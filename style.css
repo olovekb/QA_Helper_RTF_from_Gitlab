@@ -1,0 +1,102 @@
+body {
+    font-family: Arial, sans-serif;
+    padding: 20px;
+    background-color: #1a1a2e;
+    color: #e0e0e0;
+}
+
+h1,
+h2 {
+    color: #ffffff;
+    /* Золотой для заголовков */
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.6);
+}
+
+h2 {
+    margin-top: 30px;
+    border-bottom: 2px solid #9b9b9b;
+    padding-bottom: 5px;
+}
+
+p {
+    font-size: 16px;
+    margin: 10px 0;
+}
+
+ul {
+    margin-bottom: 20px;
+    list-style-type: none;
+    padding-left: 0;
+}
+
+li {
+    margin: 5px 0;
+    padding: 10px;
+    border-radius: 8px;
+    box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.4);
+    color: #ffffff;
+    /* Светлый цвет текста в блоках */
+}
+
+/* Успешные тесты */
+.success-list li {
+    background-color: #28a745;
+    /* Зелёный */
+    color: #ffffff;
+    /* Белый текст */
+}
+
+ul.failed-list li {
+    background-color: #e74b4b;
+    /* Красный */
+    color: #000000 !important;
+    /* Черный текст с !important */
+}
+
+
+/* Отдельные тестовые блоки */
+.test-case {
+    margin-bottom: 30px;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 15px;
+    box-shadow: 3px 3px 10px rgba(0, 0, 0, 0.5);
+    color: #ffffff;
+    /* Белый текст в тестах */
+}
+
+.passed {
+    color: #28a745;
+    /* Зелёный */
+    font-weight: bold;
+    text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+/* Стили для успешных тестов */
+.passed-text {
+    color: white;
+}
+
+/* Стили для неуспешных тестов */
+.failed-text {
+    color: white;
+}
+
+a {
+    color: rgb(46, 147, 255);
+    text-decoration: underline;
+    /* Черный цвет текста для обычных ссылок */
+}
+
+a:hover {
+    color: rgb(152, 199, 249);
+    text-decoration: underline;
+    /* Оранжевый цвет при наведении */
+}
+
+/* Стили для прокручиваемого списка */
+.scrollable-list {
+    max-height: 500px; /* Устанавливаем высоту списка (можно настроить по вкусу) */
+    overflow-y: auto;  /* Включаем вертикальную прокрутку */
+    list-style-type: none;
+    padding-left: 0;
+}
