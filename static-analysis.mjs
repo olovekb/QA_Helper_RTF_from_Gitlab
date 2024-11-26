@@ -1,4 +1,5 @@
-import { writeFileSync } from 'fs'; // Подключаем модуль для работы с файловой системой
+import { writeFileSync, mkdirSync } from 'fs'; // Подключаем модуль для работы с файловой системой
+import { dirname } from 'path'
 import config from './config.json' assert { type: 'json' };
 import { analyzeTestCaseWithAI } from './ai-testcase.mjs'
 
@@ -86,6 +87,8 @@ export async function staticAnalysis(testCases) {
 
     // Сохраняем HTML-отчет в файл
     const fileName = `./report/report_test_cases.${testCases[0].issue}.html`;
+    // Создаем папку, если она не существует
+    mkdirSync(dirname(fileName), { recursive: true });
     writeFileSync(fileName, htmlReport, 'utf8');
 
     console.log(`Отчет сохранен в файл: ${fileName}`);
@@ -102,9 +105,9 @@ async function generateTestCaseReport(testCase) {
 
     // Попробуем получить рекомендации от нейросети
     try {
-       // aiRecommendations = await analyzeTestCaseWithAI(testCase);
-       // пока делаем true - пока не решим с openAI
-       aiErrorOccurred = true;
+        // aiRecommendations = await analyzeTestCaseWithAI(testCase);
+        // пока делаем true - пока не решим с openAI
+        aiErrorOccurred = true;
     } catch (error) {
         console.error('Ошибка при вызове AI:', error.message);
         aiErrorOccurred = true; // Устанавливаем флаг, если произошла ошибка
