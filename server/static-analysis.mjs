@@ -61,7 +61,7 @@ export async function staticAnalysis(testCases) {
         <link rel="stylesheet" href="style.css">
     </head>
     <body>
-        <h1>Статический анализ тест-кейсов по задаче <a href="${config.jiraUrl}/${testCases[0].issue}">${testCases[0].issue}</a></h1>
+        <h1>Результат по задаче <a href="${config.jiraUrl}/${testCases[0].issue}" target="_blank">${testCases[0].issue}</a></h1>
         ${resolution}
         <ul class="success-list">${successfulTestsList || '<li>Нет успешных тестов</li>'}</ul>
         <ul class="failed-list">${failedTestsList || '<li>Нет тестов с ошибками</li>'}</ul>

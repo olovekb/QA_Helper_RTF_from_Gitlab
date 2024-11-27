@@ -9,12 +9,12 @@ import {
   getTestCaseSteps,
   getTestCaseCustomFields
 } from "./http-service.mjs";
-import { spinningLoader } from './spinning-loader.mjs'
+import { spinningLoader } from './server/spinning-loader.mjs'
 import config from './config.json' assert { type: 'json' };
 import pLimit from "p-limit";
-import { formatTestCase } from './format-testcase.mjs'
-import { formatTestCaseAsJson } from './generate-json.mjs'
-import { staticAnalysis } from './static-analysis.mjs'
+import { formatTestCase } from './server/format-testcase.mjs'
+import { formatTestCaseAsJson } from './server/generate-json.mjs'
+import { staticAnalysis } from './server/static-analysis.mjs'
 
 
 const PROJECT_ID = config.projectId;
