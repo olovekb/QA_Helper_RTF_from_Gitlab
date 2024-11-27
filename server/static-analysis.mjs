@@ -131,10 +131,10 @@ async function generateTestCaseReport(testCase) {
     output += `<p><strong>Статус:</strong> ${testCase.status} ${testCase.status !== 'Review' ? '<span style="color:red;">Ошибка: Статус должен быть "Review"</span>' : ''}</p>`;
 
     // Проверка tags
-    const validTags = ['M', 'D', 'S', 'A'];
+    const validTags = ['M', 'D', 'S', 'A', 'PWA'];
     const hasValidTag = testCase.tags.some(tag => validTags.includes(tag));
     if (!hasValidTag) {
-        errors.push('Ошибка: Тег должен содержать хотя бы одно из значений: \'M\', \'D\', \'S\', или \'A\'');
+        errors.push('Ошибка: Тег должен содержать хотя бы одно из значений: \'M\', \'D\', \'S\', \'PWA\', или \'A\'');
     }
     output += `<p><strong>Теги:</strong> ${testCase.tags.join(', ') || 'Нет значений'} ${!hasValidTag ? '<span style="color:red;">Ошибка: Тег должен содержать хотя бы одно из значений: \'M\', \'D\', \'S\', или \'A\'</span>' : ''}</p>`;
 
