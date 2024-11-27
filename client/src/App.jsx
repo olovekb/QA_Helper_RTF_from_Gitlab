@@ -23,26 +23,26 @@ function App() {
         { id: 67, name: 'РНКБ ЛК' }
     ];
 
-    // Загружаем состояние из localStorage при монтировании компонента
+    // Загружаем состояние из sessionStorage при монтировании компонента
     useEffect(() => {
-        const savedFixStatus = localStorage.getItem('fixStatus');
+        const savedFixStatus = sessionStorage.getItem('fixStatus');
         if (savedFixStatus) {
-            setFixStatus(JSON.parse(savedFixStatus)); // Восстанавливаем из localStorage
+            setFixStatus(JSON.parse(savedFixStatus)); // Восстанавливаем из sessionStorage
         }
 
-        const savedReport = localStorage.getItem('htmlReport');
+        const savedReport = sessionStorage.getItem('htmlReport');
         if (savedReport) {
             setHtmlReport(savedReport);
         }
     }, []);
 
-    // Функция для обработки клика и сохранения состояния в localStorage
+    // Функция для обработки клика и сохранения состояния в sessionStorage
     const toggleFixStatus = () => {
         const newFixStatus = !fixStatus;
         setFixStatus(newFixStatus);
 
-        // Сохраняем состояние в localStorage
-        localStorage.setItem('fixStatus', JSON.stringify(newFixStatus));
+        // Сохраняем состояние в sessionStorage
+        sessionStorage.setItem('fixStatus', JSON.stringify(newFixStatus));
     };
 
 
@@ -63,8 +63,8 @@ function App() {
                     testLink.style.textDecoration = 'none'; // Убираем перечеркивание
                     testLink.style.color = ''; // Возвращаем цвет по умолчанию
                 }
-                    const newFixStatus = !localStorage.getItem('fixStatus');
-                    localStorage.setItem('fixStatus', JSON.stringify(newFixStatus));
+                    const newFixStatus = !sessionStorage.getItem('fixStatus');
+                    sessionStorage.setItem('fixStatus', JSON.stringify(newFixStatus));
             }
             `;
             document.body.appendChild(script);
@@ -100,8 +100,8 @@ function App() {
             const newReport = response.data;
             setHtmlReport(newReport);
 
-            // Сохраняем новый отчет в localStorage
-            localStorage.setItem('htmlReport', newReport);
+            // Сохраняем новый отчет в sessionStorage
+            sessionStorage.setItem('htmlReport', newReport);
         } catch (error) {
             console.error('Error fetching data:', error);
         } finally {

@@ -23,6 +23,7 @@ const limit = pLimit(100);
 
 // Функция фильтрации тест-кейсов
 async function filterCases(allCases, jiraIssue, projectId) {
+    console.log(`filterCases принял: ${jiraIssue} ${projectId}`)
     const filteredCases = [];
 
     const promises = allCases.map((testCase) =>
@@ -58,6 +59,7 @@ async function filterCases(allCases, jiraIssue, projectId) {
 // API для анализа тест-кейсов
 app.post('/api/analyze', async (req, res) => {
     const { projectId, jiraIssue } = req.body;
+    console.log(`Запрос /api/analyze получил: ${JSON.stringify(req.body)}`)
 
     try {
         let spinnerInterval = spinningLoader('Получение всех тест-кейсов проекта...');
