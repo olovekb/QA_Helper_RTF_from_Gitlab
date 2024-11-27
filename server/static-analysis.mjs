@@ -168,6 +168,7 @@ async function generateTestCaseReport(testCase) {
     // Если есть ошибки с кастомными полями, добавляем их к выводу
     if (missingFields.length > 0) {
         customFieldsText += ` <span style="color:red;"><strong>Ошибка:</strong> Не указаны кастомные поля: ${missingFields.join(', ')}</span>`;
+        errors.push(`Ошибка: Не указаны кастомные поля: ${missingFields.join(', ')}</span>`);
     }
 
     // Закрываем тег для кастомных полей
