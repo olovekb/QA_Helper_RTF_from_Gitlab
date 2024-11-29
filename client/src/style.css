@@ -240,3 +240,83 @@ select {
     transition: border 0.3s ease, background-color 0.3s ease;
     margin-left: 30px;
 }
+
+.tabs button {
+    padding: 10px;
+    margin-right: 10px;
+    cursor: pointer;
+    margin-bottom: 30px;
+}
+
+.tabs button.active {
+    background-color: #4CAF50;
+    color: white;
+}
+
+.form-group {
+    margin-bottom: 15px;
+    display: flex;
+    flex-direction: column;
+}
+
+.form-group label {
+    font-size: 16px;
+    font-weight: bold;
+    margin-bottom: 5px;
+    color: #ebe3e3;
+    text-align: center
+}
+
+.form-group select,
+.form-group input[type="file"] {
+    padding: 10px;
+    font-size: 14px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    transition: border-color 0.3s;
+}
+
+.form-group select:hover,
+.form-group input[type="file"]:hover {
+    border-color: #007bff;
+}
+
+button {
+    padding: 10px 15px;
+    background-color: #007bff;
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: background-color 0.3s, transform 0.2s;
+}
+
+button:hover {
+    background-color: #0056b3;
+    transform: scale(1.05);
+}
+
+button:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+}
+
+.export-message {
+    margin-top: 10px;
+    font-size: 14px;
+    color: #007bff;
+}
+
+.export-link a {
+    color: #28a745;
+    font-size: 16px;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.export-link a:hover {
+    text-decoration: underline;
+    color: #218838;
+}
+

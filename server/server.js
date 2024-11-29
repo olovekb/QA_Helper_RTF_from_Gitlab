@@ -7,6 +7,8 @@ import pLimit from 'p-limit';
 import { formatTestCase } from './format-testcase.mjs';
 import { formatTestCaseAsJson } from './generate-json.mjs';
 import { staticAnalysis } from './static-analysis.mjs';
+import { exportStructureAlure } from '../server/xmind-parce/export-structure-allure.mjs';
+
 
 //const PROJECT_ID = config.projectId;
 //const JIRA_ISSUE = config.jiraIssue;
@@ -91,6 +93,24 @@ app.post('/api/analyze', async (req, res) => {
     } catch (error) {
         console.error(`Ошибка: ${error.message}`);
         res.status(500).json({ error: error.message });
+    }
+});
+
+
+app.post('/api/export', async (req, res) => {
+    console.log('Вошли в експорт')
+    const { allureData, projectId } = req.body; // Получаем JSON с клиента
+    console.log({ allureData, projectId })
+    if (!allureData || !projectId) {
+        return res.status(400).send('Отсутствуют данные для экспорта. Или Id проекта');
+    }
+
+    try {
+        await exportStructureAlure(allureData, projectId); // Передаем JSON в функцию
+        res.status(200).send('Экспорт успешно завершён.');
+    } catch (error) {
+        console.error('Ошибка экспорта:', error.message);
+        res.status(500).send('Ошибка при экспорте.');
     }
 });
 
