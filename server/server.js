@@ -11,7 +11,7 @@ import { exportStructureAlure } from '../server/xmind-parce/export-structure-all
 
 
 //const PROJECT_ID = config.projectId;
-//const JIRA_ISSUE = config.jiraIssue;
+//const JIRA_ISSUE = config.jiraIssue; 
 
 const app = express();
 const PORT = 5000;
