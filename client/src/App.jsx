@@ -43,6 +43,32 @@ function App() {
         }
     }, []);
 
+
+    const downloadHtml = () => {
+        const htmlContent = sessionStorage.getItem('htmlReport');
+        const projectId = sessionStorage.getItem('projectId'); // Предполагаем, что projectId сохранен в sessionStorage
+        const jiraIssue = sessionStorage.getItem('jiraIssue'); // Предполагаем, что jiraIssue сохранен в sessionStorage
+
+        if (!htmlContent) {
+            console.error('HTML отчет не найден в sessionStorage');
+            return;
+        }
+
+        if (!projectId || !jiraIssue) {
+            console.error('Данные projectId или jiraIssue отсутствуют в sessionStorage');
+            return;
+        }
+
+        // Формируем название файла
+        const fileName = `Результат ревью тест-кейсов ${jiraIssue}.html`;
+
+        // Создаем Blob и скачиваем HTML
+        const blob = new Blob([htmlContent], { type: 'text/html' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = fileName; // Устанавливаем динамическое имя файла
+        link.click(); // Имитируем клик для скачивания
+    };
     // Функция для обработки клика и сохранения состояния в sessionStorage
     const toggleFixStatus = () => {
         const newFixStatus = !fixStatus;
@@ -65,6 +91,9 @@ function App() {
             const newReport = response.data;
             setHtmlReport(newReport);
             sessionStorage.setItem('htmlReport', newReport);
+            // Сохраняем projectId и jiraIssue в sessionStorage
+            sessionStorage.setItem('projectId', projectId);
+            sessionStorage.setItem('jiraIssue', jiraIssue);
         } catch (error) {
             console.error('Error fetching data:', error);
         } finally {
@@ -74,7 +103,7 @@ function App() {
 
     // Обработчик загрузки файла XMind
     const handleXmindFileChange = (e) => {
-       const file = e.target.files[0];
+        const file = e.target.files[0];
         if (file) {
             setXmindFile(file);
         }
@@ -177,6 +206,12 @@ function App() {
                             {loading ? 'Анализ запущен' : 'Запустить анализ'}
                         </button>
                     </form>
+                    {/* Кнопка для скачивания отчёта */}
+                    {htmlReport && !loading && (
+                        <button onClick={downloadHtml} className="download-btn">
+                            Скачать отчёт
+                        </button>
+                    )}
                     <div>
                         {loading ? <div className="spinner"></div> : (
                             htmlReport ? (
