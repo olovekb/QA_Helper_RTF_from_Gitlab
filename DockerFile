@@ -1,0 +1,38 @@
+# Stage 1: Build
+FROM node:16-alpine as builder
+
+WORKDIR /usr/src/app
+
+# Копируем package.json и package-lock.json для корня проекта
+COPY package*.json ./
+
+# Устанавливаем зависимости для корня проекта
+RUN npm install --legacy-peer-deps
+
+# Копируем все файлы проекта в контейнер
+COPY . .
+
+# Меняем рабочую директорию на client и устанавливаем зависимости для клиента
+WORKDIR /usr/src/app/client
+RUN npm install --legacy-peer-deps
+
+# Stage 2: Final Image
+FROM node:16-alpine
+
+WORKDIR /usr/src/app
+
+# Копируем зависимости и файлы проекта из Stage 1
+COPY --from=builder /usr/src/app /usr/src/app
+
+# В корне выполняем команду для запуска сервера
+RUN npm run run
+
+# Строим React приложение в директории client
+WORKDIR /usr/src/app/client
+RUN npm run build
+
+# Экспонируем порты, если нужно для доступа к приложению
+EXPOSE 3000
+
+# Запускаем приложение из client/build
+CMD ["npx", "serve", "client/build"]
