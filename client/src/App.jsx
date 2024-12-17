@@ -83,7 +83,7 @@ function App() {
         setHtmlReport(''); // Очищаем предыдущее содержимое
 
         try {
-            const response = await axios.post('http://localhost:5000/api/analyze', {
+            const response = await axios.post(`${config.serverUrl}/api/analyze`, {
                 projectId,
                 jiraIssue,
             });
@@ -128,14 +128,14 @@ function App() {
             const allureData = await parseXmindFile(xmindFile);
 
             // Вызов метода API для экспорта
-            const response = await axios.post('http://localhost:5000/api/export', {
+            const response = await axios.post(`${config.serverUrl}/api/export`, {
                 allureData,
                 projectId,
             });
 
             // Проверяем успешность вызова
             if (response.status === 200) {
-                const allureLink = `https://abanking.qatools.cloud/project/${projectId}/test-cases`;
+                const allureLink = `${config.url}/project/${projectId}/test-cases`;
                 setExportMessage('Экспорт завершён! Посмотреть результат: ');
                 setExportResult(allureLink); // Сохраняем ссылку
             } else {

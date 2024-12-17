@@ -117,4 +117,4 @@ app.post('/api/export', async (req, res) => {
 // Запуск сервера
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
-});
+}, '0.0.0.0');

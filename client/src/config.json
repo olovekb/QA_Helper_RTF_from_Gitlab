@@ -1,5 +1,6 @@
 {
     "baseUrl":  "https://abanking.qatools.cloud/api",
+    "serverUrl":  "http://ab-vsrv-autotest-tc:5000",
     "allureToken":  "__REDACTED__",
     "projectId":  "1",
     "jiraIssue":  "SADO-20913",
