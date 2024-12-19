@@ -135,7 +135,7 @@ function App() {
 
             // Проверяем успешность вызова
             if (response.status === 200) {
-                const allureLink = `${config.url}/project/${projectId}/test-cases`;
+                const allureLink = `https://abanking.qatools.cloud/project/${projectId}/test-cases`;
                 setExportMessage('Экспорт завершён! Посмотреть результат: ');
                 setExportResult(allureLink); // Сохраняем ссылку
             } else {

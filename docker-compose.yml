@@ -1,0 +1,12 @@
+services:
+  allure-test-inspector:
+    image: git.abanking.ru:4567/vpoliakov/allure-test-inspector:main
+    restart: always
+    ports:
+      - 3000:3000
+      - 5000:5000
+    networks:
+      - allure-test-net
+
+networks:
+  allure-test-net:
