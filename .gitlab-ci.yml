@@ -1,0 +1,12 @@
+stages:
+  - build
+
+build-job:
+  stage: build
+  when: manual
+  variables:
+    FULL_IMAGE_NAME: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
+    - docker build . -t $FULL_IMAGE_NAME
+    - docker push $FULL_IMAGE_NAME

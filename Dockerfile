@@ -1,0 +1,34 @@
+# Stage 1: Build client
+FROM node:18-alpine AS frontend-builder
+WORKDIR /usr/src/app/client
+
+# Копируем package.json и package-lock.json, устанавливаем зависимости
+COPY client/package*.json ./
+RUN npm install --legacy-peer-deps --production
+
+# Копируем исходники и собираем React-приложение
+COPY client/ ./
+RUN chmod +x ./node_modules/.bin/react-scripts && npm run build
+
+# Stage 2: Build backend and serve static files
+FROM node:18-alpine AS backend-builder
+WORKDIR /usr/src/app
+
+# Копируем package.json, устанавливаем зависимости
+COPY package*.json ./
+RUN npm install --legacy-peer-deps --production
+
+# Копируем серверные файлы
+COPY server/ ./server
+
+# Копируем билд React-приложения в папку для статики
+COPY --from=frontend-builder /usr/src/app/client/build ./client/build
+
+# Устанавливаем пакет serve для обслуживания статики клиента
+RUN npm install -g serve
+
+# Expose порты
+EXPOSE 3000 5000
+
+# Запуск как сервера API, так и клиента через serve
+CMD ["sh", "-c", "node server/server.js & serve -s client/build -l 3000"]
