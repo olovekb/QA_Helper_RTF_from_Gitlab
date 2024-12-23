@@ -10,12 +10,73 @@ const HEADERS = {
     'Authorization': `Bearer ${API_TOKEN}`,
     'Content-Type': 'application/json',
 };
+let isRefreshing = false; // Флаг для предотвращения одновременного обновления токена
+let refreshSubscribers = []; // Очередь запросов, ожидающих обновления токена
+
+// Утилита для повторного выполнения запросов
+function onTokenRefreshed(newToken) {
+    refreshSubscribers.forEach(callback => callback(newToken));
+    refreshSubscribers = [];
+}
+
+function addRefreshSubscriber(callback) {
+    refreshSubscribers.push(callback);
+}
 
 // Настройка Axios
 const apiClient = axios.create({
     baseURL: BASE_URL,
     headers: HEADERS
 });
+
+// Перехватчик для обработки ошибок
+apiClient.interceptors.response.use(
+    response => response,
+    async error => {
+        const { config, response } = error;
+
+        // Проверяем, есть ли ошибка 401
+        if (response && response.status === 401 && !config._retry) {
+            console.log('Получен 401 Unauthorized. Обновляем токен...');
+
+            // Помечаем запрос для повторного выполнения
+            config._retry = true;
+
+            // Если уже идет обновление токена, ждем
+            if (isRefreshing) {
+                return new Promise(resolve => {
+                    addRefreshSubscriber(newToken => {
+                        config.headers['Authorization'] = `Bearer ${newToken}`;
+                        resolve(apiClient(config));
+                    });
+                });
+            }
+
+            // Обновляем токен
+            isRefreshing = true;
+            try {
+                const newToken = await getJwtToken(); // Получаем новый токен
+
+                // Обновляем заголовки по умолчанию
+                apiClient.defaults.headers['Authorization'] = `Bearer ${newToken}`;
+
+                // Уведомляем подписчиков
+                onTokenRefreshed(newToken);
+
+                // Выполняем повторный запрос
+                config.headers['Authorization'] = `Bearer ${newToken}`;
+                return apiClient(config);
+            } catch (refreshError) {
+                console.error('Ошибка обновления токена:', refreshError);
+                return Promise.reject(refreshError);
+            } finally {
+                isRefreshing = false;
+            }
+        }
+
+        return Promise.reject(error);
+    }
+);
 
 // Функция для логирования запроса и ответа
 async function logRequestAndResponse(promise, method, url, data) {
