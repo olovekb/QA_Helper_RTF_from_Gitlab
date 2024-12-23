@@ -25,7 +25,7 @@ export async function getJwtToken() {
             {
                 headers: {
                     "Accept": "application/json",
-                    "Expect": "",
+                   // "Expect": "",
                 }
             }
         );
