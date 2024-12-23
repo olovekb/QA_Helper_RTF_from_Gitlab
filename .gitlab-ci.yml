@@ -3,7 +3,7 @@ stages:
 
 build-job:
   stage: build
-  when: auto
+  when: always
   variables:
     FULL_IMAGE_NAME: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
   script:
