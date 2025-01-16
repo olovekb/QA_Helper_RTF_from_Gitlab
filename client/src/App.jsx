@@ -28,6 +28,7 @@ function App() {
         { id: 34, name: 'USB' },
         { id: 67, name: 'РНКБ ЛК' },
         { id: 199, name: 'Test' },
+        { id: 302, name: 'Nopaper 2.0' }
     ];
 
     // Загружаем состояние из sessionStorage при монтировании компонента
