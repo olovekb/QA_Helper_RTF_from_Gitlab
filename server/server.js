@@ -85,7 +85,7 @@ app.post('/api/analyze', async (req, res) => {
 
         // Вывод результатов
         console.log(result);
-        const htmlReport = await staticAnalysis(jsonResult); // Генерация анализа
+        const htmlReport = await staticAnalysis(jsonResult, projectId); // Генерация анализа
 
         // Возвращаем форматированный результат в ответе
         res.json(htmlReport);

@@ -3,14 +3,14 @@ import { dirname } from 'path'
 import config from './config.json' assert { type: 'json' };
 import { analyzeTestCaseWithAI } from './ai-testcase.mjs'
 
-export async function staticAnalysis(testCases) {
+export async function staticAnalysis(testCases, projectId) {
     let output = ''; // Для хранения анализа каждого теста
     const successfulTests = []; // Успешные тесты
     const failedTests = []; // Тесты с ошибками
 
     // Обрабатываем каждый тест-кейс
     for (let testCase of testCases) {
-        const { report, hasErrors } = await generateTestCaseReport(testCase);
+        const { report, hasErrors } = await generateTestCaseReport(testCase, projectId);
         output += `<div id="test-${testCase.id}" class="test-case">${report}</div>`;
 
         // Классифицируем тесты
@@ -97,7 +97,7 @@ export async function staticAnalysis(testCases) {
 
 
 
-async function generateTestCaseReport(testCase) {
+async function generateTestCaseReport(testCase, projectId) {
     let errors = []; // Массив для сбора ошибок
     let output = ''; // Для хранения результатов анализа одного теста
     let aiRecommendations = null; // Храним рекомендации, если они успешны
@@ -119,7 +119,7 @@ async function generateTestCaseReport(testCase) {
     // Добавление ссылки на тест-кейс в Allure (ТестОпс)
     output += `
         <p>
-            <a href="${config.url}/project/${config.projectId}/test-cases/${testCase.id}" target="_blank">
+            <a href="${config.url}/project/${projectId}/test-cases/${testCase.id}" target="_blank">
                 Ссылка на тест-кейс из Allure (ТестОпс)
             </a>
         </p>`;
@@ -146,20 +146,22 @@ async function generateTestCaseReport(testCase) {
     output += `<p><strong>Слои:</strong> ${testCase.layer} ${!validLayers.includes(testCase.layer) ? '<span style="color:red;">Ошибка: Слой должен быть одним из: \'E2E Tests\', \'Integration frontend Tests\', или \'Integration backend Tests\'</span>' : ''}</p>`;
 
     // Проверка customFields
-    const missingFields = [];
+    // Проверяем кастомные поля Priority и Version
+    const requiredFields = ['Priority', 'Version'];
+    const missingFields = []; // Для хранения отсутствующих или некорректных полей
 
     // Проверяем наличие кастомных полей
     const customFieldsOutput = testCase.customFields
-        .filter(field => field.value !== 'Нет значений' && (field.name === 'Priority' || field.name === 'Version'))
+        .filter(field => field.value !== 'Нет значений')
         .map(field => `${field.name}: ${field.value}`)
         .join(', ');
 
-    // Проверка на наличие кастомных полей Priority и Version
-    if (!testCase.customFields.some(field => field.name === 'Priority')) {
-        missingFields.push('Priority');
-    }
-    if (!testCase.customFields.some(field => field.name === 'Version')) {
-        missingFields.push('Version');
+    // Проверка на наличие и корректность значений кастомных полей
+    for (const fieldName of requiredFields) {
+        const field = testCase.customFields.find(field => field.name === fieldName);
+        if (!field || field.value === 'Нет значений') {
+            missingFields.push(fieldName);
+        }
     }
 
     // Формируем вывод для кастомных полей
@@ -167,8 +169,9 @@ async function generateTestCaseReport(testCase) {
 
     // Если есть ошибки с кастомными полями, добавляем их к выводу
     if (missingFields.length > 0) {
-        customFieldsText += ` <span style="color:red;"><strong>Ошибка:</strong> Не указаны кастомные поля: ${missingFields.join(', ')}</span>`;
-        errors.push(`Ошибка: Не указаны кастомные поля: ${missingFields.join(', ')}</span>`);
+        const missingFieldsMessage = `Не указаны или некорректны кастомные поля: ${missingFields.join(', ')}`;
+        customFieldsText += `<span style="color:red;"><strong> Ошибка:</strong> ${missingFieldsMessage}</span>`;
+        errors.push(` Ошибка: ${missingFieldsMessage}`);
     }
 
     // Закрываем тег для кастомных полей
