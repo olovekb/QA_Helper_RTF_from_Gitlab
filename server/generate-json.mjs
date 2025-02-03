@@ -75,7 +75,7 @@ async function formatStepsAsJson(steps) {
                 // Обработка обычного шага
                 let stepObj = {
                     index: stepIndex,
-                    description: step.body || 'Нет описания шага',
+                    description: step.body || getAttachmentName(step.attachmentId) || 'Нет описания шага',
                     attachment: getAttachmentName(step.attachmentId) || null,
                 };
 
@@ -96,7 +96,6 @@ async function formatStepsAsJson(steps) {
             }
         }
     }
-
     return stepsResult; // Возвращаем JSON-форматированные шаги
 }
 
