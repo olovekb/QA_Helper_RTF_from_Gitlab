@@ -2,12 +2,11 @@ import express from 'express';
 import cors from 'cors';
 import { getAllTestCases, getTestCaseExpectedResult, getTestCaseLayer, getCaseIssue, getCaseTags, getTestCasePrecondition, getTestCaseStatus, getTestCaseSteps, getTestCaseCustomFields } from './http-service.mjs';
 import { spinningLoader } from './spinning-loader.mjs';
-import config from './config.json' assert { type: 'json' };
 import pLimit from 'p-limit';
 import { formatTestCase } from './format-testcase.mjs';
 import { formatTestCaseAsJson } from './generate-json.mjs';
 import { staticAnalysis } from './static-analysis.mjs';
-import { exportStructureAlure } from '../server/xmind-parce/export-structure-allure.mjs';
+import { exportStructureAllure } from './xmind-parce/export-structure-allure.mjs';
 
 
 //const PROJECT_ID = config.projectId;
@@ -78,6 +77,7 @@ app.post('/api/analyze', async (req, res) => {
         // Форматируем и сохраняем результаты
         let result = '';
         let jsonResult = [];
+
         for (const caseItem of filteredCases) {
             result += await formatTestCase(caseItem);
             jsonResult.push(await formatTestCaseAsJson(caseItem)); // Ждём результат от каждой функции
@@ -96,20 +96,24 @@ app.post('/api/analyze', async (req, res) => {
     }
 });
 
-
+// Запрос на экспорт тестовой модели
 app.post('/api/export', async (req, res) => {
     console.log('Вошли в експорт')
     const { allureData, projectId } = req.body; // Получаем JSON с клиента
+
     console.log({ allureData, projectId })
+
     if (!allureData || !projectId) {
         return res.status(400).send('Отсутствуют данные для экспорта. Или Id проекта');
     }
 
     try {
-        await exportStructureAlure(allureData, projectId); // Передаем JSON в функцию
+        await exportStructureAllure(allureData, projectId); // Передаем JSON в функцию
+
         res.status(200).send('Экспорт успешно завершён.');
     } catch (error) {
         console.error('Ошибка экспорта:', error.message);
+
         res.status(500).send('Ошибка при экспорте.');
     }
 });

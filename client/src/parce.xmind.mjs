@@ -17,7 +17,7 @@ export const parseXmindFile = async (file) => {
         const parsedData = JSON.parse(jsonData);  // Парсим JSON
 
         // Преобразуем данные в формат Allure
-        console.log(extractAllureJSONStructure(parsedData))
+        console.log('Преобразованные данные:',extractAllureJSONStructure(parsedData))
         return extractAllureJSONStructure(parsedData);
     } catch (error) {
         console.error('Ошибка при обработке файла:', error);
@@ -28,39 +28,76 @@ export const parseXmindFile = async (file) => {
 // Функция для извлечения данных из структуры XMind
 function extractAllureJSONStructure(xmindData) {
     const rootTopic = xmindData[0].rootTopic;
+
     // Процесс начинается с дочерних элементов rootTopic
     return convertTopicToAllureFormat(rootTopic.children.attached);
 }
 
 // Преобразование первого уровня children в формат Allure
 function convertTopicToAllureFormat(children) {
-    const result = [];
+    try {
+        const result = [];
 
-    children.forEach(child => {
-        // Каждый child является feature
-        const feature = {
-            feature: child.title, // Название feature
-            stories: child.children && child.children.attached
-                ? child.children.attached.map(subtopic => convertSubtopicToStory(subtopic)) // Преобразуем вложенные элементы в story
-                : [] // Если нет вложенных элементов, ставим пустой массив
-        };
-        result.push(feature);
-    });
+        children.forEach(child => {
+            // Каждый child является feature
+            const feature = {
+                feature: child.title, // Название feature
+                stories: child.children && child.children.attached
+                    ? child.children.attached.map(subtopic => convertSubtopicToStory(subtopic))
+                    // Преобразуем вложенные элементы в story
+                    : [] // Если нет вложенных элементов, ставим пустой массив
+            };
 
-    return result;
+            console.log('ФИЧА', child.title);
+
+
+            result.push(feature);
+        });
+
+        return result;
+    } catch (error) {
+        console.error(`Ошибка при преобразовании первого уровня rootTopic.children.attached. ${error}`);
+    }
+
 }
 
 // Преобразование подпункта в story
 function convertSubtopicToStory(subtopic) {
-    return {
-        story: subtopic.title, // Каждое подзаголовок - это story
-        scenarios: subtopic.children && subtopic.children.attached
-            ? subtopic.children.attached.map(subsubtopic => convertSubtopicToScenario(subsubtopic)) // Преобразуем вложенные элементы в сценарии
-            : [] // Если нет вложенных сценариев, ставим пустой массив
-    };
+    try {
+        return {
+            story: subtopic.title, // Каждое подзаголовок - это story
+            scenarios: subtopic.children && subtopic.children.attached
+                ? subtopic.children.attached.map(scenario => convertSubtopicToScenario(scenario)) // Преобразуем вложенные элементы в сценарии
+                : [] // Если нет вложенных сценариев, ставим пустой массив
+        };
+    } catch (error) {
+        console.error(`Ошибка при преобразовании второго уровня в story. ${error}`);
+    }
 }
 
+
 // Преобразование более глубокого подпункта в сценарий
-function convertSubtopicToScenario(subtopic) {
-    return { scenario: subtopic.title }; // Название сценария
+function convertSubtopicToScenario(scenario) {
+    try {
+        return {
+            scenario: scenario.title, // Название сценария
+            codeList: scenario.children && scenario.children.attached ?
+                scenario.children.attached.map(code => convertScenarioToCode(code))
+                : []
+        };
+    } catch (error) {
+        console.error(`Ошибка при преобразовании третьего уровня в Scenario. ${error}`);
+    }
+
+}
+
+// Получение поля code
+function convertScenarioToCode(code) {
+    try {
+        return {
+            code: code.title
+        }
+    } catch (error) {
+        console.error(`Ошибка при преобразовании 4-го уровня в Code. ${error}`);
+    }
 }
