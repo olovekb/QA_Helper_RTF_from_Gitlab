@@ -1,7 +1,7 @@
 import axios from 'axios';
 import config from '../config.json' assert { type: 'json' };
 import { getJwtToken } from '../http-service.mjs';
-import {customProjectField} from "./customProjectField.js";
+import { customProjectField } from "./customProjectField.js";
 
 // Конфигурация
 const BASE_URL = config.baseUrl;
@@ -104,10 +104,10 @@ async function logRequestAndResponse(promise, method, url, data) {
 }
 
 // Функция для получения кастомных полей по проекту
-async function getProjectCustomFieldIdRequest(projectCustomFieldName) {
+async function getProjectCustomFieldIdRequest(projectCustomFieldName, projectId) {
     try {
         const url = '/cfschema';
-        const params = { projectId: config.projectId };
+        const params = { projectId: projectId };
         const response = await logRequestAndResponse(apiClient.get(url, { params }), 'get', url, params);
 
         // достаем список кастомных полей проекта
@@ -216,13 +216,13 @@ async function addCustomFieldsToTestCase(testCaseId, customFields) {
 }
 
 
-export async function exportStructureAllure(parsedJson, id) {
+export async function exportStructureAllure(parsedJson, projectId) {
     try {
-        const featureFieldId = await getProjectCustomFieldIdRequest(customProjectField.feature);
-        const storyFieldId = await getProjectCustomFieldIdRequest(customProjectField.story);
-        const scenarioFieldId = await getProjectCustomFieldIdRequest(customProjectField.scenario);
-        const codeFieldId = await getProjectCustomFieldIdRequest(customProjectField.code);
-
+        const featureFieldId = await getProjectCustomFieldIdRequest(customProjectField.feature, projectId);
+        const storyFieldId = await getProjectCustomFieldIdRequest(customProjectField.story, projectId);
+        const scenarioFieldId = await getProjectCustomFieldIdRequest(customProjectField.scenario, projectId);
+        const codeFieldId = await getProjectCustomFieldIdRequest(customProjectField.code, projectId);
+        console.log(`ХУЙ ${featureFieldId} ${storyFieldId} ${scenarioFieldId} ${codeFieldId}`)
         // Если не найдено ни одно из кастомных полей в проекте
         if (!featureFieldId || !storyFieldId || !scenarioFieldId || !codeFieldId) {
             console.error('Не удалось получить ID кастомных полей!');
@@ -232,30 +232,33 @@ export async function exportStructureAllure(parsedJson, id) {
         // Обрабатываем каждый feature в parsedJson
         for (const featureObj of parsedJson) {
             const feature = featureObj.feature || 'Не указано'; // Значение по умолчанию
-
+            console.log(feature)
             // Обрабатываем каждый story для текущего feature
             for (const storyObj of featureObj.stories) {
                 const story = storyObj.story || 'Не указано'; // Значение по умолчанию
-
+                console.log(story)
                 // Обрабатываем каждый scenario для текущего story
                 for (const scenarioObj of storyObj.scenarios) {
                     const scenario = scenarioObj.scenario;
-
+                    console.log('Вошли в')
+                    console.log(scenario)
                     const customFields = [
-                        {id: featureFieldId, value: feature},
-                        {id: storyFieldId, value: story},
-                        {id: scenarioFieldId, value: scenario},
+                        { id: featureFieldId, value: feature },
+                        { id: storyFieldId, value: story },
+                        { id: scenarioFieldId, value: scenario },
                     ];
+                    console.log(customFields)
 
                     // Если в scenario есть 4-й уровень, то обрабатываем ее и добавляем кейсы
                     if (scenarioObj.codeList.length) {
+                        console.log('Вошли в код')
                         for (const codeObj of scenarioObj.codeList) {
                             const code = codeObj.code;
-
+                            console.log(code)
                             console.log('SCENARIO', scenario);
                             console.log('CODE', code);
 
-                            customFields.push({id: codeFieldId, value: code});
+                            customFields.push({ id: codeFieldId, value: code });
 
                             // Создаем тест-кейс
                             /**
@@ -263,7 +266,7 @@ export async function exportStructureAllure(parsedJson, id) {
                              * иначе createTestCase({name: scenario}, id);
                              * @type {*|undefined}
                              */
-                            const testCaseId = await createTestCase({name: code}, id);
+                            const testCaseId = await createTestCase({ name: code }, projectId);
 
                             if (!testCaseId) {
                                 console.error(`Ошибка создания тест-кейса для сценария "${code}"`);
@@ -276,7 +279,7 @@ export async function exportStructureAllure(parsedJson, id) {
                             console.log(`Кастомные поля добавлены в тест-кейс ${testCaseId}`);
                         }
                     } else {
-                        const testCaseId = await createTestCase({name: scenario}, id);
+                        const testCaseId = await createTestCase({ name: scenario }, projectId);
 
                         if (!testCaseId) {
                             console.error(`Ошибка создания тест-кейса для сценария "${scenario}"`);
