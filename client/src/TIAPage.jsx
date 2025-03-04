@@ -1,6 +1,8 @@
 // client/src/components/TIAPage.js
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import Select from 'react-select'; // Импортируем react-select для мультиселекта
+import styles from './styles'; // Импортируем стили
 
 // Компонент для страницы Test Impact Analysis (TIA)
 const TIAPage = ({ projects }) => {
@@ -17,7 +19,7 @@ const TIAPage = ({ projects }) => {
 
     // Состояния для маппинга компонентов
     const [components, setComponents] = useState([]); // Список всех компонентов
-    const [componentMappings, setComponentMappings] = useState({}); // Маппинг { componentId: folderId }
+    const [componentMappings, setComponentMappings] = useState({}); // Маппинг { componentId: [folderIds] } для мультиселекта
     const [showMappingModal, setShowMappingModal] = useState(false); // Управление модальным окном
 
     useEffect(() => {
@@ -143,14 +145,15 @@ const TIAPage = ({ projects }) => {
         return allComponents;
     };
 
-    // Обновленная функция добавления маппинга компонента через API
-    const saveComponentMapping = async (component, folderId) => {
+    // Обновленная функция добавления маппинга компонента через API (для мультиселекта, отправляем массив)
+    const saveComponentMapping = async (component, folderIds) => {
         try {
+            // Отправляем один запрос с массивом functionalBlock
             await axios.post('http://localhost:5001/api/components', {
                 projectId,
                 componentType: component.type,
-                componentName: component.name, // Добавляем имя компонента
-                functionalBlock: folderId,
+                componentName: component.name,
+                functionalBlock: folderIds.map(id => id.toString()), // Отправляем массив строк
             });
         } catch (err) {
             logError('Save component mapping error', err.message);
@@ -158,7 +161,7 @@ const TIAPage = ({ projects }) => {
         }
     };
 
-    // Обновленная функция создания тест-плана с отладкой
+    // client/src/components/TIAPage.js (обновляем handleCreateTestPlan)
     const handleCreateTestPlan = async () => {
         console.log('Starting handleCreateTestPlan - projectId:', projectId);
         console.log('Starting handleCreateTestPlan - frontendJSON:', frontendJSON);
@@ -196,10 +199,26 @@ const TIAPage = ({ projects }) => {
                 return;
             }
 
+            // Получаем существующие маппинги для проекта
+            const existingMappings = await fetchExistingMappings(projectId);
             setComponents(extractedComponents);
-            setComponentMappings({});
+
+            // Инициализируем маппинги с существующими значениями, собирая все маппинги для компонента
+            const initialMappings = {};
+            extractedComponents.forEach(component => {
+                const mappingsForComponent = existingMappings.filter(
+                    m => m.component_name === component.name && m.component_type === component.type
+                );
+                console.log(`Mappings for ${component.name}:`, mappingsForComponent); // Отладка
+                const folderIds = mappingsForComponent
+                    .map(m => findFolderAllureId(m.functional_block_allure_id)?.toString() || '')
+                    .filter(id => id); // Фильтруем пустые значения
+                initialMappings[component.id] = folderIds.length > 0 ? folderIds : [];
+            });
+            setComponentMappings(initialMappings);
+
             setShowMappingModal(true);
-            console.log('Successfully opened mapping modal');
+            console.log('Successfully opened mapping modal with existing mappings');
         } catch (err) {
             setError('Произошла ошибка при обработке компонентов. Проверьте данные и повторите попытку.');
             logError('Component extraction error', err.message);
@@ -208,11 +227,56 @@ const TIAPage = ({ projects }) => {
         }
     };
 
+    // Обновленная функция для получения существующих маппингов
+    const fetchExistingMappings = async (projectId) => {
+        try {
+            const response = await axios.get(`http://localhost:5001/api/components`, {
+                params: { projectId },
+            });
+            console.log('Existing mappings response:', response.data.mappings); // Добавь для отладки
+            return response.data.mappings || []; // Предполагаем, что API возвращает массив маппингов с functional_block_allure_id
+        } catch (err) {
+            logError('Fetch existing mappings error', err.message);
+            return [];
+        }
+    };
+
+    // client/src/components/TIAPage.js (обновляем findFolderAllureId)
+    const findFolderAllureId = (functionalBlockAllureId) => {
+        if (!functionalBlockAllureId || !folders) {
+            console.log('No functionalBlockAllureId or folders:', { functionalBlockAllureId, folders }); // Отладка
+            return null;
+        }
+
+        const findInFolders = (foldersList) => {
+            for (const folder of foldersList) {
+                console.log(`Checking folder:`, folder); // Отладка
+                // Преобразуем оба значения в строки для корректного сравнения
+                const folderIdStr = folder.id.toString();
+                const functionalBlockAllureIdStr = functionalBlockAllureId.toString();
+                if (folderIdStr === functionalBlockAllureIdStr) {
+                    console.log(`Match found for ${functionalBlockAllureIdStr}:`, folderIdStr); // Отладка
+                    return folderIdStr; // Возвращаем id как строку
+                }
+                // Проверяем также children рекурсивно
+                if (folder.children && folder.children.length > 0) {
+                    const result = findInFolders(folder.children);
+                    if (result) return result;
+                }
+            }
+            return null;
+        };
+
+        const result = findInFolders(folders);
+        console.log(`findFolderAllureId result for ${functionalBlockAllureId}:`, result); // Отладка
+        return result;
+    };
+
     // Функция для создания тест-плана после маппинга
     const createTestPlan = async () => {
         try {
             const usedFunctionalBlocks = folders
-                .filter(folder => Object.values(componentMappings).includes(folder.id))
+                .filter(folder => Object.values(componentMappings).some(ids => ids.includes(folder.id)))
                 .map(folder => ({
                     id: folder.id,
                     name: folder.name,
@@ -250,9 +314,9 @@ const TIAPage = ({ projects }) => {
         setIsLoading(true);
         try {
             for (const component of components) {
-                const folderId = componentMappings[component.id];
-                if (folderId) {
-                    await saveComponentMapping(component, folderId);
+                const folderIds = componentMappings[component.id] || [];
+                if (folderIds.length > 0) {
+                    await saveComponentMapping(component, folderIds);
                 }
             }
             await createTestPlan();
@@ -270,10 +334,10 @@ const TIAPage = ({ projects }) => {
         setIsLoading(false);
     };
 
-    const handleMappingChange = (componentId, folderId) => {
+    const handleMappingChange = (componentId, selectedOptions) => {
         setComponentMappings((prev) => ({
             ...prev,
-            [componentId]: folderId,
+            [componentId]: selectedOptions.map(option => option.value.toString()), // Гарантируем, что это строки
         }));
     };
 
@@ -285,7 +349,7 @@ const TIAPage = ({ projects }) => {
                 timestamp: new Date().toISOString(),
             });
         } catch (err) {
-            console.error('Failed to log error:', err);
+            console.error('Failed to log error:', err.message);
         }
     };
 
@@ -303,21 +367,21 @@ const TIAPage = ({ projects }) => {
                     style={{
                         cursor: 'pointer',
                         padding: level === 0 ? '12px 16px' : '8px 12px',
-                        backgroundColor: level === 0 ? '#dfe6e9' : '#e8ecef',
-                        color: '#343a40',
-                        border: '1px solid #ced4da',
+                        backgroundColor: level === 0 ? styles.dfe6e9 : styles.e8ecef,
+                        color: styles.textDark,
+                        border: `1px solid ${styles.borderLight}`,
                         borderRadius: '6px',
                         boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
                         transition: 'background-color 0.2s, transform 0.1s',
                         '&:hover': {
-                            backgroundColor: level === 0 ? '#c8d6e5' : '#dee2e6',
+                            backgroundColor: level === 0 ? styles.c8d6e5 : styles.dee2e6,
                             transform: 'translateY(-1px)',
                         },
                     }}
                     onClick={() => handleFolderToggle(folder.id)}
                 >
                     {folder.children && folder.children.length > 0 && (
-                        <span style={{ marginRight: '8px', color: '#495057' }}>
+                        <span style={{ marginRight: '8px', color: styles.textMuted }}>
                             {expandedFolders[folder.id] ? '▼' : '►'}
                         </span>
                     )}
@@ -341,19 +405,21 @@ const TIAPage = ({ projects }) => {
         ));
     };
 
-    // Функция для рендеринга списка папок в виде выпадающего списка
-    const renderFolderOptions = (folders, level = 0) => {
-        let options = [];
-        folders.forEach((folder) => {
-            options.push(
-                <option key={folder.id} value={folder.id}>
-                    {'-'.repeat(level)} {folder.customFieldName} - {folder.name}
-                </option>
-            );
-            if (folder.children && folder.children.length > 0) {
-                options = options.concat(renderFolderOptions(folder.children, level + 1));
-            }
-        });
+    // Обновленная функция для подготовки опций для мультиселекта
+    const getFolderOptions = (folders) => {
+        const options = [];
+        const traverseFolders = (folderList, level = 0) => {
+            folderList.forEach((folder) => {
+                options.push({
+                    value: folder.id.toString(), // Гарантируем, что это строка (allure_id)
+                    label: `${'-'.repeat(level)} ${folder.customFieldName} - ${folder.name}`,
+                });
+                if (folder.children && folder.children.length > 0) {
+                    traverseFolders(folder.children, level + 1);
+                }
+            });
+        };
+        traverseFolders(folders);
         return options;
     };
 
@@ -474,7 +540,7 @@ const TIAPage = ({ projects }) => {
                                             <span
                                                 style={{
                                                     ...styles.mappingLabel,
-                                                    color: componentMappings[comp.id] ? '#28a745' : '#ffc107',
+                                                    color: componentMappings[comp.id]?.length > 0 ? styles.success : styles.warning,
                                                 }}
                                             >
                                                 {comp.type}: {comp.name}
@@ -490,14 +556,17 @@ const TIAPage = ({ projects }) => {
                                                 </ul>
                                             )}
                                         </div>
-                                        <select
-                                            value={componentMappings[comp.id] || ''}
-                                            onChange={(e) => handleMappingChange(comp.id, e.target.value)}
-                                            style={styles.mappingSelect}
-                                        >
-                                            <option value="">-- Выберите функциональный блок --</option>
-                                            {renderFolderOptions(folders)}
-                                        </select>
+                                        <Select
+                                            options={getFolderOptions(folders)}
+                                            value={getFolderOptions(folders).filter(option =>
+                                                componentMappings[comp.id]?.includes(option.value)
+                                            )}
+                                            onChange={(selectedOptions) => handleMappingChange(comp.id, selectedOptions)}
+                                            isMulti // Включаем мультиселект
+                                            placeholder="Выберите функциональный блок(и)..."
+                                            styles={selectStyles} // Кастомные стили для react-select
+                                            isSearchable // Включаем поиск
+                                        />
                                     </div>
                                 ))
                             )}
@@ -512,7 +581,7 @@ const TIAPage = ({ projects }) => {
                             <button
                                 onClick={handleMappingConfirm}
                                 style={styles.modalButtonConfirm}
-                                disabled={Object.keys(componentMappings).length < components.length || components.length === 0}
+                                disabled={Object.values(componentMappings).every(ids => ids.length === 0) || components.length === 0}
                             >
                                 Подтвердить
                             </button>
@@ -524,225 +593,51 @@ const TIAPage = ({ projects }) => {
     );
 };
 
-// Стили
-const styles = {
-    container: {
-        padding: '20px',
-        maxWidth: '800px',
-        margin: '0 auto',
-        backgroundColor: '#f1f3f5',
-        borderRadius: '8px',
-        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.05)',
-    },
-    header: {
-        fontSize: '24px',
-        marginBottom: '20px',
-        textAlign: 'center',
-        color: '#343a40',
-    },
-    form: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '20px',
-    },
-    formGroup: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '5px',
-    },
-    label: {
-        fontSize: '16px',
-        fontWeight: 'bold',
-        color: '#343a40',
-    },
-    select: {
-        padding: '8px',
-        fontSize: '14px',
+// Новые стили для react-select (вынесем в styles.js позже, если нужно)
+const selectStyles = {
+    control: (provided) => ({
+        ...provided,
+        minHeight: '38px',
         borderRadius: '5px',
-        border: '1px solid #ced4da',
-        color: '#343a40',
-        backgroundColor: '#fff',
-        transition: 'border-color 0.2s',
-        '&:focus': {
-            borderColor: '#007bff',
-            outline: 'none',
-        },
-    },
-    fileInput: {
-        padding: '8px 0',
-    },
-    input: {
-        padding: '8px',
-        fontSize: '14px',
-        borderRadius: '5px',
-        border: '1px solid #ced4da',
-        color: '#343a40',
-        transition: 'border-color 0.2s',
-        '&:focus': {
-            borderColor: '#007bff',
-            outline: 'none',
-        },
-    },
-    mappingSection: {
-        marginTop: '20px',
-        padding: '10px',
-        backgroundColor: '#fff',
-        borderRadius: '6px',
-        boxShadow: '0 1px 4px rgba(0, 0, 0, 0.05)',
-    },
-    subHeader: {
-        fontSize: '20px',
-        marginBottom: '10px',
-        color: '#343a40',
-    },
-    submitButton: {
-        padding: '10px 20px',
-        fontSize: '16px',
-        color: '#fff',
-        backgroundColor: '#28a745',
-        border: 'none',
-        borderRadius: '5px',
-        cursor: 'pointer',
-        marginTop: '20px',
-        transition: 'background-color 0.2s, transform 0.1s',
+        border: `1px solid ${styles.borderLight}`,
+        boxShadow: 'none',
         '&:hover': {
-            backgroundColor: '#218838',
-            transform: 'translateY(-1px)',
+            borderColor: styles.primary,
         },
-        '&:disabled': {
-            backgroundColor: '#6c757d',
-            cursor: 'not-allowed',
-        },
-    },
-    error: {
-        marginTop: '20px',
-        padding: '10px',
-        backgroundColor: '#f8d7da',
-        color: '#721c24',
-        borderRadius: '5px',
-        textAlign: 'center',
-    },
-    success: {
-        marginTop: '20px',
-        padding: '10px',
-        backgroundColor: '#d4edda',
-        color: '#155724',
-        borderRadius: '5px',
-        textAlign: 'center',
-    },
-    loader: {
-        marginTop: '20px',
-        textAlign: 'center',
-        fontSize: '16px',
-        color: '#007bff',
-    },
-    modalOverlay: {
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: '0',
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 1000,
-    },
-    modal: {
-        backgroundColor: '#fff',
-        padding: '20px',
-        borderRadius: '8px',
-        width: '500px',
-        maxHeight: '80vh',
-        overflowY: 'auto',
-        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
-    },
-    modalHeader: {
-        fontSize: '20px',
-        marginBottom: '20px',
-        color: '#343a40',
-        borderBottom: '1px solid #ced4da',
-        paddingBottom: '10px',
-    },
-    modalContent: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '15px',
-    },
-    noComponents: {
-        fontSize: '14px',
-        color: '#721c24',
-        textAlign: 'center',
-    },
-    mappingRow: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '10px',
-    },
-    componentContainer: {
-        flex: '1',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '5px',
-    },
-    mappingLabel: {
-        fontSize: '14px',
-        color: '#343a40',
-    },
-    endpointList: {
-        margin: 0,
-        paddingLeft: '20px',
-        fontSize: '12px',
-        color: '#6c757d',
-    },
-    endpointItem: {
-        marginBottom: '2px',
-    },
-    mappingSelect: {
-        flex: '2',
-        padding: '6px',
-        fontSize: '14px',
-        borderRadius: '5px',
-        border: '1px solid #ced4da',
-        color: '#343a40',
-        backgroundColor: '#fff',
-    },
-    modalActions: {
-        marginTop: '20px',
-        display: 'flex',
-        justifyContent: 'flex-end',
-        gap: '10px',
-    },
-    modalButtonCancel: {
-        padding: '8px 16px',
-        fontSize: '14px',
-        color: '#fff',
-        backgroundColor: '#6c757d',
-        border: 'none',
-        borderRadius: '5px',
-        cursor: 'pointer',
-        transition: 'background-color 0.2s',
+    }),
+    multiValue: (provided) => ({
+        ...provided,
+        backgroundColor: styles.lightGray,
+        borderRadius: '4px',
+    }),
+    multiValueLabel: (provided) => ({
+        ...provided,
+        color: styles.textDark,
+    }),
+    multiValueRemove: (provided) => ({
+        ...provided,
+        color: styles.textMuted,
         '&:hover': {
-            backgroundColor: '#5a6268',
+            backgroundColor: styles.danger,
+            color: 'white',
         },
-    },
-    modalButtonConfirm: {
-        padding: '8px 16px',
-        fontSize: '14px',
-        color: '#fff',
-        backgroundColor: '#28a745',
-        border: 'none',
-        borderRadius: '5px',
-        cursor: 'pointer',
-        transition: 'background-color 0.2s',
-        '&:hover': {
-            backgroundColor: '#218838',
-        },
-        '&:disabled': {
-            backgroundColor: '#6c757d',
-            cursor: 'not-allowed',
-        },
-    },
+    }),
+    menu: (provided) => ({
+        ...provided,
+        zIndex: 1001, // Убедимся, что меню выше модального окна
+    }),
+};
+
+const logError = async (errorType, description) => {
+    try {
+        await axios.post('http://localhost:5001/api/errors', {
+            errorType,
+            description,
+            timestamp: new Date().toISOString(),
+        });
+    } catch (err) {
+        console.error('Failed to log error:', err.message);
+    }
 };
 
 export default TIAPage;

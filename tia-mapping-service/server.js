@@ -6,10 +6,11 @@ import { fileURLToPath } from 'url'; // Импорт для преобразов
 import multer from 'multer'; // Импорт multer для обработки загрузки файлов
 import { uploadMiddleware, handleJsonUpload } from './api/upload.js'; // Импорт функционала для загрузки JSON
 import { getProjectStructure } from './api/structure.js'; // Импорт функционала для получения структуры Allure
-import { handleComponentMapping, deleteComponentMapping } from './api/components.js'; // Импорт функционала для маппинга
+import { handleComponentMapping, deleteComponentMapping, getComponentMappings } from './api/components.js'; // Импорт функционала для маппинга
 import { createTestPlanHandler } from './api/launch.js'; // Импорт функционала для создания тест-планов
 import config from './config/index.js'; // Импорт конфигурации проекта
 import { logInfo, logError } from './utils/logger.js'; // Импорт логгера для информационных и ошибочных сообщений
+import { logServerError } from './api/errors.js';
 
 // Получаем __dirname в ES-модулях
 const __filename = fileURLToPath(import.meta.url);
@@ -38,6 +39,8 @@ const upload = multer({ storage: storage });
  * @route POST /api/upload/json
  */
 app.post('/api/upload/json', uploadMiddleware, handleJsonUpload);
+
+app.post('/api/errors', logServerError);
 
 /**
  * Получение структуры проекта из Allure без пропуска узлов
@@ -69,6 +72,7 @@ app.get('/api/structure', async (req, res) => {
  */
 app.post('/api/components', handleComponentMapping); // Создание маппинга
 app.patch('/api/components/:componentId', handleComponentMapping); // Обновление маппинга по ID
+app.get('/api/components', getComponentMappings);
 
 /**
  * Удаление маппинга компонента
