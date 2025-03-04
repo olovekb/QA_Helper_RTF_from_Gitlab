@@ -9,20 +9,20 @@ if ! command -v psql &> /dev/null; then
 fi
 
 # Получение настроек из переменных окружения или установка значений по умолчанию
-DB_USER=${DB_USER:-user} # Пользователь БД (по умолчанию 'user')
-DB_PASSWORD=${DB_PASSWORD:-password} # Пароль (по умолчанию 'password')
-DB_HOST=${DB_HOST:-localhost} # Хост (по умолчанию 'localhost')
-DB_PORT=${DB_PORT:-5432} # Порт (по умолчанию 5432)
-DB_NAME=${DB_NAME:-tia_mapping_db} # Название базы данных (по умолчанию 'tia_mapping_db')
+DB_USER=${DB_USER:-tia_user} # Изменил имя пользователя на "tia_user"
+DB_PASSWORD=${DB_PASSWORD:-password}
+DB_HOST=${DB_HOST:-localhost}
+DB_PORT=${DB_PORT:-5432}
+DB_NAME=${DB_NAME:-tia_mapping_db}
 
 # Создание роли (пользователя) в PostgreSQL, если её ещё нет
-psql -U postgres -h "$DB_HOST" -c "CREATE ROLE $DB_USER WITH LOGIN PASSWORD '$DB_PASSWORD';" || true
+psql -U postgres -h "$DB_HOST" -c "CREATE ROLE \"$DB_USER\" WITH LOGIN PASSWORD '$DB_PASSWORD';" || true
 
 # Создание базы данных, если её ещё нет
 psql -U postgres -h "$DB_HOST" -c "CREATE DATABASE $DB_NAME;" || true
 
 # Присвоение прав пользователю на базу данных
-psql -U postgres -h "$DB_HOST" -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;" || true
+psql -U postgres -h "$DB_HOST" -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO \"$DB_USER\";" || true
 
 # Проверка установки расширения uuid-ossp для генерации UUID (если не установлено)
 psql -U "$DB_USER" -h "$DB_HOST" -d "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";" || true

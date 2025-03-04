@@ -1,17 +1,33 @@
-import { Pool } from 'pg'; // Импорт клиента PostgreSQL для работы с базой данных
+// db/connection.js
+import knex from 'knex'; // Импорт Knex для работы с PostgreSQL
 import config from '../config/index.js'; // Импорт конфигурации проекта
 
 /**
- * Создание пула подключений к базе данных PostgreSQL
+ * Создание подключения к базе данных через Knex
  * Использует URL из конфигурации или переменной окружения
  */
-const databasePool = new Pool({
-    connectionString: config.databaseUrl, // Строка подключения к БД из .env
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false // Настройка SSL для продакшена
+const dbConnection = knex({
+  client: 'pg', // Используем PostgreSQL
+  connection: process.env.DATABASE_URL, // Подключение через переменную окружения из .env
+  pool: {
+    min: 2, // Минимальное количество подключений в пуле
+    max: 10 // Максимальное количество подключений
+  }
 });
 
 /**
- * Экспортируем пул подключений для использования в других модулях
- * Это позволяет выполнять SQL-запросы к базе данных
+ * Тестовое подключение к базе данных для проверки
+ * Выполняет запрос к таблице functional_blocks и выводит результат или ошибку
  */
-export default databasePool;
+(async () => {
+  try {
+    const result = await dbConnection('functional_blocks').select('*').limit(1);
+    console.log('Соединение с базой успешно:', result);
+  } catch (error) {
+    console.error('Ошибка подключения:', error);
+  } finally {
+    await dbConnection.destroy(); // Закрываем подключение после теста
+  }
+})();
+
+export default dbConnection; // Экспорт подключения для использования в других модулях

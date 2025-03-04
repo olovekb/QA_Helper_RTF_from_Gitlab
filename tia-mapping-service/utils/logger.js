@@ -1,40 +1,43 @@
-import winston from 'winston';
+// utils/logger.js
+import winston from 'winston'; // Импорт библиотеки логирования winston
 
 /**
- * Настраиваем логгер для записи запросов, ошибок и информационных сообщений
- * @returns {Object} - Экземпляр логгера
+ * Создаём логгер с настройками для информационных, предупреждающих и ошибочных сообщений
  */
 const logger = winston.createLogger({
-    level: 'info', // Уровень логирования (info, error, debug)
-    format: winston.format.combine(
-        winston.format.timestamp(), // Добавляем временную метку
-        winston.format.json() // Формат логов в JSON
-    ),
-    transports: [
-        new winston.transports.File({ filename: 'error.log', level: 'error' }), // Логи ошибок в файл
-        new winston.transports.File({ filename: 'combined.log' }) // Все логи в файл
-    ]
+  level: 'info', // Уровень логирования по умолчанию (можно настроить на 'debug' для более детального вывода)
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.File({ filename: 'info.log', level: 'info' }), // Логи в файл
+    new winston.transports.File({ filename: 'error.log', level: 'error' }), // Логи ошибок в отдельный файл
+    new winston.transports.Console() // Логи в консоль
+  ],
 });
 
-if (process.env.NODE_ENV !== 'production') {
-    logger.add(new winston.transports.Console({
-        format: winston.format.simple() // Простой формат для консоли в режиме разработки
-    }));
-}
-
 /**
- * Логирование информации
+ * Логирует информационное сообщение
  * @param {string} message - Сообщение для логирования
  */
 export function logInfo(message) {
-    logger.info(message);
+  logger.info(message);
 }
 
 /**
- * Логирование ошибок
- * @param {string} message - Сообщение об ошибке
- * @param {Error} error - Объект ошибки (опционально)
+ * Логирует предупреждающее сообщение
+ * @param {string} message - Сообщение для логирования предупреждения
  */
-export function logError(message, error = null) {
-    logger.error({ message, stack: error ? error.stack : null });
+export function logWarn(message) {
+  logger.warn(message); // Используем уровень 'warn' в winston
+}
+
+/**
+ * Логирует ошибку
+ * @param {string} message - Сообщение об ошибке
+ * @param {Error} [error] - Объект ошибки (опционально)
+ */
+export function logError(message, error) {
+  logger.error(`${message}${error ? `: ${error.message}` : ''}`);
 }

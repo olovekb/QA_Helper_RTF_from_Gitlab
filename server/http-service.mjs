@@ -3,6 +3,9 @@ import axios from 'axios'
 import { spinningLoader } from './spinning-loader.mjs';
 import config from './config.json' assert { type: 'json' };
 
+// TODO: Нужно рефачить - переиспользовать из tia-mapping-service\utils\allureAuth.js
+
+
 // Конфигурация
 const BASE_URL = config.baseUrl;
 const ALLURE_TOKEN = config.allureToken;
