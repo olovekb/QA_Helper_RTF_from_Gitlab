@@ -13,12 +13,12 @@ export async function up(knex) {
     table.timestamp('updated_at').defaultTo(knex.fn.now());
   });
 
-  await knex.schema.createTable('components', (table) => {
-    table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()')); // Уникальный идентификатор компонента
-    table.uuid('project_id').notNullable(); // Идентификатор проекта (UUID)
+  await knex.schema.createTable('component_mappings', (table) => {
+    table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()')); // Уникальный идентификатор маппинга
+    table.string('project_id', 255).notNullable(); // Идентификатор проекта
     table.string('component_type', 50).notNullable().checkIn(['frontend', 'backend']); // Тип компонента
-    table.string('name', 255).notNullable(); // Название компонента
-    table.uuid('functional_block_id').references('id').inTable('functional_blocks'); // Ссылка на функциональный блок (UUID)
+    table.string('component_name', 255).notNullable(); // Название компонента
+    table.uuid('functional_block_id').references('id').inTable('functional_blocks').notNullable(); // Ссылка на функциональный блок
     table.timestamp('created_at').defaultTo(knex.fn.now()); // Дата создания
     table.timestamp('updated_at').defaultTo(knex.fn.now()); // Дата обновления
   });
@@ -43,7 +43,7 @@ export async function up(knex) {
   // Создание индексов для ускорения запросов
   await knex.raw(`
     CREATE INDEX idx_functional_blocks_project_id ON functional_blocks(project_id);
-    CREATE INDEX idx_components_project_id_type ON components(project_id, component_type);
+    CREATE INDEX idx_components_project_id_type ON component_mappings(project_id, component_type);
     CREATE INDEX idx_test_plans_project_id ON test_plans(project_id);
     CREATE INDEX idx_errors_log_timestamp ON errors_log(timestamp);
   `);
@@ -52,6 +52,6 @@ export async function up(knex) {
 export async function down(knex) {
   await knex.schema.dropTable('errors_log');
   await knex.schema.dropTable('test_plans');
-  await knex.schema.dropTable('components');
+  await knex.schema.dropTable('component_mappings');
   await knex.schema.dropTable('functional_blocks');
 }

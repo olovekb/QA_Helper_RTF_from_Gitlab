@@ -117,8 +117,11 @@ const TIAPage = ({ projects }) => {
         }));
     };
 
-    // Обновленная функция извлечения компонентов из JSON-файлов
+    // Обновленная функция извлечения компонентов из JSON-файлов с отладкой
     const extractComponents = () => {
+        console.log('Extracting components - frontendJSON:', frontendJSON);
+        console.log('Extracting components - backendJSON:', backendJSON);
+
         // Извлечение фронтенд-компонентов
         const frontendComponents = frontendJSON?.frontendComponent?.map((comp, index) => ({
             id: `${comp.name}-${index}`, // Генерируем ID
@@ -140,12 +143,13 @@ const TIAPage = ({ projects }) => {
         return allComponents;
     };
 
-    // Добавление маппинга компонента через API
+    // Обновленная функция добавления маппинга компонента через API
     const saveComponentMapping = async (component, folderId) => {
         try {
             await axios.post('http://localhost:5001/api/components', {
                 projectId,
                 componentType: component.type,
+                componentName: component.name, // Добавляем имя компонента
                 functionalBlock: folderId,
             });
         } catch (err) {
@@ -154,18 +158,26 @@ const TIAPage = ({ projects }) => {
         }
     };
 
-    // Функция создания тест-плана
+    // Обновленная функция создания тест-плана с отладкой
     const handleCreateTestPlan = async () => {
+        console.log('Starting handleCreateTestPlan - projectId:', projectId);
+        console.log('Starting handleCreateTestPlan - frontendJSON:', frontendJSON);
+        console.log('Starting handleCreateTestPlan - backendJSON:', backendJSON);
+        console.log('Starting handleCreateTestPlan - jiraLink:', jiraLink);
+
         if (!projectId) {
             setError('Выберите проект.');
+            console.log('Error: No project selected');
             return;
         }
         if (!frontendJSON && !backendJSON) {
             setError('Загрузите хотя бы один JSON-файл (фронтенд или бэкенд).');
+            console.log('Error: No JSON files uploaded');
             return;
         }
         if (!jiraLink) {
             setError('Введите ссылку на задачу в Jira.');
+            console.log('Error: No Jira link provided');
             return;
         }
 
@@ -175,8 +187,11 @@ const TIAPage = ({ projects }) => {
 
         try {
             const extractedComponents = extractComponents();
+            console.log('Extracted components in handleCreateTestPlan:', extractedComponents);
+
             if (extractedComponents.length === 0) {
                 setError('Компоненты не найдены в загруженных JSON-файлах. Проверьте структуру файлов.');
+                console.log('Error: No components extracted');
                 setIsLoading(false);
                 return;
             }
@@ -184,9 +199,11 @@ const TIAPage = ({ projects }) => {
             setComponents(extractedComponents);
             setComponentMappings({});
             setShowMappingModal(true);
+            console.log('Successfully opened mapping modal');
         } catch (err) {
             setError('Произошла ошибка при обработке компонентов. Проверьте данные и повторите попытку.');
             logError('Component extraction error', err.message);
+            console.log('Error in handleCreateTestPlan:', err.message);
             setIsLoading(false);
         }
     };
@@ -447,7 +464,7 @@ const TIAPage = ({ projects }) => {
                         <div style={styles.modalContent}>
                             {components.length === 0 ? (
                                 <div style={styles.noComponents}>
-                                    Компоненты не найдены. Проверьте загруженные JSON-файлы.
+                                    Компоненты не найдены. Проверьте загруженные JSON-fайлы.
                                 </div>
                             ) : (
                                 components.map((comp) => (

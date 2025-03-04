@@ -124,7 +124,14 @@ export async function getProjectStructure(projectId, skipCriteria = { customFiel
         // Сохраняем корневые функциональные блоки и их детей рекурсивно
         await saveFunctionalBlocks(projectId, initialData.children.content, null, customFields);
 
-        // Рекурсивно получаем всю структуру, начиная с корневого узла, параллельно, без пропуска
+        // Рекурсивно получаем и сохраняем всю структуру, начиная с корневого узла, используя fetchAndSaveNestedBlocks
+        for (const node of initialData.children.content) {
+            if (node.type === 'GROUP') { // Сохраняем все узлы типа GROUP, независимо от наличия детей
+                await fetchAndSaveNestedBlocks(projectId, node.id.toString(), treeId, customFields, skipCriteria);
+            }
+        }
+
+        // Рекурсивно получаем всю структуру для клиента, параллельно, без пропуска
         const rootFolders = await getNestedFoldersParallel(projectId, null, treeId, customFields, skipCriteria);
 
         logInfo(`Успешно получена структура проекта ${projectId} с treeId ${treeId}`); // Логирование успеха
@@ -154,7 +161,7 @@ async function saveFunctionalBlocks(projectId, nodes, parentId, customFields) {
 
     for (const node of nodes) {
         if (node.type === 'GROUP') {
-            logInfo(`Обрабатываем узел типа GROUP с ID ${node.id}, name: ${node.name}, customFieldId: ${node.customFieldId}, parentId: ${parentId}`); // Лог для отладки
+            logInfo(`Обрабатываем узел типа GROUP с ID ${node.id}, name: ${node.name}, customFieldId: ${node.customFieldId}, parentId: ${parentId}, children count: ${node.children?.content?.length || 0}`); // Расширенный лог для отладки
             try {
                 // Проверяем, существует ли функциональный блок в базе данных по allure_id
                 const existingBlock = await databasePool('functional_blocks')
@@ -221,7 +228,7 @@ async function fetchAndSaveNestedBlocks(projectId, parentNodeId, treeId, customF
         treeId: treeId.toString(),
         parentNodeId: parentNodeId,
         page: '0',
-        size: '100',
+        size: '100', // Увеличим размер на случай, если узлы не помещаются в одну страницу
         sort: 'nodeSortOrder,asc',
         deleted: 'false',
     });
@@ -241,20 +248,28 @@ async function fetchAndSaveNestedBlocks(projectId, parentNodeId, treeId, customF
     }
 
     const data = await structureResponse.json();
-    logInfo(`Ответ для parentNodeId ${parentNodeId}:`, JSON.stringify(data)); // Логирование ответа для отладки
+    logInfo(`Ответ для parentNodeId ${parentNodeId}: children.content.length = ${data.children?.content?.length || 0}`, JSON.stringify(data)); // Расширенное логирование ответа для диагностики
 
     // Получаем или устанавливаем parentId для текущего уровня
     const parentBlock = await databasePool('functional_blocks')
-        .where({ allure_id: parentNodeId, project_id: projectId })
+        .where({ allure_id: parentNodeId.toString(), project_id: projectId })
         .first();
     const parentId = parentBlock ? parentBlock.id : null; // Получаем UUID id родительского блока
 
+    // Логируем, есть ли parentId и данные для сохранения
+    logInfo(`Сохраняем вложенные блоки для parentNodeId ${parentNodeId}, parentId: ${parentId}, nodes count: ${data.children?.content?.length || 0}`);
+
     // Сохраняем вложенные блоки с правильным parentId
-    await saveFunctionalBlocks(projectId, data.children?.content || [], parentId, customFields);
+    if (data.children?.content && data.children.content.length > 0) {
+        await saveFunctionalBlocks(projectId, data.children.content, parentId, customFields);
+    } else {
+        logWarn(`Нет вложенных узлов (children.content) для parentNodeId ${parentNodeId}`);
+    }
 
     // Рекурсивно обрабатываем вложенные узлы
     for (const node of data.children?.content || []) {
-        if (node.type === 'GROUP' && node.children?.content?.length > 0) {
+        if (node.type === 'GROUP') { // Сохраняем все узлы типа GROUP, независимо от наличия детей
+            logInfo(`Рекурсивно обрабатываем узел типа GROUP с ID ${node.id}, parentNodeId ${parentNodeId}`);
             await fetchAndSaveNestedBlocks(projectId, node.id.toString(), treeId, customFields, skipCriteria);
         }
     }
@@ -298,7 +313,7 @@ async function getNestedFoldersParallel(projectId, parentNodeId, treeId, customF
     }
 
     const data = await structureResponse.json();
-    logInfo(`Ответ для parentNodeId ${parentNodeId}:`, JSON.stringify(data)); // Логирование ответа для отладки
+    logInfo(`Ответ для parentNodeId ${parentNodeId}: children.content.length = ${data.children?.content?.length || 0}`, JSON.stringify(data)); // Расширенное логирование ответа для диагностики
 
     const folders = [];
     const customFieldsMap = new Map();
@@ -329,7 +344,7 @@ async function getNestedFoldersParallel(projectId, parentNodeId, treeId, customF
     const resolvedFolders = await Promise.all(folderPromises);
     folders.push(...resolvedFolders.filter(folder => folder !== null)); // Фильтруем null (пропущенные узлы)
 
-    logInfo(`Отформатировано папок для parentNodeId ${parentNodeId}: ${folders.length}`, JSON.stringify(folders)); // Логирование для отладки
+    logInfo(`Отформатировано папок для parentNodeId ${parentNodeId}: ${folders.length}, children.content.length = ${data.children?.content?.length || 0}`, JSON.stringify(folders)); // Расширенное логирование для отладки
     return folders;
 }
 
