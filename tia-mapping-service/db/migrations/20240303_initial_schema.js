@@ -1,27 +1,31 @@
 // db/migrations/20240303_initial_schema.js
 export async function up(knex) {
   await knex.schema.createTable('functional_blocks', (table) => {
-    table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()')); // Уникальный идентификатор блока
-    table.uuid('project_id').notNullable(); // Идентификатор проекта
-    table.string('name', 255).notNullable(); // Название блока
-    table.text('description'); // Описание блока (опционально)
-    table.timestamp('created_at').defaultTo(knex.fn.now()); // Дата создания
-    table.timestamp('updated_at').defaultTo(knex.fn.now()); // Дата обновления
+    table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()')); // Уникальный идентификатор блока (UUID)
+    table.string('allure_id').unique().notNullable();
+    table.string('project_id').notNullable();
+    table.string('name').notNullable();
+    table.integer('custom_field_id');
+    table.string('custom_field_name');
+    table.uuid('parent_id').references('id').inTable('functional_blocks'); // UUID для parent_id
+    table.integer('count').defaultTo(0);
+    table.timestamp('created_at').defaultTo(knex.fn.now());
+    table.timestamp('updated_at').defaultTo(knex.fn.now());
   });
 
   await knex.schema.createTable('components', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()')); // Уникальный идентификатор компонента
-    table.uuid('project_id').notNullable(); // Идентификатор проекта
+    table.uuid('project_id').notNullable(); // Идентификатор проекта (UUID)
     table.string('component_type', 50).notNullable().checkIn(['frontend', 'backend']); // Тип компонента
     table.string('name', 255).notNullable(); // Название компонента
-    table.uuid('functional_block_id').references('id').inTable('functional_blocks'); // Ссылка на функциональный блок
+    table.uuid('functional_block_id').references('id').inTable('functional_blocks'); // Ссылка на функциональный блок (UUID)
     table.timestamp('created_at').defaultTo(knex.fn.now()); // Дата создания
     table.timestamp('updated_at').defaultTo(knex.fn.now()); // Дата обновления
   });
 
   await knex.schema.createTable('test_plans', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()')); // Уникальный идентификатор тест-плана
-    table.uuid('project_id').notNullable(); // Идентификатор проекта
+    table.uuid('project_id').notNullable(); // Идентификатор проекта (UUID)
     table.string('jira_task_url', 255).notNullable(); // URL задачи Jira
     table.jsonb('functional_blocks').notNullable(); // Список функциональных блоков и компонентов
     table.timestamp('created_at').defaultTo(knex.fn.now()); // Дата создания

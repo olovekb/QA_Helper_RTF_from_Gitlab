@@ -20,41 +20,72 @@ const componentValidationSchema = Joi.object({
  * @returns {void}
  */
 export async function handleComponentMapping(req, res) {
-    // Валидация входных данных
-    const { error, value } = componentValidationSchema.validate(req.body);
-    if (error) {
-        logError(`Ошибка валидации данных для компонента: ${error.details[0].message}`); // Логирование ошибки валидации
-        return res.status(400).send(error.details[0].message); // Отправка ошибки клиенту
-    }
-
-    const { projectId, componentType, functionalBlock, componentId } = value; // Извлечение валидированных данных
+    const { projectId, componentType, componentName, functionalBlock } = req.body;
+    const componentId = req.params.componentId; // Для PATCH
 
     try {
-        let result;
-        if (componentId) {
-            // Обновление существующего маппинга
-            logInfo(`Обновляем маппинг компонента с ID ${componentId} для проекта ${projectId}`); // Логирование
-            result = await updateComponent(componentId, functionalBlock);
-            if (!result) {
-                logError(`Компонент с ID ${componentId} не найден`); // Логирование ошибки
-                return res.status(404).send('Компонент не найден');
+        // Валидация входных данных
+        if (!projectId || !componentType || !componentName || !functionalBlock) {
+            return res.status(400).json({ error: 'Необходимо указать projectId, componentType, componentName и functionalBlock.' });
+        }
+
+        // Проверяем, существует ли функциональный блок по allure_id
+        let functionalBlockData = await databasePool('functional_blocks')
+            .where({ allure_id: functionalBlock.toString(), project_id: projectId })
+            .first();
+
+        if (!functionalBlockData) {
+            return res.status(404).json({ error: `Функциональный блок с allure_id ${functionalBlock} не найден для проекта ${projectId}.` });
+        }
+
+        let query = databasePool('component_mappings');
+
+        if (req.method === 'POST') {
+            // Проверяем, существует ли маппинг для этого компонента и проекта
+            const existingMapping = await query
+                .where({
+                    project_id: projectId,
+                    component_type: componentType,
+                    component_name: componentName,
+                })
+                .first();
+
+            if (existingMapping) {
+                return res.status(400).json({ error: 'Маппинг для этого компонента уже существует.' });
             }
-            res.status(200).json({ message: 'Маппинг успешно обновлён', data: result }); // Успешный ответ
-        } else {
-            // Создание нового маппинга
-            logInfo(`Создаём новый маппинг для компонента ${value.name} в проекте ${projectId}`); // Логирование
-            const existingComponents = await getComponents(projectId);
-            const componentExists = existingComponents.find(c => c.name === value.name && c.componentType === componentType);
-            if (componentExists) {
-                logError(`Компонент ${value.name} уже существует в проекте ${projectId}`); // Логирование ошибки
-                return res.status(400).send('Компонент уже существует');
+
+            // Создаём новый маппинг
+            const [newMapping] = await query.insert({
+                project_id: projectId,
+                component_type: componentType,
+                component_name: componentName,
+                functional_block_id: functionalBlockData.id, // Используем внутренний id
+            }).returning('*');
+
+            logInfo(`Создаём новый маппинг для компонента ${componentName} в проекте ${projectId}`);
+            res.status(201).json({ message: 'Маппинг успешно создан.', mapping: newMapping });
+        } else if (req.method === 'PATCH') {
+            if (!componentId) {
+                return res.status(400).json({ error: 'Не указан componentId для обновления.' });
             }
-            result = await createComponent(projectId, componentType, value.name, functionalBlock);
-            res.status(201).json({ message: 'Маппинг успешно добавлен', data: { id: result } }); // Успешный ответ
+
+            const updatedMapping = await query
+                .where({ id: componentId })
+                .update({
+                    functional_block_id: functionalBlockData.id, // Обновляем ссылку на функциональный блок
+                })
+                .returning('*');
+
+            if (!updatedMapping.length) {
+                return res.status(404).json({ error: `Маппинг с ID ${componentId} не найден.` });
+            }
+
+            logInfo(`Обновлён маппинг для компонента с ID ${componentId} в проекте ${projectId}`);
+            res.status(200).json({ message: 'Маппинг успешно обновлён.', mapping: updatedMapping[0] });
         }
     } catch (error) {
-        logError(`Ошибка при обработке маппинга для проекта ${projectId}:`, error); // Логирование ошибки
-        res.status(500).send('Ошибка при обновлении/добавлении маппинга');
+        logError(`Ошибка при обработке маппинга для проекта ${projectId}:`, error.message);
+        res.status(500).json({ error: 'Произошла ошибка при создании/обновлении маппинга.', details: error.message });
     }
 }
 
