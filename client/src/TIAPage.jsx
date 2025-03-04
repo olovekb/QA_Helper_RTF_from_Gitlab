@@ -161,7 +161,7 @@ const TIAPage = ({ projects }) => {
         }
     };
 
-    // client/src/components/TIAPage.js (обновляем handleCreateTestPlan)
+    // Обновленная функция создания тест-плана с отладкой и получением маппингов
     const handleCreateTestPlan = async () => {
         console.log('Starting handleCreateTestPlan - projectId:', projectId);
         console.log('Starting handleCreateTestPlan - frontendJSON:', frontendJSON);
@@ -241,7 +241,7 @@ const TIAPage = ({ projects }) => {
         }
     };
 
-    // client/src/components/TIAPage.js (обновляем findFolderAllureId)
+    // Обновленная функция для поиска allure_id по functional_block_allure_id (с учётом разных форматов)
     const findFolderAllureId = (functionalBlockAllureId) => {
         if (!functionalBlockAllureId || !folders) {
             console.log('No functionalBlockAllureId or folders:', { functionalBlockAllureId, folders }); // Отладка
@@ -272,38 +272,40 @@ const TIAPage = ({ projects }) => {
         return result;
     };
 
-    // Функция для создания тест-плана после маппинга
+    // Обновленная функция для создания тест-плана
     const createTestPlan = async () => {
         try {
-            const usedFunctionalBlocks = folders
-                .filter(folder => Object.values(componentMappings).some(ids => ids.includes(folder.id)))
-                .map(folder => ({
-                    id: folder.id,
-                    name: folder.name,
-                    customFieldId: folder.customFieldId,
-                    customFieldName: folder.customFieldName,
-                }));
+            // Собираем все уникальные folderIds из componentMappings
+            const allFolderIds = new Set();
+            Object.values(componentMappings).forEach(folderIds => {
+                folderIds.forEach(id => allFolderIds.add(id));
+            });
+            const groupsInclude = Array.from(allFolderIds).map(id => parseInt(id, 10)); // Преобразуем в числа
 
-            const formData = new FormData();
-            if (frontendJSON) formData.append('frontendJson', new Blob([JSON.stringify(frontendJSON)], { type: 'application/json' }));
-            if (backendJSON) formData.append('backendJson', new Blob([JSON.stringify(backendJSON)], { type: 'application/json' }));
-
-            const response = await axios.post('http://localhost:5001/api/launch', {
-                jiraTaskUrl: jiraLink,
+            // Формируем тело запроса для отправки на сервер
+            const requestBody = {
                 projectId,
-                functionalBlocks: usedFunctionalBlocks,
-            }, {
+                jiraLink,
+                componentMappings, // Передаём текущие маппинги
+            };
+
+            console.log('Request body for test plan to server:', requestBody);
+
+            // Отправляем POST-запрос на серверный эндпоинт /api/launch
+            const response = await axios.post('http://localhost:5001/api/launch', requestBody, {
                 headers: {
-                    'Content-Type': 'multipart/form-data',
+                    'Content-Type': 'application/json',
                 },
             });
 
-            const { allureLink } = response.data;
+            const { id } = response.data; // Получаем только id из ответа
+            const allureLink = `https://abanking.qatools.cloud/launch/${id}`; // Формируем ссылку
             setSuccessMessage('Тест-план успешно создан!');
             setAllureLink(allureLink);
         } catch (err) {
             setError('Произошла ошибка при создании тест-плана. Проверьте данные и повторите попытку.');
             logError('Test plan creation error', err.message);
+            console.log('Error in createTestPlan:', err.message);
         } finally {
             setIsLoading(false);
         }
@@ -313,8 +315,13 @@ const TIAPage = ({ projects }) => {
     const handleMappingConfirm = async () => {
         setIsLoading(true);
         try {
+            console.log('Confirming mappings - components:', components);
+            console.log('Confirming mappings - componentMappings:', componentMappings);
+
             for (const component of components) {
                 const folderIds = componentMappings[component.id] || [];
+                console.log(`Processing component ${component.name} with folderIds:`, folderIds);
+
                 if (folderIds.length > 0) {
                     await saveComponentMapping(component, folderIds);
                 }
@@ -323,6 +330,9 @@ const TIAPage = ({ projects }) => {
             setShowMappingModal(false);
         } catch (err) {
             setError(err.message);
+            logError('Mapping confirmation error', err.message);
+            console.log('Error in handleMappingConfirm:', err.message);
+        } finally {
             setIsLoading(false);
         }
     };
@@ -361,46 +371,40 @@ const TIAPage = ({ projects }) => {
                     marginLeft: `${level * 20}px`,
                     marginBottom: '12px',
                     transition: 'all 0.3s ease',
-                }}
-            >
-                <div
-                    style={{
-                        cursor: 'pointer',
-                        padding: level === 0 ? '12px 16px' : '8px 12px',
-                        backgroundColor: level === 0 ? styles.dfe6e9 : styles.e8ecef,
+                    ...(level === 0 ? {
+                        padding: '12px 16px',
+                        backgroundColor: styles.dfe6e9,
                         color: styles.textDark,
                         border: `1px solid ${styles.borderLight}`,
                         borderRadius: '6px',
                         boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
-                        transition: 'background-color 0.2s, transform 0.1s',
                         '&:hover': {
-                            backgroundColor: level === 0 ? styles.c8d6e5 : styles.dee2e6,
+                            backgroundColor: styles.c8d6e5,
                             transform: 'translateY(-1px)',
                         },
-                    }}
-                    onClick={() => handleFolderToggle(folder.id)}
-                >
-                    {folder.children && folder.children.length > 0 && (
-                        <span style={{ marginRight: '8px', color: styles.textMuted }}>
-                            {expandedFolders[folder.id] ? '▼' : '►'}
-                        </span>
-                    )}
-                    <span style={{ fontWeight: level === 0 ? '600' : '400' }}>
-                        {folder.customFieldName} - {folder.name}
+                    } : {
+                        padding: '8px 12px',
+                        backgroundColor: styles.e8ecef,
+                        color: styles.textDark,
+                        border: `1px solid ${styles.borderLight}`,
+                        borderRadius: '6px',
+                        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
+                        '&:hover': {
+                            backgroundColor: styles.dee2e6,
+                            transform: 'translateY(-1px)',
+                        },
+                    }),
+                }}
+                onClick={() => handleFolderToggle(folder.id)}
+            >
+                {folder.children && folder.children.length > 0 && (
+                    <span style={{ marginRight: '8px', color: styles.textMuted }}>
+                        {expandedFolders[folder.id] ? '▼' : '►'}
                     </span>
-                </div>
-                {expandedFolders[folder.id] && folder.children && folder.children.length > 0 && (
-                    <div
-                        style={{
-                            marginTop: '8px',
-                            transition: 'max-height 0.3s ease',
-                            maxHeight: expandedFolders[folder.id] ? '1000px' : '0',
-                            overflow: 'hidden',
-                        }}
-                    >
-                        {renderFolderTree(folder.children, level + 1)}
-                    </div>
                 )}
+                <span style={{ fontWeight: level === 0 ? '600' : '400' }}>
+                    {folder.customFieldName} - {folder.name}
+                </span>
             </div>
         ));
     };
@@ -483,7 +487,7 @@ const TIAPage = ({ projects }) => {
                         type="text"
                         value={jiraLink}
                         onChange={handleJiraLinkChange}
-                        placeholder="https://jira.example.com/task/123"
+                        placeholder="https://jira.abanking.ru/browse/CTMM-528"
                         style={styles.input}
                         disabled={isLoading}
                     />
@@ -508,7 +512,7 @@ const TIAPage = ({ projects }) => {
             {error && <div style={styles.error}>{error}</div>}
 
             {successMessage && (
-                <div style={styles.success}>
+                <div>
                     {successMessage}
                     {allureLink && (
                         <div>

@@ -7,7 +7,7 @@ import multer from 'multer'; // Импорт multer для обработки з
 import { uploadMiddleware, handleJsonUpload } from './api/upload.js'; // Импорт функционала для загрузки JSON
 import { getProjectStructure } from './api/structure.js'; // Импорт функционала для получения структуры Allure
 import { handleComponentMapping, deleteComponentMapping, getComponentMappings } from './api/components.js'; // Импорт функционала для маппинга
-import { createTestPlanHandler } from './api/launch.js'; // Импорт функционала для создания тест-планов
+import { createTestPlan } from './api/launch.js'; // Импорт функционала для создания тест-планов
 import config from './config/index.js'; // Импорт конфигурации проекта
 import { logInfo, logError } from './utils/logger.js'; // Импорт логгера для информационных и ошибочных сообщений
 import { logServerError } from './api/errors.js';
@@ -88,7 +88,7 @@ app.delete('/api/components/:componentId', deleteComponentMapping);
  * @param {string} projectId - ID проекта
  * @param {Array} functionalBlocks - Список функциональных блоков
  */
-app.post('/api/launch', createTestPlanHandler);
+app.post('/api/launch', createTestPlan);
 
 // Обработка всех маршрутов для React SPA (перенаправление на index.html)
 app.get('*', (req, res) => {
