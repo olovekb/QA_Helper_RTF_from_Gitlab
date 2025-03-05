@@ -43,11 +43,19 @@ export async function getProjectStructure(projectId, skipCriteria = { customFiel
 
             const treeData = await treeResponse.json();
             logInfo(`Ответ от /api/tree для projectId ${projectId}:`, JSON.stringify(treeData)); // Логирование ответа для отладки
-            // Извлекаем treeId из ответа, предполагая, что это поле 'id' в объекте 'content[0]'
-            treeId = treeData.content?.[0]?.id || 0; // Используем 0 как запасной вариант, если id не найден
+
+            // Извлекаем treeId из ответа, находя объект с name: "Structure"
+            const structureTree = treeData.content?.find(item => item.name === "Structure");
+            if (structureTree && structureTree.id) {
+                treeId = structureTree.id;
+                logInfo(`Найден treeId ${treeId} для проекта ${projectId} с name: "Structure"`); // Логирование успеха
+            } else {
+                logWarn(`treeId с name: "Structure" не найден в ответе для проекта ${projectId}, используем значение по умолчанию (0)`); // Логирование предупреждения
+                treeId = 0; // Значение по умолчанию, если treeId не найден
+            }
+
             if (!treeId) {
-                logWarn(`treeId не найден в ответе для проекта ${projectId}, используем значение по умолчанию (0)`); // Логирование предупреждения
-                treeId = 0; // Значение по умолчанию, если treeId не определён
+                throw new Error(`treeId не найден для проекта ${projectId} с name: "Structure"`);
             }
 
             cache.set(treeCacheKey, treeId); // Кэшируем treeId

@@ -272,7 +272,7 @@ const TIAPage = ({ projects }) => {
         return result;
     };
 
-    // Обновленная функция для создания тест-плана
+    // Cоздание тест-плана
     const createTestPlan = async () => {
         try {
             // Собираем все уникальные folderIds из componentMappings
@@ -303,8 +303,12 @@ const TIAPage = ({ projects }) => {
             setSuccessMessage('Тест-план успешно создан!');
             setAllureLink(allureLink);
         } catch (err) {
-            setError('Произошла ошибка при создании тест-плана. Проверьте данные и повторите попытку.');
-            logError('Test plan creation error', err.message);
+            if (err.response && err.response.data.error === 'На выбранных блоках отсутствуют тест-кейсы. Добавьте хотя бы один для возможности создания тест-плана.') {
+                setError(err.response.data.error);
+            } else {
+                setError('Произошла ошибка при создании тест-плана. Проверьте данные и повторите попытку.');
+                logError('Test plan creation error', err.message);
+            }
             console.log('Error in createTestPlan:', err.message);
         } finally {
             setIsLoading(false);
@@ -378,10 +382,7 @@ const TIAPage = ({ projects }) => {
                         border: `1px solid ${styles.borderLight}`,
                         borderRadius: '6px',
                         boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
-                        '&:hover': {
-                            backgroundColor: styles.c8d6e5,
-                            transform: 'translateY(-1px)',
-                        },
+                        cursor: 'pointer', // Добавляем курсор для кликабельности
                     } : {
                         padding: '8px 12px',
                         backgroundColor: styles.e8ecef,
@@ -389,13 +390,10 @@ const TIAPage = ({ projects }) => {
                         border: `1px solid ${styles.borderLight}`,
                         borderRadius: '6px',
                         boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
-                        '&:hover': {
-                            backgroundColor: styles.dee2e6,
-                            transform: 'translateY(-1px)',
-                        },
+                        cursor: 'pointer', // Добавляем курсор для кликабельности
                     }),
                 }}
-                onClick={() => handleFolderToggle(folder.id)}
+                onClick={() => handleFolderToggle(folder.id)} // Восстанавливаем обработчик клика
             >
                 {folder.children && folder.children.length > 0 && (
                     <span style={{ marginRight: '8px', color: styles.textMuted }}>
@@ -405,6 +403,18 @@ const TIAPage = ({ projects }) => {
                 <span style={{ fontWeight: level === 0 ? '600' : '400' }}>
                     {folder.customFieldName} - {folder.name}
                 </span>
+                {expandedFolders[folder.id] && folder.children && folder.children.length > 0 && (
+                    <div
+                        style={{
+                            marginTop: '8px',
+                            transition: 'max-height 0.3s ease',
+                            maxHeight: expandedFolders[folder.id] ? '1000px' : '0',
+                            overflow: 'hidden',
+                        }}
+                    >
+                        {renderFolderTree(folder.children, level + 1)}
+                    </div>
+                )}
             </div>
         ));
     };
