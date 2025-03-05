@@ -141,7 +141,7 @@ const App = ({ projects }) => {
         <h1>QA-helper</h1>
         {/* Добавляем кнопку TIA в правом верхнем углу */}
         <button onClick={handleTIAClick} className="tia-button">
-          TIA
+          TIA (Эксперементальный режим)
         </button>
       </div>
 

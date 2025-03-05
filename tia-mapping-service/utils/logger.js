@@ -1,4 +1,3 @@
-// utils/logger.js
 import winston from 'winston'; // Импорт библиотеки логирования winston
 
 /**

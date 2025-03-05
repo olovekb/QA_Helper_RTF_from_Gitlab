@@ -1,4 +1,3 @@
-// server.js (фрагмент)
 import express from 'express'; // Импорт фреймворка Express для создания веб-сервера
 import cors from 'cors'; // Импорт middleware для обработки кросс-доменных запросов
 import path, { dirname } from 'path'; // Импорт path и dirname для работы с путями файлов

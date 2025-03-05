@@ -1,5 +1,3 @@
-// api/structure.js
-import fetch from 'node-fetch'; // Импорт fetch для HTTP-запросов
 import { fetchWithAuth, authHeaders } from '../utils/allureAuth.js'; // Импорт функции авторизации и заголовков
 import config from '../config/index.js'; // Импорт конфигурации проекта
 import { logInfo, logError, logWarn } from '../utils/logger.js'; // Импорт функций логирования

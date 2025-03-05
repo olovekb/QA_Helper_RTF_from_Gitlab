@@ -1,4 +1,3 @@
-// api/errors.js
 import { logError } from '../utils/logger.js'; // Импорт логгера для записи ошибок
 import databasePool from '../db/pool.js'; // Импорт пула подключений к базе данных (если хочешь сохранять в БД)
 

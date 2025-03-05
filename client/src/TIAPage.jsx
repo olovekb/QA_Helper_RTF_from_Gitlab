@@ -1,10 +1,10 @@
-// client/src/components/TIAPage.js
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import Select from 'react-select'; // Импортируем react-select для мультиселекта
 import { useNavigate } from 'react-router-dom'; // Для навигации назад
 import styles from './styles'; // Импортируем стили
 import Loader from './Loader'; // Предполагаем, что есть компонент Loader
+import config from './config.json';
 
 const TIAPage = ({ projects }) => {
     const [projectId, setProjectId] = useState('');
@@ -60,7 +60,7 @@ const TIAPage = ({ projects }) => {
         if (selectedProjectId) {
             setStructureLoading(true);
             try {
-                const response = await axios.get(`http://localhost:5001/api/structure`, {
+                const response = await axios.get(`${config.TIAUrl}/api/structure`, {
                     params: { projectId: selectedProjectId, skipCustomFieldIds: '-3' },
                 });
 
@@ -151,7 +151,7 @@ const TIAPage = ({ projects }) => {
 
     const saveComponentMapping = async (component, folderIds) => {
         try {
-            await axios.post('http://localhost:5001/api/components', {
+            await axios.post(`${config.TIAUrl}/api/components`, {
                 projectId,
                 componentType: component.type,
                 componentName: component.name,
@@ -216,7 +216,7 @@ const TIAPage = ({ projects }) => {
 
     const fetchExistingMappings = async (projectId) => {
         try {
-            const response = await axios.get(`http://localhost:5001/api/components`, {
+            const response = await axios.get(`${config.TIAUrl}/api/components`, {
                 params: { projectId },
             });
             return response.data.mappings || [];
@@ -257,12 +257,12 @@ const TIAPage = ({ projects }) => {
                 componentMappings,
             };
 
-            const response = await axios.post('http://localhost:5001/api/launch', requestBody, {
+            const response = await axios.post(`${config.TIAUrl}/api/launch`, requestBody, {
                 headers: { 'Content-Type': 'application/json' },
             });
 
             const { id } = response.data;
-            const allureLink = `https://abanking.qatools.cloud/launch/${id}`;
+            const allureLink = `${config.url}/launch/${id}`;
             setSuccessMessage('Тест-план успешно создан!');
             setAllureLink(allureLink);
         } catch (err) {
@@ -309,7 +309,7 @@ const TIAPage = ({ projects }) => {
 
     const logError = async (errorType, description) => {
         try {
-            await axios.post('http://localhost:5001/api/errors', {
+            await axios.post(`${config.TIAUrl}/api/errors`, {
                 errorType, description, timestamp: new Date().toISOString(),
             });
         } catch (err) {
@@ -552,7 +552,7 @@ const selectStyles = {
 
 const logError = async (errorType, description) => {
     try {
-        await axios.post('http://localhost:5001/api/errors', {
+        await axios.post(`${config.TIAUrl}/api/errors`, {
             errorType, description, timestamp: new Date().toISOString(),
         });
     } catch (err) {

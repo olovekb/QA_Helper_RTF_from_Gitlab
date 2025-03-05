@@ -1,5 +1,3 @@
-// db/knexfile.js
-import knex from 'knex'; // Импорт Knex как ES-модуль
 import dotenv from 'dotenv'; // Импорт dotenv для загрузки .env
 
 // Явно загружаем переменные из .env

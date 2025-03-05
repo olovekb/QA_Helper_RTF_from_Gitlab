@@ -1,4 +1,3 @@
-// config/index.js
 import dotenv from 'dotenv'; // Импорт библиотеки для работы с переменными окружения
 
 // Загрузка переменных окружения из файла .env
@@ -24,7 +23,7 @@ const config = {
     dbName: process.env.DB_NAME || 'tia_mapping_db',
 
     // Базовый URL API Allure (берётся из .env или используется значение по умолчанию)
-    allureBaseUrl: process.env.ALLURE_BASE_URL || 'https://abanking.qatools.cloud/api',
+    allureBaseUrl: process.env.ALLURE_BASE_URL || 'https://abanking.qatools.cloud',
 
     // Токен авторизации для Allure API (берётся из .env)
     allureToken: process.env.ALLURE_TOKEN,

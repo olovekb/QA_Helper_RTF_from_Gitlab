@@ -1,4 +1,3 @@
-// db/pool.js
 import knex from 'knex';
 import config from '../config/index.js'; // Импорт конфигурации базы данных
 

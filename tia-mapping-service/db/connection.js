@@ -1,6 +1,4 @@
-// db/connection.js
 import knex from 'knex'; // Импорт Knex для работы с PostgreSQL
-import config from '../config/index.js'; // Импорт конфигурации проекта
 
 /**
  * Создание подключения к базе данных через Knex
@@ -30,4 +28,4 @@ const dbConnection = knex({
   }
 })();
 
-export default dbConnection; // Экспорт подключения для использования в других модулях
+export default dbConnection; 

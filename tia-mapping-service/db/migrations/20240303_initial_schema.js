@@ -1,4 +1,3 @@
-// db/migrations/20240303_initial_schema.js
 export async function up(knex) {
   await knex.schema.createTable('functional_blocks', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()')); // Уникальный идентификатор блока (UUID)

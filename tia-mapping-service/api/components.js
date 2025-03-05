@@ -1,6 +1,3 @@
-// api/components.js (обновляем handleComponentMapping)
-import { fetchWithAuth, authHeaders } from '../utils/allureAuth.js'; // Для авторизации, если нужно
-import config from '../config/index.js'; // Конфигурация проекта
 import { logInfo, logError, logWarn } from '../utils/logger.js'; // Импорт логгера для информационных и ошибочных сообщений
 import databasePool from '../db/pool.js'; // Импорт пула подключений к базе данных
 import Joi from 'joi'; // Импорт библиотеки для валидации
@@ -29,7 +26,7 @@ export async function handleComponentMapping(req, res) {
 
     try {
         // Валидация входных данных
-        const { error, value } = componentValidationSchema.validate({ projectId, componentType, componentName, functionalBlock });
+        const { error } = componentValidationSchema.validate({ projectId, componentType, componentName, functionalBlock });
         if (error) {
             logError(`Ошибка валидации данных для маппинга компонента: ${error.details[0].message}`);
             return res.status(400).json({ error: error.details[0].message });
