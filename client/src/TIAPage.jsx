@@ -2,9 +2,10 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import Select from 'react-select'; // Импортируем react-select для мультиселекта
+import { useNavigate } from 'react-router-dom'; // Для навигации назад
 import styles from './styles'; // Импортируем стили
+import Loader from './Loader'; // Предполагаем, что есть компонент Loader
 
-// Компонент для страницы Test Impact Analysis (TIA)
 const TIAPage = ({ projects }) => {
     const [projectId, setProjectId] = useState('');
     const [frontendJSON, setFrontendJSON] = useState(null);
@@ -13,6 +14,7 @@ const TIAPage = ({ projects }) => {
     const [folders, setFolders] = useState([]);
     const [expandedFolders, setExpandedFolders] = useState({});
     const [isLoading, setIsLoading] = useState(false);
+    const [structureLoading, setStructureLoading] = useState(false); // Лоудер для загрузки блоков
     const [error, setError] = useState('');
     const [successMessage, setSuccessMessage] = useState('');
     const [allureLink, setAllureLink] = useState('');
@@ -21,6 +23,9 @@ const TIAPage = ({ projects }) => {
     const [components, setComponents] = useState([]); // Список всех компонентов
     const [componentMappings, setComponentMappings] = useState({}); // Маппинг { componentId: [folderIds] } для мультиселекта
     const [showMappingModal, setShowMappingModal] = useState(false); // Управление модальным окном
+    const [isMappingLoading, setIsMappingLoading] = useState(false); // Лоудер для маппинга
+
+    const navigate = useNavigate(); // Для навигации назад
 
     useEffect(() => {
         console.log('Projects in TIAPage:', projects);
@@ -40,6 +45,7 @@ const TIAPage = ({ projects }) => {
             setComponents([]);
             setComponentMappings({});
             setShowMappingModal(false);
+            setIsMappingLoading(false);
         };
     }, []);
 
@@ -52,7 +58,7 @@ const TIAPage = ({ projects }) => {
         setExpandedFolders({});
 
         if (selectedProjectId) {
-            setIsLoading(true);
+            setStructureLoading(true);
             try {
                 const response = await axios.get(`http://localhost:5001/api/structure`, {
                     params: { projectId: selectedProjectId, skipCustomFieldIds: '-3' },
@@ -64,7 +70,7 @@ const TIAPage = ({ projects }) => {
                 setError('Не удалось загрузить структуру проекта. Попробуйте позже.');
                 logError('Fetch structure error', err.message);
             } finally {
-                setIsLoading(false);
+                setStructureLoading(false);
             }
         }
     };
@@ -108,36 +114,34 @@ const TIAPage = ({ projects }) => {
     };
 
     const handleJiraLinkChange = (e) => {
-        setJiraLink(e.target.value);
+        setJiraLink(e.target.value.trim()); // Убираем лишние пробелы
         setError('');
     };
 
-    const handleFolderToggle = (folderId) => {
+    const handleFolderToggle = (folderId, event) => {
+        event.stopPropagation();
         setExpandedFolders((prev) => ({
             ...prev,
             [folderId]: !prev[folderId],
         }));
     };
 
-    // Обновленная функция извлечения компонентов из JSON-файлов с отладкой
     const extractComponents = () => {
         console.log('Extracting components - frontendJSON:', frontendJSON);
         console.log('Extracting components - backendJSON:', backendJSON);
 
-        // Извлечение фронтенд-компонентов
         const frontendComponents = frontendJSON?.frontendComponent?.map((comp, index) => ({
-            id: `${comp.name}-${index}`, // Генерируем ID
+            id: `${comp.name}-${index}`,
             name: comp.name,
             type: 'frontend',
-            endpoints: [], // У фронтенда нет эндпоинтов
+            endpoints: [],
         })) || [];
 
-        // Извлечение бэкенд-компонентов (контроллеров) с их эндпоинтами
         const backendComponents = backendJSON?.Controllers?.map((controller, index) => ({
-            id: `${controller.ControllerName}-${index}`, // Генерируем ID
+            id: `${controller.ControllerName}-${index}`,
             name: controller.ControllerName,
             type: 'backend',
-            endpoints: controller.Endpoints || [], // Сохраняем список эндпоинтов
+            endpoints: controller.Endpoints || [],
         })) || [];
 
         const allComponents = [...frontendComponents, ...backendComponents];
@@ -145,15 +149,13 @@ const TIAPage = ({ projects }) => {
         return allComponents;
     };
 
-    // Обновленная функция добавления маппинга компонента через API (для мультиселекта, отправляем массив)
     const saveComponentMapping = async (component, folderIds) => {
         try {
-            // Отправляем один запрос с массивом functionalBlock
             await axios.post('http://localhost:5001/api/components', {
                 projectId,
                 componentType: component.type,
                 componentName: component.name,
-                functionalBlock: folderIds.map(id => id.toString()), // Отправляем массив строк
+                functionalBlock: folderIds.map(id => id.toString()),
             });
         } catch (err) {
             logError('Save component mapping error', err.message);
@@ -161,26 +163,17 @@ const TIAPage = ({ projects }) => {
         }
     };
 
-    // Обновленная функция создания тест-плана с отладкой и получением маппингов
-    const handleCreateTestPlan = async () => {
-        console.log('Starting handleCreateTestPlan - projectId:', projectId);
-        console.log('Starting handleCreateTestPlan - frontendJSON:', frontendJSON);
-        console.log('Starting handleCreateTestPlan - backendJSON:', backendJSON);
-        console.log('Starting handleCreateTestPlan - jiraLink:', jiraLink);
-
+    const handleCreateTestPlan = () => {
         if (!projectId) {
-            setError('Выберите проект.');
-            console.log('Error: No project selected');
+            setError('Пожалуйста, выберите проект.');
             return;
         }
         if (!frontendJSON && !backendJSON) {
-            setError('Загрузите хотя бы один JSON-файл (фронтенд или бэкенд).');
-            console.log('Error: No JSON files uploaded');
+            setError('Пожалуйста, загрузите хотя бы один JSON-файл (фронтенд или бэкенд).');
             return;
         }
-        if (!jiraLink) {
-            setError('Введите ссылку на задачу в Jira.');
-            console.log('Error: No Jira link provided');
+        if (!jiraLink || !jiraLink.match(/^https?:\/\/jira\.abanking\.ru\/browse\/[A-Z]+-\d+$/)) {
+            setError('Пожалуйста, введите корректную ссылку на задачу в Jira (например, https://jira.abanking.ru/browse/CTMM-528).');
             return;
         }
 
@@ -188,77 +181,59 @@ const TIAPage = ({ projects }) => {
         setError('');
         setSuccessMessage('');
 
-        try {
-            const extractedComponents = extractComponents();
-            console.log('Extracted components in handleCreateTestPlan:', extractedComponents);
+        const extractedComponents = extractComponents();
 
-            if (extractedComponents.length === 0) {
-                setError('Компоненты не найдены в загруженных JSON-файлах. Проверьте структуру файлов.');
-                console.log('Error: No components extracted');
-                setIsLoading(false);
-                return;
-            }
-
-            // Получаем существующие маппинги для проекта
-            const existingMappings = await fetchExistingMappings(projectId);
-            setComponents(extractedComponents);
-
-            // Инициализируем маппинги с существующими значениями, собирая все маппинги для компонента
-            const initialMappings = {};
-            extractedComponents.forEach(component => {
-                const mappingsForComponent = existingMappings.filter(
-                    m => m.component_name === component.name && m.component_type === component.type
-                );
-                console.log(`Mappings for ${component.name}:`, mappingsForComponent); // Отладка
-                const folderIds = mappingsForComponent
-                    .map(m => findFolderAllureId(m.functional_block_allure_id)?.toString() || '')
-                    .filter(id => id); // Фильтруем пустые значения
-                initialMappings[component.id] = folderIds.length > 0 ? folderIds : [];
-            });
-            setComponentMappings(initialMappings);
-
-            setShowMappingModal(true);
-            console.log('Successfully opened mapping modal with existing mappings');
-        } catch (err) {
-            setError('Произошла ошибка при обработке компонентов. Проверьте данные и повторите попытку.');
-            logError('Component extraction error', err.message);
-            console.log('Error in handleCreateTestPlan:', err.message);
+        if (extractedComponents.length === 0) {
+            setError('Компоненты не найдены в загруженных JSON-файлах. Проверьте структуру файлов.');
             setIsLoading(false);
+            return;
         }
+
+        fetchExistingMappings(projectId)
+            .then(existingMappings => {
+                setComponents(extractedComponents);
+
+                const initialMappings = {};
+                extractedComponents.forEach(component => {
+                    const mappingsForComponent = existingMappings.filter(
+                        m => m.component_name === component.name && m.component_type === component.type
+                    );
+                    const folderIds = mappingsForComponent
+                        .map(m => findFolderAllureId(m.functional_block_allure_id)?.toString() || '')
+                        .filter(id => id);
+                    initialMappings[component.id] = folderIds.length > 0 ? folderIds : [];
+                });
+                setComponentMappings(initialMappings);
+
+                setShowMappingModal(true);
+            })
+            .catch(err => {
+                setError('Произошла ошибка при обработке компонентов. Проверьте данные и повторите попытку.');
+                logError('Component extraction error', err.message);
+                setIsLoading(false);
+            });
     };
 
-    // Обновленная функция для получения существующих маппингов
     const fetchExistingMappings = async (projectId) => {
         try {
             const response = await axios.get(`http://localhost:5001/api/components`, {
                 params: { projectId },
             });
-            console.log('Existing mappings response:', response.data.mappings); // Добавь для отладки
-            return response.data.mappings || []; // Предполагаем, что API возвращает массив маппингов с functional_block_allure_id
+            return response.data.mappings || [];
         } catch (err) {
             logError('Fetch existing mappings error', err.message);
             return [];
         }
     };
 
-    // Обновленная функция для поиска allure_id по functional_block_allure_id (с учётом разных форматов)
     const findFolderAllureId = (functionalBlockAllureId) => {
-        if (!functionalBlockAllureId || !folders) {
-            console.log('No functionalBlockAllureId or folders:', { functionalBlockAllureId, folders }); // Отладка
-            return null;
-        }
+        if (!functionalBlockAllureId || !folders) return null;
 
         const findInFolders = (foldersList) => {
             for (const folder of foldersList) {
-                console.log(`Checking folder:`, folder); // Отладка
-                // Преобразуем оба значения в строки для корректного сравнения
                 const folderIdStr = folder.id.toString();
                 const functionalBlockAllureIdStr = functionalBlockAllureId.toString();
-                if (folderIdStr === functionalBlockAllureIdStr) {
-                    console.log(`Match found for ${functionalBlockAllureIdStr}:`, folderIdStr); // Отладка
-                    return folderIdStr; // Возвращаем id как строку
-                }
-                // Проверяем также children рекурсивно
+                if (folderIdStr === functionalBlockAllureIdStr) return folderIdStr;
                 if (folder.children && folder.children.length > 0) {
                     const result = findInFolders(folder.children);
                     if (result) return result;
@@ -267,77 +242,55 @@ const TIAPage = ({ projects }) => {
             return null;
         };
 
-        const result = findInFolders(folders);
-        console.log(`findFolderAllureId result for ${functionalBlockAllureId}:`, result); // Отладка
-        return result;
+        return findInFolders(folders);
     };
 
-    // Cоздание тест-плана
     const createTestPlan = async () => {
         try {
-            // Собираем все уникальные folderIds из componentMappings
             const allFolderIds = new Set();
-            Object.values(componentMappings).forEach(folderIds => {
-                folderIds.forEach(id => allFolderIds.add(id));
-            });
-            const groupsInclude = Array.from(allFolderIds).map(id => parseInt(id, 10)); // Преобразуем в числа
+            Object.values(componentMappings).forEach(folderIds => folderIds.forEach(id => allFolderIds.add(id)));
+            const groupsInclude = Array.from(allFolderIds).map(id => parseInt(id, 10));
 
-            // Формируем тело запроса для отправки на сервер
             const requestBody = {
                 projectId,
                 jiraLink,
-                componentMappings, // Передаём текущие маппинги
+                componentMappings,
             };
 
-            console.log('Request body for test plan to server:', requestBody);
-
-            // Отправляем POST-запрос на серверный эндпоинт /api/launch
             const response = await axios.post('http://localhost:5001/api/launch', requestBody, {
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
             });
 
-            const { id } = response.data; // Получаем только id из ответа
-            const allureLink = `https://abanking.qatools.cloud/launch/${id}`; // Формируем ссылку
+            const { id } = response.data;
+            const allureLink = `https://abanking.qatools.cloud/launch/${id}`;
             setSuccessMessage('Тест-план успешно создан!');
             setAllureLink(allureLink);
         } catch (err) {
-            if (err.response && err.response.data.error === 'На выбранных блоках отсутствуют тест-кейсы. Добавьте хотя бы один для возможности создания тест-плана.') {
+            if (err.response && err.response.status === 400 && err.response.data.error === 'На выбранных блоках отсутствуют тест-кейсы. Добавьте хотя бы один для возможности создания тест-плана.') {
                 setError(err.response.data.error);
             } else {
                 setError('Произошла ошибка при создании тест-плана. Проверьте данные и повторите попытку.');
                 logError('Test plan creation error', err.message);
             }
-            console.log('Error in createTestPlan:', err.message);
         } finally {
             setIsLoading(false);
         }
     };
 
-    // Обработчик подтверждения маппинга
     const handleMappingConfirm = async () => {
-        setIsLoading(true);
+        setIsMappingLoading(true); // Включаем лоудер для маппинга
         try {
-            console.log('Confirming mappings - components:', components);
-            console.log('Confirming mappings - componentMappings:', componentMappings);
-
             for (const component of components) {
                 const folderIds = componentMappings[component.id] || [];
-                console.log(`Processing component ${component.name} with folderIds:`, folderIds);
-
-                if (folderIds.length > 0) {
-                    await saveComponentMapping(component, folderIds);
-                }
+                if (folderIds.length > 0) await saveComponentMapping(component, folderIds);
             }
             await createTestPlan();
             setShowMappingModal(false);
         } catch (err) {
             setError(err.message);
             logError('Mapping confirmation error', err.message);
-            console.log('Error in handleMappingConfirm:', err.message);
         } finally {
-            setIsLoading(false);
+            setIsMappingLoading(false); // Выключаем лоудер
         }
     };
 
@@ -345,22 +298,19 @@ const TIAPage = ({ projects }) => {
         setShowMappingModal(false);
         setComponentMappings({});
         setComponents([]);
-        setIsLoading(false);
     };
 
     const handleMappingChange = (componentId, selectedOptions) => {
-        setComponentMappings((prev) => ({
+        setComponentMappings(prev => ({
             ...prev,
-            [componentId]: selectedOptions.map(option => option.value.toString()), // Гарантируем, что это строки
+            [componentId]: selectedOptions.map(option => option.value.toString()),
         }));
     };
 
     const logError = async (errorType, description) => {
         try {
             await axios.post('http://localhost:5001/api/errors', {
-                errorType,
-                description,
-                timestamp: new Date().toISOString(),
+                errorType, description, timestamp: new Date().toISOString(),
             });
         } catch (err) {
             console.error('Failed to log error:', err.message);
@@ -375,43 +325,21 @@ const TIAPage = ({ projects }) => {
                     marginLeft: `${level * 20}px`,
                     marginBottom: '12px',
                     transition: 'all 0.3s ease',
-                    ...(level === 0 ? {
-                        padding: '12px 16px',
-                        backgroundColor: styles.dfe6e9,
-                        color: styles.textDark,
-                        border: `1px solid ${styles.borderLight}`,
-                        borderRadius: '6px',
-                        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
-                        cursor: 'pointer', // Добавляем курсор для кликабельности
-                    } : {
-                        padding: '8px 12px',
-                        backgroundColor: styles.e8ecef,
-                        color: styles.textDark,
-                        border: `1px solid ${styles.borderLight}`,
-                        borderRadius: '6px',
-                        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
-                        cursor: 'pointer', // Добавляем курсор для кликабельности
-                    }),
+                    ...(level === 0 ? styles.featureLevel : styles.storyLevel),
+                    cursor: 'pointer',
                 }}
-                onClick={() => handleFolderToggle(folder.id)} // Восстанавливаем обработчик клика
+                onClick={(e) => handleFolderToggle(folder.id, e)}
             >
                 {folder.children && folder.children.length > 0 && (
-                    <span style={{ marginRight: '8px', color: styles.textMuted }}>
+                    <span style={styles.toggleIcon}>
                         {expandedFolders[folder.id] ? '▼' : '►'}
                     </span>
                 )}
-                <span style={{ fontWeight: level === 0 ? '600' : '400' }}>
+                <span style={{ ...styles.folderName, fontWeight: level === 0 ? 600 : 400 }}>
                     {folder.customFieldName} - {folder.name}
                 </span>
                 {expandedFolders[folder.id] && folder.children && folder.children.length > 0 && (
-                    <div
-                        style={{
-                            marginTop: '8px',
-                            transition: 'max-height 0.3s ease',
-                            maxHeight: expandedFolders[folder.id] ? '1000px' : '0',
-                            overflow: 'hidden',
-                        }}
-                    >
+                    <div style={{ ...styles.nestedFolders, maxHeight: expandedFolders[folder.id] ? '1000px' : '0' }}>
                         {renderFolderTree(folder.children, level + 1)}
                     </div>
                 )}
@@ -419,32 +347,31 @@ const TIAPage = ({ projects }) => {
         ));
     };
 
-    // Обновленная функция для подготовки опций для мультиселекта
     const getFolderOptions = (folders) => {
         const options = [];
         const traverseFolders = (folderList, level = 0) => {
             folderList.forEach((folder) => {
-                options.push({
-                    value: folder.id.toString(), // Гарантируем, что это строка (allure_id)
-                    label: `${'-'.repeat(level)} ${folder.customFieldName} - ${folder.name}`,
-                });
-                if (folder.children && folder.children.length > 0) {
-                    traverseFolders(folder.children, level + 1);
-                }
+                options.push({ value: folder.id.toString(), label: `${'-'.repeat(level)} ${folder.customFieldName} - ${folder.name}` });
+                if (folder.children) traverseFolders(folder.children, level + 1);
             });
         };
         traverseFolders(folders);
         return options;
     };
 
-    // Проверка, можно ли активировать кнопку "Создать тест-план"
-    const isCreateButtonDisabled = () => {
-        return !projectId || (!frontendJSON && !backendJSON) || !jiraLink || isLoading;
-    };
+    const isCreateButtonDisabled = () => !projectId || (!frontendJSON && !backendJSON) || !jiraLink || isLoading;
+
+    // Обновленная логика для проверки, что все компоненты имеют хотя бы один блок
+    const isMappingConfirmDisabled = components.some(component => !componentMappings[component.id] || componentMappings[component.id].length === 0);
 
     return (
         <div style={styles.container}>
-            <h1 style={styles.header}>Test Impact Analysis (TIA)</h1>
+            <div style={styles.headerSection}>
+                <h1 style={styles.title}>Test Impact Analysis (TIA)</h1>
+                <button style={styles.backButton} onClick={() => navigate('/')}>
+                    Назад
+                </button>
+            </div>
 
             <div style={styles.form}>
                 <div style={styles.formGroup}>
@@ -453,118 +380,109 @@ const TIAPage = ({ projects }) => {
                         value={projectId}
                         onChange={handleProjectChange}
                         style={styles.select}
-                        disabled={isLoading}
+                        disabled={isLoading || structureLoading}
                     >
                         <option value="">-- Выберите проект --</option>
-                        {projects && projects.length > 0 ? (
-                            projects.map((proj) => (
-                                <option key={proj.id} value={proj.id}>
-                                    {proj.name}
-                                </option>
-                            ))
-                        ) : (
-                            <option value="" disabled>
-                                Проекты не доступны
+                        {projects.map((proj) => (
+                            <option key={proj.id} value={proj.id}>
+                                {proj.name}
                             </option>
-                        )}
+                        ))}
                     </select>
                 </div>
 
                 <div style={styles.formGroup}>
                     <label style={styles.label}>Загрузить JSON фронтенда (опционально):</label>
-                    <input
-                        type="file"
-                        accept=".json"
-                        onChange={handleFrontendJSONUpload}
-                        style={styles.fileInput}
-                        disabled={isLoading}
-                    />
-                </div>
-                <div style={styles.formGroup}>
-                    <label style={styles.label}>Загрузить JSON бэкенда (опционально):</label>
-                    <input
-                        type="file"
-                        accept=".json"
-                        onChange={handleBackendJSONUpload}
-                        style={styles.fileInput}
-                        disabled={isLoading}
-                    />
+                    <div style={styles.uploadContainer}>
+                        <input
+                            type="file"
+                            accept=".json"
+                            onChange={handleFrontendJSONUpload}
+                            style={styles.fileInput}
+                            disabled={isLoading || structureLoading}
+                        />
+                        {frontendJSON && <span style={styles.fileName}>Файл: {frontendJSON.name || 'frontend.json'}</span>}
+                    </div>
                 </div>
 
                 <div style={styles.formGroup}>
-                    <label style={styles.label}>Ссылка на задачу в Jira:</label>
+                    <label style={styles.label}>Загрузить JSON бэкенда (опционально):</label>
+                    <div style={styles.uploadContainer}>
+                        <input
+                            type="file"
+                            accept=".json"
+                            onChange={handleBackendJSONUpload}
+                            style={styles.fileInput}
+                            disabled={isLoading || structureLoading}
+                        />
+                        {backendJSON && <span style={styles.fileName}>Файл: {backendJSON.name || 'backend.json'}</span>}
+                    </div>
+                </div>
+
+                <div style={styles.formGroup}>
+                    <label style={styles.label}>Ссылка на задачу Jira:</label>
                     <input
                         type="text"
                         value={jiraLink}
                         onChange={handleJiraLinkChange}
                         placeholder="https://jira.abanking.ru/browse/CTMM-528"
-                        style={styles.input}
-                        disabled={isLoading}
+                        style={styles.jiraInput}
+                        disabled={isLoading || structureLoading}
                     />
                 </div>
 
-                {folders.length > 0 && (
+                {structureLoading ? (
+                    <div style={styles.loader}><Loader /></div>
+                ) : folders.length > 0 && (
                     <div style={styles.mappingSection}>
                         <h2 style={styles.subHeader}>Структура папок</h2>
                         {renderFolderTree(folders)}
                     </div>
                 )}
+            </div>
 
+            <div style={styles.footer}>
+                {error && <div style={styles.error}>{error}</div>}
+                {successMessage && (
+                    <div>
+                        {successMessage}
+                        {allureLink && (
+                            <a href={allureLink} target="_blank" rel="noopener noreferrer" style={styles.successLink}>
+                                Перейти к тест-плану в Allure
+                            </a>
+                        )}
+                    </div>
+                )}
+                {isLoading && !structureLoading && <div style={styles.loader}><Loader /></div>}
                 <button
                     onClick={handleCreateTestPlan}
-                    style={styles.submitButton}
                     disabled={isCreateButtonDisabled()}
                 >
-                    {isLoading ? 'Создание...' : 'Создать тест-план'}
+                    {isLoading ? <Loader style={{ display: 'inline-block', width: '20px', height: '20px', verticalAlign: 'middle' }} /> : 'Создать тест-план'}
                 </button>
             </div>
 
-            {error && <div style={styles.error}>{error}</div>}
-
-            {successMessage && (
-                <div>
-                    {successMessage}
-                    {allureLink && (
-                        <div>
-                            <a href={allureLink} target="_blank" rel="noopener noreferrer">
-                                Перейти к тест-плану в Allure
-                            </a>
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {isLoading && <div style={styles.loader}>Загрузка...</div>}
-
-            {/* Модальное окно для маппинга */}
             {showMappingModal && (
-                <div style={styles.modalOverlay}>
-                    <div style={styles.modal}>
-                        <h2 style={styles.modalHeader}>Сопоставление компонентов</h2>
-                        <div style={styles.modalContent}>
+                <div style={{ ...styles.modalOverlay, position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0, 0, 0, 0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+                    <div style={{ ...styles.modal, backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', width: '800px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 24px rgba(0, 0, 0, 0.15)' }}>
+                        <h2 style={{ ...styles.modalHeader, fontSize: '24px', marginBottom: '20px', color: '#2c3e50', fontWeight: 700, borderBottom: '2px solid #ced4da', paddingBottom: '16px' }}>Сопоставление компонентов</h2>
+                        <div style={{ ...styles.modalContent, display: 'flex', flexDirection: 'column', gap: '20px', maxHeight: 'calc(90vh - 120px)', overflowY: 'auto' }}>
                             {components.length === 0 ? (
-                                <div style={styles.noComponents}>
-                                    Компоненты не найдены. Проверьте загруженные JSON-fайлы.
+                                <div style={{ ...styles.noComponents, fontSize: '16px', color: '#721c24', textAlign: 'center', padding: '16px', backgroundColor: '#ffebee', borderRadius: '8px' }}>
+                                    Компоненты не найдены. Проверьте загруженные JSON-файлы.
                                 </div>
                             ) : (
                                 components.map((comp) => (
-                                    <div key={comp.id} style={styles.mappingRow}>
-                                        <div style={styles.componentContainer}>
-                                            {/* Название компонента с цветовой индикацией */}
-                                            <span
-                                                style={{
-                                                    ...styles.mappingLabel,
-                                                    color: componentMappings[comp.id]?.length > 0 ? styles.success : styles.warning,
-                                                }}
-                                            >
+                                    <div key={comp.id} style={{ ...styles.mappingRow, display: 'flex', alignItems: 'center', gap: '16px', padding: '12px', backgroundColor: '#f8f9fa', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)' }}>
+                                        <div style={{ ...styles.componentContainer, flex: 1, display: 'flex' }}>
+                                            <span style={{ ...styles.mappingLabel, fontSize: '16px', fontWeight: 600, color: componentMappings[comp.id]?.length > 0 ? styles.success : styles.warning }}>
                                                 {comp.type}: {comp.name}
                                             </span>
-                                            {/* Список API-методов для бэкенд-компонентов */}
                                             {comp.type === 'backend' && comp.endpoints.length > 0 && (
-                                                <ul style={styles.endpointList}>
+                                                <ul style={{ ...styles.endpointList, margin: 0, paddingLeft: '20px', fontSize: '14px', color: '#6c757d', listStyle: 'none' }}>
                                                     {comp.endpoints.map((endpoint, index) => (
                                                         <li key={`${comp.id}-endpoint-${index}`} style={styles.endpointItem}>
-                                                            -- {endpoint.HttpMethod} {endpoint.RoutePath}
+                                                            {endpoint.HttpMethod} {endpoint.RoutePath}
                                                         </li>
                                                     ))}
                                                 </ul>
@@ -572,32 +490,25 @@ const TIAPage = ({ projects }) => {
                                         </div>
                                         <Select
                                             options={getFolderOptions(folders)}
-                                            value={getFolderOptions(folders).filter(option =>
-                                                componentMappings[comp.id]?.includes(option.value)
-                                            )}
+                                            value={getFolderOptions(folders).filter(option => componentMappings[comp.id]?.includes(option.value))}
                                             onChange={(selectedOptions) => handleMappingChange(comp.id, selectedOptions)}
-                                            isMulti // Включаем мультиселект
+                                            isMulti
                                             placeholder="Выберите функциональный блок(и)..."
-                                            styles={selectStyles} // Кастомные стили для react-select
-                                            isSearchable // Включаем поиск
+                                            styles={selectStyles}
+                                            isSearchable
                                         />
                                     </div>
                                 ))
                             )}
                         </div>
-                        <div style={styles.modalActions}>
-                            <button
-                                onClick={handleMappingCancel}
-                                style={styles.modalButtonCancel}
-                            >
-                                Отмена
-                            </button>
+                        <div style={{ ...styles.modalFooter, marginTop: '20px', paddingTop: '16px', borderTop: '2px solid #ced4da', display: 'flex', justifyContent: 'flex-end', gap: '16px' }}>
+                            <button onClick={handleMappingCancel} style={styles.modalButtonCancel}>Отмена</button>
                             <button
                                 onClick={handleMappingConfirm}
-                                style={styles.modalButtonConfirm}
-                                disabled={Object.values(componentMappings).every(ids => ids.length === 0) || components.length === 0}
+                                style={{ ...styles.modalButtonConfirm, position: 'relative' }}
+                                disabled={isMappingConfirmDisabled}
                             >
-                                Подтвердить
+                                {isMappingLoading ? <Loader style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: '20px', height: '20px' }} /> : 'Подтвердить'}
                             </button>
                         </div>
                     </div>
@@ -607,17 +518,15 @@ const TIAPage = ({ projects }) => {
     );
 };
 
-// Новые стили для react-select (вынесем в styles.js позже, если нужно)
+// Новые стили для react-select
 const selectStyles = {
     control: (provided) => ({
         ...provided,
         minHeight: '38px',
-        borderRadius: '5px',
+        borderRadius: '8px',
         border: `1px solid ${styles.borderLight}`,
         boxShadow: 'none',
-        '&:hover': {
-            borderColor: styles.primary,
-        },
+        '&:hover': { borderColor: styles.primary },
     }),
     multiValue: (provided) => ({
         ...provided,
@@ -631,23 +540,20 @@ const selectStyles = {
     multiValueRemove: (provided) => ({
         ...provided,
         color: styles.textMuted,
-        '&:hover': {
-            backgroundColor: styles.danger,
-            color: 'white',
-        },
+        '&:hover': { backgroundColor: styles.danger, color: 'white' },
     }),
     menu: (provided) => ({
         ...provided,
-        zIndex: 1001, // Убедимся, что меню выше модального окна
+        zIndex: 1001,
+        borderRadius: '8px',
+        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
     }),
 };
 
 const logError = async (errorType, description) => {
     try {
         await axios.post('http://localhost:5001/api/errors', {
-            errorType,
-            description,
-            timestamp: new Date().toISOString(),
+            errorType, description, timestamp: new Date().toISOString(),
         });
     } catch (err) {
         console.error('Failed to log error:', err.message);
