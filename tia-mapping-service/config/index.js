@@ -12,7 +12,7 @@ const config = {
     port: process.env.PORT || 5001,
 
     // URL подключения к базе данных PostgreSQL (берётся из .env, если доступен)
-    databaseUrl: process.env.DATABASE_URL,
+    databaseUrl: process.env.DATABASE_URL || "postgres://tia_user:password@localhost:5432/tia_mapping_db",
 
     // Отдельные параметры подключения к базе данных (используются, если DATABASE_URL отсутствует)
     dbClient: 'pg', // Клиент по умолчанию для PostgreSQL (можно переопределить через DB_CLIENT в .env)
@@ -26,7 +26,7 @@ const config = {
     allureBaseUrl: process.env.ALLURE_BASE_URL || 'https://abanking.qatools.cloud',
 
     // Токен авторизации для Allure API (берётся из .env)
-    allureToken: process.env.ALLURE_TOKEN,
+    allureToken: process.env.ALLURE_TOKEN || 'cc865667-ca13-4f69-a5c9-77579586f571',
 };
 
 export default config; // Экспорт конфигурации для использования в других модулях
