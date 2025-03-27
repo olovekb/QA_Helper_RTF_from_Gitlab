@@ -32,8 +32,7 @@
 
 ### 1. Клонирование репозитория
 ```bash
-git clone <URL_вашего_репозитория>
-cd tia-backend
+git clone ssh://git@git.abanking.ru:2244/vpoliakov/allure-test-inspector.git
 ```
 
 ### 2. Установка зависимостей
