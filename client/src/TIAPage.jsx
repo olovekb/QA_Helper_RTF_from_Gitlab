@@ -523,6 +523,8 @@ const selectStyles = {
     control: (provided) => ({
         ...provided,
         minHeight: '38px',
+        width: '100%', // Занимает всю доступную ширину
+        minWidth: '300px', // Минимальная ширина
         borderRadius: '8px',
         border: `1px solid ${styles.borderLight}`,
         boxShadow: 'none',
@@ -547,7 +549,16 @@ const selectStyles = {
         zIndex: 1001,
         borderRadius: '8px',
         boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+        maxHeight: '300px', // Ограничиваем высоту меню
+        overflowY: 'auto',  // Добавляем вертикальный скролл
+        color: styles.textDark
     }),
+    menuList: (provided) => ({
+        ...provided,
+        maxHeight: '300px', // Ограничиваем высоту списка
+        padding: '8px',     // Добавляем отступы для красоты
+        color: styles.textDark
+    })
 };
 
 const logError = async (errorType, description) => {
