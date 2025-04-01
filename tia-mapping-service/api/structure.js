@@ -2,9 +2,11 @@ import { fetchWithAuth, authHeaders } from '../utils/allureAuth.js'; // Импо
 import config from '../config/index.js'; // Импорт конфигурации проекта
 import { logInfo, logError, logWarn } from '../utils/logger.js'; // Импорт функций логирования
 import databasePool from '../db/pool.js'; // Импорт пула подключений к базе данных
+import pLimit from 'p-limit';
 
 // Глобальный кэш для хранения результатов запросов (очищается при необходимости)
 const cache = new Map();
+let currentProjectId = null;
 
 /**
  * Получает иерархическую структуру проекта (только папки) из Allure API, включая все уровни вложенности,
@@ -16,7 +18,14 @@ const cache = new Map();
  */
 export async function getProjectStructure(projectId, skipCriteria = { customFieldIdsToSkip: [], namePatternsToSkip: [] }) {
     try {
-        logInfo(`Запрашиваем иерархическую структуру папок проекта с ID ${projectId} из Allure API`); // Логирование запроса
+        logInfo(`Запрашиваем иерархическую структуру папок проекта с ID ${projectId} из Allure API`); // Логирование запроса\
+
+        // Очищаем кэш, если projectId изменился
+        if (currentProjectId !== projectId) {
+            cache.clear();
+            logInfo(`Кэш очищен, так как projectId изменился с ${currentProjectId} на ${projectId}`);
+            currentProjectId = projectId;
+        }
 
         // Шаг 1: Получаем treeId для проекта через эндпоинт /api/tree (с кэшированием)
         const treeCacheKey = `tree_${projectId}`;
@@ -165,57 +174,72 @@ async function saveFunctionalBlocks(projectId, nodes, parentId, customFields) {
         customFieldsMap.set(field.id, field.name);
     });
 
+    // Собираем данные для пакетной вставки/обновления
+    const blocksToInsert = [];
+    const blocksToUpdate = [];
+
     for (const node of nodes) {
         if (node.type === 'GROUP') {
-            logInfo(`Обрабатываем узел типа GROUP с ID ${node.id}, name: ${node.name}, customFieldId: ${node.customFieldId}, parentId: ${parentId}, children count: ${node.children?.content?.length || 0}`); // Расширенный лог для отладки
-            try {
-                // Проверяем, существует ли функциональный блок в базе данных по allure_id
-                const existingBlock = await databasePool('functional_blocks')
-                    .where({ allure_id: node.id.toString(), project_id: projectId })
-                    .first();
+            logInfo(`Обрабатываем узел типа GROUP с ID ${node.id}, name: ${node.name}, customFieldId: ${node.customFieldId}, parentId: ${parentId}, children count: ${node.children?.content?.length || 0}`);
 
-                if (!existingBlock) {
-                    // Создаём новый функциональный блок (id генерируется автоматически как UUID)
-                    await databasePool('functional_blocks').insert({
-                        allure_id: node.id.toString(), // Сохраняем ID из Allure как строку
-                        project_id: projectId,
-                        name: node.name,
-                        custom_field_id: node.customFieldId || null,
-                        custom_field_name: customFieldsMap.get(node.customFieldId) || 'Неизвестное поле',
-                        parent_id: parentId, // Ссылка на родительский блок (UUID)
-                        count: node.children?.content?.length || 0,
-                        created_at: databasePool.fn.now(),
-                        updated_at: databasePool.fn.now(),
-                    });
+            const existingBlock = await databasePool('functional_blocks')
+                .where({ allure_id: node.id.toString(), project_id: projectId })
+                .first();
 
-                    logInfo(`Создан новый функциональный блок с allure_id ${node.id} для проекта ${projectId} с parent_id ${parentId}`);
-                } else {
-                    // Обновляем существующий блок, если нужно (например, count или name изменились)
-                    await databasePool('functional_blocks')
-                        .where({ allure_id: node.id.toString(), project_id: projectId })
-                        .update({
-                            name: node.name,
-                            custom_field_id: node.customFieldId || null,
-                            custom_field_name: customFieldsMap.get(node.customFieldId) || 'Неизвестное поле',
-                            count: node.children?.content?.length || 0,
-                            parent_id: parentId,
-                            updated_at: databasePool.fn.now(),
-                        });
+            const blockData = {
+                allure_id: node.id.toString(),
+                project_id: projectId,
+                name: node.name,
+                custom_field_id: node.customFieldId || null,
+                custom_field_name: customFieldsMap.get(node.customFieldId) || 'Неизвестное поле',
+                parent_id: parentId,
+                count: node.children?.content?.length || 0,
+                created_at: databasePool.fn.now(),
+                updated_at: databasePool.fn.now(),
+            };
 
-                    logInfo(`Обновлён функциональный блок с allure_id ${node.id} для проекта ${projectId} с parent_id ${parentId}`);
-                }
-
-                // Рекурсивно сохраняем вложенные блоки, если есть children
-                if (node.children?.content?.length > 0) {
-                    const existingBlockId = existingBlock ? existingBlock.id : null; // Получаем UUID id существующего блока
-                    await saveFunctionalBlocks(projectId, node.children.content, existingBlockId, customFields);
-                }
-            } catch (dbError) {
-                logError(`Ошибка при сохранении/обновлении функционального блока с allure_id ${node.id} для проекта ${projectId}:`, dbError.message);
-                throw new Error(`Ошибка базы данных: ${dbError.message}`);
+            if (!existingBlock) {
+                blocksToInsert.push(blockData);
+            } else {
+                blocksToUpdate.push({ ...blockData, id: existingBlock.id });
             }
         } else {
-            logWarn(`Пропущен узел с ID ${node.id} (type: ${node.type}, name: ${node.name}) — не является GROUP`); // Лог для узлов, не являющихся GROUP
+            logWarn(`Пропущен узел с ID ${node.id} (type: ${node.type}, name: ${node.name}) — не является GROUP`);
+        }
+    }
+
+    // Пакетная вставка новых блоков
+    if (blocksToInsert.length > 0) {
+        await databasePool('functional_blocks').insert(blocksToInsert);
+        logInfo(`Пакетно создано ${blocksToInsert.length} новых функциональных блоков для проекта ${projectId}`);
+    }
+
+    // Пакетное обновление существующих блоков
+    if (blocksToUpdate.length > 0) {
+        await Promise.all(
+            blocksToUpdate.map(block =>
+                databasePool('functional_blocks')
+                    .where({ id: block.id })
+                    .update({
+                        name: block.name,
+                        custom_field_id: block.custom_field_id,
+                        custom_field_name: block.custom_field_name,
+                        count: block.count,
+                        parent_id: block.parent_id,
+                        updated_at: block.updated_at,
+                    })
+            )
+        );
+        logInfo(`Пакетно обновлено ${blocksToUpdate.length} функциональных блоков для проекта ${projectId}`);
+    }
+
+    // Рекурсивно сохраняем вложенные блоки
+    for (const node of nodes) {
+        if (node.type === 'GROUP' && node.children?.content?.length > 0) {
+            const existingBlock = await databasePool('functional_blocks')
+                .where({ allure_id: node.id.toString(), project_id: projectId })
+                .first();
+            await saveFunctionalBlocks(projectId, node.children.content, existingBlock.id, customFields);
         }
     }
 }
@@ -234,51 +258,47 @@ async function fetchAndSaveNestedBlocks(projectId, parentNodeId, treeId, customF
         treeId: treeId.toString(),
         parentNodeId: parentNodeId,
         page: '0',
-        size: '100', // Увеличим размер на случай, если узлы не помещаются в одну страницу
+        size: '100',
         sort: 'nodeSortOrder,asc',
         deleted: 'false',
     });
 
-    logInfo(`Запрашиваем вложенные блоки для projectId ${projectId}, treeId ${treeId}, parentNodeId ${parentNodeId}`); // Логирование шага
+    logInfo(`Запрашиваем вложенные блоки для projectId ${projectId}, treeId ${treeId}, parentNodeId ${parentNodeId}`);
     const structureResponse = await fetchWithAuth(`${structureUrl}?${queryParams.toString()}`, {
         headers: {
-            ...authHeaders, // Используем глобальные заголовки с токеном
-            'Content-Type': 'application/json', // Тип контента
+            ...authHeaders,
+            'Content-Type': 'application/json',
         },
     });
 
     if (!structureResponse.ok) {
         const errorMessage = await structureResponse.text();
-        logError(`Ошибка получения вложенных блоков для projectId ${projectId}, parentNodeId ${parentNodeId}: ${structureResponse.statusText}`, errorMessage); // Логирование ошибки
+        logError(`Ошибка получения вложенных блоков для projectId ${projectId}, parentNodeId ${parentNodeId}: ${structureResponse.statusText}`, errorMessage);
         throw new Error(`Не удалось получить вложенные блоки: ${structureResponse.statusText} - ${errorMessage}`);
     }
 
     const data = await structureResponse.json();
-    logInfo(`Ответ для parentNodeId ${parentNodeId}: children.content.length = ${data.children?.content?.length || 0}`, JSON.stringify(data)); // Расширенное логирование ответа для диагностики
+    logInfo(`Ответ для parentNodeId ${parentNodeId}: children.content.length = ${data.children?.content?.length || 0}`, JSON.stringify(data));
 
-    // Получаем или устанавливаем parentId для текущего уровня
     const parentBlock = await databasePool('functional_blocks')
         .where({ allure_id: parentNodeId.toString(), project_id: projectId })
         .first();
-    const parentId = parentBlock ? parentBlock.id : null; // Получаем UUID id родительского блока
+    const parentId = parentBlock ? parentBlock.id : null;
 
-    // Логируем, есть ли parentId и данные для сохранения
     logInfo(`Сохраняем вложенные блоки для parentNodeId ${parentNodeId}, parentId: ${parentId}, nodes count: ${data.children?.content?.length || 0}`);
 
-    // Сохраняем вложенные блоки с правильным parentId
     if (data.children?.content && data.children.content.length > 0) {
         await saveFunctionalBlocks(projectId, data.children.content, parentId, customFields);
     } else {
         logWarn(`Нет вложенных узлов (children.content) для parentNodeId ${parentNodeId}`);
     }
 
-    // Рекурсивно обрабатываем вложенные узлы
-    for (const node of data.children?.content || []) {
-        if (node.type === 'GROUP') { // Сохраняем все узлы типа GROUP, независимо от наличия детей
-            logInfo(`Рекурсивно обрабатываем узел типа GROUP с ID ${node.id}, parentNodeId ${parentNodeId}`);
-            await fetchAndSaveNestedBlocks(projectId, node.id.toString(), treeId, customFields, skipCriteria);
-        }
-    }
+    // Параллельно обрабатываем вложенные узлы
+    const groupNodes = data.children?.content?.filter(node => node.type === 'GROUP') || [];
+    const nestedPromises = groupNodes.map(node =>
+        fetchAndSaveNestedBlocks(projectId, node.id.toString(), treeId, customFields, skipCriteria)
+    );
+    await Promise.all(nestedPromises);
 }
 
 /**
@@ -292,65 +312,75 @@ async function fetchAndSaveNestedBlocks(projectId, parentNodeId, treeId, customF
  */
 async function getNestedFoldersParallel(projectId, parentNodeId, treeId, customFields, skipCriteria = { customFieldIdsToSkip: [], namePatternsToSkip: [] }) {
     const structureUrl = `${config.allureBaseUrl}/api/v2/project/${projectId}/test-case/tree/tree-node`;
-    const queryParams = new URLSearchParams({
-        treeId: treeId.toString(),
-        page: '0',
-        size: '100',
-        sort: 'nodeSortOrder,asc',
-        deleted: 'false',
-    });
-
-    if (parentNodeId !== null) {
-        queryParams.append('parentNodeId', parentNodeId.toString());
-    }
-
-    logInfo(`Запрашиваем вложенные папки для projectId ${projectId}, treeId ${treeId}, parentNodeId ${parentNodeId}`); // Логирование шага
-    const structureResponse = await fetchWithAuth(`${structureUrl}?${queryParams.toString()}`, {
-        headers: {
-            ...authHeaders, // Используем глобальные заголовки с токеном
-            'Content-Type': 'application/json', // Тип контента
-        },
-    });
-
-    if (!structureResponse.ok) {
-        const errorMessage = await structureResponse.text();
-        logError(`Ошибка получения вложенных папок для projectId ${projectId}, parentNodeId ${parentNodeId}: ${structureResponse.statusText}`, errorMessage); // Логирование ошибки
-        throw new Error(`Не удалось получить вложенные папки: ${structureResponse.statusText} - ${errorMessage}`);
-    }
-
-    const data = await structureResponse.json();
-    logInfo(`Ответ для parentNodeId ${parentNodeId}: children.content.length = ${data.children?.content?.length || 0}`, JSON.stringify(data)); // Расширенное логирование ответа для диагностики
-
+    const limit = pLimit(10);
     const folders = [];
     const customFieldsMap = new Map();
     customFields.forEach(field => {
         customFieldsMap.set(field.id, field.name);
     });
 
-    // Получаем все узлы параллельно
-    const groupNodes = data.children?.content?.filter(node => node.type === 'GROUP') || [];
-    const folderPromises = groupNodes.map(async (node) => {
-        // Проверяем, нужно ли пропустить этот узел (по умолчанию не пропускаем ничего)
-        if (shouldSkipNode(node, skipCriteria)) {
-            logWarn(`Пропущен узел с ID ${node.id} (name: ${node.name}, customFieldId: ${node.customFieldId}) по критериям пропуска`); // Логирование пропуска
-            return null;
+    let page = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+        const queryParams = new URLSearchParams({
+            treeId: treeId.toString(),
+            page: page.toString(),
+            size: '100',
+            sort: 'nodeSortOrder,asc',
+            deleted: 'false',
+        });
+
+        if (parentNodeId !== null) {
+            queryParams.append('parentNodeId', parentNodeId.toString());
         }
 
-        const children = await getNestedFoldersParallel(projectId, node.id.toString(), treeId, customFields, skipCriteria);
-        return {
-            id: node.id,
-            name: node.name,
-            customFieldId: node.customFieldId || null,
-            customFieldName: customFieldsMap.get(node.customFieldId) || 'Неизвестное поле',
-            count: node.children?.content?.length || 0,
-            children: children.filter(child => child !== null), // Фильтруем null (пропущенные узлы)
-        };
-    });
+        logInfo(`Запрашиваем вложенные папки для projectId ${projectId}, treeId ${treeId}, parentNodeId ${parentNodeId}, page ${page}`);
+        const structureResponse = await fetchWithAuth(`${structureUrl}?${queryParams.toString()}`, {
+            headers: {
+                ...authHeaders,
+                'Content-Type': 'application/json',
+            },
+        });
 
-    const resolvedFolders = await Promise.all(folderPromises);
-    folders.push(...resolvedFolders.filter(folder => folder !== null)); // Фильтруем null (пропущенные узлы)
+        if (!structureResponse.ok) {
+            const errorMessage = await structureResponse.text();
+            logError(`Ошибка получения вложенных папок для projectId ${projectId}, parentNodeId ${parentNodeId}: ${structureResponse.statusText}`, errorMessage);
+            throw new Error(`Не удалось получить вложенные папки: ${structureResponse.statusText} - ${errorMessage}`);
+        }
 
-    logInfo(`Отформатировано папок для parentNodeId ${parentNodeId}: ${folders.length}, children.content.length = ${data.children?.content?.length || 0}`, JSON.stringify(folders)); // Расширенное логирование для отладки
+        const data = await structureResponse.json();
+        logInfo(`Ответ для parentNodeId ${parentNodeId}, page ${page}: children.content.length = ${data.children?.content?.length || 0}`, JSON.stringify(data));
+
+        const groupNodes = data.children?.content?.filter(node => node.type === 'GROUP') || [];
+        const folderPromises = groupNodes.map(node =>
+            limit(async () => {
+                if (shouldSkipNode(node, skipCriteria)) {
+                    logWarn(`Пропущен узел с ID ${node.id} (name: ${node.name}, customFieldId: ${node.customFieldId}) по критериям пропуска`);
+                    return null;
+                }
+
+                const children = await getNestedFoldersParallel(projectId, node.id.toString(), treeId, customFields, skipCriteria);
+                return {
+                    id: node.id,
+                    name: node.name,
+                    customFieldId: node.customFieldId || null,
+                    customFieldName: customFieldsMap.get(node.customFieldId) || 'Неизвестное поле',
+                    count: node.children?.content?.length || 0,
+                    children: children.filter(child => child !== null),
+                };
+            })
+        );
+
+        const resolvedFolders = await Promise.all(folderPromises);
+        folders.push(...resolvedFolders.filter(folder => folder !== null));
+
+        // Проверяем, есть ли ещё страницы
+        hasMore = data.children?.content?.length === 100; // Если вернулось 100 узлов, возможно, есть ещё
+        page++;
+    }
+
+    logInfo(`Отформатировано папок для parentNodeId ${parentNodeId}: ${folders.length}`, JSON.stringify(folders));
     return folders;
 }
 
