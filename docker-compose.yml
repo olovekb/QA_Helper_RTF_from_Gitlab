@@ -8,5 +8,31 @@ services:
     networks:
       - allure-test-net
 
+  tia-mapping-service:
+    depends_on:
+      - postgresql
+    image: git.abanking.ru:4567/vpoliakov/allure-test-inspector/tia-mapping-service:usb-d-0-0-0-usb-7513
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - 5001:5001
+    networks:
+      - allure-test-net
+
+  postgresql:
+    image: postgres:16
+    restart: always
+    ports:
+      - 5432:5432
+    networks:
+      - allure-test-net
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+
 networks:
   allure-test-net:

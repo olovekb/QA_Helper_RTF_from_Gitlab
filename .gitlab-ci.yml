@@ -1,12 +1,25 @@
 stages:
   - build
 
-build-job:
+.common-script: &common-script
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
+    - docker build -t $FULL_IMAGE_NAME -f Dockerfile.$DOCKER_FILE_SERVICE .
+    - docker push $FULL_IMAGE_NAME
+
+build-job-inspector:
   stage: build
   when: always
   variables:
-    FULL_IMAGE_NAME: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
-  script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
-    - docker build . -t $FULL_IMAGE_NAME
-    - docker push $FULL_IMAGE_NAME
+    FULL_IMAGE_NAME: $CI_REGISTRY_IMAGE/allure-test-inspector:$CI_COMMIT_REF_SLUG
+    DOCKER_FILE_SERVICE: allure-test-inspector
+  <<: *common-script
+
+
+build-job-tia:
+  stage: build
+  when: always
+  variables:
+    FULL_IMAGE_NAME: $CI_REGISTRY_IMAGE/tia-mapping-service:$CI_COMMIT_REF_SLUG
+    DOCKER_FILE_SERVICE: tia-mapping-service
+  <<: *common-script

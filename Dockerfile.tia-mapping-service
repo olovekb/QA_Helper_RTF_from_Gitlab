@@ -1,0 +1,22 @@
+FROM node:18-alpine
+
+RUN apk update && apk add --no-cache postgresql-client
+
+WORKDIR /app
+
+COPY tia-mapping-service/package*.json ./
+RUN npm install --legacy-peer-deps --production
+
+COPY tia-mapping-service/ ./
+
+RUN ls /app/scripts
+
+RUN chmod +x /app/scripts/setup-db.sh
+
+# удаляем переносы и прочее
+RUN sed -i 's/\r//' /app/scripts/setup-db.sh
+
+EXPOSE 5001
+
+# сначала миграции и потом запуск приложения
+ENTRYPOINT ["/bin/sh", "-c", "/app/scripts/setup-db.sh && npm start"]
