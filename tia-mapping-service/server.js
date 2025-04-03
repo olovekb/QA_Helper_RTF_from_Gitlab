@@ -101,5 +101,8 @@ app.get('*', (req, res) => {
 
 // Запуск сервера на указанном порту
 app.listen(config.port, () => {
-    logInfo(`TIA Mapping Service запущен на http://localhost:${config.port}`); // Логирование запуска сервера
+    logInfo(`TIA Mapping Service запущен на http://localhost:${config.port}`);
+    logInfo(`Allure base url ${process.env.ALLURE_BASE_URL}`) // Логирование env 
+    logInfo(`Allure token ${process.env.ALLURE_TOKEN}`) // Логирование env
+    logInfo(`Allure DB host ${process.env.DB_HOST}`) // Логирование env
 });
