@@ -31,22 +31,59 @@ function extractStepText(step) {
     return "";
 }
 
+/**
+ * Функция для преобразования строки шагов, содержащей маркеры "Expected Result"
+ * в структурированный формат с нумерованными шагами.
+ *
+ * @param {string} rawStepsStr - исходная строка шагов, разделенная запятыми.
+ * @returns {string} - форматированная строка шагов с ожидаемыми результатами.
+ */
+function transformSteps(rawStepsStr) {
+    // Разбиваем строку по запятым и очищаем пробелы
+    const tokens = rawStepsStr.split(',')
+        .map(token => token.trim())
+        .filter(token => token.length > 0);
+
+    const steps = [];
+    for (let i = 0; i < tokens.length; i++) {
+        // Если токен равен "expected result" (без учета регистра), значит следующий токен –
+        // ожидаемый результат для предыдущего шага
+        if (tokens[i].toLowerCase() === 'expected result') {
+            if (steps.length > 0 && i + 1 < tokens.length) {
+                steps[steps.length - 1].expectedResult = tokens[i + 1];
+                i++; // пропускаем следующий токен
+            }
+        } else {
+            // Новый шаг
+            steps.push({ action: tokens[i] });
+        }
+    }
+    // Формируем читаемый вывод: нумерация, действие и ожидаемый результат (если есть)
+    const formattedSteps = steps.map((step, idx) => {
+        let result = `Шаг ${idx + 1}: ${step.action}`;
+        if (step.expectedResult) {
+            result += `\nОжидаемый результат: ${step.expectedResult}`;
+        }
+        return result;
+    }).join('\n\n');
+
+    return formattedSteps;
+}
+
 // Функция для анализа тест-кейса с использованием Deepseek API через OpenRouter
 export async function analyzeTestCaseWithAI(testCase) {
     try {
-        // Проверяем название теста: если не задано, используем "Неизвестно"
+        // Используем переданное имя или заменяем на "Неизвестно", если оно отсутствует
         const testName = testCase.name ? testCase.name : "Неизвестно";
 
         // Обработка шагов тест-кейса
         let stepsText = "";
         if (Array.isArray(testCase.steps)) {
-            // Если steps – массив, проходим по каждому шагу
             stepsText = testCase.steps
                 .map(step => extractStepText(step))
                 .filter(text => text !== "")
                 .join(', ');
         } else if (testCase.steps && typeof testCase.steps === 'object') {
-            // Если steps – объект и содержит ключ scenarioSteps
             if (testCase.steps.scenarioSteps && typeof testCase.steps.scenarioSteps === 'object') {
                 const stepsArray = Object.values(testCase.steps.scenarioSteps);
                 stepsText = stepsArray
@@ -58,7 +95,13 @@ export async function analyzeTestCaseWithAI(testCase) {
             }
         }
 
-        // Преобразование кастомных полей: Если значение – объект, выводим его поле name, иначе JSON.stringify
+        // Если в строке шагов присутствует маркер "expected result" (без учёта регистра),
+        // преобразуем строку в форматированный вывод
+        if (/expected result/i.test(stepsText)) {
+            stepsText = transformSteps(stepsText);
+        }
+
+        // Преобразование кастомных полей: если значение – объект, выводим его поле name, иначе JSON.stringify
         const customFieldsText = Array.isArray(testCase.customFields)
             ? testCase.customFields
                 .map(cf => {
@@ -81,6 +124,7 @@ export async function analyzeTestCaseWithAI(testCase) {
                 .filter(Boolean)
                 .join('; ')
             : '';
+
         const prompt = `Ты ведущий эксперт в области тестирования программного обеспечения с более чем 10-летним опытом в разработке тест-кейсов, автоматизации тестирования и методологиях контроля качества. Проанализируй следующий тест-кейс с особым вниманием к деталям и сопоставь его с лучшими практиками в индустрии.
 
             Обрати внимание на следующие аспекты:
@@ -97,14 +141,13 @@ export async function analyzeTestCaseWithAI(testCase) {
             Слой: ${testCase.layer && testCase.layer.name ? testCase.layer.name : 'нет'}
             Предварительные условия: ${testCase.precondition || 'нет'}
             Шаги теста: ${stepsText || 'нет'}
-            Ожидаемый результат: ${testCase.expectedResult || 'нет'}'}
+            Ожидаемый результат: ${testCase.expectedResult || 'нет'}
             ----------------------------------------------------------
             
             Дай подробный экспертный анализ и сформулируй конкретные рекомендации по улучшению данного тест-кейса, обосновав каждую рекомендацию примерами и ссылаясь на лучшие практики тестирования.
             `;
 
-
-        console.log(prompt)
+        console.log(prompt);
         // Подготовка запроса к OpenRouter API с использованием модели deepseek/deepseek-chat:free
         const API_TOKEN = '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';
         const URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -136,9 +179,10 @@ export async function analyzeTestCaseWithAI(testCase) {
             throw new Error(`Ошибка при генерации ответа: ${data.error}`);
         }
 
-        // Извлечение текста ответа (используем формат чата: data.choices[0].message.content)
+        // Извлечение текста ответа (формат чата)
         let responseText = "";
-        if (data.choices && data.choices.length > 0 && data.choices[0].message && data.choices[0].message.content) {
+        if (data.choices && data.choices.length > 0 &&
+            data.choices[0].message && data.choices[0].message.content) {
             responseText = data.choices[0].message.content.trim();
         } else if (data.text) {
             responseText = data.text.trim();
@@ -160,8 +204,7 @@ export async function analyzeTestCaseWithAI(testCase) {
 }
 
 function removeTextBeforeSuggestion(inputText) {
-    // Если в ответе присутствует лишний текст до фразы "Предложи улучшения для теста.",
-    // удаляем его. При необходимости настроить регулярное выражение.
+    // Удаляем всё до фразы "Предложи улучшения для теста." (если присутствует)
     const regex = /.*(Предложи улучшения для теста\.)/s;
     const result = inputText.replace(regex, '$1').trim();
     return result;

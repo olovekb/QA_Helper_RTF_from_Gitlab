@@ -1,0 +1,67 @@
+
+    <!DOCTYPE html>
+    <html lang="ru">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Статический анализ тест-кейсов</title>
+        <link rel="stylesheet" href="style.css">
+      </head>
+      <body>
+        <h1>Результат по задаче <a href="https://jira.abanking.ru/browse/KCBFL-6267" target="_blank">KCBFL-6267</a></h1>
+        <p style="color: red;">Есть ошибки в тест-кейсах</p>
+        <ul class="success-list"><p>Нет успешных тестов</p></ul>
+        <ul class="failed-list"><h2>Тесты с ошибками: 3</h2>
+       <ul class="scrollable-list"><li>
+                    <a href="#test-73141" class="failed-text">Замена рестов v1 на v2 при подключении счёта к СБП  (ID: 73141)</a>
+                    <label>
+                      <input type="checkbox" class="fix-checkbox" data-test-id="73141">
+                      Исправлено
+                    </label>
+                  </li><li>
+                    <a href="#test-73161" class="failed-text">Подстановка параметра tokenIntentChallengeValue для формирования ссылки перехода в приложения СБП с типом failed (ID: 73161)</a>
+                    <label>
+                      <input type="checkbox" class="fix-checkbox" data-test-id="73161">
+                      Исправлено
+                    </label>
+                  </li><li>
+                    <a href="#test-73142" class="failed-text">Подстановка параметра tokenIntentChallengeValue для формирования ссылки перехода в приложения СБП с типом success (ID: 73142)</a>
+                    <label>
+                      <input type="checkbox" class="fix-checkbox" data-test-id="73142">
+                      Исправлено
+                    </label>
+                  </li></ul></ul>
+        <div id="test-73141" class="test-case"><h1>Замена рестов v1 на v2 при подключении счёта к СБП  (ID: 73141)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/5/test-cases/73141" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> M </p><p><strong>Слои:</strong> Integration frontend Tests </p><p><strong>Кастомные поля:</strong> Epic: KCBFL-6264, Suite: СБП, Priority: medium, Version: stable</p><p><strong>Ожидаемый результат:</strong> Вызываются Запросы переведены на версию v2 став вида **_/personal/quick/v2/intent/complete?docId_** формирования ссылки редиректа и **_/personal/quick/v2/intent_** привязка счёта к СБПей </p><h3>Шаги:</h3><p><strong>1:</strong> Выбрать банк "Кубань кредит 10..50"</p><p><strong>2:</strong> Ввести пин-код</p><p><strong>3:</strong> Выбрать счёт</p><p><strong>4:</strong> Нажать подключить</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="73141">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-73141"></p>
+    </div>
+  </div></div><div id="test-73161" class="test-case"><h1>Подстановка параметра tokenIntentChallengeValue для формирования ссылки перехода в приложения СБП с типом failed (ID: 73161)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/5/test-cases/73161" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> M </p><p><strong>Слои:</strong> Integration backend Tests </p><p><strong>Кастомные поля:</strong> Epic: KCBFL-6264, Suite: СБП, Priority: medium, Version: stable</p><p><strong>Ожидаемый результат:</strong> Переход в приложение сбпей происходит запросом _sbpay/tokenIntent/{**tokenIntentId**}/faild_, где **{tokenIntentId}** равен **tokenIntentChallengeValue**. </p><h3>Шаги:</h3><p><strong>1:</strong> Выбрать банк "Кубань кредит 10..50"</p><p><strong>2:</strong> Ввести пин-код</p><p><strong>3:</strong> Выбрать счёт</p><p><strong>4:</strong> Нажать подключить</p><p><strong>5:</strong> Ввести в модальном окне код 000000</p><p><strong>6:</strong> Подменить ответ запроса /v2/intent/complete?docId</p><p><strong>7:</strong> Выбрать тестовое приложение Сбепей в нативном окне</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="73161">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-73161"></p>
+    </div>
+  </div></div><div id="test-73142" class="test-case"><h1>Подстановка параметра tokenIntentChallengeValue для формирования ссылки перехода в приложения СБП с типом success (ID: 73142)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/5/test-cases/73142" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> M </p><p><strong>Слои:</strong> Integration backend Tests </p><p><strong>Кастомные поля:</strong> Epic: KCBFL-6264, Suite: СБП, Priority: medium, Version: stable</p><p><strong>Ожидаемый результат:</strong> Переход в приложение сбпей происходит запросом _sbpay/tokenIntent/{**tokenIntentId**}/success_, где **{tokenIntentId}** равен **tokenIntentChallengeValue**. </p><h3>Шаги:</h3><p><strong>1:</strong> Выбрать банк "Кубань кредит 10..50"</p><p><strong>2:</strong> Ввести пин-код</p><p><strong>3:</strong> Выбрать счёт</p><p><strong>4:</strong> Нажать подключить</p><p><strong>5:</strong> Ввести в модальном окне код 000000</p><p><strong>6:</strong> Подменить ответ запроса /v2/intent/complete?docId</p><p><strong>7:</strong> Выбрать тестовое приложение Сбепей в нативном окне</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="73142">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-73142"></p>
+    </div>
+  </div></div>
+      </body>
+    </html>
+  
