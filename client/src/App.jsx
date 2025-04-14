@@ -198,7 +198,7 @@ const App = ({ projects }) => {
       <div className="header-wrapper">
         <h1>QA-helper</h1>
         <button onClick={handleTIAClick} className="tia-button">
-          TIA (Экспериментальный режим)
+          Test impact analysis
         </button>
       </div>
       <div className="tabs">
