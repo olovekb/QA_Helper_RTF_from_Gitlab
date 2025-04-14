@@ -1,152 +1,275 @@
 
     <!DOCTYPE html>
     <html lang="ru">
-    <head>
+      <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Статический анализ тест-кейсов</title>
         <link rel="stylesheet" href="style.css">
-    </head>
-    <body>
+      </head>
+      <body>
         <h1>Результат по задаче <a href="https://jira.abanking.ru/browse/SBK-17343" target="_blank">SBK-17343</a></h1>
         <p style="color: red;">Есть ошибки в тест-кейсах</p>
         <ul class="success-list"><p>Нет успешных тестов</p></ul>
-        <ul class="failed-list"><h2>Тесты с ошибками: 8</h2>
+        <ul class="failed-list"><h2>Тесты с ошибками: 16</h2>
        <ul class="scrollable-list"><li>
-                    <a href="#test-48501" class="failed-text">[M] [PWA] Логика отображения документов на странице "История операций" и "История действий" (ID: 48501)</a>
+                    <a href="#test-94142" class="failed-text">[M] [PWA] Отображения скелетной загрузки на странице "История заявлений" до получения ответа от запросов /rest/personal/document/list (ID: 94142)</a>
                     <label>
-                        <input type="checkbox" id="fix-48501" onchange="toggleFixStatus(48501)">
-                        Исправлено
+                      <input type="checkbox" class="fix-checkbox" data-test-id="94142">
+                      Исправлено
                     </label>
-                </li><li>
-                    <a href="#test-47189" class="failed-text">[M] [PWA] Логика отображения страницы "История заявлений", если ответ реста /doc_types/visual  200 ОК и ответ непустой (ID: 47189)</a>
+                  </li><li>
+                    <a href="#test-94181" class="failed-text">[M] [PWA] Проверка входного параметра "brokerageCode" в запросе /rest/personal/document/list для заявлений на закрытие БС (ID: 94181)</a>
                     <label>
-                        <input type="checkbox" id="fix-47189" onchange="toggleFixStatus(47189)">
-                        Исправлено
+                      <input type="checkbox" class="fix-checkbox" data-test-id="94181">
+                      Исправлено
                     </label>
-                </li><li>
-                    <a href="#test-48505" class="failed-text">[M] [PWA] Логика отображения документов при переходе из детальной страницы продукта, с которого был пополнен счет (ID: 48505)</a>
+                  </li><li>
+                    <a href="#test-94182" class="failed-text">[M] [PWA] Проверка входного параметра "brokerageCode" в запросе /rest/personal/document/list для заявлений на изменение БС (ID: 94182)</a>
                     <label>
-                        <input type="checkbox" id="fix-48505" onchange="toggleFixStatus(48505)">
-                        Исправлено
+                      <input type="checkbox" class="fix-checkbox" data-test-id="94182">
+                      Исправлено
                     </label>
-                </li><li>
-                    <a href="#test-47185" class="failed-text">[M] [PWA] Логика отображения страницы "История заявлений", если ответ реста /doc_types/visual 200 ОК и в ответе получен null/ ""/пустой ответ (ID: 47185)</a>
+                  </li><li>
+                    <a href="#test-94147" class="failed-text">[M] [PWA] Проверка захардкоженных входных параметров в запросе /rest/personal/document/list для заявлений на закрытие БС (ID: 94147)</a>
                     <label>
-                        <input type="checkbox" id="fix-47185" onchange="toggleFixStatus(47185)">
-                        Исправлено
+                      <input type="checkbox" class="fix-checkbox" data-test-id="94147">
+                      Исправлено
                     </label>
-                </li><li>
-                    <a href="#test-48471" class="failed-text">[M] [PWA] Логика отображения детальной страницы документа "Пополнение брокерского счёта" (ID: 48471)</a>
+                  </li><li>
+                    <a href="#test-94180" class="failed-text">[M] [PWA] Проверка входного параметра "brokerageCode" в запросе /rest/personal/document/list для заявлений на открытие БС (ID: 94180)</a>
                     <label>
-                        <input type="checkbox" id="fix-48471" onchange="toggleFixStatus(48471)">
-                        Исправлено
+                      <input type="checkbox" class="fix-checkbox" data-test-id="94180">
+                      Исправлено
                     </label>
-                </li><li>
-                    <a href="#test-47273" class="failed-text">[M] [PWA] Логика отображения детальной страницы заявления на оформление брокерского счета (ID: 47273)</a>
+                  </li><li>
+                    <a href="#test-94131" class="failed-text">[M] [PWA] Отправка трех запросов /rest/personal/document/list при переходе на страницу "Историй заявлений" (ID: 94131)</a>
                     <label>
-                        <input type="checkbox" id="fix-47273" onchange="toggleFixStatus(47273)">
-                        Исправлено
+                      <input type="checkbox" class="fix-checkbox" data-test-id="94131">
+                      Исправлено
                     </label>
-                </li><li>
-                    <a href="#test-48476" class="failed-text">[M] [PWA] Логика отображения детальной страницы заявления на расторжение брокерского счета (ID: 48476)</a>
+                  </li><li>
+                    <a href="#test-94146" class="failed-text">[M] [PWA] Проверка захардкоженных входных параметров в запросе /rest/personal/document/list для заявлений на открытие БС (ID: 94146)</a>
                     <label>
-                        <input type="checkbox" id="fix-48476" onchange="toggleFixStatus(48476)">
-                        Исправлено
+                      <input type="checkbox" class="fix-checkbox" data-test-id="94146">
+                      Исправлено
                     </label>
-                </li><li>
-                    <a href="#test-47179" class="failed-text">[M] [PWA] Логика отображения страницы "История заявлений", если ответ реста /doc_types/visual отличный от 200 ОК (в т.ч. 200 ОК + "errorCode") (ID: 47179)</a>
+                  </li><li>
+                    <a href="#test-93540" class="failed-text">[M] [PWA] Отображение детальной страницы заявления на изменение брокерского счета со страницы "История заявлений" (ID: 93540)</a>
                     <label>
-                        <input type="checkbox" id="fix-47179" onchange="toggleFixStatus(47179)">
-                        Исправлено
+                      <input type="checkbox" class="fix-checkbox" data-test-id="93540">
+                      Исправлено
                     </label>
-                </li></ul></ul>
-        <div id="test-48501" class="test-case"><h1>[M] [PWA] Логика отображения документов на странице "История операций" и "История действий" (ID: 48501)</h1>
-        <p>
-            <a href="https://abanking.qatools.cloud/project/199/test-cases/48501" target="_blank">
-                Ссылка на тест-кейс из Allure (ТестОпс)
-            </a>
-        </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> E2E Tests </p><p><strong>Кастомные поля:</strong> Нет значений <span style="color:red;"><strong>Ошибка:</strong> Не указаны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Нет результата <span style="color:red;"><strong>Ошибка:</strong> Конечный ожидаемый результат тест-кейса должен быть заполнен</span></p><h3>Шаги:</h3><p><strong>1:</strong> Подменить ответ запроса "/product?sync=true&with_blocked=true" на данные из JSON</p><p><strong>2:</strong> Нажать на таб "Платежи"</p><p><strong>3:</strong> Нажать на кнопку "История операций"</p><p><strong>4:</strong> Подменить ответ запроса /rest/personal/last_documents/doc_types/visual?number_of_entries=1000 на данные из JSON</p><p><strong>5:</strong> Проверить страницу  "История операций"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны кастомные поля: Priority, Version</span></li><li style="color:red;">Ошибка: Конечный ожидаемый результат тест-кейса должен быть заполнен</li></ul></div>
-            <div class="ai-recommendations">
-                <h3>Рекомендации по улучшению:</h3>
-                <p>Нет рекомендаций, так как произошла ошибка при анализе с AI.</p>
-            </div></div><div id="test-47189" class="test-case"><h1>[M] [PWA] Логика отображения страницы "История заявлений", если ответ реста /doc_types/visual  200 ОК и ответ непустой (ID: 47189)</h1>
-        <p>
-            <a href="https://abanking.qatools.cloud/project/199/test-cases/47189" target="_blank">
-                Ссылка на тест-кейс из Allure (ТестОпс)
-            </a>
-        </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> E2E Tests </p><p><strong>Кастомные поля:</strong> Нет значений <span style="color:red;"><strong>Ошибка:</strong> Не указаны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Нет результата <span style="color:red;"><strong>Ошибка:</strong> Конечный ожидаемый результат тест-кейса должен быть заполнен</span></p><h3>Шаги:</h3><p><strong>1:</strong> Подменить ответ запроса "/product?sync=true&with_blocked=true"   на данные из JSON</p><p><strong>2:</strong> Нажать на первый продукт в блоке "Инвестиции"</p><p><strong>3:</strong> Нажать на кнопку "История заявлений"</p><p><strong>4:</strong> Подменить ответ запроса /rest/personal/last_documents/doc_types/visual?number_of_entries=1000 на данные из JSON</p><p><strong>5:</strong> Проверить страницу "История заявлений"</p><p><strong>6:</strong> Свайпнуть первый документ влево</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны кастомные поля: Priority, Version</span></li><li style="color:red;">Ошибка: Конечный ожидаемый результат тест-кейса должен быть заполнен</li></ul></div>
-            <div class="ai-recommendations">
-                <h3>Рекомендации по улучшению:</h3>
-                <p>Нет рекомендаций, так как произошла ошибка при анализе с AI.</p>
-            </div></div><div id="test-48505" class="test-case"><h1>[M] [PWA] Логика отображения документов при переходе из детальной страницы продукта, с которого был пополнен счет (ID: 48505)</h1>
-        <p>
-            <a href="https://abanking.qatools.cloud/project/199/test-cases/48505" target="_blank">
-                Ссылка на тест-кейс из Allure (ТестОпс)
-            </a>
-        </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> E2E Tests </p><p><strong>Кастомные поля:</strong> Нет значений <span style="color:red;"><strong>Ошибка:</strong> Не указаны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Нет результата <span style="color:red;"><strong>Ошибка:</strong> Конечный ожидаемый результат тест-кейса должен быть заполнен</span></p><h3>Шаги:</h3><p><strong>1:</strong> Подменить ответ запроса "/product?sync=true&with_blocked=true"  на данные из JSON</p><p><strong>2:</strong> Нажать на счет *0263</p><p><strong>3:</strong> Подменить ответ запроса  /rest/personal/account/statement на данные из JSON</p><p><strong>4:</strong> Нажать на кнопку "Показать все операции"</p><p><strong>5:</strong> Подменить ответ запроса  /rest/personal/account/statement на данные из JSON</p><p><strong>6:</strong> Проверить  список совершенных операций</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны кастомные поля: Priority, Version</span></li><li style="color:red;">Ошибка: Конечный ожидаемый результат тест-кейса должен быть заполнен</li></ul></div>
-            <div class="ai-recommendations">
-                <h3>Рекомендации по улучшению:</h3>
-                <p>Нет рекомендаций, так как произошла ошибка при анализе с AI.</p>
-            </div></div><div id="test-47185" class="test-case"><h1>[M] [PWA] Логика отображения страницы "История заявлений", если ответ реста /doc_types/visual 200 ОК и в ответе получен null/ ""/пустой ответ (ID: 47185)</h1>
-        <p>
-            <a href="https://abanking.qatools.cloud/project/199/test-cases/47185" target="_blank">
-                Ссылка на тест-кейс из Allure (ТестОпс)
-            </a>
-        </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> E2E Tests </p><p><strong>Кастомные поля:</strong> Нет значений <span style="color:red;"><strong>Ошибка:</strong> Не указаны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Нет результата <span style="color:red;"><strong>Ошибка:</strong> Конечный ожидаемый результат тест-кейса должен быть заполнен</span></p><h3>Шаги:</h3><p><strong>1:</strong> Подменить ответ запроса "/product?sync=true&with_blocked=true"   на данные из JSON</p><p><strong>2:</strong> Нажать на первый продукт в блоке "Инвестиции"</p><p><strong>3:</strong> Нажать на кнопку "История заявлений"</p><p><strong>4:</strong> Подменить ответ запроса /rest/personal/last_documents/doc_types/visual?number_of_entries=1000 на пустую строку ("")</p><p><strong>5:</strong> Проверить страницу "История заявлений"</p><p><strong>6:</strong> Нажать на системную кнопку "Назад"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны кастомные поля: Priority, Version</span></li><li style="color:red;">Ошибка: Конечный ожидаемый результат тест-кейса должен быть заполнен</li></ul></div>
-            <div class="ai-recommendations">
-                <h3>Рекомендации по улучшению:</h3>
-                <p>Нет рекомендаций, так как произошла ошибка при анализе с AI.</p>
-            </div></div><div id="test-48471" class="test-case"><h1>[M] [PWA] Логика отображения детальной страницы документа "Пополнение брокерского счёта" (ID: 48471)</h1>
-        <p>
-            <a href="https://abanking.qatools.cloud/project/199/test-cases/48471" target="_blank">
-                Ссылка на тест-кейс из Allure (ТестОпс)
-            </a>
-        </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> E2E Tests </p><p><strong>Кастомные поля:</strong> Нет значений <span style="color:red;"><strong>Ошибка:</strong> Не указаны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Нет результата <span style="color:red;"><strong>Ошибка:</strong> Конечный ожидаемый результат тест-кейса должен быть заполнен</span></p><h3>Шаги:</h3><p><strong>1:</strong> Подменить ответ запроса "/product?sync=true&with_blocked=true"   на данные из JSON</p><p><strong>2:</strong> Нажать на первый продукт в блоке "Инвестиции"</p><p><strong>3:</strong> Нажать на кнопку "История заявлений"</p><p><strong>4:</strong> Подменить ответ запроса /rest/personal/last_documents/doc_types/visual?number_of_entries=1000 на данные из JSON</p><p><strong>5:</strong> Нажать на первый документ</p><p><strong>6:</strong> Проверить страницу  "Пополнение брокерского счета"</p><p><strong>7:</strong> Нажать на кнопку "Назад"</p><p><strong>8:</strong> Нажать на третий документ</p><p><strong>9:</strong> Проверить страницу  "Пополнение брокерского счета"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны кастомные поля: Priority, Version</span></li><li style="color:red;">Ошибка: Конечный ожидаемый результат тест-кейса должен быть заполнен</li></ul></div>
-            <div class="ai-recommendations">
-                <h3>Рекомендации по улучшению:</h3>
-                <p>Нет рекомендаций, так как произошла ошибка при анализе с AI.</p>
-            </div></div><div id="test-47273" class="test-case"><h1>[M] [PWA] Логика отображения детальной страницы заявления на оформление брокерского счета (ID: 47273)</h1>
-        <p>
-            <a href="https://abanking.qatools.cloud/project/199/test-cases/47273" target="_blank">
-                Ссылка на тест-кейс из Allure (ТестОпс)
-            </a>
-        </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> E2E Tests </p><p><strong>Кастомные поля:</strong> Нет значений <span style="color:red;"><strong>Ошибка:</strong> Не указаны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Нет результата <span style="color:red;"><strong>Ошибка:</strong> Конечный ожидаемый результат тест-кейса должен быть заполнен</span></p><h3>Шаги:</h3><p><strong>1:</strong> Подменить ответ запроса "/product?sync=true&with_blocked=true"   на данные из JSON</p><p><strong>2:</strong> Нажать на первый продукт в блоке "Инвестиции"</p><p><strong>3:</strong> Нажать на кнопку "История заявлений"</p><p><strong>4:</strong> Подменить ответ запроса /rest/personal/last_documents/doc_types/visual?number_of_entries=1000 на данные из JSON</p><p><strong>5:</strong> Нажать на первый документ</p><p><strong>6:</strong> Проверить детальную страницу заявления на оформление БС</p><p><strong>7:</strong> Нажать на кнопку "Назад"</p><p><strong>8:</strong> Нажать на второй документ</p><p><strong>9:</strong> Проверить детальную страницу заявления на оформление БС</p><p><strong>10:</strong> Нажать на кнопку "Назад"</p><p><strong>11:</strong> Нажать на третий документ</p><p><strong>12:</strong> Проверить детальную страницу заявления на оформление БС</p><p><strong>13:</strong> Нажать на кнопку "Скачать"</p><p><strong>14:</strong> Подменить ответ запроса на данные из JSON</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны кастомные поля: Priority, Version</span></li><li style="color:red;">Ошибка: Конечный ожидаемый результат тест-кейса должен быть заполнен</li></ul></div>
-            <div class="ai-recommendations">
-                <h3>Рекомендации по улучшению:</h3>
-                <p>Нет рекомендаций, так как произошла ошибка при анализе с AI.</p>
-            </div></div><div id="test-48476" class="test-case"><h1>[M] [PWA] Логика отображения детальной страницы заявления на расторжение брокерского счета (ID: 48476)</h1>
-        <p>
-            <a href="https://abanking.qatools.cloud/project/199/test-cases/48476" target="_blank">
-                Ссылка на тест-кейс из Allure (ТестОпс)
-            </a>
-        </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> E2E Tests </p><p><strong>Кастомные поля:</strong> Нет значений <span style="color:red;"><strong>Ошибка:</strong> Не указаны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Нет результата <span style="color:red;"><strong>Ошибка:</strong> Конечный ожидаемый результат тест-кейса должен быть заполнен</span></p><h3>Шаги:</h3><p><strong>1:</strong> Подменить ответ запроса "/product?sync=true&with_blocked=true"   на данные из JSON</p><p><strong>2:</strong> Нажать на первый продукт в блоке "Инвестиции"</p><p><strong>3:</strong> Нажать на кнопку "История заявлений"</p><p><strong>4:</strong> Подменить ответ запроса /rest/personal/last_documents/doc_types/visual?number_of_entries=1000 на данные из JSON</p><p><strong>5:</strong> Нажать на первый документ</p><p><strong>6:</strong> Проверить детальную страницу заявления на расторжение БС</p><p><strong>7:</strong> Нажать на кнопку "Назад"</p><p><strong>8:</strong> Нажать на второй документ</p><p><strong>9:</strong> Проверить детальную страницу заявления на расторжение БС</p><p><strong>10:</strong> Нажать на кнопку "Назад"</p><p><strong>11:</strong> Нажать на третий документ</p><p><strong>12:</strong> Проверить детальную страницу заявления на расторжение БС</p><p><strong>13:</strong> Нажать на кнопку "Отправить"</p><p><strong>14:</strong> Нажать отправить "Переслать в Whatsapp, Viber и др."</p><p><strong>15:</strong> Нажать на иконку "Телеграмм"</p><p><strong>16:</strong> Поделиться документом в МП "Телеграмм"</p><p><strong>17:</strong> Вернуть в МП "Ингосстрах"</p><p><strong>18:</strong> Нажать отправить "Отправить на e-mail"</p><p><strong>19:</strong> Ввести валидный e-mail</p><p><strong>20:</strong> Нажать на кнопку "Отправить"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны кастомные поля: Priority, Version</span></li><li style="color:red;">Ошибка: Конечный ожидаемый результат тест-кейса должен быть заполнен</li></ul></div>
-            <div class="ai-recommendations">
-                <h3>Рекомендации по улучшению:</h3>
-                <p>Нет рекомендаций, так как произошла ошибка при анализе с AI.</p>
-            </div></div><div id="test-47179" class="test-case"><h1>[M] [PWA] Логика отображения страницы "История заявлений", если ответ реста /doc_types/visual отличный от 200 ОК (в т.ч. 200 ОК + "errorCode") (ID: 47179)</h1>
-        <p>
-            <a href="https://abanking.qatools.cloud/project/199/test-cases/47179" target="_blank">
-                Ссылка на тест-кейс из Allure (ТестОпс)
-            </a>
-        </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> E2E Tests </p><p><strong>Кастомные поля:</strong> Нет значений <span style="color:red;"><strong>Ошибка:</strong> Не указаны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Нет результата <span style="color:red;"><strong>Ошибка:</strong> Конечный ожидаемый результат тест-кейса должен быть заполнен</span></p><h3>Шаги:</h3><p><strong>1:</strong> Подменить ответ запроса "/product?sync=true&with_blocked=true"  на данные из JSON</p><p><strong>2:</strong> Нажать на первый продукт в блоке "Инвестиции"</p><p><strong>3:</strong> Нажать на кнопку "История заявлений"</p><p><strong>4:</strong> Перехватить запрос /rest/personal/last_documents/doc_types/visual?number_of_entries=1000</p><p><strong>5:</strong> Проверить соответствие входных параметров запроса /rest/personal/last_documents/doc_types/visual?number_of_entries=1000 с изображением ниже</p><p><strong>6:</strong> Сделать ПТР</p><p><strong>7:</strong> Свернуть МП</p><p><strong>8:</strong> Дождаться окончание жизни сессии</p><p><strong>9:</strong> Развернуть МП из фона</p><p><strong>10:</strong> Подменить ответ запроса /rest/personal/last_documents/doc_types/visual?number_of_entries=1000 на данные из JSON</p><p><strong>11:</strong> Проверить страницу "История заявлений"</p><p><strong>12:</strong> Нажать на кнопку "Назад" в виде стрелки</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны кастомные поля: Priority, Version</span></li><li style="color:red;">Ошибка: Конечный ожидаемый результат тест-кейса должен быть заполнен</li></ul></div>
-            <div class="ai-recommendations">
-                <h3>Рекомендации по улучшению:</h3>
-                <p>Нет рекомендаций, так как произошла ошибка при анализе с AI.</p>
-            </div></div>
-        <script>
-            function toggleFixStatus(testId) {
-                const checkbox = document.getElementById('fix-' + testId);
-                const testLink = document.querySelector('a[href="#test-' + testId + '"]');
-
-                if (checkbox.checked) {
-                    testLink.style.textDecoration = 'line-through'; // Перечеркиваем ссылку, если ошибка исправлена
-                    testLink.style.color = '#999'; // Меняем цвет на серый
-                } else {
-                    testLink.style.textDecoration = 'none'; // Убираем перечеркивание
-                    testLink.style.color = ''; // Возвращаем цвет по умолчанию
-                }
-            }
-        </script>
-    </body>
+                  </li><li>
+                    <a href="#test-87139" class="failed-text">[M] [PWA] Отображение документов на странице "История действий" (ID: 87139)</a>
+                    <label>
+                      <input type="checkbox" class="fix-checkbox" data-test-id="87139">
+                      Исправлено
+                    </label>
+                  </li><li>
+                    <a href="#test-94148" class="failed-text">[M] [PWA] Проверка захардкоженных входных параметров в запросе /rest/personal/document/list для заявлений на изменение БС (ID: 94148)</a>
+                    <label>
+                      <input type="checkbox" class="fix-checkbox" data-test-id="94148">
+                      Исправлено
+                    </label>
+                  </li><li>
+                    <a href="#test-48501" class="failed-text">[M] [PWA] Отображение документов на странице "История операций" (ID: 48501)</a>
+                    <label>
+                      <input type="checkbox" class="fix-checkbox" data-test-id="48501">
+                      Исправлено
+                    </label>
+                  </li><li>
+                    <a href="#test-47179" class="failed-text">[M] [PWA] Отображение страницы "История заявлений", если ответы рестов /rest/personal/document/list отличны от 200 ОК (в т.ч. 200 ОК + "errorCode") (ID: 47179)</a>
+                    <label>
+                      <input type="checkbox" class="fix-checkbox" data-test-id="47179">
+                      Исправлено
+                    </label>
+                  </li><li>
+                    <a href="#test-47273" class="failed-text">[M] [PWA] Отображение детальной страницы заявления на оформление брокерского счета (ID: 47273)</a>
+                    <label>
+                      <input type="checkbox" class="fix-checkbox" data-test-id="47273">
+                      Исправлено
+                    </label>
+                  </li><li>
+                    <a href="#test-47189" class="failed-text">[M] [PWA] Отображение страницы "История заявлений", если ответ реста /rest/personal/document/list  200 ОК и ответ непустой (ID: 47189)</a>
+                    <label>
+                      <input type="checkbox" class="fix-checkbox" data-test-id="47189">
+                      Исправлено
+                    </label>
+                  </li><li>
+                    <a href="#test-47185" class="failed-text">[M] [PWA] Отображение страницы "История заявлений", если ответы рестов  /rest/personal/document/list 200 ОК и в ответах получен null/ ""/пустой ответ (ID: 47185)</a>
+                    <label>
+                      <input type="checkbox" class="fix-checkbox" data-test-id="47185">
+                      Исправлено
+                    </label>
+                  </li><li>
+                    <a href="#test-48476" class="failed-text">[M] [PWA] Отображение детальной страницы заявления на расторжение брокерского счета (ID: 48476)</a>
+                    <label>
+                      <input type="checkbox" class="fix-checkbox" data-test-id="48476">
+                      Исправлено
+                    </label>
+                  </li></ul></ul>
+        <div id="test-94142" class="test-case"><h1>[M] [PWA] Отображения скелетной загрузки на странице "История заявлений" до получения ответа от запросов /rest/personal/document/list (ID: 94142)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/4/test-cases/94142" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, 71-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> Integration frontend Tests </p><p><strong>Кастомные поля:</strong> Suite: Брокерские соглашения<span style="color:red;"><strong> Ошибка:</strong> Не указаны или некорректны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Отображается скелетная загрузка </p><h3>Шаги:</h3><p><strong>1:</strong> Нажать на кнопку "История заявлений"</p><p><strong>2:</strong> Перехватить запрос "/document/list"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны или некорректны кастомные поля: Priority, Version</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="94142">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-94142"></p>
+    </div>
+  </div></div><div id="test-94181" class="test-case"><h1>[M] [PWA] Проверка входного параметра "brokerageCode" в запросе /rest/personal/document/list для заявлений на закрытие БС (ID: 94181)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/4/test-cases/94181" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 71-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> Integration frontend Tests </p><p><strong>Кастомные поля:</strong> Suite: Брокерские соглашения<span style="color:red;"><strong> Ошибка:</strong> Не указаны или некорректны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> В запросе `/rest/personal/document/list` для заявлений на закрытие БС входной параметр "brokerageCode":"RF167" </p><h3>Шаги:</h3><p><strong>1:</strong> Нажать на кнопку "История заявлений"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны или некорректны кастомные поля: Priority, Version</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="94181">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-94181"></p>
+    </div>
+  </div></div><div id="test-94182" class="test-case"><h1>[M] [PWA] Проверка входного параметра "brokerageCode" в запросе /rest/personal/document/list для заявлений на изменение БС (ID: 94182)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/4/test-cases/94182" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 71-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> Integration frontend Tests </p><p><strong>Кастомные поля:</strong> Suite: Брокерские соглашения<span style="color:red;"><strong> Ошибка:</strong> Не указаны или некорректны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> В запросе `/rest/personal/document/list` для заявлений на изменение БС входной параметр "brokerageCode":"RF167" </p><h3>Шаги:</h3><p><strong>1:</strong> Нажать на кнопку "История заявлений"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны или некорректны кастомные поля: Priority, Version</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="94182">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-94182"></p>
+    </div>
+  </div></div><div id="test-94147" class="test-case"><h1>[M] [PWA] Проверка захардкоженных входных параметров в запросе /rest/personal/document/list для заявлений на закрытие БС (ID: 94147)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/4/test-cases/94147" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 71-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> Integration frontend Tests </p><p><strong>Кастомные поля:</strong> Suite: Брокерские соглашения<span style="color:red;"><strong> Ошибка:</strong> Не указаны или некорректны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> В запросе `/rest/personal/document/list` для заявлений на закрытие БС входные параметры "docModule":"ibankfl" , "docType":"request_close_brokerage_acc" и "filter":"(status='for_send' or status='send' or status='end' or status='decline') </p><h3>Шаги:</h3><p><strong>1:</strong> Нажать на кнопку "История заявлений"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны или некорректны кастомные поля: Priority, Version</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="94147">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-94147"></p>
+    </div>
+  </div></div><div id="test-94180" class="test-case"><h1>[M] [PWA] Проверка входного параметра "brokerageCode" в запросе /rest/personal/document/list для заявлений на открытие БС (ID: 94180)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/4/test-cases/94180" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 71-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> Integration frontend Tests </p><p><strong>Кастомные поля:</strong> Suite: Брокерские соглашения<span style="color:red;"><strong> Ошибка:</strong> Не указаны или некорректны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> В запросе `/rest/personal/document/list` для заявлений на открытие БС входной параметр "brokerageCode":"RF167" </p><h3>Шаги:</h3><p><strong>1:</strong> Нажать на кнопку "История заявлений"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны или некорректны кастомные поля: Priority, Version</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="94180">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-94180"></p>
+    </div>
+  </div></div><div id="test-94131" class="test-case"><h1>[M] [PWA] Отправка трех запросов /rest/personal/document/list при переходе на страницу "Историй заявлений" (ID: 94131)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/4/test-cases/94131" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 71-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> Integration frontend Tests </p><p><strong>Кастомные поля:</strong> Suite: Брокерские соглашения<span style="color:red;"><strong> Ошибка:</strong> Не указаны или некорректны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Отправляются три запроса /rest/personal/document/list </p><h3>Шаги:</h3><p><strong>1:</strong> Нажать на кнопку "История заявлений"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны или некорректны кастомные поля: Priority, Version</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="94131">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-94131"></p>
+    </div>
+  </div></div><div id="test-94146" class="test-case"><h1>[M] [PWA] Проверка захардкоженных входных параметров в запросе /rest/personal/document/list для заявлений на открытие БС (ID: 94146)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/4/test-cases/94146" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 71-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> Integration frontend Tests </p><p><strong>Кастомные поля:</strong> Suite: Брокерские соглашения<span style="color:red;"><strong> Ошибка:</strong> Не указаны или некорректны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> В запросе `/rest/personal/document/list` для заявлений на открытие БС входные параметры "docModule":"ibankfl",  "docType":"request_open_brokerage_acc" и "filter":"(status='send' or status='end') </p><h3>Шаги:</h3><p><strong>1:</strong> Нажать на кнопку "История заявлений"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны или некорректны кастомные поля: Priority, Version</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="94146">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-94146"></p>
+    </div>
+  </div></div><div id="test-93540" class="test-case"><h1>[M] [PWA] Отображение детальной страницы заявления на изменение брокерского счета со страницы "История заявлений" (ID: 93540)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/4/test-cases/93540" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, 71-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> E2E Tests </p><p><strong>Кастомные поля:</strong> Suite: Брокерские соглашения<span style="color:red;"><strong> Ошибка:</strong> Не указаны или некорректны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Отображается детальная страница заявления на изменение брокерского счета </p><h3>Шаги:</h3><p><strong>1:</strong> Вход в МП без вызова запросов - Общий шаг <span style="color:red;">Описание шага 1 должно начинаться с глагола в неопределенной форме (окончания "ть", "ться" или "ти").</span></p><p><strong>2:</strong> Раскрыть блок "Инвестиции"</p><p><strong>3:</strong> Нажать на первый продукт в блоке "Инвестиции"</p><p><strong>4:</strong> Нажать на кнопку "История заявлений"</p><p><strong>5:</strong> Нажать на первый документ</p><p><strong>6:</strong> Проверить детальную страницу заявления на изменение БС</p><p><strong>7:</strong> Нажать на кнопку "Назад"</p><p><strong>8:</strong> Нажать на второй документ</p><p><strong>9:</strong> Проверить детальную страницу заявления на изменение БС</p><p><strong>10:</strong> Нажать на кнопку "Назад"</p><p><strong>11:</strong> Нажать на третий документ</p><p><strong>12:</strong> Проверить детальную страницу заявления на изменение БС</p><p><strong>13:</strong> Нажать на кнопку "Скачать"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны или некорректны кастомные поля: Priority, Version</li><li style="color:red;">Описание шага 1 должно начинаться с глагола в неопределенной форме (окончания "ть", "ться" или "ти").</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="93540">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-93540"></p>
+    </div>
+  </div></div><div id="test-87139" class="test-case"><h1>[M] [PWA] Отображение документов на странице "История действий" (ID: 87139)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/4/test-cases/87139" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, 71-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> E2E Tests </p><p><strong>Кастомные поля:</strong> Suite: Брокерские соглашения<span style="color:red;"><strong> Ошибка:</strong> Не указаны или некорректны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Отображаются документы на странице "История операций" </p><h3>Шаги:</h3><p><strong>1:</strong> Вход в МП без вызова запросов - Общий шаг <span style="color:red;">Описание шага 1 должно начинаться с глагола в неопределенной форме (окончания "ть", "ться" или "ти").</span></p><p><strong>2:</strong> Нажать на таб "Еще"</p><p><strong>3:</strong> Нажать на кнопку "История действий"</p><p><strong>4:</strong> Проверить страницу  "История действий"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны или некорректны кастомные поля: Priority, Version</li><li style="color:red;">Описание шага 1 должно начинаться с глагола в неопределенной форме (окончания "ть", "ться" или "ти").</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="87139">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-87139"></p>
+    </div>
+  </div></div><div id="test-94148" class="test-case"><h1>[M] [PWA] Проверка захардкоженных входных параметров в запросе /rest/personal/document/list для заявлений на изменение БС (ID: 94148)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/4/test-cases/94148" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 71-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> Integration frontend Tests </p><p><strong>Кастомные поля:</strong> Suite: Брокерские соглашения<span style="color:red;"><strong> Ошибка:</strong> Не указаны или некорректны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> В запросе `/rest/personal/document/list` для заявлений на изменение БС входные параметры "docModule":"ibankfl", "docType":"request_change_brokerage_acc" и "filter":"(status='for_send' or status='send' or status='end' or status='decline') </p><h3>Шаги:</h3><p><strong>1:</strong> Нажать на кнопку "История заявлений"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны или некорректны кастомные поля: Priority, Version</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="94148">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-94148"></p>
+    </div>
+  </div></div><div id="test-48501" class="test-case"><h1>[M] [PWA] Отображение документов на странице "История операций" (ID: 48501)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/4/test-cases/48501" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, 71-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> E2E Tests </p><p><strong>Кастомные поля:</strong> Suite: Брокерские соглашения<span style="color:red;"><strong> Ошибка:</strong> Не указаны или некорректны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Отображаются документы на странице "История операций" </p><h3>Шаги:</h3><p><strong>1:</strong> Вход в МП без вызова запросов - Общий шаг <span style="color:red;">Описание шага 1 должно начинаться с глагола в неопределенной форме (окончания "ть", "ться" или "ти").</span></p><p><strong>2:</strong> Нажать на таб "Платежи"</p><p><strong>3:</strong> Нажать на кнопку "История операций"</p><p><strong>4:</strong> Проверить страницу  "История операций"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны или некорректны кастомные поля: Priority, Version</li><li style="color:red;">Описание шага 1 должно начинаться с глагола в неопределенной форме (окончания "ть", "ться" или "ти").</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="48501">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-48501"></p>
+    </div>
+  </div></div><div id="test-47179" class="test-case"><h1>[M] [PWA] Отображение страницы "История заявлений", если ответы рестов /rest/personal/document/list отличны от 200 ОК (в т.ч. 200 ОК + "errorCode") (ID: 47179)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/4/test-cases/47179" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, 71-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> E2E Tests </p><p><strong>Кастомные поля:</strong> Suite: Брокерские соглашения<span style="color:red;"><strong> Ошибка:</strong> Не указаны или некорректны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> На странице отображается "Не удалось загрузить" </p><h3>Шаги:</h3><p><strong>1:</strong> Вход в МП без вызова запросов - Общий шаг <span style="color:red;">Описание шага 1 должно начинаться с глагола в неопределенной форме (окончания "ть", "ться" или "ти").</span></p><p><strong>2:</strong> Раскрыть блок "Инвестиции"</p><p><strong>3:</strong> Нажать на первый продукт в блоке "Инвестиции"</p><p><strong>4:</strong> Нажать на кнопку "История заявлений"</p><p><strong>5:</strong> Нажать на кнопку "Назад" в виде стрелки</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны или некорректны кастомные поля: Priority, Version</li><li style="color:red;">Описание шага 1 должно начинаться с глагола в неопределенной форме (окончания "ть", "ться" или "ти").</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="47179">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-47179"></p>
+    </div>
+  </div></div><div id="test-47273" class="test-case"><h1>[M] [PWA] Отображение детальной страницы заявления на оформление брокерского счета (ID: 47273)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/4/test-cases/47273" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, 71-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> E2E Tests </p><p><strong>Кастомные поля:</strong> Suite: Брокерские соглашения<span style="color:red;"><strong> Ошибка:</strong> Не указаны или некорректны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Отображается детальная страница заявления на оформление брокерского счета </p><h3>Шаги:</h3><p><strong>1:</strong> Вход в МП без вызова запросов - Общий шаг <span style="color:red;">Описание шага 1 должно начинаться с глагола в неопределенной форме (окончания "ть", "ться" или "ти").</span></p><p><strong>2:</strong> Раскрыть блок "Инвестиции"</p><p><strong>3:</strong> Нажать на первый продукт в блоке "Инвестиции"</p><p><strong>4:</strong> Нажать на кнопку "История заявлений"</p><p><strong>5:</strong> Нажать на первый документ</p><p><strong>6:</strong> Проверить детальную страницу заявления на оформление БС</p><p><strong>7:</strong> Нажать на кнопку "Назад"</p><p><strong>8:</strong> Нажать на второй документ</p><p><strong>9:</strong> Проверить детальную страницу заявления на оформление БС</p><p><strong>10:</strong> Нажать на кнопку "Назад"</p><p><strong>11:</strong> Нажать на третий документ</p><p><strong>12:</strong> Проверить детальную страницу заявления на оформление БС</p><p><strong>13:</strong> Нажать на кнопку "Скачать"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны или некорректны кастомные поля: Priority, Version</li><li style="color:red;">Описание шага 1 должно начинаться с глагола в неопределенной форме (окончания "ть", "ться" или "ти").</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="47273">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-47273"></p>
+    </div>
+  </div></div><div id="test-47189" class="test-case"><h1>[M] [PWA] Отображение страницы "История заявлений", если ответ реста /rest/personal/document/list  200 ОК и ответ непустой (ID: 47189)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/4/test-cases/47189" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, 71-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> E2E Tests </p><p><strong>Кастомные поля:</strong> Suite: Брокерские соглашения<span style="color:red;"><strong> Ошибка:</strong> Не указаны или некорректны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Отображается список документов </p><h3>Шаги:</h3><p><strong>1:</strong> Вход в МП без вызова запросов - Общий шаг <span style="color:red;">Описание шага 1 должно начинаться с глагола в неопределенной форме (окончания "ть", "ться" или "ти").</span></p><p><strong>2:</strong> Раскрыть блок "Инвестиции"</p><p><strong>3:</strong> Нажать на первый продукт в блоке "Инвестиции"</p><p><strong>4:</strong> Нажать на кнопку "История заявлений"</p><p><strong>5:</strong> Проверить страницу "История заявлений"</p><p><strong>6:</strong> Свайпнуть первый документ влево</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны или некорректны кастомные поля: Priority, Version</li><li style="color:red;">Описание шага 1 должно начинаться с глагола в неопределенной форме (окончания "ть", "ться" или "ти").</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="47189">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-47189"></p>
+    </div>
+  </div></div><div id="test-47185" class="test-case"><h1>[M] [PWA] Отображение страницы "История заявлений", если ответы рестов  /rest/personal/document/list 200 ОК и в ответах получен null/ ""/пустой ответ (ID: 47185)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/4/test-cases/47185" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, 71-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> E2E Tests </p><p><strong>Кастомные поля:</strong> Suite: Брокерские соглашения<span style="color:red;"><strong> Ошибка:</strong> Не указаны или некорректны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Отображается страница "История заявлений" с заглушкой "Заявлений не было" </p><h3>Шаги:</h3><p><strong>1:</strong> Вход в МП без вызова запросов - Общий шаг <span style="color:red;">Описание шага 1 должно начинаться с глагола в неопределенной форме (окончания "ть", "ться" или "ти").</span></p><p><strong>2:</strong> Раскрыть блок "Инвестиции"</p><p><strong>3:</strong> Нажать на первый продукт в блоке "Инвестиции"</p><p><strong>4:</strong> Нажать на кнопку "История заявлений"</p><p><strong>5:</strong> Проверить страницу "История заявлений"</p><p><strong>6:</strong> Нажать на системную кнопку "Назад"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны или некорректны кастомные поля: Priority, Version</li><li style="color:red;">Описание шага 1 должно начинаться с глагола в неопределенной форме (окончания "ть", "ться" или "ти").</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="47185">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-47185"></p>
+    </div>
+  </div></div><div id="test-48476" class="test-case"><h1>[M] [PWA] Отображение детальной страницы заявления на расторжение брокерского счета (ID: 48476)</h1>
+    <p>
+      <a href="https://abanking.qatools.cloud/project/4/test-cases/48476" target="_blank">
+        Ссылка на тест-кейс из Allure (ТестОпс)
+      </a>
+    </p><p><strong>Статус:</strong> Active <span style="color:red;">Ошибка: Статус должен быть "Review"</span></p><p><strong>Теги:</strong> 66-ЧТЗ, 71-ЧТЗ, M, PWA </p><p><strong>Слои:</strong> E2E Tests </p><p><strong>Кастомные поля:</strong> Suite: Брокерские соглашения<span style="color:red;"><strong> Ошибка:</strong> Не указаны или некорректны кастомные поля: Priority, Version</span></p><p><strong>Ожидаемый результат:</strong> Нет результата <span style="color:red;"><strong>Ошибка:</strong> Конечный ожидаемый результат тест-кейса должен быть заполнен</span></p><h3>Шаги:</h3><p><strong>1:</strong> Вход в МП без вызова запросов - Общий шаг <span style="color:red;">Описание шага 1 должно начинаться с глагола в неопределенной форме (окончания "ть", "ться" или "ти").</span></p><p><strong>2:</strong> Раскрыть блок "Инвестиции"</p><p><strong>3:</strong> Нажать на первый продукт в блоке "Инвестиции"</p><p><strong>4:</strong> Нажать на кнопку "История заявлений"</p><p><strong>5:</strong> Нажать на первый документ</p><p><strong>6:</strong> Проверить детальную страницу заявления на расторжение БС</p><p><strong>7:</strong> Нажать на кнопку "Назад"</p><p><strong>8:</strong> Нажать на второй документ</p><p><strong>9:</strong> Проверить детальную страницу заявления на расторжение БС</p><p><strong>10:</strong> Нажать на кнопку "Назад"</p><p><strong>11:</strong> Нажать на третий документ</p><p><strong>12:</strong> Проверить детальную страницу заявления на расторжение БС</p><p><strong>13:</strong> Нажать на кнопку "Отправить"</p><p><strong>14:</strong> Нажать отправить "Переслать в Whatsapp, Viber и др."</p><p><strong>15:</strong> Нажать на иконку "Телеграмм"</p><p><strong>16:</strong> Поделиться документом в МП "Телеграмм"</p><p><strong>17:</strong> Вернуть в МП "Ингосстрах"</p><p><strong>18:</strong> Нажать отправить "Отправить на e-mail"</p><p><strong>19:</strong> Ввести валидный e-mail</p><p><strong>20:</strong> Нажать на кнопку "Отправить"</p><h2><strong>Ошибки</strong>:</h2><ul><li style="color:red;">Ошибка: Статус должен быть "Review"</li><li style="color:red;">Ошибка: Не указаны или некорректны кастомные поля: Priority, Version</li><li style="color:red;">Ошибка: Конечный ожидаемый результат тест-кейса должен быть заполнен</li><li style="color:red;">Описание шага 1 должно начинаться с глагола в неопределенной форме (окончания "ть", "ться" или "ти").</li></ul>
+    <div class="ai-recommendations">
+      <button class="ai-recommend-btn" data-test-id="48476">Запросить рекомендации от AI</button>
+      <p id="ai-rec-text-48476"></p>
+    </div>
+  </div></div>
+      </body>
     </html>
+  

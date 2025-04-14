@@ -84,7 +84,19 @@ async function fetchWithAuth(url, options = {}) {
     return response;
 }
 
-
+/**
+ * Функция для получения обзора тест-кейса
+ */
+export async function getTestCaseOverview(testCaseId) {
+    const BASE_URL = config.baseUrl;
+    const url = `${BASE_URL}/testcase/${testCaseId}/overview`;
+    const response = await fetchWithAuth(url);
+    if (!response.ok) {
+        throw new Error(`Ошибка получения overview для тест-кейса ${testCaseId}: ${response.statusText}`);
+    }
+    const data = await response.json();
+    return data; // предполагается, что ответ содержит поле name
+}
 
 /**
  * Функция для получения всех тест-кейсов

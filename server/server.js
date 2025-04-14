@@ -1,13 +1,13 @@
 import express from 'express';
 import cors from 'cors';
-import { getAllTestCases, getTestCaseExpectedResult, getTestCaseLayer, getCaseIssue, getCaseTags, getTestCasePrecondition, getTestCaseStatus, getTestCaseSteps, getTestCaseCustomFields } from './http-service.mjs';
+import { getAllTestCases, getTestCaseOverview, getTestCaseExpectedResult, getTestCaseLayer, getCaseIssue, getCaseTags, getTestCasePrecondition, getTestCaseStatus, getTestCaseSteps, getTestCaseCustomFields } from './http-service.mjs';
 import { spinningLoader } from './spinning-loader.mjs';
 import pLimit from 'p-limit';
 import { formatTestCase } from './format-testcase.mjs';
 import { formatTestCaseAsJson } from './generate-json.mjs';
 import { staticAnalysis } from './static-analysis.mjs';
 import { exportStructureAllure } from './xmind-parce/export-structure-allure.mjs';
-
+import { analyzeTestCaseWithAI } from './ai-testcase.mjs';
 
 //const PROJECT_ID = config.projectId;
 //const JIRA_ISSUE = config.jiraIssue; 
@@ -117,6 +117,80 @@ app.post('/api/export', async (req, res) => {
         res.status(500).send('Ошибка при экспорте.');
     }
 });
+
+app.post('/ai-recommendation', async (req, res) => {
+    try {
+        let testCase = req.body;
+
+        if (!testCase.id) {
+            throw new Error('Отсутствует id тест-кейса');
+        }
+        if (!testCase.projectId) {
+            throw new Error('Отсутствует projectId');
+        }
+
+        console.log('Запрос рекомендации для тест-кейса:', testCase.id);
+
+        // Если некоторые поля отсутствуют, дополняем их
+        if (!testCase.steps || !testCase.expectedResult) {
+            const id = testCase.id;
+            const projectId = testCase.projectId;
+            const [
+                tags,
+                steps,
+                expectedResult,
+                status,
+                layer,
+                precondition,
+                customFields,
+                issue
+            ] = await Promise.all([
+                getCaseTags(id),
+                getTestCaseSteps(id),
+                getTestCaseExpectedResult(id),
+                getTestCaseStatus(id),
+                getTestCaseLayer(id),
+                getTestCasePrecondition(id),
+                getTestCaseCustomFields(id, projectId),
+                getCaseIssue(id)
+            ]);
+            // Обновляем объект, сохраняя все поля, что пришли от клиента и дополняем недостающие.
+            testCase = {
+                ...testCase,
+                tags,
+                steps,
+                expectedResult,
+                status,
+                layer,
+                precondition,
+                customFields,
+                issue,
+                projectId
+            };
+        }
+
+        // Если поле name отсутствует, делаем запрос на overview и извлекаем name
+        if (!testCase.name) {
+            try {
+                const overviewData = await getTestCaseOverview(testCase.id);
+                // Предполагаем, что overviewData содержит поле name
+                testCase.name = overviewData.name || "Неизвестно";
+            } catch (error) {
+                console.error('Ошибка при получении overview тест-кейса:', error.message);
+                testCase.name = "Неизвестно";
+            }
+        }
+
+        // Вызываем функцию анализа тест-кейса с использованием ИИ
+        const recommendation = await analyzeTestCaseWithAI(testCase);
+        res.json({ recommendation });
+    } catch (error) {
+        console.error('Ошибка в /ai-recommendation:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
 
 // Запуск сервера
 app.listen(PORT, () => {

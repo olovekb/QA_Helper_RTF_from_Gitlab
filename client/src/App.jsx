@@ -1,10 +1,11 @@
 // src/App.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import './style.css';
 import config from './config.json';
 import { parseXmindFile } from './parce.xmind.mjs';
-import { useNavigate } from 'react-router-dom'; // Добавляем useNavigate
+import { useNavigate } from 'react-router-dom';
+import { marked } from 'marked'; // 1) Импортируем библиотеку marked
 
 const App = ({ projects }) => {
   const [projectId, setProjectId] = useState(config.projectId);
@@ -17,37 +18,99 @@ const App = ({ projects }) => {
   const [exportMessage, setExportMessage] = useState('');
   const [exportResult, setExportResult] = useState(null);
 
-  const navigate = useNavigate(); // Хук для навигации
+  const navigate = useNavigate();
+  // ref для контейнера, где выводится htmlReport
+  const reportContainerRef = useRef(null);
 
+  // 2) Функция для преобразования Markdown-текста в HTML
+  function parseMarkdown(markdownText) {
+    // При необходимости можно настроить некоторые параметры marked
+    // пример: marked.setOptions({ breaks: true });
+    return marked(markdownText);
+  }
 
   useEffect(() => {
     const savedFixStatus = sessionStorage.getItem('fixStatus');
     if (savedFixStatus) {
       setFixStatus(JSON.parse(savedFixStatus));
     }
-
     const savedReport = sessionStorage.getItem('htmlReport');
     if (savedReport) {
       setHtmlReport(savedReport);
     }
   }, []);
 
+  // Делегирование кликов внутри контейнера, обработка кнопок AI-рекомендаций
+  useEffect(() => {
+    const container = reportContainerRef.current;
+    if (!container) return;
+
+    const handleButtonClick = async (event) => {
+      const btn = event.target.closest('.ai-recommend-btn');
+      if (!btn) return;
+      if (btn.disabled) return;
+
+      const originalContent = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<div class="spinner"></div>';
+
+      const testId = btn.getAttribute('data-test-id');
+      const testCaseData = btn.getAttribute('data-test-case');
+      let testCase = {};
+      if (testCaseData) {
+        try {
+          testCase = JSON.parse(testCaseData);
+        } catch (e) {
+          console.error('Ошибка парсинга testCaseData:', e);
+        }
+      }
+      const payload = {
+        id: testId,
+        projectId,
+        ...testCase
+      };
+
+      const recParagraph = container.querySelector(`#ai-rec-text-${testId}`);
+
+      try {
+        const response = await axios.post(`${config.serverUrl}/ai-recommendation`, payload);
+        const recommendation = response.data.recommendation || 'Нет рекомендаций';
+
+        if (recParagraph) {
+          // 3) Преобразуем Markdown в HTML:
+          const htmlContent = parseMarkdown(recommendation);
+          // 4) Вместо innerText используем innerHTML:
+          recParagraph.innerHTML = htmlContent;
+        }
+      } catch (error) {
+        if (recParagraph) {
+          recParagraph.innerText = 'Ошибка: ' + error.message;
+        }
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalContent;
+      }
+    };
+
+    container.addEventListener('click', handleButtonClick);
+    return () => {
+      container.removeEventListener('click', handleButtonClick);
+    };
+  }, [htmlReport, projectId]);
+
   const downloadHtml = () => {
     const htmlContent = sessionStorage.getItem('htmlReport');
-    const projectId = sessionStorage.getItem('projectId');
-    const jiraIssue = sessionStorage.getItem('jiraIssue');
-
+    const savedProjectId = sessionStorage.getItem('projectId');
+    const savedJiraIssue = sessionStorage.getItem('jiraIssue');
     if (!htmlContent) {
       console.error('HTML отчет не найден в sessionStorage');
       return;
     }
-
-    if (!projectId || !jiraIssue) {
+    if (!savedProjectId || !savedJiraIssue) {
       console.error('Данные projectId или jiraIssue отсутствуют в sessionStorage');
       return;
     }
-
-    const fileName = `Результат ревью тест-кейсов ${jiraIssue}.html`;
+    const fileName = `Результат ревью тест-кейсов ${savedJiraIssue}.html`;
     const blob = new Blob([htmlContent], { type: 'text/html' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -71,7 +134,6 @@ const App = ({ projects }) => {
         projectId,
         jiraIssue,
       });
-
       const newReport = response.data;
       setHtmlReport(newReport);
       sessionStorage.setItem('htmlReport', newReport);
@@ -97,12 +159,10 @@ const App = ({ projects }) => {
       setExportMessage('Пожалуйста, загрузите файл XMind.');
       return;
     }
-
     if (!projectId) {
       setExportMessage('Пожалуйста, выберите проект.');
       return;
     }
-
     setExportMessage('Обработка файла и экспорт данных...');
     try {
       const allureData = await parseXmindFile(xmindFile);
@@ -110,7 +170,6 @@ const App = ({ projects }) => {
         allureData,
         projectId,
       });
-
       if (response.status === 200) {
         const allureLink = `https://abanking.qatools.cloud/project/${projectId}/test-cases`;
         setExportMessage('Экспорт завершён! Посмотреть результат: ');
@@ -130,7 +189,6 @@ const App = ({ projects }) => {
     setActiveTab(tab);
   };
 
-  // Обработчик для перехода на страницу TIA
   const handleTIAClick = () => {
     navigate('/tia');
   };
@@ -139,13 +197,10 @@ const App = ({ projects }) => {
     <div className="App">
       <div className="header-wrapper">
         <h1>QA-helper</h1>
-        {/* Добавляем кнопку TIA в правом верхнем углу */}
         <button onClick={handleTIAClick} className="tia-button">
           TIA (Экспериментальный режим)
         </button>
       </div>
-
-      {/* Вкладки */}
       <div className="tabs">
         <button onClick={() => handleTabChange('analysis')} className={activeTab === 'analysis' ? 'active' : ''}>
           Анализ тестов
@@ -154,19 +209,13 @@ const App = ({ projects }) => {
           Экспорт Xmind в Allure
         </button>
       </div>
-
-      {/* Контент в зависимости от активной вкладки */}
       {activeTab === 'analysis' && (
         <div>
-          {/* Ваш текущий функционал для анализа */}
           <form onSubmit={handleSubmit}>
             <div>
               <label>
                 Выберите проект:
-                <select
-                  value={projectId}
-                  onChange={(e) => setProjectId(e.target.value)}
-                >
+                <select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
                   <option value="">Выберите проект</option>
                   {projects.map((project) => (
                     <option key={project.id} value={project.id}>
@@ -179,24 +228,19 @@ const App = ({ projects }) => {
             <div>
               <label>
                 Номер задачи из Jira:
-                <input
-                  type="text"
-                  value={jiraIssue}
-                  onChange={(e) => setJiraIssue(e.target.value)}
-                />
+                <input type="text" value={jiraIssue} onChange={(e) => setJiraIssue(e.target.value)} />
               </label>
             </div>
             <button type="submit" disabled={loading}>
               {loading ? 'Анализ запущен' : 'Запустить анализ'}
             </button>
           </form>
-          {/* Кнопка для скачивания отчёта */}
           {htmlReport && !loading && (
             <button onClick={downloadHtml} className="download-btn">
               Скачать отчёт
             </button>
           )}
-          <div>
+          <div ref={reportContainerRef}>
             {loading ? (
               <div className="spinner"></div>
             ) : htmlReport ? (
@@ -207,17 +251,13 @@ const App = ({ projects }) => {
           </div>
         </div>
       )}
-
       {activeTab === 'export' && (
         <div>
           <h2>Экспорт XMind в Allure</h2>
           <div className="form-group">
             <label>
               Выберите проект:
-              <select
-                value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
-              >
+              <select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
                 <option value="">Выберите проект</option>
                 {projects.map((project) => (
                   <option key={project.id} value={project.id}>
@@ -230,11 +270,7 @@ const App = ({ projects }) => {
           <div className="form-group">
             <label>
               Загрузить XMind файл:
-              <input
-                type="file"
-                accept=".xmind"
-                onChange={handleXmindFileChange}
-              />
+              <input type="file" accept=".xmind" onChange={handleXmindFileChange} />
             </label>
           </div>
           <button onClick={handleExportClick} disabled={loading || !xmindFile}>
@@ -254,6 +290,6 @@ const App = ({ projects }) => {
       )}
     </div>
   );
-}
+};
 
 export default App;
