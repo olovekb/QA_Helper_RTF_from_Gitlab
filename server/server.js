@@ -8,6 +8,8 @@ import { formatTestCaseAsJson } from './generate-json.mjs';
 import { staticAnalysis } from './static-analysis.mjs';
 import { exportStructureAllure } from './xmind-parce/export-structure-allure.mjs';
 import { analyzeTestCaseWithAI } from './ai-testcase.mjs';
+import { analyzeSolution } from './requirements-testing.mjs';
+import { analyzeRequirementWithAI } from './analyzeRequirementWithAI.mjs';
 
 //const PROJECT_ID = config.projectId;
 //const JIRA_ISSUE = config.jiraIssue; 
@@ -190,7 +192,37 @@ app.post('/ai-recommendation', async (req, res) => {
     }
 });
 
+app.post('/analyze/solution', async (req, res) => {
+    try {
+        const { text, useDeepseek } = req.body;
+        if (!text) {
+            throw new Error('Параметр text обязателен.');
+        }
 
+        // Запускаем локальный анализ
+        const result = analyzeSolution({ text, useDeepseek });
+
+        // Если включён анализ через нейросеть — запускаем Deepseek
+        if (useDeepseek) {
+            try {
+                const aiResponse = await analyzeRequirementWithAI(text);
+                result.ai = {
+                    success: true,
+                    response: aiResponse
+                };
+            } catch (aiError) {
+                result.ai = {
+                    success: false,
+                    error: aiError.message
+                };
+            }
+        }
+
+        res.json({ success: true, data: result });
+    } catch (error) {
+        res.status(400).json({ success: false, error: error.message });
+    }
+});
 
 // Запуск сервера
 app.listen(PORT, () => {

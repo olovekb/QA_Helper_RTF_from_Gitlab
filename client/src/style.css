@@ -324,24 +324,34 @@ button:disabled {
 
 .header-wrapper {
     display: flex;
-    justify-content: space-between;
+    /* включаем flex-контейнер */
     align-items: center;
-    margin-bottom: 20px;
+    /* выравниваем элементы по вертикали */
+    padding: 10px 20px;
+    /* отступы по желанию */
+}
+
+.header-buttons {
+    margin-left: auto;
+    /* сдвигает контейнер кнопок вправо */
+    display: flex;
+    /* располагает кнопки в строку */
+    gap: 10px;
+    /* добавляет промежуток между кнопками */
 }
 
 .tia-button {
-    padding: 10px 20px;
-    background-color: #007bff;
-    color: #fff;
+    padding: 8px 12px;
+    background-color: #4c9aff;
     border: none;
-    border-radius: 5px;
+    border-radius: 4px;
     cursor: pointer;
-    font-size: 16px;
-    transition: background-color 0.3s;
+    color: #fff;
+    font-size: 14px;
 }
 
 .tia-button:hover {
-    background-color: #0056b3;
+    background-color: #2575e6;
 }
 
 .tia-button:focus {

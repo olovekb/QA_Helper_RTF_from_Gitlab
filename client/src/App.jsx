@@ -5,7 +5,7 @@ import './style.css';
 import config from './config.json';
 import { parseXmindFile } from './parce.xmind.mjs';
 import { useNavigate } from 'react-router-dom';
-import { marked } from 'marked'; // 1) Импортируем библиотеку marked
+import { marked } from 'marked'; // Импорт библиотеки marked
 
 const App = ({ projects }) => {
   const [projectId, setProjectId] = useState(config.projectId);
@@ -19,15 +19,12 @@ const App = ({ projects }) => {
   const [exportResult, setExportResult] = useState(null);
 
   const navigate = useNavigate();
-  // ref для контейнера, где выводится htmlReport
   const reportContainerRef = useRef(null);
 
-  // 2) Функция для преобразования Markdown-текста в HTML
-  function parseMarkdown(markdownText) {
-    // При необходимости можно настроить некоторые параметры marked
-    // пример: marked.setOptions({ breaks: true });
+  // Функция для преобразования Markdown-текста в HTML
+  const parseMarkdown = (markdownText) => {
     return marked(markdownText);
-  }
+  };
 
   useEffect(() => {
     const savedFixStatus = sessionStorage.getItem('fixStatus');
@@ -77,9 +74,7 @@ const App = ({ projects }) => {
         const recommendation = response.data.recommendation || 'Нет рекомендаций';
 
         if (recParagraph) {
-          // 3) Преобразуем Markdown в HTML:
           const htmlContent = parseMarkdown(recommendation);
-          // 4) Вместо innerText используем innerHTML:
           recParagraph.innerHTML = htmlContent;
         }
       } catch (error) {
@@ -185,21 +180,32 @@ const App = ({ projects }) => {
     }
   };
 
-  const handleTabChange = (tab) => {
-    setActiveTab(tab);
-  };
-
+  // Обработчик для перехода на страницу "Test impact analysis"
   const handleTIAClick = () => {
     navigate('/tia');
+  };
+
+  // Новый обработчик для перехода на страницу "Тестирование требований"
+  const handleSolutionClick = () => {
+    navigate('/solution');
+  };
+
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
   };
 
   return (
     <div className="App">
       <div className="header-wrapper">
         <h1>QA-helper</h1>
-        <button onClick={handleTIAClick} className="tia-button">
-          Test impact analysis
-        </button>
+        <div className="header-buttons">
+          <button onClick={handleTIAClick} className="tia-button">
+            Test impact analysis
+          </button>
+          <button onClick={handleSolutionClick} className="tia-button">
+            Тестирование требований
+          </button>
+        </div>
       </div>
       <div className="tabs">
         <button onClick={() => handleTabChange('analysis')} className={activeTab === 'analysis' ? 'active' : ''}>
