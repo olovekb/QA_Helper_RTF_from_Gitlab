@@ -1,69 +1,133 @@
+import fetch from 'node-fetch';
+import { JSDOM } from 'jsdom';
 
-import fetch from "node-fetch";
+const CONFLUENCE_BASE = 'https://confluence.artsofte.ru';
+const CONTENT_URL = (pageId) => `${CONFLUENCE_BASE}/rest/api/content/${pageId}?expand=body.view`;
 
-/**
- * Извлекает идентификатор страницы (pageId) из URL Confluence.
- * Предполагается, что URL содержит параметр ?pageId=XXXXX.
- * @param {string} url - URL страницы Confluence.
- * @returns {string} - pageId.
- */
-function extractPageId(url) {
-    const match = url.match(/pageId=(\d+)/);
-    if (match && match[1]) {
-        return match[1];
-    }
-    throw new Error('Не удалось извлечь pageId из URL.');
-}
+export async function fetchConfluencePage(bearerToken, pageId) {
+    // Получаем содержимое страницы через API
+    const contentRes = await fetch(CONTENT_URL(pageId), {
+        method: 'GET',
+        headers: {
+            'Accept': 'application/json',
+            'Authorization': `Bearer ${bearerToken}`
+        }
+    });
 
-/**
- * Получает содержимое страницы Confluence в виде HTML.
- *
- * Делается запрос по схеме:
- * GET {baseUrl}/rest/api/content/{pageId}?expand=body.storage
- *
- * @param {string} url - Полный URL страницы Confluence.
- * @param {string} baseUrl - Базовый URL вашего Confluence (например, "https://confluence.artsofte.ru").
- * @param {string} [authToken] - Токен авторизации (если требуется).
- * @returns {Promise<string>} - HTML-содержимое страницы.
- */
-export async function fetchConfluenceContent(url, baseUrl, authToken = null) {
-    // Извлекаем pageId из URL
-    const pageId = extractPageId(url);
-    // Формируем URL запроса к REST API Confluence
-    const apiUrl = `${baseUrl}/rest/api/content/${pageId}?expand=body.storage`;
+    const bodyText = await contentRes.text();
 
-    const headers = {
-        'Content-Type': 'application/json'
-    };
-    if (authToken) {
-        headers['Authorization'] = `Bearer ${authToken}`;
+    if (!contentRes.ok) {
+        throw new Error(`Content fetch failed: ${contentRes.status} ${bodyText.trim().slice(0, 200)}…`);
     }
 
-    const response = await fetch(apiUrl, { headers });
-    if (!response.ok) {
-        throw new Error(`Ошибка запроса к Confluence API: ${response.status}`);
-    }
+    const data = JSON.parse(bodyText);
+    const html = data.body?.view?.value;
 
-    const data = await response.json();
-
-    // HTML-содержимое страницы хранится в data.body.storage.value
-    const html = data?.body?.storage?.value;
     if (!html) {
-        throw new Error('Не найден HTML контент на странице');
+        throw new Error('Не найдено поле body.view.value');
     }
 
-    return html;
+    // Парсим HTML через JSDOM
+    const dom = new JSDOM(html);
+    const doc = dom.window.document;
+
+    // Удаляем все style и script теги
+    doc.querySelectorAll('style, script').forEach(el => el.remove());
+
+    // Функция для форматирования текста с сохранением структуры
+    const formatText = (element) => {
+        if (!element) return '';
+
+        const processNode = (node, level = 0) => {
+            let result = '';
+            const children = Array.from(node.childNodes);
+
+            for (const child of children) {
+                if (child.nodeType === 3) { // Текстовый узел
+                    const text = child.textContent.trim();
+                    if (text) {
+                        result += text + (child.nextSibling ? ' ' : '');
+                    }
+                } else if (child.nodeType === 1) { // Элемент
+                    const tagName = child.tagName.toLowerCase();
+                    const childText = processNode(child, level + 1);
+
+                    if (!childText) continue;
+
+                    if (tagName === 'h1') {
+                        result += `# ${childText}\n\n`;
+                    } else if (tagName === 'h2') {
+                        result += `## ${childText}\n\n`;
+                    } else if (tagName === 'h3') {
+                        result += `### ${childText}\n\n`;
+                    } else if (tagName === 'li') {
+                        result += `- ${childText}\n`;
+                    } else if (tagName === 'p' || tagName === 'div') {
+                        result += `${childText}\n`;
+                    } else {
+                        result += childText;
+                    }
+                }
+            }
+
+            return result.trim();
+        };
+
+        const text = processNode(element);
+        // Убираем лишние пустые строки
+        return text.split(/\n+/).map(line => line.trim()).filter(line => line).join('\n');
+    };
+
+    // Ищем все вкладки и их содержимое
+    const containers = Array.from(doc.querySelectorAll('div.aura-tab-container'));
+    const result = {
+        businessRequirements: '',
+        solutionConcept: '',
+        scenarios: ''
+    };
+
+    for (const container of containers) {
+        const labels = Array.from(container.querySelectorAll('.aura-tab-nav .aura-tab-item'));
+        const contents = Array.from(container.querySelectorAll('.aura-tab-content > div[role="tabpanel"]'));
+
+        if (labels.length !== contents.length) {
+            console.warn(`⚠️ Кол-во табов (${labels.length}) и контента (${contents.length}) не совпадает`);
+        }
+
+        for (let i = 0; i < Math.min(labels.length, contents.length); i++) {
+            const label = labels[i]?.textContent?.trim();
+            const contentElement = contents[i];
+            const content = formatText(contentElement);
+
+            if (label) {
+                const normalizedLabel = label.toLowerCase();
+                if (normalizedLabel.includes('бизнес требования') || normalizedLabel.includes('бизнес-требования')) {
+                    result.businessRequirements = content || '[пусто]';
+                } else if (normalizedLabel.includes('образ решения')) {
+                    result.solutionConcept = content || '[пусто]';
+                } else if (normalizedLabel.includes('сценарии')) {
+                    result.scenarios = content || '[пусто]';
+                }
+            }
+        }
+    }
+
+    // Проверяем, найдены ли данные
+    if (!result.businessRequirements && !result.solutionConcept && !result.scenarios) {
+        return '[empty]';
+    }
+
+    // Формируем структурированный результат в виде строки
+    let output = '';
+    if (result.businessRequirements) {
+        output += `### Бизнес-требования\n\n${result.businessRequirements}\n\n---\n\n`;
+    }
+    if (result.solutionConcept) {
+        output += `### Образ решения\n\n${result.solutionConcept}\n\n---\n\n`;
+    }
+    if (result.scenarios) {
+        output += `### Сценарии\n\n${result.scenarios}\n\n---\n\n`;
+    }
+
+    return output.trim() || '[empty]';
 }
-
-/**
- * Преобразует HTML в простой текст.
- * Здесь используется простая замена – для более качественной обработки можно использовать библиотеку "html-to-text".
- *
- * @param {string} html - HTML строка.
- * @returns {string} - Простой текст.
- */
-export function convertHtmlToText(html) {
-    return html.replace(/<[^>]+>/g, ' ');
-}
-
-

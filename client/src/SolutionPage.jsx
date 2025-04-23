@@ -1,226 +1,359 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import axios from 'axios';
 import config from './config.json';
 import './SolutionPage.css';
 import { marked } from 'marked';
+import 'github-markdown-css/github-markdown-dark.css';
 
-const groupIssuesByCategoryAndMessage = (issues) => {
-  const result = {};
-  for (const issue of issues) {
-    if (!result[issue.category]) result[issue.category] = {};
-    if (!result[issue.category][issue.message]) result[issue.category][issue.message] = [];
-    result[issue.category][issue.message].push(issue);
-  }
-  return result;
-};
-
-/**
- * Функция для парсинга Markdown‑текста с рекомендациями.
- * Ожидается, что в тексте рекомендации для каждого требования начинаются строкой вида:
- * #### ТР-001. <Описание требования>
- * Далее где-то в блоке есть секция **Рекомендаций:** <текст рекомендаций>.
- */
-function parseAiResponse(aiResponse) {
-  const lines = aiResponse.split('\n');
-  const recMap = {};
-  let currentReq = null;
-  lines.forEach(line => {
-    // Ищем заголовок требований в формате "#### ТР-XXX. Описание..."
-    const headerMatch = line.match(/^####\s*([TТ][RР]-\d+)\.\s*(.+)$/);
-    if (headerMatch) {
-      currentReq = headerMatch[1];
-      // Сохраняем описание требования как часть пары
-      recMap[currentReq] = { requirement: headerMatch[2].trim(), recommendation: '' };
-    } else if (currentReq && line.indexOf('**Рекомендаций:**') !== -1) {
-      // Находим рекомендацию после ключевого слова
-      const parts = line.split('**Рекомендаций:**');
-      if (parts[1]) {
-        recMap[currentReq].recommendation = parts[1].trim();
-      }
-    } else if (currentReq && line.trim() && recMap[currentReq].recommendation) {
-      // Если рекомендация уже началась, добавляем последующие строки
-      recMap[currentReq].recommendation += ' ' + line.trim();
-    }
-  });
-  return recMap;
-}
-
-/**
- * Функция для генерации текстового отчёта.
- * В отчёте включаются:
- *  - Статистика по анализу
- *  - Перечень найденных проблем
- *  - AI рекомендации (если имеются)
- */
-function generateReportText(analysisResult) {
-  let report = 'Отчёт по анализу требований\n\n';
-
-  // Статистика
-  report += 'Статистика:\n';
-  report += `  Всего проблем: ${analysisResult.stats.total}\n`;
-  for (const [category, count] of Object.entries(analysisResult.stats.byCategory)) {
-    report += `  ${category}: ${count}\n`;
-  }
-  report += '\n';
-
-  // Проблемы
-  report += 'Найденные проблемы:\n';
-  analysisResult.issues.forEach((issue, idx) => {
-    report += `${idx + 1}. [${issue.category}] ${issue.fullRequirement}\n   -> ${issue.message}\n\n`;
-  });
-
-  // Deepseek рекомендации (если имеются)
-  if (analysisResult.deepseekRecommendations && analysisResult.deepseekRecommendations.suggestions) {
-    report += 'Рекомендации Deepseek:\n';
-    analysisResult.deepseekRecommendations.suggestions.forEach((sugg, idx) => {
-      report += `  ${idx + 1}. ${sugg}\n`;
-    });
-    report += '\n';
-  }
-
-  // AI рекомендации (если имеются)
-  if (analysisResult.ai && analysisResult.ai.response) {
-    report += 'AI рекомендации:\n';
-    report += analysisResult.ai.response + '\n';
-  }
-
-  return report;
-}
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+});
 
 const SolutionPage = () => {
   const [solutionText, setSolutionText] = useState('');
+  const [confluencePageId, setConfluencePageId] = useState('');
+  const [bearerToken, setBearerToken] = useState('');
+  const [contextText, setContextText] = useState('');
   const [analysisResult, setAnalysisResult] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [showIssues, setShowIssues] = useState(true);
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [jiraProject, setJiraProject] = useState('');
+  const [jiraPat, setJiraPat] = useState('');
+  const [epicLink, setEpicLink] = useState('');
+  const [jiraCreateResult, setJiraCreateResult] = useState(null);
+  const [jiraLoading, setJiraLoading] = useState(false);
+
+  const analyzeButtonRef = useRef(null);
+
+  const stripCodeFences = (text) => {
+    let md = text.trim();
+    if (md.startsWith('```')) {
+      md = md.replace(/^```[^\n]*\n/, '').replace(/```$/, '').trim();
+    }
+    return md;
+  };
 
   const handleAnalyzeSolution = async () => {
     setLoading(true);
+    setAnalysisResult(null);
+
+    const payload = {
+      context: contextText || undefined,
+      project: undefined,
+      useDeepseek: true,
+      mode: 'text',
+    };
+
+    if (confluencePageId.trim()) {
+      payload.pageId = confluencePageId.trim();
+      payload.bearerToken = bearerToken.trim();
+    } else {
+      payload.text = solutionText;
+    }
+
     try {
-      const payload = { text: solutionText, mode: 'text', useDeepseek: true };
-      const response = await axios.post(`${config.serverUrl}/analyze/solution`, payload);
-      setAnalysisResult(response.data.data);
-    } catch (error) {
-      console.error('Ошибка анализа:', error);
-      setAnalysisResult({ error: error.message });
+      const resp = await axios.post(`${config.serverUrl}/analyze/solution`, payload);
+      if (!resp.data.success) {
+        setAnalysisResult({ error: resp.data.error });
+      } else {
+        setAnalysisResult(resp.data.data);
+      }
+    } catch (err) {
+      console.error('Ошибка анализа:', err);
+      setAnalysisResult({ error: err.message });
     } finally {
       setLoading(false);
     }
   };
 
-  // Если есть AI-ответ в markdown, парсим его, чтобы получить пары "ТР-XXX"
-  const recommendationsMap = analysisResult && analysisResult.ai && analysisResult.ai.response
-    ? parseAiResponse(analysisResult.ai.response)
-    : {};
-
-  // Функция для скачивания отчёта
   const handleDownloadReport = () => {
     if (!analysisResult) return;
-    const reportText = generateReportText(analysisResult);
-    const blob = new Blob([reportText], { type: 'text/plain;charset=utf-8' });
+    let report = 'AI рекомендации по требованиям\n\n';
+    report += analysisResult.ai?.response || 'Рекомендации отсутствуют.';
+    const blob = new Blob([report], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `report_${new Date().toISOString()}.txt`;
+    a.download = `ai_recommendations_${new Date().toISOString()}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
 
+  const handleRetry = () => {
+    setAnalysisResult(null);
+    analyzeButtonRef.current?.focus();
+  };
+
+  const parseDocumentationErrors = (response) => {
+    if (!response) return [];
+    const blocks = response.split('```').filter((_, i) => i % 2 === 1);
+    return blocks.map(block => {
+      const lines = block.trim().split('\n');
+      const requirement = lines[0].replace(/^###\s*/, '').trim();
+      const errorSection = lines.slice(1).join('\n');
+      const topicMatch = errorSection.match(/- \*\*Тема\*\*: (.+?) в части «(.+?)»/);
+      const descriptionMatch = errorSection.match(/- \*\*Описание\*\*: (.+)/);
+      const propertiesMatch = errorSection.match(/- \*\*Нарушены свойства\*\*: (.+)/);
+      const actualMatch = errorSection.match(/- \*\*Фактический результат\*\*: (.+)/);
+      const expectedMatch = errorSection.match(/- \*\*Ожидаемый результат\*\*: (.+)/);
+
+      return {
+        requirement,
+        topic: topicMatch ? topicMatch[1] : '',
+        problemPart: topicMatch ? topicMatch[2] : '',
+        description: descriptionMatch ? descriptionMatch[1] : '',
+        properties: propertiesMatch ? propertiesMatch[1] : '',
+        actual: actualMatch ? actualMatch[1] : '',
+        expected: expectedMatch ? expectedMatch[1] : '',
+      };
+    }).filter(err => err.topic && err.description);
+  };
+
+  const validateInputs = () => {
+    if (!jiraProject || !jiraPat || !epicLink) {
+      return 'Пожалуйста, заполните все поля: Project Key, PAT и Epic Link.';
+    }
+    if (!/^[A-Z0-9]+(-[0-9]+)?$/.test(epicLink)) {
+      return 'Epic Link должен быть в формате ABC-123.';
+    }
+    return null;
+  };
+
+  const handleCreateJiraIssues = async () => {
+    const validationError = validateInputs();
+    if (validationError) {
+      alert(validationError);
+      return;
+    }
+
+    setJiraLoading(true);
+    setJiraCreateResult(null);
+
+    const errors = parseDocumentationErrors(analysisResult.ai?.response);
+    if (errors.length === 0) {
+      setJiraCreateResult({ error: 'Нет ошибок документации для создания задач.' });
+      setJiraLoading(false);
+      return;
+    }
+
+    const results = [];
+
+    for (const err of errors) {
+      const summary = `${err.topic} в части "${err.problemPart}"`;
+      const description =
+        `h3. Требование\n${err.requirement}\n\n` +
+        `h3. Описание проблемы\n${err.description}\n\n` +
+        `h3. Нарушены свойства\n${err.properties}\n\n` +
+        `h3. Фактический результат\n${err.actual}\n\n` +
+        `h3. Ожидаемый результат\n${err.expected}`;
+
+      const payload = {
+        fields: {
+          project: { key: jiraProject },
+          summary,
+          description,
+          issuetype: { id: "12812" },
+          customfield_13169: { id: "12683" },
+          customfield_10101: epicLink,
+          customfield_14306: description 
+        }
+      };
+
+      try {
+        const response = await axios.post(`${config.serverUrl}/jira/create-issue`, {
+          pat: jiraPat,
+          payload
+        }, {
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8' // Явно указываем кодировку UTF-8
+          }
+        });
+        results.push({ success: true, key: response.data.key, summary });
+      } catch (e) {
+        results.push({ success: false, summary, error: e.response?.data?.error || e.message });
+      }
+    }
+
+    setJiraCreateResult({ results });
+    setJiraLoading(false);
+  };
+
+
+  
+  const canAnalyze = (solutionText.trim() || confluencePageId.trim()) && !loading;
+  const isUsingManualText = !!solutionText.trim();
+  const isUsingPageId = !!confluencePageId.trim();
+
   return (
     <div className="solution-page">
-      <h1>Тестирование требований (alpha версия в разработке)</h1>
+      <h1>Тестирование требований (alpha)</h1>
 
-      {/* Кнопка скачивания отчёта */}
-      {analysisResult && !analysisResult.error && (
-        <div className="download-report">
-          <button onClick={handleDownloadReport}>
-            Скачать отчёт (TXT)
-          </button>
+      <div className="field">
+        <label>Контекст (необязательно):</label>
+        <textarea
+          placeholder="Дополнительный контекст для анализа..."
+          value={contextText}
+          onChange={e => setContextText(e.target.value)}
+          rows={3}
+        />
+      </div>
+
+      <div className="field">
+        <label>Confluence Page ID:</label>
+        <input
+          type="text"
+          placeholder="Например: 133465419"
+          value={confluencePageId}
+          onChange={e => setConfluencePageId(e.target.value)}
+          disabled={isUsingManualText}
+        />
+      </div>
+
+      <div className="field">
+        <label>Маркер доступа Confluence (PAT):</label>
+        <input
+          type="password"
+          placeholder="Ваш Confluence PAT"
+          value={bearerToken}
+          onChange={e => setBearerToken(e.target.value)}
+          disabled={isUsingManualText}
+        />
+      </div>
+
+      <div className="field">
+        <label>Текст требований (приоритет ввода):</label>
+        <textarea
+          placeholder="Вставьте текст требований..."
+          value={solutionText}
+          onChange={e => setSolutionText(e.target.value)}
+          rows={10}
+          disabled={isUsingPageId}
+        />
+      </div>
+
+      <div className="buttons">
+        <button
+          ref={analyzeButtonRef}
+          onClick={handleAnalyzeSolution}
+          disabled={!canAnalyze}
+        >
+          {loading ? 'Анализируется...' : 'Запустить AI-анализ'}
+        </button>
+
+        {analysisResult && !analysisResult.error && (
+          <>
+            <button onClick={handleDownloadReport}>
+              Скачать AI-рекомендации (TXT)
+            </button>
+            <button onClick={() => setModalOpen(true)}>
+              Создать задачи в Jira
+            </button>
+          </>
+        )}
+      </div>
+
+      {modalOpen && (
+        <div className="modal">
+          <div className="modal-content">
+            <h2>Создание задач в Jira</h2>
+
+            <div className="field">
+              <label>Jira Project Key:</label>
+              <input
+                type="text"
+                placeholder="Например: JMT"
+                value={jiraProject}
+                onChange={e => setJiraProject(e.target.value)}
+              />
+            </div>
+
+            <div className="field">
+              <label>Jira PAT:</label>
+              <input
+                type="password"
+                placeholder="Ваш Jira PAT"
+                value={jiraPat}
+                onChange={e => setJiraPat(e.target.value)}
+              />
+            </div>
+
+            <div className="field">
+              <label>Epic Link (ключ эпика):</label>
+              <input
+                type="text"
+                placeholder="Например: JMT-123"
+                value={epicLink}
+                onChange={e => setEpicLink(e.target.value)}
+              />
+            </div>
+
+            <div className="buttons">
+              <button onClick={handleCreateJiraIssues} disabled={jiraLoading}>
+                {jiraLoading ? 'Создание...' : 'Создать задачи'}
+              </button>
+              <button onClick={() => setModalOpen(false)} disabled={jiraLoading}>
+                Закрыть
+              </button>
+            </div>
+
+            {jiraCreateResult && (
+              <div className="jira-result">
+                <h3>Результат создания задач</h3>
+                {jiraCreateResult.error && <p className="error">{jiraCreateResult.error}</p>}
+                {jiraCreateResult.results && (
+                  <ul>
+                    {jiraCreateResult.results.map((res, i) => (
+                      <li key={i}>
+                        {res.success ? (
+                          <span>
+                            ✅ <a href={`https://jira.abanking.ru/browse/${res.key}`} target="_blank" rel="noreferrer">{res.key}</a>: {res.summary}
+                          </span>
+                        ) : (
+                          <span>❌ {res.summary}: {res.error}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      <p className="instruction">
-        Введите требования в формате:<br />
-        <code>
-          ТР-028. Система должна предоставлять возможность фильтровать заявки в таблице по наличию parentDocumentId.<br />
-          ТР-029. В выпадающем списке "Продукт" должны легко отображаться дочерние подпроцессы.<br />
-          ТР-030. Если выбран фильтр "Отображать только параллельные процессы", система должна отображать только такие заявки.
-        </code><br />
-        Каждое требование должно начинаться с кода (например, <code>ТР-028.</code>) и быть с новой строки.
-      </p>
-
-      <textarea
-        placeholder="Вставьте образ решения для анализа..."
-        value={solutionText}
-        onChange={(e) => setSolutionText(e.target.value)}
-        rows={12}
-        cols={80}
-      />
-      <br />
-      <button onClick={handleAnalyzeSolution} disabled={loading || !solutionText}>
-        {loading
-          ? 'Анализируется...(Нужно подождать пару минут)'
-          : 'Запустить анализ'}
-      </button>
-
       {analysisResult && (
         <div className="analysis-result">
-          <h2>Результаты анализа</h2>
+          <h2>AI-рекомендации</h2>
 
           {analysisResult.error && (
-            <p className="error">Ошибка: {analysisResult.error}</p>
-          )}
-
-          {!analysisResult.error && (
             <>
-              {/* AI рекомендации в исходном виде */}
-              {analysisResult.ai?.success && analysisResult.ai.response && (
-                <section className="ai-recommendation">
-                  <div
-                    className="ai-block"
-                    dangerouslySetInnerHTML={{
-                      __html: marked.parse(analysisResult.ai.response)
-                    }}
-                  />
-                </section>
-              )}
-
-              {/* Переключатель видимости найденных проблем */}
-              <div className="toggle-issues">
-                <button onClick={() => setShowIssues(!showIssues)}>
-                  {showIssues
-                    ? 'Скрыть найденные проблемы'
-                    : 'Показать найденные проблемы, найденные статическим анализом'}
-                </button>
-              </div>
-
-              {/* Список найденных проблем */}
-              {showIssues && (
-                <section className="issues-section">
-                  <h3>
-                    Найденные проблемы статического анализа требований ({analysisResult.stats.total})
-                  </h3>
-                  {Object.entries(groupIssuesByCategoryAndMessage(analysisResult.issues)).map(([category, messages]) => (
-                    <div key={category} className="issue-group">
-                      <h4>{category}</h4>
-                      {Object.entries(messages).map(([message, relatedIssues]) => (
-                        <div key={message} className="issue-subgroup">
-                          <div className="issue-message">{message}</div>
-                          <ul className="analysis-list">
-                            {relatedIssues.map((issue, idx) => (
-                              <li key={idx} className={`issue-item issue-${category.replace(/\s+/g, '-').toLowerCase()}`}>
-                                <div className="issue-excerpt">…{issue.fullRequirement}…</div>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                </section>
+              <p className="error">
+                {analysisResult.error === 'AI не вернул результат, попробуйте ещё раз.'
+                  ? 'AI вернул пустой ответ. Нажмите «Запустить AI-анализ» ещё раз.'
+                  : `Ошибка: ${analysisResult.error}`}
+              </p>
+              {analysisResult.error === 'AI не вернул результат, попробуйте ещё раз.' && (
+                <button onClick={handleRetry}>Попробовать снова</button>
               )}
             </>
+          )}
+
+          {!analysisResult.error && analysisResult.ai?.response && (
+            <section className="ai-recommendation markdown-body">
+              <div
+                dangerouslySetInnerHTML={{
+                  __html: marked.parse(stripCodeFences(analysisResult.ai.response))
+                }}
+              />
+            </section>
+          )}
+
+          {!analysisResult.error && !analysisResult.ai?.response && (
+            <p>Рекомендации AI не получены.</p>
           )}
         </div>
       )}

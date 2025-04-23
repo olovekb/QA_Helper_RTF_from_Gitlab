@@ -8,7 +8,7 @@ import { formatTestCaseAsJson } from './generate-json.mjs';
 import { staticAnalysis } from './static-analysis.mjs';
 import { exportStructureAllure } from './xmind-parce/export-structure-allure.mjs';
 import { analyzeTestCaseWithAI } from './ai-testcase.mjs';
-import { analyzeSolution } from './requirements-testing.mjs';
+import { fetchConfluencePage } from './confluenceFetcher.mjs';
 import { analyzeRequirementWithAI } from './analyzeRequirementWithAI.mjs';
 
 //const PROJECT_ID = config.projectId;
@@ -192,35 +192,95 @@ app.post('/ai-recommendation', async (req, res) => {
     }
 });
 
+/**
+ * POST /analyze/solution
+ * Тело: { text: string, context?: string, project?: string }
+ */
 app.post('/analyze/solution', async (req, res) => {
     try {
-        const { text, useDeepseek } = req.body;
-        if (!text) {
-            throw new Error('Параметр text обязателен.');
+        const { text, pageId, context, project, bearerToken } = req.body;
+
+        if (!text && !pageId) {
+            throw new Error('Параметр text или pageId обязателен.');
         }
 
-        // Запускаем локальный анализ
-        const result = analyzeSolution({ text, useDeepseek });
-
-        // Если включён анализ через нейросеть — запускаем Deepseek
-        if (useDeepseek) {
+        let requirementText = text;
+        if (pageId) {
+            if (!bearerToken) {
+                throw new Error('Для получения страницы Confluence требуется bearerToken');
+            }
             try {
-                const aiResponse = await analyzeRequirementWithAI(text);
-                result.ai = {
-                    success: true,
-                    response: aiResponse
-                };
-            } catch (aiError) {
-                result.ai = {
-                    success: false,
-                    error: aiError.message
-                };
+                requirementText = await fetchConfluencePage(bearerToken, pageId);
+            } catch (e) {
+                throw new Error(`Не удалось получить страницу Confluence: ${e.message}`);
             }
         }
 
+        const aiResponse = await analyzeRequirementWithAI(
+            requirementText,
+            context,
+            project
+        );
+
+        const result = {
+            ai: {
+                success: true,
+                response: aiResponse
+            }
+        };
+
         res.json({ success: true, data: result });
-    } catch (error) {
-        res.status(400).json({ success: false, error: error.message });
+
+    } catch (err) {
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+app.post('/jira/create-issue', async (req, res) => {
+    const { pat, payload } = req.body;
+
+    if (!pat || !payload) {
+        return res.status(400).json({ error: 'PAT и payload обязательны' });
+    }
+
+    // Логируем входящий payload
+    console.log('Входящий payload:', JSON.stringify(payload, null, 2));
+
+    // Проверка обязательных полей в payload
+    const requiredFields = ['project', 'issuetype', 'summary', 'description'];
+    const missingFields = requiredFields.filter(field => !payload.fields || !payload.fields[field]);
+    if (missingFields.length > 0) {
+        return res.status(400).json({ error: `Отсутствуют обязательные поля: ${missingFields.join(', ')}` });
+    }
+
+    const jiraBaseUrl = 'https://jira.abanking.ru';
+    try {
+        // Логируем тело запроса перед отправкой
+        console.log('Отправляемый payload в Jira:', JSON.stringify(payload, null, 2));
+
+        const response = await fetch(`${jiraBaseUrl}/rest/api/2/issue`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${pat}`,
+                'Content-Type': 'application/json; charset=utf-8'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            console.error('Ответ от Jira:', JSON.stringify(data, null, 2));
+            throw new Error(
+                data.errorMessages?.join(', ') ||
+                Object.keys(data.errors || {})
+                    .map(key => `${key}: ${data.errors[key]}`)
+                    .join(', ') ||
+                'Неизвестная ошибка'
+            );
+        }
+        res.json({ success: true, key: data.key });
+    } catch (err) {
+        console.error('Ошибка при создании задачи в Jira:', err.message);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
