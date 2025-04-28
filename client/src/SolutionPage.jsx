@@ -25,6 +25,10 @@ const SolutionPage = () => {
   const [jiraCreateResult, setJiraCreateResult] = useState(null);
   const [jiraLoading, setJiraLoading] = useState(false);
 
+  // Новые состояния для выбора задач и редактирования описаний
+  const [tasksToCreate, setTasksToCreate] = useState([]); // Список задач для создания
+  const [showTaskSelection, setShowTaskSelection] = useState(false); // Показывать экран выбора задач
+
   const analyzeButtonRef = useRef(null);
 
   const stripCodeFences = (text) => {
@@ -123,16 +127,7 @@ const SolutionPage = () => {
     return null;
   };
 
-  const handleCreateJiraIssues = async () => {
-    const validationError = validateInputs();
-    if (validationError) {
-      alert(validationError);
-      return;
-    }
-
-    setJiraLoading(true);
-    setJiraCreateResult(null);
-
+  const prepareTasksForCreation = () => {
     const errors = parseDocumentationErrors(analysisResult.ai?.response);
     if (errors.length === 0) {
       setJiraCreateResult({ error: 'Нет ошибок документации для создания задач.' });
@@ -140,9 +135,8 @@ const SolutionPage = () => {
       return;
     }
 
-    const results = [];
-
-    for (const err of errors) {
+    // Подготавливаем задачи с флагом selected и редактируемым описанием
+    const tasks = errors.map(err => {
       const summary = `${err.topic} в части "${err.problemPart}"`;
       const description =
         `h3. Требование\n${err.requirement}\n\n` +
@@ -151,15 +145,36 @@ const SolutionPage = () => {
         `h3. Фактический результат\n${err.actual}\n\n` +
         `h3. Ожидаемый результат\n${err.expected}`;
 
+      return {
+        summary,
+        description,
+        originalDescription: description, // Сохраняем оригинальное описание
+        selected: true, // По умолчанию задача выбрана для создания
+        err // Сохраняем исходный объект ошибки для дальнейшей обработки
+      };
+    });
+
+    setTasksToCreate(tasks);
+    setShowTaskSelection(true); // Показываем экран выбора задач
+  };
+
+  const handleCreateJiraIssues = async () => {
+    setJiraLoading(true);
+    setJiraCreateResult(null);
+
+    const results = [];
+
+    // Создаем только выбранные задачи
+    for (const task of tasksToCreate.filter(task => task.selected)) {
       const payload = {
         fields: {
           project: { key: jiraProject },
-          summary,
-          description,
+          summary: task.summary,
+          description: task.description, // Используем отредактированное описание
           issuetype: { id: "12812" },
           customfield_13169: { id: "12683" },
           customfield_10101: epicLink,
-          customfield_14306: description 
+          customfield_14306: task.description
         }
       };
 
@@ -169,21 +184,37 @@ const SolutionPage = () => {
           payload
         }, {
           headers: {
-            'Content-Type': 'application/json; charset=utf-8' // Явно указываем кодировку UTF-8
+            'Content-Type': 'application/json; charset=utf-8'
           }
         });
-        results.push({ success: true, key: response.data.key, summary });
+        results.push({ success: true, key: response.data.key, summary: task.summary });
       } catch (e) {
-        results.push({ success: false, summary, error: e.response?.data?.error || e.message });
+        results.push({ success: false, summary: task.summary, error: e.response?.data?.error || e.message });
       }
     }
 
     setJiraCreateResult({ results });
     setJiraLoading(false);
+    setShowTaskSelection(false); // Скрываем экран выбора после создания задач
   };
 
+  const handleTaskSelectionChange = (index, selected) => {
+    const updatedTasks = [...tasksToCreate];
+    updatedTasks[index].selected = selected;
+    setTasksToCreate(updatedTasks);
+  };
 
-  
+  const handleDescriptionChange = (index, newDescription) => {
+    const updatedTasks = [...tasksToCreate];
+    updatedTasks[index].description = newDescription;
+    setTasksToCreate(updatedTasks);
+  };
+
+  const handleBackToInputs = () => {
+    setShowTaskSelection(false);
+    setTasksToCreate([]);
+  };
+
   const canAnalyze = (solutionText.trim() || confluencePageId.trim()) && !loading;
   const isUsingManualText = !!solutionText.trim();
   const isUsingPageId = !!confluencePageId.trim();
@@ -259,46 +290,103 @@ const SolutionPage = () => {
       {modalOpen && (
         <div className="modal">
           <div className="modal-content">
-            <h2>Создание задач в Jira</h2>
+            {!showTaskSelection ? (
+              <>
+                <h2>Создание задач в Jira</h2>
 
-            <div className="field">
-              <label>Jira Project Key:</label>
-              <input
-                type="text"
-                placeholder="Например: JMT"
-                value={jiraProject}
-                onChange={e => setJiraProject(e.target.value)}
-              />
-            </div>
+                <div className="field">
+                  <label>Jira Project Key:</label>
+                  <input
+                    type="text"
+                    placeholder="Например: JMT"
+                    value={jiraProject}
+                    onChange={e => setJiraProject(e.target.value)}
+                  />
+                </div>
 
-            <div className="field">
-              <label>Jira PAT:</label>
-              <input
-                type="password"
-                placeholder="Ваш Jira PAT"
-                value={jiraPat}
-                onChange={e => setJiraPat(e.target.value)}
-              />
-            </div>
+                <div className="field">
+                  <label>Jira PAT:</label>
+                  <input
+                    type="password"
+                    placeholder="Ваш Jira PAT"
+                    value={jiraPat}
+                    onChange={e => setJiraPat(e.target.value)}
+                  />
+                </div>
 
-            <div className="field">
-              <label>Epic Link (ключ эпика):</label>
-              <input
-                type="text"
-                placeholder="Например: JMT-123"
-                value={epicLink}
-                onChange={e => setEpicLink(e.target.value)}
-              />
-            </div>
+                <div className="field">
+                  <label>Epic Link (ключ эпика):</label>
+                  <input
+                    type="text"
+                    placeholder="Например: JMT-123"
+                    value={epicLink}
+                    onChange={e => setEpicLink(e.target.value)}
+                  />
+                </div>
 
-            <div className="buttons">
-              <button onClick={handleCreateJiraIssues} disabled={jiraLoading}>
-                {jiraLoading ? 'Создание...' : 'Создать задачи'}
-              </button>
-              <button onClick={() => setModalOpen(false)} disabled={jiraLoading}>
-                Закрыть
-              </button>
-            </div>
+                <div className="buttons">
+                  <button
+                    onClick={() => {
+                      const validationError = validateInputs();
+                      if (validationError) {
+                        alert(validationError);
+                        return;
+                      }
+                      prepareTasksForCreation();
+                    }}
+                    disabled={jiraLoading}
+                  >
+                    Далее
+                  </button>
+                  <button onClick={() => setModalOpen(false)} disabled={jiraLoading}>
+                    Закрыть
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2>Выбор задач для создания</h2>
+
+                {tasksToCreate.length === 0 ? (
+                  <p>Нет задач для создания.</p>
+                ) : (
+                  <div className="task-selection">
+                    {tasksToCreate.map((task, index) => (
+                      <div key={index} className="task-item">
+                        <div className="task-header">
+                          <input
+                            type="checkbox"
+                            checked={task.selected}
+                            onChange={e => handleTaskSelectionChange(index, e.target.checked)}
+                          />
+                          <h3>{task.summary}</h3>
+                        </div>
+                        <div className="field">
+                          <label>Описание:</label>
+                          <textarea
+                            value={task.description}
+                            onChange={e => handleDescriptionChange(index, e.target.value)}
+                            rows={10}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="buttons">
+                  <button onClick={handleCreateJiraIssues} disabled={jiraLoading || !tasksToCreate.some(task => task.selected)}>
+                    {jiraLoading ? 'Создание...' : 'Создать выбранные задачи'}
+                  </button>
+                  <button onClick={handleBackToInputs} disabled={jiraLoading}>
+                    Назад
+                  </button>
+                  <button onClick={() => setModalOpen(false)} disabled={jiraLoading}>
+                    Закрыть
+                  </button>
+                </div>
+              </>
+            )}
 
             {jiraCreateResult && (
               <div className="jira-result">

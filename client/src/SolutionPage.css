@@ -150,3 +150,33 @@
   overflow-wrap: break-word !important;
   font-size: 0.9em;
 }
+
+.task-selection {
+  max-height: 400px;
+  overflow-y: auto;
+  margin-bottom: 20px;
+}
+
+.task-item {
+  border: 1px solid #444;
+  padding: 10px;
+  margin-bottom: 10px;
+  border-radius: 5px;
+}
+
+.task-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.task-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.task-item .field textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
