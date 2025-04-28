@@ -103,7 +103,7 @@ export async function fetchConfluencePage(bearerToken, pageId) {
                 const normalizedLabel = label.toLowerCase();
                 if (normalizedLabel.includes('бизнес требования') || normalizedLabel.includes('бизнес-требования')) {
                     result.businessRequirements = content || '[пусто]';
-                } else if (normalizedLabel.includes('варианты реализации')) {
+                } else if (normalizedLabel.includes('варианты реализации') || normalizedLabel.includes('образ решения')) {
                     result.solutionConcept = content || '[пусто]';
                 } else if (normalizedLabel.includes('сценарии')) {
                     result.scenarios = content || '[пусто]';
