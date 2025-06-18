@@ -323,6 +323,23 @@ const styles = {
         '0%': { transform: 'rotate(0deg)' },
         '100%': { transform: 'rotate(360deg)' },
     },
+    modalButtonSave: {
+        padding: '10px 20px',
+        fontSize: '16px',
+        color: '#ffffff',
+        backgroundColor: '#28a745', // A green color for "save"
+        border: 'none',
+        borderRadius: '8px',
+        cursor: 'pointer',
+        transition: 'background-color 0.3s ease',
+        '&:hover': {
+            backgroundColor: '#218838',
+        },
+        '&:disabled': {
+            backgroundColor: '#95d8a2',
+            cursor: 'not-allowed',
+        },
+    },
 };
 
 export default styles;

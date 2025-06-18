@@ -18,6 +18,9 @@ const TIAPage = ({ projects }) => {
     const [error, setError] = useState('');
     const [successMessage, setSuccessMessage] = useState('');
     const [allureLink, setAllureLink] = useState('');
+    const [isPartialSaving, setIsPartialSaving] = useState(false);
+    const [partialSaveMessage, setPartialSaveMessage] = useState('');
+
 
     // Состояния для маппинга компонентов
     const [components, setComponents] = useState([]); // Список всех компонентов
@@ -140,6 +143,7 @@ const TIAPage = ({ projects }) => {
         const backendComponents = backendJSON?.Controllers?.map((controller, index) => ({
             id: `${controller.ControllerName}-${index}`,
             name: controller.ControllerName,
+            serviceName: controller.ServiceName,
             type: 'backend',
             endpoints: controller.Endpoints || [],
         })) || [];
@@ -213,6 +217,30 @@ const TIAPage = ({ projects }) => {
                 setIsLoading(false);
             });
     };
+
+    const handlePartialSave = async () => {
+        setIsPartialSaving(true);
+        setError('');
+        setPartialSaveMessage('');
+
+        try {
+            // сохраняем только те компоненты, у которых есть выбранные блоки
+            const promises = components
+                .filter(c => componentMappings[c.id]?.length > 0)
+                .map(c => saveComponentMapping(c, componentMappings[c.id]));
+
+            await Promise.all(promises);
+
+            setPartialSaveMessage('Маппинг успешно сохранён, можете продолжить.');
+            // убрать сообщение через 5 секунд
+            setTimeout(() => setPartialSaveMessage(''), 5000);
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setIsPartialSaving(false);
+        }
+    };
+
 
     const fetchExistingMappings = async (projectId) => {
         try {
@@ -295,10 +323,23 @@ const TIAPage = ({ projects }) => {
     };
 
     const handleMappingCancel = () => {
+        // закрываем окно маппинга
         setShowMappingModal(false);
-        setComponentMappings({});
+
+        // сбрасываем список компонентов и маппинг
         setComponents([]);
+        setComponentMappings({});
+
+        // чистим сообщения об ошибке / об успешном частичном сохранении
+        setError('');
+        setPartialSaveMessage('');
+
+        // сбрасываем все лоадеры
+        setIsMappingLoading(false);
+        setIsPartialSaving(false);
+        setIsLoading(false);
     };
+
 
     const handleMappingChange = (componentId, selectedOptions) => {
         setComponentMappings(prev => ({
@@ -461,59 +502,210 @@ const TIAPage = ({ projects }) => {
                     {isLoading ? <Loader style={{ display: 'inline-block', width: '20px', height: '20px', verticalAlign: 'middle' }} /> : 'Создать тест-план'}
                 </button>
             </div>
-
             {showMappingModal && (
-                <div style={{ ...styles.modalOverlay, position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0, 0, 0, 0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-                    <div style={{ ...styles.modal, backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', width: '800px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 24px rgba(0, 0, 0, 0.15)' }}>
-                        <h2 style={{ ...styles.modalHeader, fontSize: '24px', marginBottom: '20px', color: '#2c3e50', fontWeight: 700, borderBottom: '2px solid #ced4da', paddingBottom: '16px' }}>Сопоставление компонентов</h2>
-                        <div style={{ ...styles.modalContent, display: 'flex', flexDirection: 'column', gap: '20px', maxHeight: 'calc(90vh - 120px)', overflowY: 'auto' }}>
+                <div
+                    style={{
+                        ...styles.modalOverlay,
+                        position: 'fixed',
+                        top: 0, left: 0, right: 0, bottom: 0,
+                        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                        display: 'flex', justifyContent: 'center', alignItems: 'center',
+                        zIndex: 1000
+                    }}
+                >
+                    <div
+                        style={{
+                            ...styles.modal,
+                            backgroundColor: '#ffffff',
+                            padding: '24px',
+                            borderRadius: '12px',
+                            width: '800px',
+                            maxHeight: '90vh',
+                            overflowY: 'auto',
+                            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.15)'
+                        }}
+                    >
+                        <h2
+                            style={{
+                                ...styles.modalHeader,
+                                fontSize: '24px',
+                                marginBottom: '20px',
+                                color: '#2c3e50',
+                                fontWeight: 700,
+                                borderBottom: '2px solid #ced4da',
+                                paddingBottom: '16px'
+                            }}
+                        >
+                            Сопоставление компонентов
+                        </h2>
+
+                        {/* --- NEW: Область для сообщений об ошибке и об успешном частичном сохранении --- */}
+                        <div style={{ padding: '0 10px', textAlign: 'center', marginBottom: '16px' }}>
+                            {partialSaveMessage && (
+                                <div style={{
+                                    ...styles.successMessage,
+                                    padding: '8px',
+                                    backgroundColor: '#e6ffed',
+                                    borderRadius: '4px',
+                                    color: '#22863a'
+                                }}>
+                                    {partialSaveMessage}
+                                </div>
+                            )}
+                            {error && (
+                                <div style={{
+                                    ...styles.error,
+                                    padding: '8px',
+                                    backgroundColor: '#ffeef0',
+                                    borderRadius: '4px',
+                                    color: '#cb2431'
+                                }}>
+                                    {error}
+                                </div>
+                            )}
+                        </div>
+
+                        <div
+                            style={{
+                                ...styles.modalContent,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '20px',
+                                maxHeight: 'calc(90vh - 200px)',
+                                overflowY: 'auto'
+                            }}
+                        >
                             {components.length === 0 ? (
-                                <div style={{ ...styles.noComponents, fontSize: '16px', color: '#721c24', textAlign: 'center', padding: '16px', backgroundColor: '#ffebee', borderRadius: '8px' }}>
+                                <div style={{
+                                    ...styles.noComponents,
+                                    fontSize: '16px',
+                                    color: '#721c24',
+                                    textAlign: 'center',
+                                    padding: '16px',
+                                    backgroundColor: '#ffebee',
+                                    borderRadius: '8px'
+                                }}>
                                     Компоненты не найдены. Проверьте загруженные JSON-файлы.
                                 </div>
                             ) : (
-                                components.map((comp) => (
-                                    <div key={comp.id} style={{ ...styles.mappingRow, display: 'flex', alignItems: 'center', gap: '16px', padding: '12px', backgroundColor: '#f8f9fa', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)' }}>
-                                        <div style={{ ...styles.componentContainer, flex: 1, display: 'flex' }}>
-                                            <span style={{ ...styles.mappingLabel, fontSize: '16px', fontWeight: 600, color: componentMappings[comp.id]?.length > 0 ? styles.success : styles.warning }}>
+                                components.map(comp => (
+                                    <div
+                                        key={comp.id}
+                                        style={{
+                                            ...styles.mappingRow,
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '16px',
+                                            padding: '12px',
+                                            backgroundColor: '#f8f9fa',
+                                            borderRadius: '8px',
+                                            boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)'
+                                        }}
+                                    >
+                                        {/* Метка компонента + сервис + эндпоинты */}
+                                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                            {/* Имя и тип */}
+                                            <span
+                                                style={{
+                                                    ...styles.mappingLabel,
+                                                    fontSize: 16,
+                                                    fontWeight: 600,
+                                                    color: componentMappings[comp.id]?.length > 0 ? styles.success : styles.warning
+                                                }}
+                                            >
                                                 {comp.type}: {comp.name}
                                             </span>
+
+                                            {/* ServiceName */}
+                                            {comp.serviceName && (
+                                                <span style={{ fontSize: 14, color: '#6c757d' }}>
+                                                    Service: {comp.serviceName}
+                                                </span>
+                                            )}
+
+                                            {/* Эндпоинты */}
                                             {comp.type === 'backend' && comp.endpoints.length > 0 && (
-                                                <ul style={{ ...styles.endpointList, margin: 0, paddingLeft: '20px', fontSize: '14px', color: '#6c757d', listStyle: 'none' }}>
-                                                    {comp.endpoints.map((endpoint, index) => (
-                                                        <li key={`${comp.id}-endpoint-${index}`} style={styles.endpointItem}>
-                                                            {endpoint.HttpMethod} {endpoint.RoutePath}
+                                                <ul
+                                                    style={{
+                                                        ...styles.endpointList,
+                                                        margin: 0,
+                                                        paddingLeft: 20,
+                                                        fontSize: 14,
+                                                        color: '#6c757d',
+                                                        listStyle: 'none'
+                                                    }}
+                                                >
+                                                    {comp.endpoints.map((ep, i) => (
+                                                        <li key={`${comp.id}-ep-${i}`} style={styles.endpointItem}>
+                                                            {ep.HttpMethod} {ep.RoutePath}
                                                         </li>
                                                     ))}
                                                 </ul>
                                             )}
                                         </div>
-                                        <Select
-                                            options={getFolderOptions(folders)}
-                                            value={getFolderOptions(folders).filter(option => componentMappings[comp.id]?.includes(option.value))}
-                                            onChange={(selectedOptions) => handleMappingChange(comp.id, selectedOptions)}
-                                            isMulti
-                                            placeholder="Выберите функциональный блок(и)..."
-                                            styles={selectStyles}
-                                            isSearchable
-                                        />
+
+                                        {/* Мультиселект */}
+                                        <div style={{ flex: 2 }}>
+                                            <Select
+                                                options={getFolderOptions(folders)}
+                                                value={getFolderOptions(folders)
+                                                    .filter(opt => componentMappings[comp.id]?.includes(opt.value))}
+                                                onChange={opts => handleMappingChange(comp.id, opts)}
+                                                isMulti
+                                                placeholder="Выберите функциональный блок(и)..."
+                                                styles={selectStyles}
+                                                isSearchable
+                                            />
+                                        </div>
                                     </div>
                                 ))
                             )}
                         </div>
-                        <div style={{ ...styles.modalFooter, marginTop: '20px', paddingTop: '16px', borderTop: '2px solid #ced4da', display: 'flex', justifyContent: 'flex-end', gap: '16px' }}>
-                            <button onClick={handleMappingCancel} style={styles.modalButtonCancel}>Отмена</button>
+
+                        <div style={{
+                            ...styles.modalFooter,
+                            marginTop: '20px',
+                            paddingTop: '16px',
+                            borderTop: '2px solid #ced4da',
+                            display: 'flex',
+                            justifyContent: 'flex-end',
+                            gap: '16px'
+                        }}>
+                            {/* Отмена */}
                             <button
-                                onClick={handleMappingConfirm}
-                                style={{ ...styles.modalButtonConfirm, position: 'relative' }}
-                                disabled={isMappingConfirmDisabled}
+                                onClick={handleMappingCancel}
+                                style={styles.modalButtonCancel}
+                                disabled={isPartialSaving || isMappingLoading}
                             >
-                                {isMappingLoading ? <Loader style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: '20px', height: '20px' }} /> : 'Подтвердить'}
+                                Отмена
+                            </button>
+
+                            {/* Новая кнопка «Сохранить маппинг» */}
+                            <button
+                                onClick={handlePartialSave}
+                                style={styles.modalButtonSave}
+                                disabled={isPartialSaving || isMappingLoading}
+                            >
+                                {isPartialSaving
+                                    ? <Loader style={{ width: 20, height: 20 }} />
+                                    : 'Сохранить маппинг'}
+                            </button>
+
+                            {/* Подтвердить и создать */}
+                            <button
+                                onClick={handleMappingConfirm}           // <-- вот здесь
+                                style={styles.modalButtonConfirm}
+                                disabled={isPartialSaving || isMappingLoading || isMappingConfirmDisabled}
+                            >
+                                {isMappingLoading
+                                    ? <Loader style={{ width: 20, height: 20 }} />
+                                    : 'Подтвердить и создать'}
                             </button>
                         </div>
                     </div>
                 </div>
             )}
+
         </div>
     );
 };
