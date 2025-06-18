@@ -1,6 +1,6 @@
 import fetch from 'node-fetch';
 import fs from 'fs';
-import { analyzeSolution as staticAnalyze } from './requirements-testing.mjs';
+import { analyzeRequirements as staticAnalyze } from './requirements-testing.mjs';
 
 /**
  * Анализирует требование с учётом статического анализа и LLM.
@@ -8,9 +8,10 @@ import { analyzeSolution as staticAnalyze } from './requirements-testing.mjs';
  * @param {string} requirementText — текст требования для анализа
  * @param {string} [context='—'] — необязательный контекст
  * @param {string} [project='—'] — необязательный идентификатор проекта
+ * @param {string} [glossary='—'] — необязательный глосарий проекта
  * @returns {Promise<string>} — ответ AI в виде отформатированного текста
  */
-export async function analyzeRequirementWithAI(requirementText, context = '—', project = '—') {
+export async function analyzeRequirementWithAI(requirementText, context = '—', project = '—', glossary = '—') {
 
   // Составляем промпт
   const prompt = `Вы — старший эксперт по системному анализу и тестированию ПО. Ваша задача — проверить качество требований по ISO/IEC/IEEE 29148 и QA‑практикам. Вы должны находить ошибки документации и выдавать ТОЛЬКО Markdown-блоки в строго заданном формате. Никаких заголовков, пояснений или текста вне блоков.
@@ -19,9 +20,13 @@ export async function analyzeRequirementWithAI(requirementText, context = '—',
   ---------------------------------------
   ${requirementText}
   ---------------------------------------
+
+  **Результаты предварительного статического анализа (обрати на них особое внимание):**
+  ${staticAnalyze(requirementText) || 'Проблем не найдено'}
   
-  Контекст: ${context}
-  Проект: ${project}
+  **Контекст**: ${context}
+  **Проект**: ${project}
+  **Глоссарий проекта (сокращения и термины):**: ${glossary}
   
   **Критерии проверки:**
   1. Завершённость — полная информация без пропусков (негативные сценарии, параметры)
@@ -32,6 +37,9 @@ export async function analyzeRequirementWithAI(requirementText, context = '—',
   6. Обязательность — ясно, обязательно ли требование, опционально или устарело
   7. Корректность и проверяемость — есть чёткий критерий проверки, нет опечаток, адекватный уровень детализации
   
+  **Инструкция по анализу:**
+  Сначала по каждому требованию проведи внутренний анализ шаг за шагом. Для каждого из 7 критериев (Завершённость, Атомарность и т.д.) подумай, нарушен ли он. Если да, то почему. Только после этого внутреннего анализа сформируй итоговый ответ в Markdown-блоках. Не показывай свои рассуждения в итоговом ответе.
+
   **Формат ответа — обязательно использовать ровно этот шаблон Markdown**:
   
   Для каждого требования:

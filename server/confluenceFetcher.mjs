@@ -4,130 +4,159 @@ import { JSDOM } from 'jsdom';
 const CONFLUENCE_BASE = 'https://confluence.artsofte.ru';
 const CONTENT_URL = (pageId) => `${CONFLUENCE_BASE}/rest/api/content/${pageId}?expand=body.view`;
 
+/**
+ * =================================================================
+ * УЛУЧШЕННЫЙ HTML-TO-MARKDOWN КОНВЕРТЕР
+ * =================================================================
+ * Эта функция рекурсивно обходит DOM-дерево и преобразует его в Markdown.
+ */
+function htmlToMarkdown(element) {
+    if (!element) return '';
+
+    const processNode = (node) => {
+        // 1. Обработка текстовых узлов
+        if (node.nodeType === 3) { // 3 = Text Node
+            // Заменяем множественные пробелы и переносы на один пробел
+            return node.textContent.replace(/\s+/g, ' ');
+        }
+
+        // 2. Обработка узлов-элементов
+        if (node.nodeType === 1) { // 1 = Element Node
+            const tagName = node.tagName.toLowerCase();
+            const childrenMarkdown = Array.from(node.childNodes).map(processNode).join('');
+
+            // 3. Обработка тегов
+            switch (tagName) {
+                // Блочные элементы с переносами строк
+                case 'h1': return `# ${childrenMarkdown.trim()}\n\n`;
+                case 'h2': return `## ${childrenMarkdown.trim()}\n\n`;
+                case 'h3': return `### ${childrenMarkdown.trim()}\n\n`;
+                case 'h4': return `#### ${childrenMarkdown.trim()}\n\n`;
+                case 'p': return `${childrenMarkdown.trim()}\n\n`;
+                case 'div': return `${childrenMarkdown.trim()}\n`; // div может быть и строчным, и блочным, добавляем один перенос
+                case 'li': return `- ${childrenMarkdown.trim()}\n`;
+                case 'ul':
+                case 'ol': return `\n${childrenMarkdown}\n`;
+                case 'blockquote':
+                    // Добавляем '>' к каждой строке внутри цитаты
+                    return `> ${childrenMarkdown.trim().replace(/\n/g, '\n> ')}\n\n`;
+
+                // Обработка таблиц - КЛЮЧЕВОЕ УЛУЧШШЕНИЕ
+                case 'table':
+                    const headerRow = node.querySelector('thead tr, tr:first-child');
+                    if (!headerRow) return '';
+                    const colCount = headerRow.cells.length;
+                    const separator = `|${' --- |'.repeat(colCount)}\n`;
+                    return `\n${childrenMarkdown}${separator}`;
+                case 'tr':
+                    return `| ${childrenMarkdown.trim()} |\n`;
+                case 'td':
+                case 'th':
+                    // Заменяем переносы строк внутри ячейки на <br> для корректного отображения в Markdown
+                    return `${childrenMarkdown.trim().replace(/\n/g, '<br>')} | `;
+
+                // Блоки кода (часто в Confluence)
+                case 'pre':
+                    return `\n\`\`\`\n${node.textContent.trim()}\n\`\`\`\n\n`;
+
+                // Строчные элементы
+                case 'strong':
+                case 'b':
+                    return `**${childrenMarkdown.trim()}**`;
+                case 'em':
+                case 'i':
+                    return `*${childrenMarkdown.trim()}*`;
+                case 'a':
+                    let href = node.getAttribute('href') || '';
+                    if (href.startsWith('/')) {
+                        href = CONFLUENCE_BASE + href;
+                    }
+                    return `[${childrenMarkdown.trim()}](${href})`;
+
+                // Игнорируемые теги
+                case 'style':
+                case 'script':
+                    return '';
+
+                // Все остальные теги просто рендерят своих детей
+                default:
+                    return childrenMarkdown;
+            }
+        }
+        return ''; // Игнорируем другие типы узлов (комментарии и т.д.)
+    };
+
+    let markdown = processNode(element);
+
+    // Финальная очистка: убираем лишние пробелы в начале строк и множественные пустые строки
+    return markdown
+        .split('\n')
+        .map(line => line.trimEnd())
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n') // Не более двух переносов подряд
+        .trim();
+}
+
+
 export async function fetchConfluencePage(bearerToken, pageId) {
-    // Получаем содержимое страницы через API
     const contentRes = await fetch(CONTENT_URL(pageId), {
         method: 'GET',
-        headers: {
-            'Accept': 'application/json',
-            'Authorization': `Bearer ${bearerToken}`
-        }
+        headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${bearerToken}` }
     });
 
     const bodyText = await contentRes.text();
-
     if (!contentRes.ok) {
         throw new Error(`Content fetch failed: ${contentRes.status} ${bodyText.trim().slice(0, 200)}…`);
     }
 
     const data = JSON.parse(bodyText);
     const html = data.body?.view?.value;
+    if (!html) throw new Error('Не найдено поле body.view.value');
 
-    if (!html) {
-        throw new Error('Не найдено поле body.view.value');
-    }
-
-    // Парсим HTML через JSDOM
     const dom = new JSDOM(html);
     const doc = dom.window.document;
 
-    // Удаляем все style и script теги
-    doc.querySelectorAll('style, script').forEach(el => el.remove());
+    // --- УЛУЧШЕННАЯ ЛОГИКА ИЗВЛЕЧЕНИЯ КОНТЕНТА ---
 
-    // Функция для форматирования текста с сохранением структуры
-    const formatText = (element) => {
-        if (!element) return '';
-
-        const processNode = (node, level = 0) => {
-            let result = '';
-            const children = Array.from(node.childNodes);
-
-            for (const child of children) {
-                if (child.nodeType === 3) { // Текстовый узел
-                    const text = child.textContent.trim();
-                    if (text) {
-                        result += text + (child.nextSibling ? ' ' : '');
-                    }
-                } else if (child.nodeType === 1) { // Элемент
-                    const tagName = child.tagName.toLowerCase();
-                    const childText = processNode(child, level + 1);
-
-                    if (!childText) continue;
-
-                    if (tagName === 'h1') {
-                        result += `# ${childText}\n\n`;
-                    } else if (tagName === 'h2') {
-                        result += `## ${childText}\n\n`;
-                    } else if (tagName === 'h3') {
-                        result += `### ${childText}\n\n`;
-                    } else if (tagName === 'li') {
-                        result += `- ${childText}\n`;
-                    } else if (tagName === 'p' || tagName === 'div') {
-                        result += `${childText}\n`;
-                    } else {
-                        result += childText;
-                    }
-                }
-            }
-
-            return result.trim();
-        };
-
-        const text = processNode(element);
-        // Убираем лишние пустые строки
-        return text.split(/\n+/).map(line => line.trim()).filter(line => line).join('\n');
-    };
-
-    // Ищем все вкладки и их содержимое
     const containers = Array.from(doc.querySelectorAll('div.aura-tab-container'));
-    const result = {
-        businessRequirements: '',
-        solutionConcept: '',
-        scenarios: ''
-    };
+    let combinedContent = '';
 
-    for (const container of containers) {
-        const labels = Array.from(container.querySelectorAll('.aura-tab-nav .aura-tab-item'));
-        const contents = Array.from(container.querySelectorAll('.aura-tab-content > div[role="tabpanel"]'));
+    if (containers.length > 0) {
+        // Если нашли табы, обрабатываем их как раньше
+        const result = { businessRequirements: '', solutionConcept: '', scenarios: '' };
+        for (const container of containers) {
+            const labels = Array.from(container.querySelectorAll('.aura-tab-nav .aura-tab-item'));
+            const contents = Array.from(container.querySelectorAll('.aura-tab-content > div[role="tabpanel"]'));
 
-        if (labels.length !== contents.length) {
-            console.warn(`⚠️ Кол-во табов (${labels.length}) и контента (${contents.length}) не совпадает`);
-        }
+            for (let i = 0; i < Math.min(labels.length, contents.length); i++) {
+                const label = labels[i]?.textContent?.trim().toLowerCase();
+                const contentElement = contents[i];
+                // Используем новый, улучшенный парсер
+                const content = htmlToMarkdown(contentElement);
 
-        for (let i = 0; i < Math.min(labels.length, contents.length); i++) {
-            const label = labels[i]?.textContent?.trim();
-            const contentElement = contents[i];
-            const content = formatText(contentElement);
-
-            if (label) {
-                const normalizedLabel = label.toLowerCase();
-                if (normalizedLabel.includes('бизнес требования') || normalizedLabel.includes('бизнес-требования')) {
-                    result.businessRequirements = content || '[пусто]';
-                } else if (normalizedLabel.includes('варианты реализации') || normalizedLabel.includes('образ решения')) {
-                    result.solutionConcept = content || '[пусто]';
-                } else if (normalizedLabel.includes('сценарии')) {
-                    result.scenarios = content || '[пусто]';
+                if (label) {
+                    if (label.includes('бизнес требования') || label.includes('бизнес-требования')) {
+                        result.businessRequirements = content || '[пусто]';
+                    } else if (label.includes('варианты реализации') || label.includes('образ решения')) {
+                        result.solutionConcept = content || '[пусто]';
+                    } else if (label.includes('сценарии')) {
+                        result.scenarios = content || '[пусто]';
+                    }
                 }
             }
         }
+        // Собираем результат из табов
+        if (result.businessRequirements) combinedContent += `## Бизнес-требования\n\n${result.businessRequirements}\n\n---\n\n`;
+        if (result.solutionConcept) combinedContent += `## Образ решения\n\n${result.solutionConcept}\n\n---\n\n`;
+        if (result.scenarios) combinedContent += `## Сценарии\n\n${result.scenarios}\n\n---\n\n`;
+
+    } else {
+        // ЕСЛИ ТАБОВ НЕТ - парсим основное содержимое страницы. Это делает парсер более универсальным.
+        console.warn('⚠️ Контейнеры с табами (.aura-tab-container) не найдены. Парсится все содержимое страницы.');
+        // Часто основной контент в Confluence находится в <div id="main-content">
+        const mainContent = doc.querySelector('#main-content') || doc.body;
+        combinedContent = htmlToMarkdown(mainContent);
     }
 
-    // Проверяем, найдены ли данные
-    if (!result.businessRequirements && !result.solutionConcept && !result.scenarios) {
-        return '[empty]';
-    }
-
-    // Формируем структурированный результат в виде строки
-    let output = '';
-    if (result.businessRequirements) {
-        output += `### Бизнес-требования\n\n${result.businessRequirements}\n\n---\n\n`;
-    }
-    if (result.solutionConcept) {
-        output += `### Образ решения\n\n${result.solutionConcept}\n\n---\n\n`;
-    }
-    if (result.scenarios) {
-        output += `### Сценарии\n\n${result.scenarios}\n\n---\n\n`;
-    }
-
-    return output.trim() || '[empty]';
+    return combinedContent.trim() || '[empty]';
 }

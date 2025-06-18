@@ -1,319 +1,192 @@
 import nlp from 'compromise';
 import nlpNumbers from 'compromise-numbers';
-import nlpSentences from 'compromise-sentences';
-// расширяем библиотеку
-nlp.extend(nlpNumbers).extend(nlpSentences);
-
-// паттерны для категорий
-const patterns = {
-  completeness: [
-    { regex: /парол(ь|и|ей).*?(хранить|хранятся|хранение)/gi, message: 'Укажите алгоритм шифрования для хранения паролей.' },
-    { regex: /\bTBD\b|\bto be defined\b/gi, message: 'Неполное требование (TBD). Уточните значение.' },
-    { regex: /\bи т\.д\.\b/gi, message: 'Неполное перечисление ("и т.д."). Уточните полный список.' }
-  ],
-  negativeScenarios: [/\b(error|fail|exception|ошибк|отказ)\b/i],
-  ambiguityWords: [
-    'адекватно', 'быстро', 'удобно', 'эффективно', 'нормально',
-    'желательно', 'возможно', 'и т.д.', 'часто', 'редко', 'иногда',
-    'по мере необходимости', 'как можно скорее', 'максимально',
-    'оптимально', 'достаточно', 'значительно', 'существенный',
-    'улучшенный', 'результативно', 'свободно', 'легко', 'прозрачно',
-    'скоро', 'возможно, стоит', 'без ограничений', 'по аналогии',
-    'примерно', 'etc'
-  ],
-  contradiction: [
-    {
-      regex: /(должен|обязательно).*?(не должен|запрещено)/gi,
-      message: 'Противоречивые формулировки: обязательность и запрет.'
-    }
-  ],
-  feasibility: [
-    {
-      regex: /(искусственн\w* интеллект|нейросет\w*)/gi,
-      message: 'Сложно реализуемая конструкция с ИИ.'
-    }
-  ],
-  apiPatterns: [
-    {
-      regex: /\/rest\/[^\s]+/g,
-      validator: (url) => {
-        if (!/(GET|POST|PUT|DELETE|PATCH|HEAD)\s+\//.test(url)) {
-          return 'REST-метод без указания HTTP-метода';
-        }
-        if (url.includes('//rest/')) return 'Двойной слэш в URL';
-        return null;
-      }
-    },
-    {
-      regex: /(Метод \d+):\s*([^\n]+)/g,
-      message: 'Формат описания методов: "Метод X: HTTP-метод /path/endpoint - Описание"'
-    }
-  ],
-  mobilePatterns: [
-    {
-      regex: /мобильн\w+ приложени\w+/gi,
-      validator: (text) => {
-        if (!/с учетом ограничений мобильных платформ/i.test(text)) {
-          return 'Упомянуты мобильные приложения без указания платформо-специфичных ограничений';
-        }
-        return null;
-      }
-    }
-  ],
-  httpPatterns: [
-    {
-      regex: /200 ОК\s*\+\s*errorCode/gi,
-      message: 'Противоречивый HTTP-статус (200 OK + errorCode). Используйте 4xx/5xx для ошибок'
-    }
-  ]
-};
+nlp.extend(nlpNumbers);
 
 /**
- * Анализ требований по 7 свойствам качества
- * @param {{ text: string }} data
- * @returns {{ issues: Array, stats: Object }}
+ * =================================================================
+ * Новая архитектура правил: Декларативно и расширяемо
+ * =================================================================
+ * Каждый объект в массиве rules представляет одно правило проверки.
+ * - id: Уникальный идентификатор правила.
+ * - category: Категория ошибки (по ISO 29148).
+ * - severity: 'critical', 'major', 'minor' – помогает приоритизировать.
+ * - message: Шаблон сообщения об ошибке.
+ * - check: Функция, выполняющая проверку. Принимает текст, возвращает массив совпадений.
  */
-export function analyzeSolution(data) {
-  console.log('Запуск анализа требований...');
-  if (!data || typeof data.text !== 'string') {
-    console.error('Неверный формат данных: ожидается строка текст требований');
-    throw new Error('Неверный формат данных: требуется поле text.');
+const rules = [
+  // --- КАТЕГОРИЯ: ЗАВЕРШЕННОСТЬ (Completeness) ---
+  {
+    id: 'completeness.tbd',
+    category: 'Завершённость',
+    severity: 'critical',
+    message: 'Требование не завершено. Замените плейсхолдер "[match]" на конкретное значение.',
+    check: (text) => text.match(/\b(TBD|TODO|FIXME|XXX|\[уточнить\])\b/gi)
+  },
+  {
+    id: 'completeness.etc',
+    category: 'Завершённость',
+    severity: 'major',
+    message: 'Неполное перечисление. Замените "[match]" на полный список элементов.',
+    check: (text) => text.match(/\b(и т\.д\.|и т\.п\.|etc\.)/gi)
+  },
+  {
+    id: 'completeness.no_negative_scenarios',
+    category: 'Завершённость',
+    severity: 'major',
+    message: 'В требованиях отсутствуют описания негативных сценариев или обработки ошибок. Добавьте раздел про поведение системы в случае ошибок.',
+    check: (text) => !/\b(error|fail|exception|ошибк|отказ|неуспешн|негативн)/i.test(text) ? [{ match: 'Отсутствие негативных сценариев', index: 0 }] : null
+  },
+  {
+    id: 'completeness.figure_mismatch',
+    category: 'Завершённость',
+    severity: 'minor',
+    message: 'Обнаружено несоответствие ссылок на рисунки (ссылок: [refs], определений: [defs]). Проверьте нумерацию.',
+    check: (text) => {
+      const refs = (text.match(/рис\.\s*\d+/gi) || []).length;
+      const defs = (text.match(/Рис(унок)?\.\s*\d+/gi) || []).length;
+      if (refs > 0 && refs !== defs) {
+        return [{ match: `(ссылок: ${refs}, определений: ${defs})`, index: text.search(/рис\.\s*\d+/gi) }];
+      }
+      return null;
+    }
+  },
+
+  // --- КАТЕГОРИЯ: НЕДВУСМЫСЛЕННОСТЬ (Unambiguity) ---
+  {
+    id: 'ambiguity.weak_words',
+    category: 'Недвусмысленность',
+    severity: 'major',
+    message: 'Найдено расплывчатое слово "[match]". Замените его на конкретный, измеримый критерий.',
+    check: (text) => text.match(/\b(адекватно|быстро|удобно|эффективно|нормально|достаточно|значительно|улучшенный|легко|прозрачно|скоро|максимально|оптимально)\b/gi)
+  },
+  {
+    id: 'ambiguity.unspecified_acronym',
+    category: 'Недвусмысленность',
+    severity: 'major',
+    message: 'Аббревиатура "[match]" используется без предварительной расшифровки. Добавьте полное название при первом упоминании.',
+    check: (text) => {
+      const KNOWN_ACRONYMS = new Set(['API', 'HTTP', 'JSON', 'XML', 'GET', 'POST', 'PUT', 'DELETE', 'PWA', 'REST']);
+      const acronyms = nlp(text).acronyms().out('array').filter(a => !KNOWN_ACRONYMS.has(a));
+      // Проверяем, что для акронима нет расшифровки в скобках рядом
+      return acronyms.filter(acronym => {
+        const regex = new RegExp(`\\b${acronym}\\b\\s*\\(`, 'i');
+        return !regex.test(text);
+      });
+    }
+  },
+  {
+    id: 'ambiguity.passive_voice',
+    category: 'Недвусмысленность',
+    severity: 'minor',
+    message: 'Используется пассивный залог: "[match]". Переформулируйте в активном залоге ("Система должна...") для ясности.',
+    check: (text) => text.match(/(будет сделан[ао]?|должен быть|должны быть|была реализована|реализовано|отображается)/gi)
+  },
+
+  // --- КАТЕГОРИЯ: АТОМАРНОСТЬ (Atomicity) ---
+  {
+    id: 'atomicity.multiple_verbs',
+    category: 'Атомарность',
+    severity: 'major',
+    message: 'Предложение содержит несколько действий ("[match]"). Возможно, требование стоит разделить на несколько атомарных.',
+    check: (text) => {
+      const sentences = nlp(text).sentences().json();
+      const issues = [];
+      for (const s of sentences) {
+        // Проверяем предложения, которые похожи на требования (начинаются с "Система должна", "Пользователь может" и т.д.)
+        if (/^(система|пользователь|модуль)/i.test(s.text)) {
+          const verbs = nlp(s.text).verbs().out('array');
+          if (verbs.length > 2 && s.text.includes(' и ')) {
+            issues.push(s.text);
+          }
+        }
+      }
+      return issues;
+    }
+  },
+
+  // --- КАТЕГОРИЯ: КОРРЕКТНОСТЬ И ПРОВЕРЯЕМОСТЬ (Correctness & Verifiability) ---
+  {
+    id: 'verifiability.not_measurable',
+    category: 'Проверяемость',
+    severity: 'critical',
+    message: 'Неизмеримое требование к качеству: "[match]". Добавьте конкретные цифры (время отклика в мс, нагрузка в RPS и т.д.).',
+    check: (text) => {
+      // Ищем слова, связанные с производительностью, но без цифр рядом
+      const qualityWords = text.match(/\b(производительность|скорость|время отклика|нагрузк[ауи]|быстродействие)\b/gi) || [];
+      return qualityWords.filter(word => {
+        const index = text.indexOf(word);
+        const context = text.substring(index - 30, index + 30);
+        return !/\d/.test(context); // Если в контексте нет цифр, это проблема
+      });
+    }
+  },
+  {
+    id: 'correctness.api_no_method',
+    category: 'Корректность API',
+    severity: 'major',
+    message: 'REST-эндпоинт "[match]" указан без HTTP-метода (GET, POST и т.д.).',
+    check: (text) => {
+      const urls = text.match(/\/rest\/[^\s,."'()]+/g) || [];
+      return urls.filter(url => {
+        const index = text.indexOf(url);
+        const prefix = text.substring(Math.max(0, index - 10), index);
+        return !/\b(GET|POST|PUT|DELETE|PATCH)\s*$/i.test(prefix);
+      });
+    }
+  },
+  {
+    id: 'correctness.api_200_with_error',
+    category: 'Корректность API',
+    severity: 'critical',
+    message: 'Противоречие в ответе API: успешный статус 200 OK и поле ошибки. Для ошибок должны использоваться статусы 4xx/5xx.',
+    check: (text) => text.match(/200 OK\s*\+.*errorCode/gi)
+  },
+];
+
+
+/**
+ * Основная функция анализа.
+ * @param {string} textToAnalyze - Текст требований для анализа.
+ * @returns {{ issues: Array }}
+ */
+export function analyzeRequirements(textToAnalyze) {
+  if (!textToAnalyze || typeof textToAnalyze !== 'string') {
+    console.error('Ошибка: на вход должна подаваться непустая строка.');
+    return { issues: [] };
   }
 
-  const raw = data.text;
-  console.log('Входной текст требований:\n', raw);
-  const text = raw.trim();
-  const baseOffset = raw.indexOf(text);
-
-  // разбиваем на предложения
-  const doc = nlp(text);
-  const sentences = doc.sentences().out('array');
   const issues = [];
 
-  // вспомогательные функции
-  const getGlobalIndex = idx => idx + baseOffset;
-  function findLine(idx) {
-    const lines = raw.split(/\r?\n/);
-    let pos = 0;
-    for (const line of lines) {
-      const len = line.length + 1;
-      if (idx < pos + len) return line.trim();
-      pos += len;
-    }
-    return '';
-  }
-  function record(category, message, localIdx) {
-    const idx = getGlobalIndex(localIdx);
-    const line = findLine(idx);
-    console.log(`Нарушение [${category}] в строке:`, line);
+  // Функция для унифицированной записи найденных проблем
+  const recordIssue = (rule, match) => {
+    const fullMatch = typeof match === 'string' ? match : match.match;
+    const index = typeof match === 'string' ? textToAnalyze.indexOf(match) : match.index;
+
     issues.push({
-      category,
-      message,
-      index: idx,
-      line,
-      excerpt: raw.substr(idx, 80).replace(/\r?\n/g, ' ')
+      id: rule.id,
+      category: rule.category,
+      severity: rule.severity,
+      message: rule.message.replace('[match]', fullMatch),
+      line: textToAnalyze.substring(0, index).split('\n').length,
+      excerpt: fullMatch.length > 80 ? fullMatch.substring(0, 80) + '...' : fullMatch
     });
-  }
-
-  // 1. Завершённость
-  patterns.completeness.forEach(p => {
-    let m;
-    while ((m = p.regex.exec(text)) !== null) {
-      record('Завершённость', p.message, m.index);
-    }
-  });
-
-  // негативные сценарии
-  if (!patterns.negativeScenarios[0].test(text)) {
-    record('Завершённость',
-      'Не найдены негативные сценарии (ошибки, исключения). Уточните возможные отказы.',
-      0);
-  }
-
-  // условия «если...то» и таблица решений
-  const ifThenAll = text.match(/\bесли[\s\S]{0,100}?\bто\b/gi) || [];
-  if (ifThenAll.length > 3 && !/таблица решений/i.test(text)) {
-    record('Завершённость',
-      `Найдено ${ifThenAll.length} условий «если...то». Рассмотрите использование таблицы решений.`,
-      0);
-  }
-
-  // Проверка сложных условий
-  const complexIfRegex = /если[\s\S]{10,}?(?:иначе|и если|или если)/gi;
-  let complexIf;
-  while ((complexIf = complexIfRegex.exec(text)) !== null) {
-    const nestedIf = complexIf[0].match(/если/gi)?.length || 0;
-    if (nestedIf > 2) {
-      record('Читаемость',
-        `Слишком сложное условие (${nestedIf} уровней вложенности). Рассмотрите вынос в отдельную таблицу решений.`,
-        complexIf.index);
-    }
-  }
-
-  // 2. Атомарность
-  sentences.forEach(sent => {
-    const localIdx = text.indexOf(sent);
-    if (/^\s*\d+[\.\)]/.test(sent) || /\/rest\//.test(sent) || sent.length > 200) return;
-
-    const conjMatches = sent.match(/\b(и|или)\b/gi) || [];
-    if (conjMatches.length > 1) {
-      record('Атомарность',
-        `Найдено несколько союзов 'и/или' (${conjMatches.join(', ')}). Возможно объединены несколько требований.`,
-        localIdx);
-    }
-  });
-
-  // 3. Непротиворечивость
-  patterns.contradiction.forEach(p => {
-    let m;
-    while ((m = p.regex.exec(text)) !== null) {
-      record('Непротиворечивость', p.message, m.index);
-    }
-  });
-
-  // Проверка параметров на дублирование
-  const paramSection = text.match(/Используемые параметры на проекте:[\s\S]+?(?=(\n\s*\n|$))/gi);
-  if (paramSection) {
-    const params = paramSection[0].match(/"([^"]+)"/g);
-    if (params && params.length > 0) {
-      const uniqueParams = [...new Set(params)];
-      if (uniqueParams.length !== params.length) {
-        record('Непротиворечивость',
-          'Обнаружены дублирующиеся параметры в описании',
-          text.indexOf(paramSection[0]));
-      }
-    }
-  }
-
-  // 4. Недвусмысленность
-  patterns.ambiguityWords.forEach(w => {
-    const re = new RegExp(`\\b${w}\\b`, 'gi');
-    let m;
-    while ((m = re.exec(text)) !== null) {
-      record('Недвусмысленность',
-        `Расплывчатая фраза "${w}". Уточните конкретный параметр.`,
-        m.index);
-    }
-  });
-
-  // аббревиатуры без расшифровки
-  const acronyms = doc.match('#Acronym').out('array');
-  acronyms.forEach(abbr => {
-    if (/^[A-ZА-ЯЁ]{2,}$/.test(abbr) &&
-      !['API', 'HTTP', 'JSON', 'XML', 'GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'M', 'PWA', 'DA', 'D'].includes(abbr)) {
-      const idx = text.indexOf(abbr);
-      record('Недвусмысленность',
-        `Аббревиатура "${abbr}" без расшифровки. Добавьте определение.`,
-        idx);
-    }
-  });
-
-  // 5. Выполнимость
-  patterns.feasibility.forEach(p => {
-    let m;
-    while ((m = p.regex.exec(text)) !== null) {
-      record('Выполнимость', p.message, m.index);
-    }
-  });
-
-  // Проверка API
-  let m;
-  const apiRule = patterns.apiPatterns[0];
-  while ((m = apiRule.regex.exec(text)) !== null) {
-    const url = m[0];
-    const pos = m.index;
-    const prefix = text.slice(Math.max(0, pos - 20), pos);
-
-    // 1) если перед URL явно указан HTTP‑метод — пропускаем
-    if (/\b(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*$/.test(prefix)) {
-      continue;
-    }
-    // 2) если перед URL стоит "Метод N:" — пропускаем
-    if (/\bМетод\s*\d+\s*:\s*$/.test(prefix)) {
-      continue;
-    }
-
-    // остальная валидация (двойной слэш, отсутствие метода и т.п.)
-    const error = apiRule.validator(url);
-    if (error) {
-      record('Корректность API', error, pos);
-    }
-  }
-  // 5. Проверка «голых» REST‑URL без явного HTTP‑метода или «Метод N:»
-  {
-    const apiUrlRe = /\/rest\/[^\s]+/g;
-    let m;
-    while ((m = apiUrlRe.exec(text)) !== null) {
-      const url = m[0];
-      const pos = m.index;
-      // захватим контекст 20 символов до и 10 после URL
-      const ctxStart = Math.max(0, pos - 20);
-      const ctxEnd = Math.min(text.length, pos + url.length + 10);
-      const ctx = text.slice(ctxStart, ctxEnd);
-
-      // если перед "/rest/" есть HTTP‑метод — пропускаем
-      if (/(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+\/rest\//i.test(ctx)) {
-        continue;
-      }
-      // все остальные — действительно «REST‑метод без указания HTTP‑метода»
-      const error = patterns.apiPatterns[0].validator(url);
-      if (error) {
-        record('Корректность API', error, pos);
-      }
-    }
-  }
-
-  // Проверка мобильных требований
-  let mobileMatch;
-  while ((mobileMatch = patterns.mobilePatterns[0].regex.exec(text)) !== null) {
-    const error = patterns.mobilePatterns[0].validator(mobileMatch[0]);
-    if (error) record('Мобильные требования', error, mobileMatch.index);
-  }
-
-  // 6. Обязательность
-  doc.match('желательно').forEach(m => {
-    const str = m.text();
-    const idx = text.indexOf(str);
-    record('Обязательность',
-      'Слово "желательно" указывает на опциональность. Проверьте необходимость.',
-      idx);
-  });
-
-  // 7. Корректность и проверяемость
-  const hasNumbers = /\b\d+\b/.test(text);
-  const hasMeasurable = /(\d+\s*%|\d+\s*(сек|мин|час|мс)|responseTime|timeout)/i.test(text);
-  if (!hasNumbers || !hasMeasurable) {
-    record('Корректность',
-      hasNumbers ? 'Нет измеримых критериев (таймауты, лимиты)' : 'Нет числовых параметров',
-      0);
-  }
-
-  // Проверка HTTP-статусов
-  patterns.httpPatterns.forEach(p => {
-    let httpMatch;
-    while ((httpMatch = p.regex.exec(text)) !== null) {
-      record('Корректность API', p.message, httpMatch.index);
-    }
-  });
-
-  // Проверка ссылок на рисунки
-  const figureRefs = text.match(/рис\.\s*\d+/gi) || [];
-  const figureDefs = text.match(/Рис\.\s*\d+/gi) || [];
-  if (figureRefs.length !== figureDefs.length) {
-    record('Завершенность',
-      `Несоответствие ссылок на рисунки (ссылок: ${figureRefs.length}, определений: ${figureDefs.length})`,
-      text.indexOf(figureRefs[0] || figureDefs[0] || ''));
-  }
-
-  // сбор статистики
-  const stats = {
-    total: issues.length,
-    byCategory: issues.reduce((acc, i) => {
-      acc[i.category] = (acc[i.category] || 0) + 1;
-      return acc;
-    }, {})
   };
-  console.log('Итоговая статистика:', stats);
 
-  return { issues, stats };
+  // Проходим по всем правилам и выполняем их проверки
+  for (const rule of rules) {
+    try {
+      const matches = rule.check(textToAnalyze);
+      if (matches && matches.length > 0) {
+        matches.forEach(match => recordIssue(rule, match));
+      }
+    } catch (e) {
+      console.error(`Ошибка при выполнении правила "${rule.id}":`, e.message);
+    }
+  }
+
+  // Сортируем проблемы по серьезности
+  const severityOrder = { 'critical': 1, 'major': 2, 'minor': 3 };
+  issues.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+
+  return { issues };
 }

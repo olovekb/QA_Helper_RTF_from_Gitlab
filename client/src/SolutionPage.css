@@ -1,182 +1,288 @@
-/* SolutionPage.css */
+/* General Page Style */
+body {
+  background-color: #0d1117;
+  color: #c9d1d9;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+}
 
 .solution-page {
+  max-width: 900px;
+  margin: 20px auto;
   padding: 20px;
-  max-width: 800px;
-  margin: 0 auto;
-  color: #e0e0e0;
-  font-family: Arial, sans-serif;
 }
 
-.field {
+h1,
+h2 {
+  color: #58a6ff;
+  border-bottom: 1px solid #30363d;
+  padding-bottom: 10px;
+}
+
+/* Input Area */
+.input-area {
+  background-color: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 30px;
+}
+
+.input-tabs {
   display: flex;
-  flex-direction: column;
-  margin-bottom: 1rem;
+  border-bottom: 1px solid #30363d;
+  margin-bottom: 15px;
 }
 
-.field label {
-  margin-bottom: 0.5rem;
-  font-weight: 500;
+.input-tabs button {
+  padding: 10px 20px;
+  border: none;
+  background: none;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 16px;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1px;
+  /* Overlap the container border */
 }
 
-.field textarea,
-.field input {
+.input-tabs button.active {
+  color: #f0f6fc;
+  border-bottom-color: #f78166;
+  font-weight: 600;
+}
+
+.input-area textarea,
+.input-area input {
   width: 100%;
   box-sizing: border-box;
-  padding: 0.5rem;
-  font-family: monospace;
-  font-size: 0.95rem;
-  border: 1px solid #444;
-  border-radius: 4px;
-  background-color: #1e1e2f;
-  color: #f1f1f1;
+  padding: 10px;
+  background-color: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #c9d1d9;
+  font-size: 14px;
+  margin-bottom: 10px;
 }
 
-.field textarea:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.buttons {
+.confluence-inputs {
   display: flex;
-  gap: 1rem;
-  margin-top: 1rem;
+  gap: 10px;
 }
 
-.buttons button {
-  flex: none;
-  padding: 0.6rem 1.2rem;
-  font-size: 1rem;
-  font-weight: 500;
-  border: none;
-  border-radius: 4px;
+.analyze-button {
+  width: 100%;
+  padding: 12px;
+  font-size: 16px;
+  font-weight: 600;
+  color: white;
+  background-color: #238636;
+  border: 1px solid rgba(240, 246, 252, 0.1);
+  border-radius: 6px;
   cursor: pointer;
-  background-color: #0065ff;
-  color: #fff;
   transition: background-color 0.2s;
 }
 
-.buttons button:disabled {
+.analyze-button:hover:not(:disabled) {
+  background-color: #2ea043;
+}
+
+.analyze-button:disabled {
   background-color: #555;
   cursor: not-allowed;
+  opacity: 0.7;
 }
 
-.buttons button:hover:not(:disabled) {
-  background-color: #0052cc;
-}
-
-.analysis-result {
+/* Task Workspace */
+.task-workspace {
   margin-top: 2rem;
 }
 
-.analysis-result h2 {
-  margin-bottom: 1rem;
-  color: #ffcc00;
+.task-controls {
+  display: flex;
+  gap: 1rem;
+  margin: 20px 0;
 }
 
-/* Markdown rendering */
-.ai-recommendation {
-  margin-top: 1.5rem;
-  padding: 1rem;
-  background-color: #1e1e2f;
-  border-left: 4px solid #ffcc00;
+.task-controls button {
+  padding: 10px 15px;
+  font-size: 14px;
+  font-weight: 500;
+  border: 1px solid #30363d;
   border-radius: 6px;
-  color: #f1f1f1;
+  cursor: pointer;
+  transition: all 0.2s;
 }
 
-.markdown-body {
-  padding: 1rem;
-  background-color: transparent;
+.add-task-btn {
+  background-color: #21262d;
+  color: #c9d1d9;
 }
 
-/* Headings */
-.markdown-body h1,
-.markdown-body h2,
-.markdown-body h3,
-.markdown-body h4,
-.markdown-body h5,
-.markdown-body h6 {
-  color: #ffffff;
-  margin: 1.2em 0 0.5em;
+.add-task-btn:hover {
+  background-color: #30363d;
 }
 
-/* Paragraphs */
-.markdown-body p {
-  color: #e0e0e0;
-  margin: 0.8em 0;
+.create-jira-btn {
+  background-color: #1f6feb;
+  color: white;
 }
 
-/* Lists */
-.markdown-body ul,
-.markdown-body ol {
-  margin: 1em 0;
-  padding-left: 1.5em;
+.create-jira-btn:hover {
+  background-color: #388bfd;
 }
 
-.markdown-body li {
-  margin-bottom: 0.5em;
-  color: #d0d0d0;
+/* Task Card */
+.task-card {
+  background-color: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  margin-bottom: 15px;
+  padding: 15px;
 }
 
-/* Inline formatting */
-.markdown-body strong {
-  color: #ffffff;
-  font-weight: bold;
-}
-
-.markdown-body em {
-  color: #ccc;
-  font-style: italic;
-}
-
-/* Code */
-.markdown-body code {
-  background-color: #2e2e3e;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-family: monospace;
-  color: #ffeb95;
-  white-space: pre-wrap !important;
-  word-break: break-word !important;
-}
-
-.markdown-body pre {
-  background-color: #2e2e3e;
-  padding: 1em;
-  border-radius: 6px;
-  overflow-x: hidden !important;
-  white-space: pre-wrap !important;
-  word-wrap: break-word !important;
-  overflow-wrap: break-word !important;
-  font-size: 0.9em;
-}
-
-.task-selection {
-  max-height: 400px;
-  overflow-y: auto;
-  margin-bottom: 20px;
-}
-
-.task-item {
-  border: 1px solid #444;
-  padding: 10px;
-  margin-bottom: 10px;
-  border-radius: 5px;
+.task-card.new-task {
+  border-left: 3px solid #f78166;
 }
 
 .task-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 15px;
 }
 
-.task-header h3 {
-  margin: 0;
+.task-header input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+}
+
+.task-summary-input {
+  flex-grow: 1;
+  background: none;
+  border: none;
+  border-bottom: 1px dashed #444;
+  color: #f0f6fc;
+  font-size: 18px;
+  font-weight: 600;
+  padding: 5px;
+}
+
+.task-summary-input:focus {
+  outline: none;
+  border-bottom-color: #58a6ff;
+}
+
+.delete-task-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
   font-size: 16px;
+  opacity: 0.6;
+  transition: opacity 0.2s;
 }
 
-.task-item .field textarea {
+.delete-task-btn:hover {
+  opacity: 1;
+}
+
+.task-body input,
+.task-body textarea {
   width: 100%;
   box-sizing: border-box;
+  margin-bottom: 8px;
+  background-color: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 8px;
+  color: #c9d1d9;
+}
+
+
+/* Modal */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.8);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background-color: #161b22;
+  padding: 30px;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 600px;
+  border: 1px solid #30363d;
+}
+
+.modal .field {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 1rem;
+}
+
+.modal .field label {
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+  color: #8b949e;
+}
+
+.modal .buttons {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
+  justify-content: flex-end;
+}
+
+.jira-result ul {
+  list-style: none;
+  padding: 0;
+  margin-top: 20px;
+}
+
+.jira-result li {
+  padding: 5px 0;
+}
+
+.jira-result li.error {
+  color: #f85149;
+}
+
+.jira-result li.success {
+  color: #3fb950;
+}
+
+.jira-result a {
+  color: #58a6ff;
+}
+
+/* Делаем фон выпавших “успешных” элементов тёмно-зелёным,
+   а текст — светлым */
+.jira-result li.success {
+  background-color: #213f20;   /* тёмно-зелёный фон */
+  color: #c9d1d9;              /* светло-серый текст */
+  padding: 8px 12px;           /* отступы для читабельности */
+  border-radius: 4px;          /* скруглённые углы */
+  margin-bottom: 6px;          /* расстояние между строк */
+}
+
+/* Аналогично сделаем фон “ошибочных” элементов тёмно-красным */
+.jira-result li.error {
+  background-color: #3f1f1f;   /* тёмно-красный фон */
+  color: #f85149;              /* ярко-красный текст */
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin-bottom: 6px;
+}
+
+/* Чтобы ссылки внутри списка тоже были контрастнее */
+.jira-result li a {
+  color: #58a6ff;              /* остатим ярко-синий, но на тёмном фоне читается */
+  text-decoration: underline;  /* подчёркивание для наглядности */
 }

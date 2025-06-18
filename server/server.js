@@ -198,7 +198,7 @@ app.post('/ai-recommendation', async (req, res) => {
  */
 app.post('/analyze/solution', async (req, res) => {
     try {
-        const { text, pageId, context, project, bearerToken } = req.body;
+        const { text, pageId, context, project, glossary, bearerToken } = req.body;
 
         if (!text && !pageId) {
             throw new Error('Параметр text или pageId обязателен.');
@@ -219,7 +219,8 @@ app.post('/analyze/solution', async (req, res) => {
         const aiResponse = await analyzeRequirementWithAI(
             requirementText,
             context,
-            project
+            project,
+            glossary
         );
 
         const result = {
