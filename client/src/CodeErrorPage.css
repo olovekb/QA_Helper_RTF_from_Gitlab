@@ -1,0 +1,261 @@
+/* General Page Styles */
+.solution-page {
+    padding: 20px;
+    background-color: #1a1a2e;
+    color: #e0e0e0;
+    min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+h1 {
+    color: #a6b0f1;
+    text-align: center;
+    margin-bottom: 25px;
+}
+
+/* Task Controls */
+.task-controls {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+    margin-bottom: 25px;
+}
+
+.add-task-btn,
+.create-jira-btn {
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: none;
+    font-size: 16px;
+    cursor: pointer;
+    transition: background-color 0.3s ease, transform 0.1s ease;
+}
+
+.add-task-btn:active,
+.create-jira-btn:active {
+    transform: scale(0.98);
+}
+
+.add-task-btn {
+    background-color: #4a4a70;
+    color: white;
+}
+
+.create-jira-btn {
+    background-color: #1e90ff;
+    color: white;
+}
+
+.create-jira-btn:disabled {
+    background-color: #555;
+    cursor: not-allowed;
+}
+
+/* Task List */
+.task-list {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+/* Task Card */
+.task-card {
+    background-color: #2a2a4a;
+    border-radius: 8px;
+    border: 1px solid #4a4a70;
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.task-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.task-header input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+
+.delete-task-btn {
+    background: none;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+}
+
+/* Grid layout for task body */
+.task-body-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+}
+
+.span-two-columns {
+    grid-column: 1 / -1;
+}
+
+/* Universal input/select/textarea styles */
+.task-card input,
+.task-card textarea,
+.task-card select {
+    width: 100%;
+    padding: 10px;
+    background-color: #1a1a2e;
+    border: 1px solid #4a4a70;
+    border-radius: 5px;
+    color: #e0e0e0;
+    box-sizing: border-box;
+    font-family: inherit;
+    font-size: 1em;
+}
+
+.task-card select {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23c0c0e0%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22/%3E%3C/svg%3E');
+    background-repeat: no-repeat;
+    background-position: right 10px top 50%;
+    background-size: .65em auto;
+    padding-right: 30px;
+}
+
+.task-card textarea {
+    resize: vertical;
+}
+
+/* Modal Styles */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    background-color: #2a2a4a;
+    padding: 25px;
+    border-radius: 10px;
+    width: 90%;
+    max-width: 550px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.modal-close-btn {
+    position: absolute;
+    top: 10px;
+    right: 15px;
+    font-size: 24px;
+    cursor: pointer;
+    background: none;
+    border: none;
+    color: #fff;
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.field label {
+    font-weight: bold;
+}
+
+.field input,
+.field select {
+    padding: 10px;
+    background-color: #1a1a2e;
+    border: 1px solid #4a4a70;
+    border-radius: 5px;
+    color: #e0e0e0;
+}
+
+.common-fields-group {
+    border: 1px solid #4a4a70;
+    padding: 15px;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    transition: opacity 0.3s ease;
+}
+
+.common-fields-group:disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+.common-fields-group legend {
+    padding: 0 10px;
+    color: #a6b0f1;
+}
+
+.buttons {
+    display: flex;
+    justify-content: center;
+}
+
+.buttons button:disabled {
+    background-color: #555;
+    cursor: not-allowed;
+}
+
+/* --- NEW: Status Messages --- */
+.status-message {
+    text-align: center;
+    padding: 10px;
+    border-radius: 5px;
+    margin: 5px 0;
+    font-weight: 500;
+}
+
+.status-message.loading {
+    background-color: #1e90ff20;
+    color: #80c0ff;
+}
+
+.status-message.error {
+    background-color: #dc354530;
+    color: #ff8090;
+}
+
+.status-message.success {
+    background-color: #28a74530;
+    color: #60e080;
+}
+
+/* Jira Result Messages */
+.jira-result {
+    margin-top: 15px;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.jira-result .success {
+    color: #34e060;
+}
+
+.jira-result .success a {
+    color: #58c0ff;
+}
+
+.jira-result .error {
+    color: #ff6b81;
+}

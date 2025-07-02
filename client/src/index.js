@@ -5,6 +5,8 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import App from './App';
 import TIAPage from './TIAPage';
 import SolutionPage from './SolutionPage';
+import CodeErrorPage from './CodeErrorPage';
+
 
 // Список проектов (можно вынести в отдельный файл, если он нужен в нескольких местах)
 const projects = [
@@ -31,6 +33,7 @@ root.render(
       <Route path="/" element={<App projects={projects} />} />
       <Route path="/tia" element={<TIAPage projects={projects} />} />
       <Route path="/solution" element={<SolutionPage />} />
+      <Route path="/code-error" element={<CodeErrorPage projects={projects} />} />
     </Routes>
   </Router>
 );

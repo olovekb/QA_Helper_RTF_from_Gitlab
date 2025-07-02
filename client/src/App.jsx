@@ -205,6 +205,9 @@ const App = ({ projects }) => {
           <button onClick={handleSolutionClick} className="tia-button">
             Тестирование требований
           </button>
+          <button onClick={() => navigate('/code-error')} className="tia-button">
+            Завести набор ошибок кода на эпик
+          </button>
         </div>
       </div>
       <div className="tabs">
