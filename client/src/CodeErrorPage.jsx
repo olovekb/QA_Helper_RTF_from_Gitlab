@@ -1,4 +1,3 @@
-// src/CodeErrorPage.jsx
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import Select from 'react-select';
@@ -24,6 +23,7 @@ const CodeErrorCard = ({
     onDelete,
     fieldOptions,
     loadDefectOptions,
+    onDefectSelect,
     allureProject,
     runAi,
     aiLoading
@@ -31,12 +31,6 @@ const CodeErrorCard = ({
     const handleChange = field => e => {
         const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
         onUpdate(index, { ...task, [field]: v });
-    };
-    const handleSelect = field => opt => {
-        onUpdate(index, { ...task, [field]: opt ? opt.value : '' });
-    };
-    const handleMulti = field => opts => {
-        onUpdate(index, { ...task, [field]: opts.map(o => o.value) });
     };
     const toOptions = key =>
         (fieldOptions[key] || []).map(o => ({ value: o.id, label: o.name }));
@@ -58,6 +52,7 @@ const CodeErrorCard = ({
                 />
                 <button className="delete-task-btn" onClick={() => onDelete(index)}>❌</button>
             </div>
+
             {/* AI feedback for "Тема" */}
             {task.aiSummary && (
                 <div className="ai-feedback">
@@ -133,31 +128,32 @@ const CodeErrorCard = ({
                 <input type="text" placeholder="Тестовые данные" value={task.testData} onChange={handleChange('testData')} />
                 <input type="text" placeholder="Макет" value={task.mockup} onChange={handleChange('mockup')} />
 
+                {/* Jira custom fields */}
                 <Select
                     placeholder="Серьезность*"
                     options={toOptions('Severity')}
                     value={toOptions('Severity').find(o => o.value === task.severity) || null}
-                    onChange={handleSelect('severity')}
+                    onChange={opt => onUpdate(index, { ...task, severity: opt?.value || '' })}
                 />
                 <Select
                     isMulti
                     placeholder="Симптом*"
                     options={toOptions('Symptom')}
                     value={toOptions('Symptom').filter(o => task.symptom.includes(o.value))}
-                    onChange={handleMulti('symptom')}
+                    onChange={opts => onUpdate(index, { ...task, symptom: opts.map(o => o.value) })}
                 />
                 <Select
                     isMulti
                     placeholder="Платформа*"
                     options={toOptions('Platform')}
                     value={toOptions('Platform').filter(o => task.platform.includes(o.value))}
-                    onChange={handleMulti('platform')}
+                    onChange={opts => onUpdate(index, { ...task, platform: opts.map(o => o.value) })}
                 />
                 <Select
                     placeholder="Баг с прода"
                     options={toOptions('ProdBug')}
                     value={toOptions('ProdBug').find(o => o.value === task.prodBug) || null}
-                    onChange={handleSelect('prodBug')}
+                    onChange={opt => onUpdate(index, { ...task, prodBug: opt?.value || '' })}
                 />
 
                 {/* Allure defect picker */}
@@ -170,7 +166,12 @@ const CodeErrorCard = ({
                         isClearable
                         placeholder="Начните вводить…"
                         value={task.allureDefect}
-                        onChange={opt => onUpdate(index, { ...task, allureDefect: opt })}
+                        onChange={opt => {
+                            onUpdate(index, { ...task, allureDefect: opt });
+                            if (opt?.value) {
+                                onDefectSelect(index, opt.value);
+                            }
+                        }}
                         noOptionsMessage={() => 'Нет совпадений'}
                         isOptionDisabled={opt => opt.linked}
                         formatOptionLabel={opt => (
@@ -260,8 +261,8 @@ export default function CodeErrorPage({ projects }) {
                 { params: { issueKey: sample, pat: jiraPat } }
             );
             setTransitions(data);
-        } catch (e) {
-            console.warn('Не удалось загрузить transitions:', e);
+        } catch {
+            console.warn('Не удалось загрузить transitions');
         }
     }, [debProject, debPat, jiraPat]);
     useEffect(() => {
@@ -280,7 +281,28 @@ export default function CodeErrorPage({ projects }) {
         })));
     };
 
-    // 5) AI review for a single task
+    // 5) Fetch Allure description+steps on select
+    const fetchDefectDetails = async (idx, defectId) => {
+        try {
+            const { data } = await axios.get(
+                `${config.serverUrl}/allure/defect/${defectId}/details`
+            );
+            setTasks(ts => ts.map((t, i) => i === idx
+                ? {
+                    ...t,
+                    description: data.description || t.description,
+                    steps: (data.steps || []).join('\n') || t.steps,
+                    isNew: false
+                }
+                : t
+            ));
+        } catch (e) {
+            console.error('Ошибка загрузки деталей дефекта:', e);
+            alert('Не удалось загрузить описание/шаги дефекта');
+        }
+    };
+
+    // 6) AI review for a single task
     const runAi = async idx => {
         const t = tasks[idx];
         setAiLoading(l => ({ ...l, [idx]: true }));
@@ -307,7 +329,7 @@ export default function CodeErrorPage({ projects }) {
         }
     };
 
-    // 6) Task list handlers
+    // 7) Task list handlers
     const handleAdd = () => setTasks(ts => [{
         summary: '', description: '', steps: '', actual: '', expected: '',
         stand: '', env: '', requirementLink: '', testData: '', mockup: '',
@@ -318,7 +340,7 @@ export default function CodeErrorPage({ projects }) {
     const handleDelete = i => setTasks(ts => ts.filter((_, idx) => idx !== i));
     const handleUpdate = (i, upd) => setTasks(ts => ts.map((t, idx) => idx === i ? upd : t));
 
-    // 7) Create, transition and link Allure defect
+    // 8) Create + transition + link Allure
     const handleCreateAll = async () => {
         if (!affectedVersion) {
             alert('Выберите затронутую версию.');
@@ -328,7 +350,7 @@ export default function CodeErrorPage({ projects }) {
         const out = [];
 
         for (const t of tasks.filter(t => t.selected)) {
-            // валидация...
+            // валидируем...
             const desc = `
 h3. Подробное описание
 ${t.description}
@@ -405,6 +427,7 @@ ${t.expected}
         }
 
         setResults(out);
+        // удаляем успешно созданные
         setTasks(ts => ts.filter(t =>
             !out.find(r => r.success && r.summary === t.summary)
         ));
@@ -461,7 +484,9 @@ ${t.expected}
                     className="create-jira-btn"
                     disabled={!tasks.some(t => t.selected)}
                     onClick={() => setModalOpen(true)}
-                >⚙️ Создать ({tasks.filter(t => t.selected).length})</button>
+                >
+                    ⚙️ Создать ({tasks.filter(t => t.selected).length})
+                </button>
             </div>
 
             {/* 3) Task list */}
@@ -476,6 +501,7 @@ ${t.expected}
                         fieldOptions={fieldOptions}
                         loadDefectOptions={loadDefectOptions}
                         allureProject={allureProject}
+                        onDefectSelect={fetchDefectDetails}
                         runAi={runAi}
                         aiLoading={aiLoading[i]}
                     />
@@ -527,7 +553,8 @@ ${t.expected}
                                 <Select
                                     placeholder="Выберите статус…"
                                     options={transitions.map(t => ({ value: t.id, label: t.name }))}
-                                    value={transitions.map(t => ({ value: t.id, label: t.name })).find(o => o.value === targetStatus) || null}
+                                    value={transitions.map(t => ({ value: t.id, label: t.name }))
+                                        .find(o => o.value === targetStatus) || null}
                                     onChange={opt => setTargetStatus(opt?.value || null)}
                                 />
                             </div>

@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { analyzeBugWithAI, getAllureDefects, linkIssueToAllureDefect, getAllTestCases, getTestCaseOverview, getTestCaseExpectedResult, getTestCaseLayer, getCaseIssue, getCaseTags, getTestCasePrecondition, getTestCaseStatus, getTestCaseSteps, getTestCaseCustomFields } from './http-service.mjs';
+import { getAllureDefectById, getStepsForDefect, analyzeBugWithAI, getAllureDefects, linkIssueToAllureDefect, getAllTestCases, getTestCaseOverview, getTestCaseExpectedResult, getTestCaseLayer, getCaseIssue, getCaseTags, getTestCasePrecondition, getTestCaseStatus, getTestCaseSteps, getTestCaseCustomFields } from './http-service.mjs';
 import { spinningLoader } from './spinning-loader.mjs';
 import pLimit from 'p-limit';
 import { formatTestCase } from './format-testcase.mjs';
@@ -535,6 +535,24 @@ app.post('/api/bug/ai-review', async (req, res) => {
     }
 });
 
+app.get('/allure/defect/:defectId/details', async (req, res) => {
+    try {
+        const defectId = req.params.defectId;
+        if (!defectId) return res.status(400).json({ error: 'Нужен defectId' });
+
+        const defect = await getAllureDefectById(defectId);
+        const steps = await getStepsForDefect(defectId);
+
+        // возвращаем описание дефекта в поле description и шаги
+        res.json({
+            description: defect.description || '',
+            steps
+        });
+    } catch (err) {
+        console.error('Error /allure/defect/:id/details:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // Запуск сервера
 app.listen(PORT, () => {

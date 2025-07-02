@@ -5,6 +5,8 @@ import config from './config.json' assert { type: 'json' };
 
 // TODO: Нужно рефачить - переиспользовать из tia-mapping-service\utils\allureAuth.js
 
+const OPENROUTER_KEY = config.openRouterAiKey;
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // Конфигурация
 const BASE_URL = config.baseUrl;
@@ -246,3 +248,161 @@ export async function getTestCaseCustomFields(testCaseId, projectId) {
     return await response.json();
 }
 
+/**
+ * Получить дефекты из Allure
+ * @param {string} projectId
+ * @param {string} [query]
+ * @param {number} [page]
+ * @param {number} [size]
+ */
+export async function getAllureDefects(projectId, query = '', page = 0, size = 25) {
+    if (!projectId) throw new Error('projectId is required');
+    const url = new URL(`${BASE_URL}/defect`);
+    url.searchParams.set('projectId', projectId);
+    url.searchParams.set('sort', 'id,asc');
+    url.searchParams.set('page', page);
+    url.searchParams.set('size', size);
+    if (query) url.searchParams.set('name', query);
+
+    const resp = await fetchWithAuth(url.toString(), { credentials: 'include' });
+    if (!resp.ok) throw new Error(`Allure GET defects failed: ${resp.statusText}`);
+    const json = await resp.json();
+    return json.content || [];
+}
+
+/**
+ * Привязать к дефекту задачу из Jira
+ * @param {string} defectId
+ * @param {number} integrationId
+ * @param {string} issueName
+ */
+export async function linkIssueToAllureDefect(defectId, integrationId, issueName) {
+    const url = `${BASE_URL}/defect/${defectId}/issue`;
+    const resp = await fetchWithAuth(url, {
+        method: 'POST',
+        credentials: 'include',
+        body: JSON.stringify({ integrationId, name: issueName })
+    });
+    if (!resp.ok) {
+        const text = await resp.text().catch(() => resp.statusText);
+        throw new Error(`Allure POST link issue failed: ${text}`);
+    }
+    return resp.json();
+}
+
+
+export async function analyzeBugWithAI(task) {
+    const { summary, description, steps, actual, expected } = task;
+    const prompt = `
+Ты — эксперт по написанию баг-репортов. Проверь следующие поля по нашему чек-листу:
+
+1. Тема  
+   - Кратко: Что? Где? При каких условиях?  
+   - Без личных местоимений и размытых формулировок.  
+2. Подробное описание  
+   - Должно раскрывать суть ошибки и приводить репродукцию.  
+3. Шаги воспроизведения  
+   - Каждый шаг начинается с глагола, обезличен, ясен.  
+4. Фактический результат  
+   - Ясно и однозначно описывает проблему.  
+5. Ожидаемый результат  
+   - Ясно и однозначно, что система должна делать.
+
+Вот текущее содержимое:
+\`\`\`
+Тема: ${summary || '<пусто>'}
+
+Подробное описание:
+${description || '<пусто>'}
+
+Шаги воспроизведения:
+${steps || '<пусто>'}
+
+Фактический результат:
+${actual || '<пусто>'}
+
+Ожидаемый результат:
+${expected || '<пусто>'}
+\`\`\`
+
+Для каждого блока верни **короткую** рекомендацию (1–2 предложения) в **чистом** JSON формате:
+\`\`\`json
+{
+  "summaryFeedback": "...",
+  "descriptionFeedback": "...",
+  "stepsFeedback": "...",
+  "actualFeedback": "...",
+  "expectedFeedback": "..."
+}
+\`\`\`
+`;
+
+    const res = await fetch(OPENROUTER_URL, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${OPENROUTER_KEY}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            model: 'deepseek/deepseek-chat:free',
+            messages: [{ role: 'user', content: prompt }]
+        })
+    });
+    const json = await res.json();
+    const content = json.choices?.[0]?.message?.content || '';
+
+    // Вытаскиваем первый JSON-объект из текста
+    const match = content.match(/\{[\s\S]*\}/);
+    if (!match) {
+        throw new Error('Не удалось найти JSON в ответе AI:\n' + content);
+    }
+    try {
+        return JSON.parse(match[0]);
+    } catch (e) {
+        throw new Error('Не удалось распарсить извлечённый JSON: ' + e.message + '\n' + match[0]);
+    }
+}
+
+
+
+/**
+ * Получить детали дефекта (с описанием).
+ */
+export async function getAllureDefectById(defectId) {
+    const url = `${BASE_URL}/defect/${defectId}`;
+    const resp = await fetchWithAuth(url, { credentials: 'include' });
+    if (!resp.ok) throw new Error(`Allure GET defect failed: ${resp.statusText}`);
+    return resp.json(); // вернёт { id, projectId, name, description, … }
+}
+
+export async function getStepsForDefect(defectId) {
+    // 1) узнаём связанный testResult
+    const trUrl = `${BASE_URL}/defect/${defectId}/testresult?page=0&size=1`;
+    const trResp = await fetchWithAuth(trUrl, { credentials: 'include' });
+    if (!trResp.ok) throw new Error(`Allure GET defect testresult failed: ${trResp.statusText}`);
+    const trJson = await trResp.json();
+    const first = trJson.content?.[0];
+    if (!first) return [];
+
+    // 2) получаем execution с полями steps + вложенными steps
+    const executionUrl = `${BASE_URL}/testresult/${first.id}/execution?v2=true`;
+    const exResp = await fetchWithAuth(executionUrl, { credentials: 'include' });
+    if (!exResp.ok) throw new Error(`Allure GET execution failed: ${exResp.statusText}`);
+    const exJson = await exResp.json();
+
+    // 3) Формируем уже пронумерованный и отформатированный список строк:
+    //    родительский – курсивом (_…_), дочерние – с отступом и «n.m»
+    const lines = [];
+    exJson.steps.forEach((step, i) => {
+        const idx = i + 1;
+        // общий шаг – курсивом
+        lines.push(`${idx}. _${step.body}_`);
+        // вложенные шаги
+        (step.steps || []).forEach((child, j) => {
+            const cidx = j + 1;
+            lines.push(`    ${idx}.${cidx}. ${child.body}`);
+        });
+    });
+
+    return lines;
+}
