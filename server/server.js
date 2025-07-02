@@ -545,6 +545,7 @@ app.get('/allure/defect/:defectId/details', async (req, res) => {
 
         // возвращаем описание дефекта в поле description и шаги
         res.json({
+            name: defect.name || '',
             description: defect.description || '',
             steps
         });
