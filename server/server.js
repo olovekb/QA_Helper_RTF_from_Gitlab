@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { getAllureDefects, linkIssueToAllureDefect, getAllTestCases, getTestCaseOverview, getTestCaseExpectedResult, getTestCaseLayer, getCaseIssue, getCaseTags, getTestCasePrecondition, getTestCaseStatus, getTestCaseSteps, getTestCaseCustomFields } from './http-service.mjs';
+import { analyzeBugWithAI, getAllureDefects, linkIssueToAllureDefect, getAllTestCases, getTestCaseOverview, getTestCaseExpectedResult, getTestCaseLayer, getCaseIssue, getCaseTags, getTestCasePrecondition, getTestCaseStatus, getTestCaseSteps, getTestCaseCustomFields } from './http-service.mjs';
 import { spinningLoader } from './spinning-loader.mjs';
 import pLimit from 'p-limit';
 import { formatTestCase } from './format-testcase.mjs';
@@ -517,6 +517,21 @@ app.post('/allure/defect/:defectId/issue', async (req, res) => {
     } catch (err) {
         console.error('Allure POST link issue failed:', err);
         res.status(500).json({ error: err.message });
+    }
+});
+
+
+app.post('/api/bug/ai-review', async (req, res) => {
+    const task = req.body.task || req.body.testCase;
+    if (!task || typeof task !== 'object') {
+        return res.status(400).json({ error: 'Нужен объект task' });
+    }
+    try {
+        const feedback = await analyzeBugWithAI(task);
+        return res.json(feedback);
+    } catch (err) {
+        console.error('AI-review error:', err);
+        return res.status(500).json({ error: err.message });
     }
 });
 

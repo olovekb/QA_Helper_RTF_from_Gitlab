@@ -18,8 +18,15 @@ function useDebounce(value, delay) {
 
 // single task card component
 const CodeErrorCard = ({
-    task, index, onUpdate, onDelete, fieldOptions,
-    loadDefectOptions, allureProject
+    task,
+    index,
+    onUpdate,
+    onDelete,
+    fieldOptions,
+    loadDefectOptions,
+    allureProject,
+    runAi,
+    aiLoading
 }) => {
     const handleChange = field => e => {
         const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
@@ -51,7 +58,15 @@ const CodeErrorCard = ({
                 />
                 <button className="delete-task-btn" onClick={() => onDelete(index)}>❌</button>
             </div>
+            {/* AI feedback for "Тема" */}
+            {task.aiSummary && (
+                <div className="ai-feedback">
+                    <strong>AI Тема:</strong> {task.aiSummary}
+                </div>
+            )}
+
             <div className="task-body-grid">
+                {/* Подробное описание */}
                 <textarea
                     className="span-two-columns"
                     rows={3}
@@ -59,6 +74,14 @@ const CodeErrorCard = ({
                     value={task.description}
                     onChange={handleChange('description')}
                 />
+                {/* AI feedback for "Подробное описание" */}
+                {task.aiDescription && (
+                    <div className="ai-feedback span-two-columns">
+                        <strong>AI Описание:</strong> {task.aiDescription}
+                    </div>
+                )}
+
+                {/* Шаги воспроизведения */}
                 <textarea
                     className="span-two-columns"
                     rows={3}
@@ -66,6 +89,14 @@ const CodeErrorCard = ({
                     value={task.steps}
                     onChange={handleChange('steps')}
                 />
+                {/* AI feedback for "Шаги воспроизведения" */}
+                {task.aiSteps && (
+                    <div className="ai-feedback span-two-columns">
+                        <strong>AI Шаги:</strong> {task.aiSteps}
+                    </div>
+                )}
+
+                {/* Фактический результат */}
                 <textarea
                     className="span-two-columns"
                     rows={2}
@@ -73,6 +104,14 @@ const CodeErrorCard = ({
                     value={task.actual}
                     onChange={handleChange('actual')}
                 />
+                {/* AI feedback for "Фактический результат" */}
+                {task.aiActual && (
+                    <div className="ai-feedback span-two-columns">
+                        <strong>AI Факт. рез-т:</strong> {task.aiActual}
+                    </div>
+                )}
+
+                {/* Ожидаемый результат */}
                 <textarea
                     className="span-two-columns"
                     rows={2}
@@ -80,7 +119,14 @@ const CodeErrorCard = ({
                     value={task.expected}
                     onChange={handleChange('expected')}
                 />
+                {/* AI feedback for "Ожидаемый результат" */}
+                {task.aiExpected && (
+                    <div className="ai-feedback span-two-columns">
+                        <strong>AI Ожид. рез-т:</strong> {task.aiExpected}
+                    </div>
+                )}
 
+                {/* Прочие поля */}
                 <input type="text" placeholder="Стенд" value={task.stand} onChange={handleChange('stand')} />
                 <input type="text" placeholder="Окружение" value={task.env} onChange={handleChange('env')} />
                 <input type="text" placeholder="Ссылка на требование" value={task.requirementLink} onChange={handleChange('requirementLink')} />
@@ -135,12 +181,24 @@ const CodeErrorCard = ({
                     />
                 </div>
             </div>
+
+            {/* AI button */}
+            <div className="ai-controls">
+                <button
+                    onClick={() => runAi(index)}
+                    disabled={aiLoading}
+                    className="ai-btn"
+                >
+                    {aiLoading ? 'Проверка AI…' : 'Проверка AI'}
+                </button>
+            </div>
         </div>
     );
 };
 
 export default function CodeErrorPage({ projects }) {
     const [tasks, setTasks] = useState([]);
+    const [aiLoading, setAiLoading] = useState({});
     const [jiraProject, setJiraProject] = useState('');
     const [jiraPat, setJiraPat] = useState('');
     const [epicLink, setEpicLink] = useState('');
@@ -210,7 +268,7 @@ export default function CodeErrorPage({ projects }) {
         if (modalOpen) loadTransitions();
     }, [modalOpen, loadTransitions]);
 
-    // 4) Async load Allure defects, marking already linked
+    // 4) Async load Allure defects (mark already linked)
     const loadDefectOptions = (projectId, input) => {
         if (!projectId) return Promise.resolve([]);
         return axios.get(`${config.serverUrl}/allure/defects`, {
@@ -222,17 +280,45 @@ export default function CodeErrorPage({ projects }) {
         })));
     };
 
-    // 5) Task list handlers
+    // 5) AI review for a single task
+    const runAi = async idx => {
+        const t = tasks[idx];
+        setAiLoading(l => ({ ...l, [idx]: true }));
+        try {
+            const { data } = await axios.post(
+                `${config.serverUrl}/api/bug/ai-review`,
+                { task: t }
+            );
+            setTasks(ts => ts.map((c, i) => i === idx
+                ? {
+                    ...c,
+                    aiSummary: data.summaryFeedback,
+                    aiDescription: data.descriptionFeedback,
+                    aiSteps: data.stepsFeedback,
+                    aiActual: data.actualFeedback,
+                    aiExpected: data.expectedFeedback
+                }
+                : c
+            ));
+        } catch (e) {
+            alert('Ошибка AI: ' + (e.response?.data?.error || e.message));
+        } finally {
+            setAiLoading(l => ({ ...l, [idx]: false }));
+        }
+    };
+
+    // 6) Task list handlers
     const handleAdd = () => setTasks(ts => [{
         summary: '', description: '', steps: '', actual: '', expected: '',
         stand: '', env: '', requirementLink: '', testData: '', mockup: '',
         severity: '', symptom: [], platform: [], prodBug: '',
-        selected: true, isNew: true, allureDefect: null
+        selected: true, isNew: true, allureDefect: null,
+        aiSummary: '', aiDescription: '', aiSteps: '', aiActual: '', aiExpected: ''
     }, ...ts]);
     const handleDelete = i => setTasks(ts => ts.filter((_, idx) => idx !== i));
     const handleUpdate = (i, upd) => setTasks(ts => ts.map((t, idx) => idx === i ? upd : t));
 
-    // 6) Create, transition, link Allure defect
+    // 7) Create, transition and link Allure defect
     const handleCreateAll = async () => {
         if (!affectedVersion) {
             alert('Выберите затронутую версию.');
@@ -242,12 +328,7 @@ export default function CodeErrorPage({ projects }) {
         const out = [];
 
         for (const t of tasks.filter(t => t.selected)) {
-            if (!t.summary || !t.description || !t.steps || !t.actual || !t.expected
-                || !t.severity || !t.symptom.length || !t.platform.length) {
-                alert(`Заполните все * поля в "${t.summary || 'Без темы'}".`);
-                setCreating(false);
-                return;
-            }
+            // валидация...
             const desc = `
 h3. Подробное описание
 ${t.description}
@@ -264,8 +345,7 @@ ${t.expected}
 *Стенд:* ${t.stand || 'не указано'}
 *Окружение:* ${t.env || 'не указано'}
 *Тестовые данные:* ${t.testData || 'не указано'}
-*Макет:* ${t.mockup || 'не указано'}
-`;
+*Макет:* ${t.mockup || 'не указано'}`;
             const fields = {
                 project: { key: jiraProject },
                 issuetype: { id: '12811' },
@@ -281,7 +361,6 @@ ${t.expected}
             if (assignee) fields.assignee = { name: assignee };
 
             try {
-                // create in Jira
                 const r = await axios.post(
                     `${config.serverUrl}/jira/create-issue`,
                     { pat: jiraPat, payload: { fields } }
@@ -289,7 +368,6 @@ ${t.expected}
                 const key = r.data.key;
                 out.push({ success: true, summary: t.summary, key });
 
-                // do transition if requested
                 if (targetStatus) {
                     await axios.post(
                         `${config.serverUrl}/jira/transition-issues`,
@@ -297,7 +375,6 @@ ${t.expected}
                     );
                 }
 
-                // link Allure defect if chosen
                 if (t.allureDefect) {
                     try {
                         await axios.post(
@@ -305,7 +382,6 @@ ${t.expected}
                             { integrationId: 67, name: key }
                         );
                     } catch (linkErr) {
-                        // catch 409 conflict
                         if (linkErr.response?.status === 409) {
                             out.push({
                                 success: false,
@@ -323,7 +399,6 @@ ${t.expected}
                         }
                     }
                 }
-
             } catch (e) {
                 out.push({ success: false, summary: t.summary, error: e.message });
             }
@@ -391,7 +466,7 @@ ${t.expected}
 
             {/* 3) Task list */}
             <div className="task-list">
-                {tasks.map((t, i) =>
+                {tasks.map((t, i) => (
                     <CodeErrorCard
                         key={i}
                         index={i}
@@ -401,11 +476,13 @@ ${t.expected}
                         fieldOptions={fieldOptions}
                         loadDefectOptions={loadDefectOptions}
                         allureProject={allureProject}
+                        runAi={runAi}
+                        aiLoading={aiLoading[i]}
                     />
-                )}
+                ))}
             </div>
 
-            {/* 4) Modal */}
+            {/* 4) Modal with shared fields */}
             {modalOpen && (
                 <div className="modal">
                     <div className="modal-content">
@@ -413,7 +490,6 @@ ${t.expected}
                         <h2>2. Общие поля для всех задач</h2>
                         <fieldset disabled={!ready} className="common-fields-group">
                             <legend>Общие поля</legend>
-
                             <div className="field">
                                 <label>Epic Link</label>
                                 <input
@@ -422,7 +498,6 @@ ${t.expected}
                                     placeholder="PROJ-123"
                                 />
                             </div>
-
                             <div className="field">
                                 <label>Исполнитель</label>
                                 <AsyncSelect
@@ -435,7 +510,6 @@ ${t.expected}
                                     noOptionsMessage={() => 'Нет совпадений'}
                                 />
                             </div>
-
                             <div className="field">
                                 <label>Затронутые версии*</label>
                                 <AsyncSelect
@@ -448,29 +522,21 @@ ${t.expected}
                                     noOptionsMessage={() => 'Нет совпадений'}
                                 />
                             </div>
-
                             <div className="field">
                                 <label>Статус после создания</label>
                                 <Select
                                     placeholder="Выберите статус…"
                                     options={transitions.map(t => ({ value: t.id, label: t.name }))}
-                                    value={transitions
-                                        .map(t => ({ value: t.id, label: t.name }))
-                                        .find(o => o.value === targetStatus) || null}
+                                    value={transitions.map(t => ({ value: t.id, label: t.name })).find(o => o.value === targetStatus) || null}
                                     onChange={opt => setTargetStatus(opt?.value || null)}
                                 />
                             </div>
                         </fieldset>
-
                         <div className="buttons">
-                            <button
-                                onClick={handleCreateAll}
-                                disabled={!ready || creating || !affectedVersion}
-                            >
+                            <button onClick={handleCreateAll} disabled={!ready || creating || !affectedVersion}>
                                 {creating ? 'Создание…' : `Создать (${tasks.filter(t => t.selected).length})`}
                             </button>
                         </div>
-
                         <div className="jira-result">
                             {results.map((r, i) =>
                                 r.success

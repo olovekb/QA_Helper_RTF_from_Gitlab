@@ -6,5 +6,6 @@
     "url":  "https://abanking.qatools.cloud",
     "jiraUrl":  "https://jira.abanking.ru/browse",
     "huggingfaceToken":  "__REDACTED__",
+    "openRouterAiKey":  "__REDACTED__",
     "openAiToken":  "__REDACTED__"
 }
