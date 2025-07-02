@@ -1,7 +1,8 @@
+// CodeErrorPage.jsx
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import Select from 'react-select';             // npm install react-select
-import AsyncSelect from 'react-select/async';  // npm install react-select
+import Select from 'react-select';
+import AsyncSelect from 'react-select/async';
 import './CodeErrorPage.css';
 import config from './config.json';
 
@@ -15,18 +16,16 @@ function useDebounce(value, delay) {
     return debounced;
 }
 
-// single task card component
+// Single test-case card
 const CodeErrorCard = ({ task, index, onUpdate, onDelete, fieldOptions }) => {
     const handleChange = field => e => {
-        const v = e.target.type === 'checkbox'
-            ? e.target.checked
-            : e.target.value;
+        const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
         onUpdate(index, { ...task, [field]: v });
     };
     const handleSelect = field => option => {
         onUpdate(index, { ...task, [field]: option ? option.value : '' });
     };
-    const handleMultiChange = field => options => {
+    const handleMulti = field => options => {
         onUpdate(index, { ...task, [field]: options.map(o => o.value) });
     };
     const toOptions = key =>
@@ -47,10 +46,7 @@ const CodeErrorCard = ({ task, index, onUpdate, onDelete, fieldOptions }) => {
                     value={task.summary}
                     onChange={handleChange('summary')}
                 />
-                <button
-                    className="delete-task-btn"
-                    onClick={() => onDelete(index)}
-                >❌</button>
+                <button className="delete-task-btn" onClick={() => onDelete(index)}>❌</button>
             </div>
             <div className="task-body-grid">
                 <textarea
@@ -82,70 +78,33 @@ const CodeErrorCard = ({ task, index, onUpdate, onDelete, fieldOptions }) => {
                     onChange={handleChange('expected')}
                 />
 
-                <input
-                    type="text"
-                    placeholder="Стенд"
-                    value={task.stand}
-                    onChange={handleChange('stand')}
-                />
-                <input
-                    type="text"
-                    placeholder="Окружение"
-                    value={task.env}
-                    onChange={handleChange('env')}
-                />
-                <input
-                    type="text"
-                    placeholder="Ссылка на требование"
-                    value={task.requirementLink}
-                    onChange={handleChange('requirementLink')}
-                />
-                <input
-                    type="text"
-                    placeholder="Тестовые данные"
-                    value={task.testData}
-                    onChange={handleChange('testData')}
-                />
-                <input
-                    type="text"
-                    placeholder="Макет"
-                    value={task.mockup}
-                    onChange={handleChange('mockup')}
-                />
-                <input
-                    type="number"
-                    placeholder="ID дефекта из Allure"
-                    value={task.allureId}
-                    onChange={handleChange('allureId')}
-                />
+                <input type="text" placeholder="Стенд" value={task.stand} onChange={handleChange('stand')} />
+                <input type="text" placeholder="Окружение" value={task.env} onChange={handleChange('env')} />
+                <input type="text" placeholder="Ссылка на требование" value={task.requirementLink} onChange={handleChange('requirementLink')} />
+                <input type="text" placeholder="Тестовые данные" value={task.testData} onChange={handleChange('testData')} />
+                <input type="text" placeholder="Макет" value={task.mockup} onChange={handleChange('mockup')} />
+                <input type="number" placeholder="ID Allure" value={task.allureId} onChange={handleChange('allureId')} />
 
-                {/* Severity */}
                 <Select
                     placeholder="Серьезность*"
                     options={toOptions('Severity')}
                     value={toOptions('Severity').find(o => o.value === task.severity) || null}
                     onChange={handleSelect('severity')}
                 />
-
-                {/* Symptom */}
                 <Select
                     isMulti
                     placeholder="Симптом*"
                     options={toOptions('Symptom')}
                     value={toOptions('Symptom').filter(o => task.symptom.includes(o.value))}
-                    onChange={handleMultiChange('symptom')}
+                    onChange={handleMulti('symptom')}
                 />
-
-                {/* Platform */}
                 <Select
                     isMulti
                     placeholder="Платформа*"
                     options={toOptions('Platform')}
                     value={toOptions('Platform').filter(o => task.platform.includes(o.value))}
-                    onChange={handleMultiChange('platform')}
+                    onChange={handleMulti('platform')}
                 />
-
-                {/* ProdBug */}
                 <Select
                     placeholder="Баг с прода"
                     options={toOptions('ProdBug')}
@@ -157,7 +116,6 @@ const CodeErrorCard = ({ task, index, onUpdate, onDelete, fieldOptions }) => {
     );
 };
 
-// main page component
 export default function CodeErrorPage() {
     const [tasks, setTasks] = useState([]);
     const [jiraProject, setJiraProject] = useState('');
@@ -165,8 +123,10 @@ export default function CodeErrorPage() {
     const [epicLink, setEpicLink] = useState('');
     const [assignee, setAssignee] = useState('');
     const [affectedVersion, setAffectedVersion] = useState('');
+    const [targetStatus, setTargetStatus] = useState(null);  // <-- новый
     const [fieldOptions, setFieldOptions] = useState({});
     const [fieldIds, setFieldIds] = useState({});
+    const [transitions, setTransitions] = useState([]);    // <-- для кеша переходов
     const [isMetaLoading, setIsMetaLoading] = useState(false);
     const [metaError, setMetaError] = useState('');
     const [creating, setCreating] = useState(false);
@@ -176,7 +136,7 @@ export default function CodeErrorPage() {
     const debProject = useDebounce(jiraProject, 500);
     const debPat = useDebounce(jiraPat, 500);
 
-    // load only field-options & field-ids once project+pat are typed
+    // 1) Загружаем базовые кастом-поля
     const loadMeta = useCallback(async () => {
         if (!debProject || !debPat) return;
         setIsMetaLoading(true);
@@ -194,44 +154,69 @@ export default function CodeErrorPage() {
             setIsMetaLoading(false);
         }
     }, [debProject, debPat]);
+    useEffect(() => { loadMeta() }, [loadMeta]);
 
-    useEffect(() => { loadMeta(); }, [loadMeta]);
-
-    // dynamic load for assignees
+    // 2) Подгрузка исполнителей/версий по ходу набора
     const loadUserOptions = input =>
         axios.get(`${config.serverUrl}/jira/users`, {
             params: { projectKey: jiraProject, pat: jiraPat, query: input }
         }).then(r => r.data.map(u => ({ value: u.name, label: u.displayName })));
 
-    // dynamic load for versions
     const loadVersionOptions = input =>
         axios.get(`${config.serverUrl}/jira/versions`, {
             params: { projectKey: jiraProject, pat: jiraPat, query: input }
         }).then(r => r.data.map(v => ({ value: v.id, label: v.name })));
 
+    // 3) Подгрузка списка переходов сразу при открытии модалки
+    const loadTransitions = useCallback(async () => {
+        if (!debProject || !debPat) return;
+        try {
+            // здесь просто запрашиваем из настроенного «примерного» ключа JMT-1,
+            const sample = `JMT-14707`;
+            const { data } = await axios.get(
+                `${config.serverUrl}/jira/transition`,
+                { params: { issueKey: sample, pat: jiraPat } }
+            );
+            // data = [{ id: '21', name: 'Оценка' }, …]
+            setTransitions(data);
+        } catch (e) {
+            console.warn('Не удалось подгрузить transitions:', e);
+        }
+    }, [jiraProject, jiraPat, debProject, debPat]);
+
+    useEffect(() => {
+        if (modalOpen) loadTransitions();
+    }, [modalOpen, loadTransitions]);
+
+    // манипуляции со списком задач
     const handleAdd = () => setTasks(ts => [{
         summary: '', description: '', steps: '', actual: '', expected: '',
         stand: '', env: '', requirementLink: '', testData: '', mockup: '',
         allureId: '', severity: '', symptom: [], platform: [], prodBug: '',
         selected: true, isNew: true
     }, ...ts]);
-
     const handleDelete = i => setTasks(ts => ts.filter((_, idx) => idx !== i));
     const handleUpdate = (i, upd) => setTasks(ts => ts.map((t, idx) => idx === i ? upd : t));
 
+    // 4) Создание + переход
     const handleCreateAll = async () => {
         if (!affectedVersion) {
-            alert('Выберите затронутую версию.');
+            alert('Выберите версию.');
             return;
         }
         setCreating(true);
         const out = [];
+
         for (const t of tasks.filter(t => t.selected)) {
-            if (!t.summary || !t.description || !t.steps || !t.actual || !t.expected || !t.severity || !t.symptom.length || !t.platform.length) {
+            // валидация
+            if (!t.summary || !t.description || !t.steps || !t.actual || !t.expected
+                || !t.severity || !t.symptom.length || !t.platform.length) {
                 alert(`Заполните все * поля в "${t.summary || 'Без темы'}".`);
                 setCreating(false);
                 return;
             }
+
+            // формируем description
             const desc = `
 h3. Подробное описание
 ${t.description}
@@ -256,8 +241,9 @@ ${t.expected}
                 issuetype: { id: '12811' },
                 summary: t.summary,
                 description: desc,
-                versions: [{ id: affectedVersion }],
+                versions: [{ id: affectedVersion }]
             };
+            // кастом-поля
             fields[fieldIds.Severity] = { id: t.severity };
             fields[fieldIds.Symptom] = t.symptom.map(id => ({ id }));
             fields[fieldIds.Platform] = t.platform.map(id => ({ id }));
@@ -266,17 +252,31 @@ ${t.expected}
             if (assignee) fields.assignee = { name: assignee };
 
             try {
+                // create issue
                 const r = await axios.post(
                     `${config.serverUrl}/jira/create-issue`,
                     { pat: jiraPat, payload: { fields } }
                 );
-                out.push({ success: true, summary: t.summary, key: r.data.key });
-            } catch (e) {
+                const key = r.data.key;
+                out.push({ success: true, summary: t.summary, key });
+
+                // если выбрали статус — делаем переход
+                if (targetStatus) {
+                    await axios.post(
+                        `${config.serverUrl}/jira/transition-issues`,
+                        { pat: jiraPat, issueKey: key, transitionId: targetStatus }
+                    );
+                }
+            }
+            catch (e) {
                 out.push({ success: false, summary: t.summary, error: e.message });
             }
         }
+
         setResults(out);
-        setTasks(ts => ts.filter(t => !out.find(r => r.success && r.summary === t.summary)));
+        setTasks(ts => ts.filter(t =>
+            !out.find(r => r.success && r.summary === t.summary)
+        ));
         setCreating(false);
         setModalOpen(false);
     };
@@ -287,7 +287,7 @@ ${t.expected}
         <div className="solution-page">
             <h1>Массовое создание ошибок кода</h1>
 
-            {/* Jira connection */}
+            {/* 1) Подключение к Jira */}
             <div className="jira-main-settings">
                 <h2>1. Настройки подключения к Jira</h2>
                 <div className="settings-grid">
@@ -314,7 +314,7 @@ ${t.expected}
                 {ready && <p className="status-message success">Данные загружены</p>}
             </div>
 
-            {/* Task controls */}
+            {/* 2) Управление списком */}
             <div className="task-controls">
                 <button className="add-task-btn" onClick={handleAdd}>➕ Добавить задачу</button>
                 <button
@@ -324,9 +324,9 @@ ${t.expected}
                 >⚙️ Создать ({tasks.filter(t => t.selected).length})</button>
             </div>
 
-            {/* Task list */}
+            {/* 3) Список карточек */}
             <div className="task-list">
-                {tasks.map((t, i) => (
+                {tasks.map((t, i) =>
                     <CodeErrorCard
                         key={i}
                         index={i}
@@ -335,17 +335,18 @@ ${t.expected}
                         onDelete={handleDelete}
                         fieldOptions={fieldOptions}
                     />
-                ))}
+                )}
             </div>
 
-            {/* Modal */}
+            {/* 4) Модалка с общими полями + статус */}
             {modalOpen && (
                 <div className="modal">
                     <div className="modal-content">
                         <button className="modal-close-btn" onClick={() => setModalOpen(false)}>×</button>
                         <h2>2. Общие поля для всех задач</h2>
-                        <fieldset className="common-fields-group" disabled={!ready}>
+                        <fieldset disabled={!ready} className="common-fields-group">
                             <legend>Общие поля</legend>
+
                             <div className="field">
                                 <label>Epic Link</label>
                                 <input
@@ -354,6 +355,7 @@ ${t.expected}
                                     placeholder="PROJ-123"
                                 />
                             </div>
+
                             <div className="field">
                                 <label>Исполнитель</label>
                                 <AsyncSelect
@@ -366,6 +368,7 @@ ${t.expected}
                                     noOptionsMessage={() => 'Нет совпадений'}
                                 />
                             </div>
+
                             <div className="field">
                                 <label>Затронутые версии*</label>
                                 <AsyncSelect
@@ -376,6 +379,20 @@ ${t.expected}
                                     placeholder="Начните вводить…"
                                     onChange={opt => setAffectedVersion(opt?.value || '')}
                                     noOptionsMessage={() => 'Нет совпадений'}
+                                />
+                            </div>
+
+                            <div className="field">
+                                <label>Статус после создания</label>
+                                <Select
+                                    placeholder="Выберите статус…"
+                                    options={transitions.map(t => ({ value: t.id, label: t.name }))}
+                                    value={
+                                        transitions
+                                            .map(t => ({ value: t.id, label: t.name }))
+                                            .find(o => o.value === targetStatus) || null
+                                    }
+                                    onChange={opt => setTargetStatus(opt?.value || null)}
                                 />
                             </div>
                         </fieldset>
@@ -390,17 +407,18 @@ ${t.expected}
                         </div>
 
                         <div className="jira-result">
-                            {results.map((r, i) => r.success
-                                ? <p key={i} className="success">
-                                    ✅ <a
-                                        href={`${config.jiraBaseUrl || 'https://jira.abanking.ru'}/browse/${r.key}`}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                    >
-                                        {r.summary}: {r.key}
-                                    </a>
-                                </p>
-                                : <p key={i} className="error">❌ {r.summary}: {r.error}</p>
+                            {results.map((r, i) =>
+                                r.success
+                                    ? <p key={i} className="success">
+                                        ✅ <a
+                                            href={`${config.jiraBaseUrl || 'https://jira.abanking.ru'}/browse/${r.key}`}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                        >
+                                            {r.summary}: {r.key}
+                                        </a>
+                                    </p>
+                                    : <p key={i} className="error">❌ {r.summary}: {r.error}</p>
                             )}
                         </div>
                     </div>

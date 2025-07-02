@@ -15,7 +15,7 @@ import { analyzeRequirementWithAI } from './analyzeRequirementWithAI.mjs';
 //const JIRA_ISSUE = config.jiraIssue; 
 
 const app = express();
-const PORT = 5000;
+const PORT = 5001;
 
 // Настройка CORS
 app.use(cors());
@@ -284,6 +284,215 @@ app.post('/jira/create-issue', async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
+
+
+// Эндпоинт для получения метаданных проекта (поля, пользователи, версии)
+app.post('/jira/meta', async (req, res) => {
+    const jiraBase = 'https://jira.abanking.ru';
+    const issueKey = 'JMT-983';               // берём из вашего CURL
+    const { pat, projectKey } = req.body;     // передаёте с фронта
+
+    if (!pat || !projectKey) {
+        return res.status(400).json({ error: 'PAT и projectKey обязательны' });
+    }
+
+    const headers = {
+        'Authorization': `Bearer ${pat}`,
+        'Accept': 'application/json'
+    };
+
+    try {
+        // 1) Получаем метаданные полей для указанного issueKey
+        const editRes = await fetch(
+            `${jiraBase}/rest/api/2/issue/${encodeURIComponent(issueKey)}/editmeta`,
+            { headers }
+        );
+        if (!editRes.ok) {
+            throw new Error(`editmeta вернул ${editRes.status}`);
+        }
+        const { fields } = await editRes.json();
+
+        // сопоставление UI-ключа → имя поля в Jira
+        const customFieldNames = {
+            Severity: 'Серьезность ошибки',
+            Symptom: 'Симптом',
+            Platform: 'Платформа',
+            ProdBug: 'Баг с прода',
+            'Epic Link': 'Epic Link'
+        };
+
+        const options = {};
+        const fieldIds = {};
+
+        // 2) Извлекаем id полей и их опции
+        for (const [key, jiraName] of Object.entries(customFieldNames)) {
+            const entry = Object.entries(fields)
+                .find(([_, meta]) => meta.name === jiraName);
+
+            if (!entry) {
+                console.warn(`[META] Поле "${jiraName}" не найдено в editmeta`);
+                options[key] = [];
+                continue;
+            }
+
+            const [fieldId, meta] = entry;
+            fieldIds[key] = fieldId;
+            options[key] = (meta.allowedValues || []).map(o => ({
+                id: String(o.id),
+                name: o.value ?? o.name
+            }));
+        }
+
+        /*
+        // 3) Постранично вытягиваем всех assignable пользователей
+        const users = [];
+        const maxResults = 100;   // Jira позволяет до 1000, но 100—более безопасно
+        let startAt = 0;
+        while (true) {
+            const url = `${jiraBase}/rest/api/2/user/assignable/search`
+                + `?project=${encodeURIComponent(projectKey)}`
+                + `&startAt=${startAt}`
+                + `&maxResults=${maxResults}`;
+            const resp = await fetch(url, { headers });
+            if (!resp.ok) break;
+            const batch = await resp.json();
+            users.push(...batch);
+            if (batch.length < maxResults) break;  // больше страниц нет
+            startAt += maxResults;
+        }
+
+        // 4) Версии проекта (возвращаются все сразу)
+        const versions = await fetch(
+            `${jiraBase}/rest/api/2/project/${encodeURIComponent(projectKey)}/versions`,
+            { headers }
+        ).then(r => r.ok ? r.json() : []);
+*/
+        // return res.json({ options, fieldIds, users, versions });
+        return res.json({ options, fieldIds })
+    }
+    catch (err) {
+        console.error('Ошибка /jira/meta:', err);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+
+// 1. Поиск assignable пользователей
+app.get('/jira/users', async (req, res) => {
+    const { projectKey, pat, query = '', startAt = 0, maxResults = 50 } = req.query;
+    const jiraBase = 'https://jira.abanking.ru';
+    const headers = {
+        'Authorization': `Bearer ${pat}`,
+        'Accept': 'application/json'
+    };
+
+    const url = `${jiraBase}/rest/api/2/user/assignable/search`
+        + `?project=${encodeURIComponent(projectKey)}`
+        + `&username=${encodeURIComponent(query)}`
+        + `&startAt=${startAt}`
+        + `&maxResults=${maxResults}`;
+
+    const resp = await fetch(url, { headers });
+    if (!resp.ok) return res.status(resp.status).end();
+    const users = await resp.json();
+    return res.json(users);
+});
+
+// 2. Поиск версий (фильтрация по имени)
+app.get('/jira/versions', async (req, res) => {
+    const { projectKey, pat, query = '' } = req.query;
+    const jiraBase = 'https://jira.abanking.ru';
+    const headers = {
+        'Authorization': `Bearer ${pat}`,
+        'Accept': 'application/json'
+    };
+
+    // Получаем все версии разом (они обычно меньше 1000)...
+    const all = await fetch(
+        `${jiraBase}/rest/api/2/project/${encodeURIComponent(projectKey)}/versions`,
+        { headers }
+    ).then(r => r.ok ? r.json() : []);
+
+    // ...а потом фильтруем по подстроке и отдаем первые 50
+    const filtered = all
+        .filter(v => v.name.toLowerCase().includes(query.toLowerCase()))
+        .slice(0, 50);
+
+    return res.json(filtered);
+});
+
+// GET /jira/transitions?issueKey=JMT-123
+app.get('/jira/transitions', async (req, res) => {
+    const { pat, issueKey } = req.query;
+    if (!pat || !issueKey) {
+        return res.status(400).json({ error: 'Нужны pat и issueKey' });
+    }
+    try {
+        const response = await fetch(
+            `https://jira.abanking.ru/rest/api/2/issue/${encodeURIComponent(issueKey)}/transitions`,
+            {
+                headers: {
+                    'Authorization': `Bearer ${pat}`,
+                    'Accept': 'application/json'
+                }
+            }
+        );
+        if (!response.ok) throw new Error(`Jira вернула ${response.status}`);
+        const { transitions } = await response.json();
+        // вернём только id + name для селекта
+        const ops = transitions.map(t => ({ id: t.id, name: t.name }));
+        res.json(ops);
+    } catch (err) {
+        console.error('Ошибка /jira/transitions:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/jira/transition-issues', async (req, res) => {
+    let { pat, issueKeys, issueKey, transitionId } = req.body;
+
+    // если пришёл одиночный issueKey, упакуем его в массив
+    if (!issueKeys && issueKey) {
+        issueKeys = [issueKey];
+    }
+
+    if (!pat || !Array.isArray(issueKeys) || !transitionId) {
+        return res
+            .status(400)
+            .json({ error: 'Нужны pat, issueKeys и transitionId' });
+    }
+
+    // дальше — ваш код
+    const results = [];
+    for (const key of issueKeys) {
+        try {
+            const r = await fetch(
+                `https://jira.abanking.ru/rest/api/2/issue/${encodeURIComponent(key)}/transitions`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${pat}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ transition: { id: transitionId } })
+                }
+            );
+            if (!r.ok) {
+                const err = await r.json().catch(() => ({}));
+                throw new Error(err.errorMessages?.join(', ') || r.statusText);
+            }
+            results.push({ key, success: true });
+        } catch (err) {
+            console.error(`Transition ${key}:`, err);
+            results.push({ key, success: false, error: err.message });
+        }
+    }
+
+    res.json(results);
+});
+
+
+
 
 // Запуск сервера
 app.listen(PORT, () => {
