@@ -1,4 +1,4 @@
-// CodeErrorPage.jsx
+// src/CodeErrorPage.jsx
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import Select from 'react-select';
@@ -16,17 +16,20 @@ function useDebounce(value, delay) {
     return debounced;
 }
 
-// Single test-case card
-const CodeErrorCard = ({ task, index, onUpdate, onDelete, fieldOptions }) => {
+// single task card component
+const CodeErrorCard = ({
+    task, index, onUpdate, onDelete, fieldOptions,
+    loadDefectOptions, allureProject
+}) => {
     const handleChange = field => e => {
         const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
         onUpdate(index, { ...task, [field]: v });
     };
-    const handleSelect = field => option => {
-        onUpdate(index, { ...task, [field]: option ? option.value : '' });
+    const handleSelect = field => opt => {
+        onUpdate(index, { ...task, [field]: opt ? opt.value : '' });
     };
-    const handleMulti = field => options => {
-        onUpdate(index, { ...task, [field]: options.map(o => o.value) });
+    const handleMulti = field => opts => {
+        onUpdate(index, { ...task, [field]: opts.map(o => o.value) });
     };
     const toOptions = key =>
         (fieldOptions[key] || []).map(o => ({ value: o.id, label: o.name }));
@@ -83,7 +86,6 @@ const CodeErrorCard = ({ task, index, onUpdate, onDelete, fieldOptions }) => {
                 <input type="text" placeholder="Ссылка на требование" value={task.requirementLink} onChange={handleChange('requirementLink')} />
                 <input type="text" placeholder="Тестовые данные" value={task.testData} onChange={handleChange('testData')} />
                 <input type="text" placeholder="Макет" value={task.mockup} onChange={handleChange('mockup')} />
-                <input type="number" placeholder="ID Allure" value={task.allureId} onChange={handleChange('allureId')} />
 
                 <Select
                     placeholder="Серьезность*"
@@ -111,22 +113,46 @@ const CodeErrorCard = ({ task, index, onUpdate, onDelete, fieldOptions }) => {
                     value={toOptions('ProdBug').find(o => o.value === task.prodBug) || null}
                     onChange={handleSelect('prodBug')}
                 />
+
+                {/* Allure defect picker */}
+                <div className="field">
+                    <label>Дефект Allure</label>
+                    <AsyncSelect
+                        cacheOptions
+                        loadOptions={input => loadDefectOptions(allureProject, input)}
+                        defaultOptions
+                        isClearable
+                        placeholder="Начните вводить…"
+                        value={task.allureDefect}
+                        onChange={opt => onUpdate(index, { ...task, allureDefect: opt })}
+                        noOptionsMessage={() => 'Нет совпадений'}
+                        isOptionDisabled={opt => opt.linked}
+                        formatOptionLabel={opt => (
+                            <div style={{ opacity: opt.linked ? 0.5 : 1 }}>
+                                {opt.label} {opt.linked && <em>(уже привязан)</em>}
+                            </div>
+                        )}
+                    />
+                </div>
             </div>
         </div>
     );
 };
 
-export default function CodeErrorPage() {
+export default function CodeErrorPage({ projects }) {
     const [tasks, setTasks] = useState([]);
     const [jiraProject, setJiraProject] = useState('');
     const [jiraPat, setJiraPat] = useState('');
     const [epicLink, setEpicLink] = useState('');
     const [assignee, setAssignee] = useState('');
     const [affectedVersion, setAffectedVersion] = useState('');
-    const [targetStatus, setTargetStatus] = useState(null);  // <-- новый
+    const [targetStatus, setTargetStatus] = useState(null);
+    const [allureProject, setAllureProject] = useState('');
+
     const [fieldOptions, setFieldOptions] = useState({});
     const [fieldIds, setFieldIds] = useState({});
-    const [transitions, setTransitions] = useState([]);    // <-- для кеша переходов
+    const [transitions, setTransitions] = useState([]);
+
     const [isMetaLoading, setIsMetaLoading] = useState(false);
     const [metaError, setMetaError] = useState('');
     const [creating, setCreating] = useState(false);
@@ -136,7 +162,7 @@ export default function CodeErrorPage() {
     const debProject = useDebounce(jiraProject, 500);
     const debPat = useDebounce(jiraPat, 500);
 
-    // 1) Загружаем базовые кастом-поля
+    // 1) Load Jira meta
     const loadMeta = useCallback(async () => {
         if (!debProject || !debPat) return;
         setIsMetaLoading(true);
@@ -156,67 +182,72 @@ export default function CodeErrorPage() {
     }, [debProject, debPat]);
     useEffect(() => { loadMeta() }, [loadMeta]);
 
-    // 2) Подгрузка исполнителей/версий по ходу набора
+    // 2) Async load users / versions
     const loadUserOptions = input =>
         axios.get(`${config.serverUrl}/jira/users`, {
             params: { projectKey: jiraProject, pat: jiraPat, query: input }
         }).then(r => r.data.map(u => ({ value: u.name, label: u.displayName })));
-
     const loadVersionOptions = input =>
         axios.get(`${config.serverUrl}/jira/versions`, {
             params: { projectKey: jiraProject, pat: jiraPat, query: input }
         }).then(r => r.data.map(v => ({ value: v.id, label: v.name })));
 
-    // 3) Подгрузка списка переходов сразу при открытии модалки
+    // 3) Load transitions on modal open
     const loadTransitions = useCallback(async () => {
         if (!debProject || !debPat) return;
         try {
-            // здесь просто запрашиваем из настроенного «примерного» ключа JMT-1,
-            const sample = `JMT-14707`;
+            const sample = 'JMT-14707';
             const { data } = await axios.get(
-                `${config.serverUrl}/jira/transition`,
+                `${config.serverUrl}/jira/transitions`,
                 { params: { issueKey: sample, pat: jiraPat } }
             );
-            // data = [{ id: '21', name: 'Оценка' }, …]
             setTransitions(data);
         } catch (e) {
-            console.warn('Не удалось подгрузить transitions:', e);
+            console.warn('Не удалось загрузить transitions:', e);
         }
-    }, [jiraProject, jiraPat, debProject, debPat]);
-
+    }, [debProject, debPat, jiraPat]);
     useEffect(() => {
         if (modalOpen) loadTransitions();
     }, [modalOpen, loadTransitions]);
 
-    // манипуляции со списком задач
+    // 4) Async load Allure defects, marking already linked
+    const loadDefectOptions = (projectId, input) => {
+        if (!projectId) return Promise.resolve([]);
+        return axios.get(`${config.serverUrl}/allure/defects`, {
+            params: { projectId, query: input }
+        }).then(r => r.data.map(d => ({
+            value: d.id,
+            label: `${d.name} (${d.id})`,
+            linked: Boolean(d.issue)
+        })));
+    };
+
+    // 5) Task list handlers
     const handleAdd = () => setTasks(ts => [{
         summary: '', description: '', steps: '', actual: '', expected: '',
         stand: '', env: '', requirementLink: '', testData: '', mockup: '',
-        allureId: '', severity: '', symptom: [], platform: [], prodBug: '',
-        selected: true, isNew: true
+        severity: '', symptom: [], platform: [], prodBug: '',
+        selected: true, isNew: true, allureDefect: null
     }, ...ts]);
     const handleDelete = i => setTasks(ts => ts.filter((_, idx) => idx !== i));
     const handleUpdate = (i, upd) => setTasks(ts => ts.map((t, idx) => idx === i ? upd : t));
 
-    // 4) Создание + переход
+    // 6) Create, transition, link Allure defect
     const handleCreateAll = async () => {
         if (!affectedVersion) {
-            alert('Выберите версию.');
+            alert('Выберите затронутую версию.');
             return;
         }
         setCreating(true);
         const out = [];
 
         for (const t of tasks.filter(t => t.selected)) {
-            // валидация
             if (!t.summary || !t.description || !t.steps || !t.actual || !t.expected
                 || !t.severity || !t.symptom.length || !t.platform.length) {
                 alert(`Заполните все * поля в "${t.summary || 'Без темы'}".`);
                 setCreating(false);
                 return;
             }
-
-            // формируем description
             const desc = `
 h3. Подробное описание
 ${t.description}
@@ -234,25 +265,23 @@ ${t.expected}
 *Окружение:* ${t.env || 'не указано'}
 *Тестовые данные:* ${t.testData || 'не указано'}
 *Макет:* ${t.mockup || 'не указано'}
-*ID Allure:* ${t.allureId || 'не указано'}
-      `;
+`;
             const fields = {
                 project: { key: jiraProject },
                 issuetype: { id: '12811' },
                 summary: t.summary,
                 description: desc,
-                versions: [{ id: affectedVersion }]
+                versions: [{ id: affectedVersion }],
+                [fieldIds.Severity]: { id: t.severity },
+                [fieldIds.Symptom]: t.symptom.map(id => ({ id })),
+                [fieldIds.Platform]: t.platform.map(id => ({ id }))
             };
-            // кастом-поля
-            fields[fieldIds.Severity] = { id: t.severity };
-            fields[fieldIds.Symptom] = t.symptom.map(id => ({ id }));
-            fields[fieldIds.Platform] = t.platform.map(id => ({ id }));
             if (t.prodBug) fields[fieldIds.ProdBug] = { id: t.prodBug };
             if (epicLink) fields[fieldIds['Epic Link']] = epicLink;
             if (assignee) fields.assignee = { name: assignee };
 
             try {
-                // create issue
+                // create in Jira
                 const r = await axios.post(
                     `${config.serverUrl}/jira/create-issue`,
                     { pat: jiraPat, payload: { fields } }
@@ -260,15 +289,42 @@ ${t.expected}
                 const key = r.data.key;
                 out.push({ success: true, summary: t.summary, key });
 
-                // если выбрали статус — делаем переход
+                // do transition if requested
                 if (targetStatus) {
                     await axios.post(
                         `${config.serverUrl}/jira/transition-issues`,
-                        { pat: jiraPat, issueKey: key, transitionId: targetStatus }
+                        { pat: jiraPat, issueKeys: [key], transitionId: targetStatus }
                     );
                 }
-            }
-            catch (e) {
+
+                // link Allure defect if chosen
+                if (t.allureDefect) {
+                    try {
+                        await axios.post(
+                            `${config.serverUrl}/allure/defect/${t.allureDefect.value}/issue`,
+                            { integrationId: 67, name: key }
+                        );
+                    } catch (linkErr) {
+                        // catch 409 conflict
+                        if (linkErr.response?.status === 409) {
+                            out.push({
+                                success: false,
+                                summary: t.summary,
+                                key,
+                                error: 'Дефект уже привязан к задаче.'
+                            });
+                        } else {
+                            out.push({
+                                success: false,
+                                summary: t.summary,
+                                key,
+                                error: linkErr.response?.data?.error || linkErr.message
+                            });
+                        }
+                    }
+                }
+
+            } catch (e) {
                 out.push({ success: false, summary: t.summary, error: e.message });
             }
         }
@@ -287,12 +343,12 @@ ${t.expected}
         <div className="solution-page">
             <h1>Массовое создание ошибок кода</h1>
 
-            {/* 1) Подключение к Jira */}
+            {/* 1) Connection settings */}
             <div className="jira-main-settings">
-                <h2>1. Настройки подключения к Jira</h2>
+                <h2>1. Настройки подключения</h2>
                 <div className="settings-grid">
                     <div className="field">
-                        <label>Project Key</label>
+                        <label>Project Key (Jira)</label>
                         <input
                             value={jiraProject}
                             onChange={e => setJiraProject(e.target.value.toUpperCase())}
@@ -308,13 +364,22 @@ ${t.expected}
                             placeholder="Ваш PAT"
                         />
                     </div>
+                    <div className="field">
+                        <label>Проект Allure</label>
+                        <Select
+                            placeholder="Выберите проект Allure…"
+                            options={projects.map(p => ({ value: p.id, label: p.name }))}
+                            isClearable
+                            onChange={opt => setAllureProject(opt?.value || '')}
+                        />
+                    </div>
                 </div>
-                {isMetaLoading && <p className="status-message loading">Загрузка…</p>}
+                {isMetaLoading && <p className="status-message loading">Загрузка метаданных Jira…</p>}
                 {metaError && <p className="status-message error">{metaError}</p>}
-                {ready && <p className="status-message success">Данные загружены</p>}
+                {ready && <p className="status-message success">Данные Jira загружены</p>}
             </div>
 
-            {/* 2) Управление списком */}
+            {/* 2) Controls */}
             <div className="task-controls">
                 <button className="add-task-btn" onClick={handleAdd}>➕ Добавить задачу</button>
                 <button
@@ -324,7 +389,7 @@ ${t.expected}
                 >⚙️ Создать ({tasks.filter(t => t.selected).length})</button>
             </div>
 
-            {/* 3) Список карточек */}
+            {/* 3) Task list */}
             <div className="task-list">
                 {tasks.map((t, i) =>
                     <CodeErrorCard
@@ -334,11 +399,13 @@ ${t.expected}
                         onUpdate={handleUpdate}
                         onDelete={handleDelete}
                         fieldOptions={fieldOptions}
+                        loadDefectOptions={loadDefectOptions}
+                        allureProject={allureProject}
                     />
                 )}
             </div>
 
-            {/* 4) Модалка с общими полями + статус */}
+            {/* 4) Modal */}
             {modalOpen && (
                 <div className="modal">
                     <div className="modal-content">
@@ -387,11 +454,9 @@ ${t.expected}
                                 <Select
                                     placeholder="Выберите статус…"
                                     options={transitions.map(t => ({ value: t.id, label: t.name }))}
-                                    value={
-                                        transitions
-                                            .map(t => ({ value: t.id, label: t.name }))
-                                            .find(o => o.value === targetStatus) || null
-                                    }
+                                    value={transitions
+                                        .map(t => ({ value: t.id, label: t.name }))
+                                        .find(o => o.value === targetStatus) || null}
                                     onChange={opt => setTargetStatus(opt?.value || null)}
                                 />
                             </div>
@@ -412,8 +477,7 @@ ${t.expected}
                                     ? <p key={i} className="success">
                                         ✅ <a
                                             href={`${config.jiraBaseUrl || 'https://jira.abanking.ru'}/browse/${r.key}`}
-                                            target="_blank"
-                                            rel="noreferrer"
+                                            target="_blank" rel="noreferrer"
                                         >
                                             {r.summary}: {r.key}
                                         </a>

@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { getAllTestCases, getTestCaseOverview, getTestCaseExpectedResult, getTestCaseLayer, getCaseIssue, getCaseTags, getTestCasePrecondition, getTestCaseStatus, getTestCaseSteps, getTestCaseCustomFields } from './http-service.mjs';
+import { getAllureDefects, linkIssueToAllureDefect, getAllTestCases, getTestCaseOverview, getTestCaseExpectedResult, getTestCaseLayer, getCaseIssue, getCaseTags, getTestCasePrecondition, getTestCaseStatus, getTestCaseSteps, getTestCaseCustomFields } from './http-service.mjs';
 import { spinningLoader } from './spinning-loader.mjs';
 import pLimit from 'p-limit';
 import { formatTestCase } from './format-testcase.mjs';
@@ -10,6 +10,7 @@ import { exportStructureAllure } from './xmind-parce/export-structure-allure.mjs
 import { analyzeTestCaseWithAI } from './ai-testcase.mjs';
 import { fetchConfluencePage } from './confluenceFetcher.mjs';
 import { analyzeRequirementWithAI } from './analyzeRequirementWithAI.mjs';
+import config from './config.json' assert { type: 'json'};
 
 //const PROJECT_ID = config.projectId;
 //const JIRA_ISSUE = config.jiraIssue; 
@@ -491,7 +492,33 @@ app.post('/jira/transition-issues', async (req, res) => {
     res.json(results);
 });
 
+// GET /allure/defects
+app.get('/allure/defects', async (req, res) => {
+    try {
+        const { projectId, query, page, size } = req.query;
+        const defects = await getAllureDefects(projectId, query, page, size);
+        res.json(defects);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
+// POST /allure/defect/:defectId/issue
+app.post('/allure/defect/:defectId/issue', async (req, res) => {
+    const { defectId } = req.params;
+    const { integrationId, name } = req.body;
+    if (!defectId || !integrationId || !name) {
+        return res.status(400).json({ error: 'Нужны defectId, integrationId и name' });
+    }
+    try {
+        const result = await linkIssueToAllureDefect(defectId, integrationId, name);
+        res.json(result);
+    } catch (err) {
+        console.error('Allure POST link issue failed:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
 
 // Запуск сервера

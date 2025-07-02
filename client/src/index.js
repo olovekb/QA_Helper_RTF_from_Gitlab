@@ -19,7 +19,7 @@ const projects = [
   { id: 7, name: 'РНКБ' },
   { id: 34, name: 'USB' },
   { id: 67, name: 'РНКБ ЛК' },
-  { id: 199, name: 'Test' },
+  { id: 166, name: 'Test - JMT' },
   { id: 302, name: 'Nopaper 2.0' },
   { id: 133, name: 'Дизайн система' },
   { id: 305, name: 'АФБ' },
