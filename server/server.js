@@ -16,7 +16,7 @@ import config from './config.json' assert { type: 'json'};
 //const JIRA_ISSUE = config.jiraIssue; 
 
 const app = express();
-const PORT = 5001;
+const PORT = 5000;
 
 // Настройка CORS
 app.use(cors());
