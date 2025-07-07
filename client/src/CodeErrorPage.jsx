@@ -330,7 +330,7 @@ export default function CodeErrorPage({ projects }) {
         if (!projectId) return Promise.resolve([]);
         const r = await axios.get(`${config.serverUrl}/allure/defects`, {
             // передаём name, а не query
-            params: { projectId, name: input, page: 0, size: 50 }
+            params: { projectId, query: input, page: 0, size: 100 }
         });
         // сначала непривязанные, потом привязанные
         const opts = r.data.map(d => ({
