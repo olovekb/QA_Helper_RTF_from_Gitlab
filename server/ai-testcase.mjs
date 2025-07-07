@@ -169,7 +169,7 @@ ${formattedStepsForPrompt || 'не указаны'}
         console.log(prompt); // Можно раскомментировать для отладки
 
 
-        const API_TOKEN = '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';
+        const API_TOKEN = config.openRouterAiKey;
         if (!API_TOKEN) {
             throw new Error("Не найден OPENROUTER_API_KEY. Проверьте ваш .env файл.");
         }
