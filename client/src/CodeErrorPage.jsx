@@ -326,48 +326,54 @@ export default function CodeErrorPage({ projects }) {
             }
         }
     }, [fieldOptions.ProdBug, defaultProdBug, setDefaultProdBug]);
-    
+
     const loadDefectOptions = async (projectId, input) => {
         if (!projectId) return [];
 
-        // 1) Получаем у бэкенда до 100 дефектов
+        const needle = input.trim().toLowerCase();
+
+        // 1) Берём первые 100 дефектов
         const { data: defects } = await axios.get(
             `${config.serverUrl}/allure/defects`,
-            {
-                params: {
-                    projectId,
-                    page: 0,
-                    size: 100,
-                    // можем оставить query, чтобы сервер тоже попытался фильтровать
-                    query: input || undefined
-                }
-            }
+            { params: { projectId, page: 0, size: 500, query: needle || undefined } }
         );
 
-        // 2) Клиентская фильтрация: по части имени или по ID
-        const needle = input.trim().toLowerCase();
+        // 2) Если ввели чистый ID и он не в тех 100, подгружаем его отдельно
+        if (/^\d+$/.test(needle)) {
+            const id = Number(needle);
+            if (!defects.some(d => d.id === id)) {
+                try {
+                    const { data: detail } = await axios.get(
+                        `${config.serverUrl}/allure/defect/${id}/details`
+                    );
+                    defects.unshift({
+                        id,
+                        name: detail.name,
+                        issue: detail.issue // чтобы корректно попал в «привязанные»/«непривязанные»
+                    });
+                } catch {
+                    // если нет такого ID или ошибка — молча игнорируем
+                }
+            }
+        }
+
+        // 3) Клиентская фильтрация по имени или по ID
         const filtered = needle
-            ? defects.filter(d => {
-                // матчим и по тексту, и по цифрам
-                return (
-                    d.name.toLowerCase().includes(needle) ||
-                    String(d.id).includes(needle)
-                );
-            })
+            ? defects.filter(d =>
+                d.name.toLowerCase().includes(needle) ||
+                String(d.id).includes(needle)
+            )
             : defects;
 
-        // 3) Группируем на свободные и привязанные
+        // 4) Группируем и возвращаем
         const opts = filtered.map(d => ({
             value: d.id,
             label: `${d.name} (ID: ${d.id})`,
             linked: Boolean(d.issue)
         }));
-        const unlinked = opts.filter(o => !o.linked);
-        const linked = opts.filter(o => o.linked);
-
         return [
-            { label: 'Свободные дефекты', options: unlinked },
-            { label: 'Уже привязанные дефекты', options: linked }
+            { label: 'Свободные дефекты', options: opts.filter(o => !o.linked) },
+            { label: 'Уже привязанные дефекты', options: opts.filter(o => o.linked) }
         ];
     };
 

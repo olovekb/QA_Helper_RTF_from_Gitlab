@@ -259,7 +259,7 @@ export async function getAllureDefects(projectId, query = '', page = 0, size = 2
     if (!projectId) throw new Error('projectId is required');
     const url = new URL(`${BASE_URL}/defect`);
     url.searchParams.set('projectId', projectId);
-    url.searchParams.set('sort', 'id,asc');
+    url.searchParams.set('sort', 'id,desc');
     url.searchParams.set('page', page);
     url.searchParams.set('size', size);
     if (query) url.searchParams.set('name', query);
