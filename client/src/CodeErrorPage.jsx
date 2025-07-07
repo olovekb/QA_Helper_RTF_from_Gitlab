@@ -326,25 +326,52 @@ export default function CodeErrorPage({ projects }) {
             }
         }
     }, [fieldOptions.ProdBug, defaultProdBug, setDefaultProdBug]);
+    
     const loadDefectOptions = async (projectId, input) => {
-        if (!projectId) return Promise.resolve([]);
-        const r = await axios.get(`${config.serverUrl}/allure/defects`, {
-            // передаём name, а не query
-            params: { projectId, query: input, page: 0, size: 100 }
-        });
-        // сначала непривязанные, потом привязанные
-        const opts = r.data.map(d => ({
+        if (!projectId) return [];
+
+        // 1) Получаем у бэкенда до 100 дефектов
+        const { data: defects } = await axios.get(
+            `${config.serverUrl}/allure/defects`,
+            {
+                params: {
+                    projectId,
+                    page: 0,
+                    size: 100,
+                    // можем оставить query, чтобы сервер тоже попытался фильтровать
+                    query: input || undefined
+                }
+            }
+        );
+
+        // 2) Клиентская фильтрация: по части имени или по ID
+        const needle = input.trim().toLowerCase();
+        const filtered = needle
+            ? defects.filter(d => {
+                // матчим и по тексту, и по цифрам
+                return (
+                    d.name.toLowerCase().includes(needle) ||
+                    String(d.id).includes(needle)
+                );
+            })
+            : defects;
+
+        // 3) Группируем на свободные и привязанные
+        const opts = filtered.map(d => ({
             value: d.id,
             label: `${d.name} (ID: ${d.id})`,
             linked: Boolean(d.issue)
         }));
         const unlinked = opts.filter(o => !o.linked);
-        const linked = opts.filter(o_1 => o_1.linked);
+        const linked = opts.filter(o => o.linked);
+
         return [
             { label: 'Свободные дефекты', options: unlinked },
             { label: 'Уже привязанные дефекты', options: linked }
         ];
     };
+
+
 
     const fetchDefectDetails = async (idx, defectId) => {
         try {
