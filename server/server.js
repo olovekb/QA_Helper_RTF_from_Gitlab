@@ -12,18 +12,22 @@ import { fetchConfluencePage } from './confluenceFetcher.mjs';
 import { analyzeRequirementWithAI } from './analyzeRequirementWithAI.mjs';
 import config from './config.json' assert { type: 'json'};
 
-//const PROJECT_ID = config.projectId;
-//const JIRA_ISSUE = config.jiraIssue; 
 
 const app = express();
 const PORT = 5000;
 
-// Настройка CORS
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+const corsOptions = {
+    origin: 'https://test-inspector.abanking.ru',  
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,                            
+};
+app.use(cors(corsOptions));
 
-// Ограничение на количество параллельных запросов
-const limit = pLimit(100);
+app.options('*', cors(corsOptions));
+
+
+app.use(express.json({ limit: '10mb' }));
 
 // Функция фильтрации тест-кейсов
 async function filterCases(allCases, jiraIssue, projectId) {

@@ -15,19 +15,23 @@ import { logServerError } from './api/errors.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Создание экземпляра приложения Express
+
 const app = express();
 
-// Настройка middleware для обработки JSON, URL-encoded данных и CORS
-app.use(cors()); // Разрешаем кросс-доменные запросы
-app.use(express.json()); // Парсим JSON из тела запросов
-app.use(express.urlencoded({ extended: true })); // Парсим URL-encoded данные
-
-// Обслуживание статических файлов React-приложения после сборки
+const corsOptions = {
+    origin: 'https://test-inspector.abanking.ru',  
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,                           
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 const clientBuildPath = path.join(__dirname, 'client', 'build');
 app.use(express.static(clientBuildPath));
 
-// Настройка Multer для загрузки файлов (храним в памяти для парсинга)
+
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
