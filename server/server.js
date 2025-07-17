@@ -17,17 +17,17 @@ const app = express();
 const PORT = 5000;
 
 const corsOptions = {
-    origin: 'https://test-inspector.abanking.ru',  
+    origin: 'https://test-inspector.abanking.ru',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: true,                            
+    credentials: true,
 };
 app.use(cors(corsOptions));
-
+app.use(express.json({ limit: '10mb' }));
 app.options('*', cors(corsOptions));
 
+const limit = pLimit(100);
 
-app.use(express.json({ limit: '10mb' }));
 
 // Функция фильтрации тест-кейсов
 async function filterCases(allCases, jiraIssue, projectId) {
