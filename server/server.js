@@ -125,7 +125,7 @@ app.post('/api/export', async (req, res) => {
     }
 });
 
-app.post('/ai-recommendation', async (req, res) => {
+app.post('/api/ai-recommendation', async (req, res) => {
     try {
         let testCase = req.body;
 
@@ -201,7 +201,7 @@ app.post('/ai-recommendation', async (req, res) => {
  * POST /analyze/solution
  * Тело: { text: string, context?: string, project?: string }
  */
-app.post('/analyze/solution', async (req, res) => {
+app.post('/api/analyze/solution', async (req, res) => {
     try {
         const { text, pageId, context, project, glossary, bearerToken } = req.body;
 
@@ -241,7 +241,7 @@ app.post('/analyze/solution', async (req, res) => {
         res.status(400).json({ success: false, error: err.message });
     }
 });
-app.post('/jira/create-issue', async (req, res) => {
+app.post('/api/jira/create-issue', async (req, res) => {
     const { pat, payload } = req.body;
 
     if (!pat || !payload) {
@@ -292,7 +292,7 @@ app.post('/jira/create-issue', async (req, res) => {
 
 
 // Эндпоинт для получения метаданных проекта (поля, пользователи, версии)
-app.post('/jira/meta', async (req, res) => {
+app.post('/api/jira/meta', async (req, res) => {
     const jiraBase = 'https://jira.abanking.ru';
     const issueKey = 'JMT-983';               // берём из вашего CURL
     const { pat, projectKey } = req.body;     // передаёте с фронта
@@ -383,7 +383,7 @@ app.post('/jira/meta', async (req, res) => {
 
 
 // 1. Поиск assignable пользователей
-app.get('/jira/users', async (req, res) => {
+app.get('/api/jira/users', async (req, res) => {
     const { projectKey, pat, query = '', startAt = 0, maxResults = 50 } = req.query;
     const jiraBase = 'https://jira.abanking.ru';
     const headers = {
@@ -404,7 +404,7 @@ app.get('/jira/users', async (req, res) => {
 });
 
 // 2. Поиск версий (фильтрация по имени)
-app.get('/jira/versions', async (req, res) => {
+app.get('/api/jira/versions', async (req, res) => {
     const { projectKey, pat, query = '' } = req.query;
     const jiraBase = 'https://jira.abanking.ru';
     const headers = {
@@ -427,7 +427,7 @@ app.get('/jira/versions', async (req, res) => {
 });
 
 // GET /jira/transitions?issueKey=JMT-123
-app.get('/jira/transitions', async (req, res) => {
+app.get('/api/jira/transitions', async (req, res) => {
     const { pat, issueKey } = req.query;
     if (!pat || !issueKey) {
         return res.status(400).json({ error: 'Нужны pat и issueKey' });
@@ -453,7 +453,7 @@ app.get('/jira/transitions', async (req, res) => {
     }
 });
 
-app.post('/jira/transition-issues', async (req, res) => {
+app.post('/api/jira/transition-issues', async (req, res) => {
     let { pat, issueKeys, issueKey, transitionId } = req.body;
 
     // если пришёл одиночный issueKey, упакуем его в массив
@@ -497,7 +497,7 @@ app.post('/jira/transition-issues', async (req, res) => {
 });
 
 // GET /allure/defects
-app.get('/allure/defects', async (req, res) => {
+app.get('/api/allure/defects', async (req, res) => {
     try {
         const { projectId, query, page, size } = req.query;
         const defects = await getAllureDefects(projectId, query, page, size);
@@ -509,7 +509,7 @@ app.get('/allure/defects', async (req, res) => {
 });
 
 // POST /allure/defect/:defectId/issue
-app.post('/allure/defect/:defectId/issue', async (req, res) => {
+app.post('/api/allure/defect/:defectId/issue', async (req, res) => {
     const { defectId } = req.params;
     const { integrationId, name } = req.body;
     if (!defectId || !integrationId || !name) {
@@ -539,7 +539,7 @@ app.post('/api/bug/ai-review', async (req, res) => {
     }
 });
 
-app.get('/allure/defect/:defectId/details', async (req, res) => {
+app.get('/api/allure/defect/:defectId/details', async (req, res) => {
     try {
         const defectId = req.params.defectId;
         if (!defectId) return res.status(400).json({ error: 'Нужен defectId' });
