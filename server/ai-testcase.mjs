@@ -183,7 +183,7 @@ ${formattedStepsForPrompt || 'не указаны'}
         };
 
         const body = JSON.stringify({
-            model: "deepseek/deepseek-chat:free",
+            model: "deepseek/deepseek-chat-v3-0324:free",
             messages: [{ role: "user", content: prompt }]
         });
 

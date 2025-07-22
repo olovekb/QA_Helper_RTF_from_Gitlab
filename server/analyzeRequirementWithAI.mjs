@@ -20,9 +20,6 @@ export async function analyzeRequirementWithAI(requirementText, context = '—',
   ---------------------------------------
   ${requirementText}
   ---------------------------------------
-
-  **Результаты предварительного статического анализа (обрати на них особое внимание):**
-  ${staticAnalyze(requirementText) || 'Проблем не найдено'}
   
   **Контекст**: ${context}
   **Проект**: ${project}
@@ -88,7 +85,7 @@ export async function analyzeRequirementWithAI(requirementText, context = '—',
     'Content-Type': 'application/json'
   };
   const body = JSON.stringify({
-    model: 'deepseek/deepseek-chat:free',
+    model: 'deepseek/deepseek-chat-v3-0324:free',
     max_tokens: 5000,
     temperature: 0.0,
     messages: [{ role: 'user', content: prompt }]
