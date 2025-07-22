@@ -311,7 +311,7 @@ export default function CodeErrorPage({ projects }) {
     const loadTransitions = useCallback(async () => {
         if (!debProject || !debPat) return;
         try {
-            const sample = 'JMT-14707';
+            const sample = 'JMT-14927';
             const { data } = await axios.get(`${config.serverUrl}/jira/transitions`, { params: { issueKey: sample, pat: jiraPat } });
             setTransitions(data);
         } catch { console.warn('Не удалось загрузить transitions'); }
