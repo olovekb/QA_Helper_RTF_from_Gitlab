@@ -399,7 +399,7 @@ export default function CodeErrorPage({ projects }) {
         const t = tasks[idx];
         setAiLoading(l => ({ ...l, [idx]: true }));
         try {
-            const { data } = await axios.post(`${config.serverUrl}/api/bug/ai-review`, { task: t });
+            const { data } = await axios.post(`${config.serverUrl}/bug/ai-review`, { task: t });
             setTasks(ts => ts.map((c, i) => i === idx ? {
                 ...c,
                 aiSummary: data.summaryFeedback, aiDescription: data.descriptionFeedback,
