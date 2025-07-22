@@ -125,7 +125,7 @@ const App = ({ projects }) => {
     setHtmlReport('');
 
     try {
-      const response = await axios.post(`${config.serverUrl}/api/analyze`, {
+      const response = await axios.post(`${config.serverUrl}/analyze`, {
         projectId,
         jiraIssue,
       });
@@ -161,7 +161,7 @@ const App = ({ projects }) => {
     setExportMessage('Обработка файла и экспорт данных...');
     try {
       const allureData = await parseXmindFile(xmindFile);
-      const response = await axios.post(`${config.serverUrl}/api/export`, {
+      const response = await axios.post(`${config.serverUrl}/export`, {
         allureData,
         projectId,
       });
