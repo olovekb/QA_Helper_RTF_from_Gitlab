@@ -1003,7 +1003,8 @@ async function callWithBackoff(url, prompt, apiKey) {
     }
 }
 
-
+const httpAgent = new http.Agent({ keepAlive: true });
+const httpsAgent = new https.Agent({ keepAlive: true });
 /**
  * GET /api/jira/search
  * Query params:
@@ -1013,37 +1014,31 @@ async function callWithBackoff(url, prompt, apiKey) {
  *   - startAt:    с какой записи начинать (необязательно, дефолт 0)
  */
 app.get('/api/jira/search', async (req, res) => {
-    const { pat, jql, maxResults = 50, startAt = 0 } = req.query;
-
-    if (!pat || !jql) {
-        return res
-            .status(400)
-            .json({ error: 'Query parameters "pat" and "jql" are required' });
-    }
+    const { pat, jql, maxResults = 50 } = req.query;
+    if (!pat || !jql) return res.status(400).json({ error: 'pat и jql обязательны' });
 
     try {
-        // Проксируем запрос к Jira REST API
-        const response = await axios.get(
+        const { data } = await axios.get(
             'https://jira.abanking.ru/rest/api/2/search',
             {
-                params: { jql, maxResults, startAt },
+                params: {
+                    jql,
+                    maxResults,
+                    fields: 'summary'         //  только summary
+                },
                 headers: {
                     Authorization: `Bearer ${pat}`,
-                    Accept: 'application/json',
+                    Accept: 'application/json'
                 },
+                httpAgent,
+                httpsAgent,
+                timeout: 10_000            // таймаут 10 сек
             }
         );
-
-        // Возвращаем клиенту точно тот же JSON, что и от Jira
-        return res.json(response.data);
+        res.json(data);
     } catch (err) {
-        console.error('Error in /api/jira/search:', err.response?.data || err.message);
-        const status = err.response?.status || 500;
-        const message =
-            err.response?.data?.errorMessages?.join(',') ||
-            err.response?.data ||
-            err.message;
-        return res.status(status).json({ error: message });
+        console.error('Ошибка /api/jira/search:', err.message);
+        res.status(err.response?.status || 500).json({ error: err.message });
     }
 });
 
