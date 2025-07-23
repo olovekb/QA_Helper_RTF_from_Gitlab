@@ -1004,7 +1004,48 @@ async function callWithBackoff(url, prompt, apiKey) {
 }
 
 
+/**
+ * GET /api/jira/search
+ * Query params:
+ *   - pat:      Jira Personal Access Token (обязательный)
+ *   - jql:      JQL‑запрос (обязательный)
+ *   - maxResults: сколько возвращать записей (необязательно, дефолт 50)
+ *   - startAt:    с какой записи начинать (необязательно, дефолт 0)
+ */
+app.get('/api/jira/search', async (req, res) => {
+    const { pat, jql, maxResults = 50, startAt = 0 } = req.query;
 
+    if (!pat || !jql) {
+        return res
+            .status(400)
+            .json({ error: 'Query parameters "pat" and "jql" are required' });
+    }
+
+    try {
+        // Проксируем запрос к Jira REST API
+        const response = await axios.get(
+            'https://jira.abanking.ru/rest/api/2/search',
+            {
+                params: { jql, maxResults, startAt },
+                headers: {
+                    Authorization: `Bearer ${pat}`,
+                    Accept: 'application/json',
+                },
+            }
+        );
+
+        // Возвращаем клиенту точно тот же JSON, что и от Jira
+        return res.json(response.data);
+    } catch (err) {
+        console.error('Error in /api/jira/search:', err.response?.data || err.message);
+        const status = err.response?.status || 500;
+        const message =
+            err.response?.data?.errorMessages?.join(',') ||
+            err.response?.data ||
+            err.message;
+        return res.status(status).json({ error: message });
+    }
+});
 
 // Запуск сервера
 app.listen(PORT, () => {
