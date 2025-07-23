@@ -78,7 +78,7 @@ export async function analyzeRequirementWithAI(requirementText, context = '—',
 
   console.log('Итоговый сформированный промт:\n ' + prompt)
 
-  const API_TOKEN = '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';
+  const API_TOKEN = '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';
   const URL = 'https://openrouter.ai/api/v1/chat/completions';
   const headers = {
     Authorization: `Bearer ${API_TOKEN}`,

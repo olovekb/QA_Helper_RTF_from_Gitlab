@@ -1,3 +1,4 @@
+/* eslint-disable no-undef */
 // src/CodeErrorPage.jsx
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
@@ -7,12 +8,10 @@ import { get as idbGet, set as idbSet, clear as idbClear } from 'idb-keyval';
 import './CodeErrorPage.css';
 import config from './config.json';
 import { useNavigate } from 'react-router-dom';
+import { v4 as uuidv4 } from 'uuid';
+import useAttachmentsMap from './components/useAttachmentsMap'
+import { serializeFile } from './components/fileStorage'
 
-
-
-
-
-// --- Пользовательские хуки (без изменений) ---
 function useDebounce(value, delay) {
     const [debounced, setDebounced] = useState(value);
     useEffect(() => {
@@ -24,51 +23,123 @@ function useDebounce(value, delay) {
 
 function usePersistentState(key, defaultValue) {
     const [state, setState] = useState(defaultValue);
+    const isFirstMount = useRef(true);
+
+    // При монтировании читаем из IndexedDB; если ключа нет – создаём его со defaultValue
     useEffect(() => {
-        let mounted = true;
-        idbGet(key).then(stored => {
-            if (mounted && stored !== undefined) {
-                setState(stored);
-            }
-        }).catch(console.warn);
-        return () => { mounted = false; };
+        idbGet(key)
+            .then(stored => {
+                if (stored !== undefined) {
+                    setState(stored);
+                } else {
+                    idbSet(key, defaultValue).catch(console.warn);
+                }
+            })
+            .catch(console.warn);
     }, [key]);
 
-    const setPersistent = updaterOrValue => {
-        setState(prev => {
-            const newValue = typeof updaterOrValue === 'function'
-                ? updaterOrValue(prev)
-                : updaterOrValue;
-            idbSet(key, newValue).catch(err => {
-                console.warn('Не удалось записать в IndexedDB:', err);
+    // После первого рендера – при любом изменении state – пишем новое значение в IndexedDB
+    useEffect(() => {
+        if (isFirstMount.current) {
+            isFirstMount.current = false;
+            return;
+        }
+
+        if (key === 'codeErrorTasks') {
+            // НЕ сохраняем тяжёлые File/Blob вместе с задачами
+            const toPersist = (Array.isArray(state) ? state : []).map(t => {
+                const {
+                    attachments,
+                    descriptionAttachments,
+                    stepsAttachments,
+                    actualAttachments,
+                    expectedAttachments,
+                    ...rest
+                } = t;
+                return rest;
             });
-            return newValue;
-        });
-    };
-    return [state, setPersistent];
+            idbSet(key, toPersist)
+                .catch(err => console.warn('IDB error saving tasks:', err));
+        } else {
+            // Обычная запись для всех остальных ключей
+            idbSet(key, state)
+                .catch(err => console.warn(`IDB error saving "${key}":`, err));
+        }
+    }, [key, state]);
+
+    return [state, setState];
 }
 
 
-// ===============================================
-//   Обновленный компонент: CodeErrorCard
-// ===============================================
-const CodeErrorCard = ({
+export const CodeErrorCard = ({
+
     task, index, onUpdate, onDelete,
     fieldOptions, loadDefectOptions, onDefectSelect,
     allureProject, runAi, aiLoading,
-    isCollapsed, onToggleCollapse // NEW props for collapse
+    isCollapsed, onToggleCollapse, fillFieldsWithAI,
+    aiFillLoading,
+    setAttachmentsMap
 }) => {
+
     const handleChange = field => e => {
-        const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+        const v = e.target.type === 'checkbox'
+            ? e.target.checked
+            : e.target.value;
         onUpdate(index, { ...task, [field]: v });
     };
 
-    const toOptions = key => (fieldOptions[key] || []).map(o => ({ value: o.id, label: o.name }));
+    const handlePaste = field => async e => {
+        const rawFiles = Array.from(e.clipboardData.files || []);
+        if (!rawFiles.length) return;
+        e.preventDefault();
 
+        // 1) Создаём новые File с уникальными именами
+        const renamedFiles = rawFiles.map((f, idx) => {
+            const ext = f.name.split('.').pop();
+            const uniqueName = `screenshot-${Date.now()}-${idx}.${ext}`;
+            return new File([f], uniqueName, { type: f.type });
+        });
+
+        // 2) Генерим плейсхолдеры
+        const placeholders = renamedFiles
+            .map(f => `!${f.name}|thumbnail!`)
+            .join('\n');
+        const existingText = task[field] || '';
+        const needsSeparator =
+            existingText !== '' && !existingText.endsWith('\n');
+        const markup = (needsSeparator ? '\n' : '') + placeholders;
+
+        // 3) Ключ массива вложений в task
+        const attKey = field + 'Attachments';
+        // Вот тут берём уже существующий список из task
+        const prevList = task[attKey] || [];
+
+        // 5) Обновляем сам task в состоянии (текст + массив preview‑файлов)
+        onUpdate(index, {
+            ...task,
+            [field]: existingText + markup,
+            [attKey]: [...prevList, ...renamedFiles]
+        });
+        const serialized = await Promise.all(rawFiles.map(f => serializeFile(f)))
+        setAttachmentsMap(m => ({
+            ...m,
+            [task.id]: {
+                ...(m[task.id] || {}),
+                common: [...(m[task.id]?.common || []), ...serialized],
+                [field]: [...(m[task.id]?.[field] || []), ...renamedFiles]
+            }
+        }));
+    };
+
+
+
+    // утилита: превратить fieldOptions в [{value, label}]
+    const toOptions = key =>
+        (fieldOptions[key] || []).map(o => ({ value: o.id, label: o.name }));
+
+    // кастомный рендер для Allure Defect
     const formatAllureOptionLabel = (opt, { context }) => {
-        if (context === 'value') {
-            return opt.label.split('(')[0].trim();
-        }
+        if (context === 'value') return opt.label.split('(')[0].trim();
         return (
             <div className="allure-option-container">
                 <div className="allure-option">
@@ -83,15 +154,18 @@ const CodeErrorCard = ({
     return (
         <div className={`task-card ${task.isNew ? 'new-task' : ''}`}>
             <div className="task-header">
-                {/* NEW: Collapse button */}
-                <button className="collapse-toggle" onClick={() => onToggleCollapse(index)} title={isCollapsed ? "Развернуть" : "Свернуть"}>
+                <button
+                    className="collapse-toggle"
+                    onClick={() => onToggleCollapse(index)}
+                    title={isCollapsed ? "Развернуть" : "Свернуть"}
+                >
                     {isCollapsed ? '▶' : '▼'}
                 </button>
                 <input
                     type="checkbox"
                     checked={task.selected}
                     onChange={handleChange('selected')}
-                    title="Выбрать/снять выбор с задачи"
+                    title="Выбрать/снять выбор"
                 />
                 <div className="field" style={{ flexGrow: 1 }}>
                     <label htmlFor={`summary-${index}`}>Тема*</label>
@@ -103,38 +177,35 @@ const CodeErrorCard = ({
                         onChange={handleChange('summary')}
                     />
                 </div>
-                <button
-                    className="delete-task-btn"
-                    onClick={() => onDelete(index)}
-                    title="Удалить задачу"
-                >
-                    ❌
-                </button>
+                <button onClick={() => onDelete(index)} title="Удалить задачу">❌</button>
             </div>
+
             {task.aiSummary && (
                 <div className="ai-feedback full-width">
                     <strong>AI Тема:</strong> {task.aiSummary}
                 </div>
             )}
 
-            {/* NEW: Collapsible body */}
             <div className={`card-body ${isCollapsed ? 'collapsed' : ''}`}>
-                {/* MOVED: Allure Defect field is now at the top */}
+                {/* Allure Defect */}
                 <div className="field full-width">
                     <label>Дефект Allure</label>
                     <AsyncSelect
+                        key={allureProject}
                         classNamePrefix="select"
                         cacheOptions
                         defaultOptions
                         loadOptions={input => loadDefectOptions(allureProject, input)}
                         isClearable
-                        placeholder="Начните вводить для поиска..."
+                        placeholder="Начните вводить..."
                         value={task.allureDefect}
                         onChange={opt => {
                             onUpdate(index, { ...task, allureDefect: opt });
                             if (opt?.value) onDefectSelect(index, opt.value);
                         }}
-                        noOptionsMessage={() => allureProject ? 'Нет совпадений' : 'Выберите проект Allure'}
+                        noOptionsMessage={() =>
+                            allureProject ? 'Нет совпадений' : 'Выберите проект'
+                        }
                         isOptionDisabled={opt => opt.linked}
                         formatOptionLabel={formatAllureOptionLabel}
                         formatGroupLabel={group => (
@@ -143,64 +214,228 @@ const CodeErrorCard = ({
                                     fontWeight: 600,
                                     padding: '4px 8px',
                                     backgroundColor: 'var(--bg-input)',
-                                    color: group.label.includes('Свободные') ? 'var(--success)' : 'var(--warning)'
+                                    color: group.label.includes('Свободные')
+                                        ? 'var(--success)'
+                                        : 'var(--warning)'
                                 }}
                             >
                                 {group.label} ({group.options.length})
                             </div>
                         )}
                     />
-
                 </div>
 
-                {/* --- Основные поля баг-репорта --- */}
+                {/* Подробное описание */}
                 <div className="field full-width">
                     <label htmlFor={`description-${index}`}>Подробное описание*</label>
-                    <textarea id={`description-${index}`} rows={4} placeholder="Детальное описание, контекст..." value={task.description} onChange={handleChange('description')} />
-                    {task.aiDescription && <div className="ai-feedback"><strong>AI Описание:</strong> {task.aiDescription}</div>}
+                    <textarea
+                        id={`description-${index}`}
+                        rows={4}
+                        placeholder="Детальное описание, контекст..."
+                        value={task.description}
+                        onChange={handleChange('description')}
+                        onPaste={handlePaste('description')}
+                    />
                 </div>
+                {/* ← вот этот блок добавляем */}
+                {task.aiDescription && (
+                    <div className="ai-feedback full-width">
+                        <strong>AI Описание:</strong> {task.aiDescription}
+                    </div>
+                )}
+                {/* Шаги воспроизведения */}
                 <div className="field full-width">
                     <label htmlFor={`steps-${index}`}>Шаги воспроизведения*</label>
-                    <textarea id={`steps-${index}`} rows={4} placeholder="1. Открыть...&#10;2. Нажать...&#10;3. Увидеть ошибку..." value={task.steps} onChange={handleChange('steps')} />
-                    {task.aiSteps && <div className="ai-feedback"><strong>AI Шаги:</strong> {task.aiSteps}</div>}
+                    <textarea
+                        id={`steps-${index}`}
+                        rows={4}
+                        placeholder="1. Открыть... 2. Нажать... 3. Увидеть ошибку..."
+                        value={task.steps}
+                        onChange={handleChange('steps')}
+                        onPaste={handlePaste('steps')}
+                    />
                 </div>
-
+                {task.aiSteps && (
+                    <div className="ai-feedback full-width">
+                        <strong>AI Шаги:</strong> {task.aiSteps}
+                    </div>
+                )}
+                {/* Фактический и ожидаемый результат */}
                 <div className="field-group">
                     <div className="field full-width">
                         <label htmlFor={`actual-${index}`}>Фактический результат*</label>
-                        <textarea id={`actual-${index}`} rows={2} placeholder="Что произошло на самом деле" value={task.actual} onChange={handleChange('actual')} />
-                        {task.aiActual && <div className="ai-feedback"><strong>AI Факт. рез-т:</strong> {task.aiActual}</div>}
+                        <textarea
+                            id={`actual-${index}`}
+                            rows={2}
+                            placeholder="Что произошло на самом деле"
+                            value={task.actual}
+                            onChange={handleChange('actual')}
+                            onPaste={handlePaste('actual')}
+                        />
                     </div>
+                    {task.aiActual && (
+                        <div className="ai-feedback full-width">
+                            <strong>AI Фактический:</strong> {task.aiActual}
+                        </div>
+                    )}
                     <div className="field full-width">
                         <label htmlFor={`expected-${index}`}>Ожидаемый результат*</label>
-                        <textarea id={`expected-${index}`} rows={2} placeholder="Что должно было произойти" value={task.expected} onChange={handleChange('expected')} />
-                        {task.aiExpected && <div className="ai-feedback"><strong>AI Ожид. рез-т:</strong> {task.aiExpected}</div>}
+                        <textarea
+                            id={`expected-${index}`}
+                            rows={2}
+                            placeholder="Что должно было произойти"
+                            value={task.expected}
+                            onChange={handleChange('expected')}
+                            onPaste={handlePaste('expected')}
+                        />
+                    </div>
+                    {task.aiExpected && (
+                        <div className="ai-feedback full-width">
+                            <strong>AI Ожидаемый:</strong> {task.aiExpected}
+                        </div>
+                    )}
+                </div>
+
+                {/* Общие вложения */}
+                <div className="field full-width">
+                    <label>Прикрепить файлы</label>
+                    <input
+                        type="file"
+                        multiple
+                        onChange={async e => {
+                            const rawFiles = Array.from(e.target.files);
+                            // локально — добавляем File для предпросмотра и отправки
+                            onUpdate(index, { ...task, attachments: [...(task.attachments || []), ...rawFiles] });
+                            // в map — сохраняем сериализованную версию
+                            const serialized = await Promise.all(rawFiles.map(f => serializeFile(f)));
+                            setAttachmentsMap(m => ({
+                                ...m,
+                                [task.id]: {
+                                    ...(m[task.id] || {}),
+                                    common: [...(m[task.id]?.common || []), ...serialized]
+                                }
+                            }));
+                        }}
+                    />
+
+                    {task.attachments?.length > 0 && (
+                        <ul className="attached-list">
+                            {task.attachments.map((f, i) => (
+                                <li key={i}>
+                                    {f.name}
+                                    {/* кнопка удаления */}
+                                    <button
+                                        type="button"
+                                        className="remove-attachment-btn"
+                                        onClick={() => {
+                                            const newAttachments = task.attachments.filter((_, idx) => idx !== i);
+                                            onUpdate(index, { ...task, attachments: newAttachments });
+                                        }}
+                                        title="Удалить файл"
+                                    >
+                                        ❌
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+
+                {/* Дополнительная информация */}
+                <div className="field-group">
+                    <div className="field">
+                        <label>Стенд</label>
+                        <input
+                            type="text"
+                            placeholder="e.g., test-01"
+                            value={task.stand}
+                            onChange={handleChange('stand')}
+                        />
+                    </div>
+                    <div className="field">
+                        <label>Окружение</label>
+                        <input
+                            type="text"
+                            placeholder="e.g., Chrome, Android"
+                            value={task.env}
+                            onChange={handleChange('env')}
+                        />
+                    </div>
+                    <div className="field">
+                        <label>Ссылка на требование</label>
+                        <input
+                            type="text"
+                            placeholder="URL в Confluence"
+                            value={task.requirementLink}
+                            onChange={handleChange('requirementLink')}
+                        />
+                    </div>
+                    <div className="field">
+                        <label>Тестовые данные</label>
+                        <input
+                            type="text"
+                            placeholder="Логин/пароль"
+                            value={task.testData}
+                            onChange={handleChange('testData')}
+                        />
+                    </div>
+                    <div className="field">
+                        <label>Макет</label>
+                        <input
+                            type="text"
+                            placeholder="URL в Figma"
+                            value={task.mockup}
+                            onChange={handleChange('mockup')}
+                        />
                     </div>
                 </div>
 
-                {/* --- Дополнительная информация --- */}
+                {/* === Жирные JIRA‑селекты === */}
                 <div className="field-group">
-                    <div className="field"><label>Стенд</label><input type="text" placeholder="e.g., test-01" value={task.stand} onChange={handleChange('stand')} /></div>
-                    <div className="field"><label>Окружение</label><input type="text" placeholder="e.g., Chrome, Android" value={task.env} onChange={handleChange('env')} /></div>
-                    <div className="field"><label>Ссылка на требование</label><input type="text" placeholder="URL в Confluence" value={task.requirementLink} onChange={handleChange('requirementLink')} /></div>
-                    <div className="field"><label>Тестовые данные</label><input type="text" placeholder="Логин/пароль" value={task.testData} onChange={handleChange('testData')} /></div>
-                    <div className="field"><label>Макет</label><input type="text" placeholder="URL в Figma" value={task.mockup} onChange={handleChange('mockup')} /></div>
-                </div>
-
-                {/* --- Поля Jira --- */}
-                <div className="field-group">
-                    <div className="field"><label>Серьезность*</label><Select menuPortalTarget={document.body}
-                        menuPosition="fixed"
-                        menuPlacement="auto"
-                        styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }} classNamePrefix="select" placeholder="Выберите..." options={toOptions('Severity')} value={toOptions('Severity').find(o => o.value === task.severity) || null} onChange={opt => onUpdate(index, { ...task, severity: opt?.value || '' })} /></div>
-                    <div className="field"><label>Симптом*</label><Select menuPortalTarget={document.body}
-                        menuPosition="fixed"
-                        menuPlacement="auto"
-                        styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }} classNamePrefix="select" isMulti placeholder="Выберите..." options={toOptions('Symptom')} value={toOptions('Symptom').filter(o => task.symptom.includes(o.value))} onChange={opts => onUpdate(index, { ...task, symptom: opts.map(o => o.value) })} /></div>
-                    <div className="field"><label>Платформа*</label><Select menuPortalTarget={document.body}
-                        menuPosition="fixed"
-                        menuPlacement="auto"
-                        styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }} classNamePrefix="select" isMulti placeholder="Выберите..." options={toOptions('Platform')} value={toOptions('Platform').filter(o => task.platform.includes(o.value))} onChange={opts => onUpdate(index, { ...task, platform: opts.map(o => o.value) })} /></div>
+                    <div className="field">
+                        <label>Серьезность*</label>
+                        <Select
+                            menuPortalTarget={document.body}
+                            menuPosition="fixed"
+                            menuPlacement="auto"
+                            styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
+                            classNamePrefix="select"
+                            placeholder="Выберите..."
+                            options={toOptions('Severity')}
+                            value={toOptions('Severity').find(o => o.value === task.severity) || null}
+                            onChange={opt => onUpdate(index, { ...task, severity: opt?.value || '' })}
+                        />
+                    </div>
+                    <div className="field">
+                        <label>Симптом*</label>
+                        <Select
+                            menuPortalTarget={document.body}
+                            menuPosition="fixed"
+                            menuPlacement="auto"
+                            styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
+                            classNamePrefix="select"
+                            isMulti
+                            placeholder="Выберите..."
+                            options={toOptions('Symptom')}
+                            value={toOptions('Symptom').filter(o => task.symptom.includes(o.value))}
+                            onChange={opts => onUpdate(index, { ...task, symptom: opts.map(o => o.value) })}
+                        />
+                    </div>
+                    <div className="field">
+                        <label>Платформа*</label>
+                        <Select
+                            menuPortalTarget={document.body}
+                            menuPosition="fixed"
+                            menuPlacement="auto"
+                            styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
+                            classNamePrefix="select"
+                            isMulti
+                            placeholder="Выберите..."
+                            options={toOptions('Platform')}
+                            value={toOptions('Platform').filter(o => task.platform.includes(o.value))}
+                            onChange={opts => onUpdate(index, { ...task, platform: opts.map(o => o.value) })}
+                        />
+                    </div>
                     <div className="field">
                         <label>Баг с прода*</label>
                         <Select
@@ -213,15 +448,28 @@ const CodeErrorCard = ({
                             options={toOptions('ProdBug')}
                             value={toOptions('ProdBug').find(o => o.value === task.prodBug) || null}
                             onChange={opt => onUpdate(index, { ...task, prodBug: opt.value })}
-                            isClearable={false}        // запретим “пустой” выбор после того, как пользователь выбрал
+                            isClearable={false}
                         />
                     </div>
-
                 </div>
 
+                {/* AI‑кнопка */}
                 <div className="ai-controls">
-                    <button onClick={() => runAi(index)} disabled={aiLoading} className="btn ai-btn">
+                    <button
+                        onClick={() => runAi(index)}
+                        disabled={aiLoading}
+                        className="btn ai-btn"
+                    >
                         {aiLoading ? 'Проверка AI…' : '✨ Проверить AI'}
+                    </button>
+                    <button
+                        onClick={() => fillFieldsWithAI(index)}
+                        disabled={aiFillLoading}
+                        className="btn ai-fill-btn"
+                        style={{ marginLeft: '8px' }}
+                        title="🤖 Заполнить поля AI"
+                    >
+                        {aiFillLoading ? '⏳ …' : '🤖 AI‑поля'}
                     </button>
                 </div>
             </div>
@@ -230,11 +478,12 @@ const CodeErrorCard = ({
 };
 
 
-// ===============================================
-//   Обновленный основной компонент страницы
-// ===============================================
-export default function CodeErrorPage({ projects }) {
 
+
+//основной компонент страницы
+export default function CodeErrorPage({ projects }) {
+    console.log('%c<CodeErrorPage/> render', 'color: #999;');
+    const [attachmentsMap, setAttachmentsMap] = useAttachmentsMap('codeErrorAttachmentsMap');
     // ——— блок default-значений
     const [defaultStand, setDefaultStand] = usePersistentState('defaultStand', '');
     const [defaultEnv, setDefaultEnv] = usePersistentState('defaultEnv', '');
@@ -247,9 +496,9 @@ export default function CodeErrorPage({ projects }) {
     const [tasks, setTasks] = usePersistentState('codeErrorTasks', []);
     const [jiraProject, setJiraProject] = usePersistentState('jiraProject', '');
     const [jiraPat, setJiraPat] = usePersistentState('jiraPat', '');
-    const [epicLink, setEpicLink] = usePersistentState('epicLink', '');
-    const [assignee, setAssignee] = usePersistentState('assignee', '');
-    const [affectedVersion, setAffectedVersion] = usePersistentState('affectedVersion', '');
+    const [epicOption, setEpicOption] = usePersistentState('codeErrorEpic', null);
+    const [assigneeOption, setAssigneeOption] = usePersistentState('codeErrorAssignee', null);
+    const [versionOption, setVersionOption] = usePersistentState('codeErrorVersion', null);
     const [targetStatus, setTargetStatus] = usePersistentState('targetStatus', null);
     const [allureProject, setAllureProject] = usePersistentState('allureProject', '');
     const [fieldOptions, setFieldOptions] = useState({});
@@ -261,29 +510,93 @@ export default function CodeErrorPage({ projects }) {
     const [results, setResults] = useState([]);
     const [modalOpen, setModalOpen] = useState(false);
     const [aiLoading, setAiLoading] = useState({});
+    const [requestLinkOption, setRequestLinkOption] = usePersistentState('codeErrorReqLink', null);
+    const [aiFillAllLoading, setAiFillAllLoading] = useState(false);
+
+
+    const [aiFillLoading, setAiFillLoading] = useState({});
+    const [linkTypes, setLinkTypes] = useState([]);
+    const [requestLinkIssue, setRequestLinkIssue] = useState(null);
+    const [requestLinkType, setRequestLinkType] = usePersistentState('codeErrorReqLinkType', null);
     const debProject = useDebounce(jiraProject, 500);
     const debPat = useDebounce(jiraPat, 500);
-    // NEW state for collapsed cards
+    const allowedLinkNames = ['Блокирует', 'Относится', 'Клонирование', 'Порождение'];
     const [collapsedStates, setCollapsedStates] = useState({});
     useEffect(() => {
-        if (!defaultProdBug) return;  // ждём, пока defaultProdBug станет truthy
+        // если у первой задачи нет поля selected, значит грузим “старые” задачи — отметим их все
+        if (tasks.length > 0 && tasks[0].selected === undefined) {
+            setTasks(ts => ts.map(t => ({ ...t, selected: true })));
+        }
+    }, [tasks, setTasks]);
+    useEffect(() => {
+
+        idbSet('__initialized__', true)
+            .catch(console.warn);
+    }, []);
+    useEffect(() => {
+        // сбросить заранее выбранный дефект во всех тасках
+        setTasks(ts => ts.map(t => ({ ...t, allureDefect: null })));
+    }, [allureProject, setTasks]);
+    useEffect(() => {
+        if (!defaultProdBug) return;
         setTasks(tasks =>
             tasks.map(t => ({
                 ...t,
                 prodBug: t.prodBug || defaultProdBug
             }))
         );
-    }, [defaultProdBug, setTasks]);
+    }, [defaultProdBug]);
 
     const cardRefs = useRef([]);
 
-    // синхронизируем длину списка ref'ов с кол-вом задач
     useEffect(() => {
         cardRefs.current = tasks.map((_, i) => cardRefs.current[i] || React.createRef());
+        console.log('%c[tasks] changed:', 'color: #0a0;', tasks);
     }, [tasks]);
 
+    const loadLinkTypes = useCallback(async () => {
+        if (!jiraPat) return;
+        try {
+            const { data } = await axios.get(
+                `${config.serverUrl}/jira/issueLinkTypes`,
+                { params: { pat: jiraPat } }
+            );
 
-    // --- Функции загрузки данных (логика не изменена) ---
+            setLinkTypes(data.map(t => ({ value: t.name, label: t.name })));
+        } catch (e) {
+            console.warn('Не удалось загрузить типы связей:', e);
+        }
+    }, [jiraPat]);
+
+    useEffect(() => { loadLinkTypes() }, [loadLinkTypes]);
+
+    const loadIssueOptions = async input => {
+        if (!jiraProject || !jiraPat) return [];
+        // строим JQL: все задачи в проекте, фильтр по summary
+        const jql = `project = ${jiraProject}` +
+            (input
+                ? ` AND summary ~ "${input.replace(/"/g, '') + '*'}"`
+                : '') +
+            ` ORDER BY created DESC`;
+
+        const url = new URL(`${config.serverUrl}/jira/search`);
+        url.searchParams.set('pat', jiraPat);
+        url.searchParams.set('jql', jql);
+        url.searchParams.set('maxResults', 50);
+
+        const resp = await fetch(url.toString(), {
+            headers: { Accept: 'application/json' }
+        });
+        if (!resp.ok) return [];
+        const body = await resp.json();
+        // body.issues: [{ key, fields: { summary } }, …]
+        return body.issues.map(issue => ({
+            value: issue.key,
+            label: `${issue.key} — ${issue.fields.summary}`
+        }));
+    };
+
+    // Функции загрузки данных
     const loadMeta = useCallback(async () => {
         if (!debProject || !debPat) return;
         setIsMetaLoading(true); setMetaError('');
@@ -318,7 +631,6 @@ export default function CodeErrorPage({ projects }) {
     }, [debProject, debPat]);
     useEffect(() => { if (modalOpen) loadTransitions(); }, [modalOpen, loadTransitions]);
     useEffect(() => {
-        // Если список опций уже есть, и дефолт ещё не установлен
         if (fieldOptions.ProdBug?.length && !defaultProdBug) {
             const noOption = fieldOptions.ProdBug.find(o => o.name === 'Нет');
             if (noOption) {
@@ -326,19 +638,30 @@ export default function CodeErrorPage({ projects }) {
             }
         }
     }, [fieldOptions.ProdBug, defaultProdBug, setDefaultProdBug]);
-
+    useEffect(() => {
+        setTasks(ts =>
+            ts.map(t => ({
+                ...t,
+                // если есть в map — отрендерим
+                attachments: attachmentsMap[t.id]?.common || t.attachments || [],
+                descriptionAttachments: attachmentsMap[t.id]?.description || [],
+                stepsAttachments: attachmentsMap[t.id]?.steps || [],
+                actualAttachments: attachmentsMap[t.id]?.actual || [],
+                expectedAttachments: attachmentsMap[t.id]?.expected || [],
+            }))
+        );
+    }, [attachmentsMap, setTasks]);
     const loadDefectOptions = async (projectId, input) => {
         if (!projectId) return [];
 
         const needle = input.trim().toLowerCase();
 
-        // 1) Берём первые 100 дефектов
+
         const { data: defects } = await axios.get(
             `${config.serverUrl}/allure/defects`,
             { params: { projectId, page: 0, size: 500, query: needle || undefined } }
         );
 
-        // 2) Если ввели чистый ID и он не в тех 100, подгружаем его отдельно
         if (/^\d+$/.test(needle)) {
             const id = Number(needle);
             if (!defects.some(d => d.id === id)) {
@@ -349,15 +672,14 @@ export default function CodeErrorPage({ projects }) {
                     defects.unshift({
                         id,
                         name: detail.name,
-                        issue: detail.issue // чтобы корректно попал в «привязанные»/«непривязанные»
+                        issue: detail.issue
                     });
                 } catch {
-                    // если нет такого ID или ошибка — молча игнорируем
+
                 }
             }
         }
 
-        // 3) Клиентская фильтрация по имени или по ID
         const filtered = needle
             ? defects.filter(d =>
                 d.name.toLowerCase().includes(needle) ||
@@ -365,7 +687,6 @@ export default function CodeErrorPage({ projects }) {
             )
             : defects;
 
-        // 4) Группируем и возвращаем
         const opts = filtered.map(d => ({
             value: d.id,
             label: `${d.name} (ID: ${d.id})`,
@@ -395,6 +716,86 @@ export default function CodeErrorPage({ projects }) {
         }
     };
 
+    const handleFillAllWithAI = async () => {
+        if (!jiraProject || !jiraPat) {
+            alert('Сначала укажите Project Key и Jira PAT');
+            return;
+        }
+        setAiFillAllLoading(true);
+        try {
+            // по очереди обрабатываем все выбранные задачи
+            const updated = await Promise.all(tasks.map(async (t) => {
+                if (!t.selected) return t;
+                // собираем полезные поля
+                const payload = {
+                    summary: t.summary,
+                    description: t.description,
+                    steps: t.steps,
+                    stand: t.stand,
+                    env: t.env,
+                    pat: jiraPat,
+                    projectKey: jiraProject
+                };
+                const { data } = await axios.post(
+                    `${config.serverUrl}/jira/ai-fill-fields`,
+                    payload
+                );
+                return {
+                    ...t,
+                    actual: data.actual,
+                    expected: data.expected,
+                    severity: data.severity,
+                    platform: data.platform,
+                    symptom: data.symptom
+                };
+            }));
+            setTasks(updated);
+        } catch (e) {
+            console.error('AI fill all error:', e);
+            alert('Ошибка при заполнении AI для всех: ' + (e.response?.data?.error || e.message));
+        } finally {
+            setAiFillAllLoading(false);
+        }
+    };
+
+
+    const fillFieldsWithAI = async idx => {
+        const t = tasks[idx];
+        setAiFillLoading(l => ({ ...l, [idx]: true }));
+        try {
+            const payload = {
+                summary: t.summary,
+                description: t.description,
+                steps: t.steps,
+                stand: t.stand,
+                env: t.env,
+                pat: jiraPat,
+                projectKey: jiraProject
+            };
+            const { data } = await axios.post(
+                `${config.serverUrl}/jira/ai-fill-fields`,
+                payload
+            );
+            // data: { actual, expected, severity, platform: [], symptom: [] }
+            setTasks(ts => ts.map((c, i) => i === idx
+                ? {
+                    ...c,
+                    actual: data.actual,
+                    expected: data.expected,
+                    severity: data.severity,
+                    platform: data.platform,
+                    symptom: data.symptom
+                }
+                : c
+            ));
+        } catch (e) {
+            console.error('AI‑fill error:', e);
+            alert('Не удалось заполнить поля AI: ' + (e.response?.data?.error || e.message));
+        } finally {
+            setAiFillLoading(l => ({ ...l, [idx]: false }));
+        }
+    };
+
     const runAi = async idx => {
         const t = tasks[idx];
         setAiLoading(l => ({ ...l, [idx]: true }));
@@ -413,31 +814,81 @@ export default function CodeErrorPage({ projects }) {
     };
 
     // --- Обработчики ---
+    // Внутри вашего компонента CodeErrorPage, найдите определение handleAdd и замените его на:
+
     const handleAdd = () => {
-        setTasks(ts => [{
-            summary: '', description: '', steps: '', actual: '', expected: '',
+        console.log('handleAdd вызван'); // чтобы убедиться, что срабатывает
+        console.log('%chandleAdd start', 'color: #00f; font-weight: bold;');
+        console.trace('trace handleAdd');
+
+        // 1) Сгенерировать уникальный ID
+        const newId = uuidv4();
+        console.log(' — новый ID:', newId);
+
+        // 2) Инициализировать пустые массивы вложений для этого ID
+        setAttachmentsMap(prev => ({
+            ...prev,
+            [newId]: {
+                common: [],
+                description: [],
+                steps: [],
+                actual: [],
+                expected: [],
+            }
+        }));
+
+        // 3) Создать новый таск и вставить в начало списка
+        setTasks(prev => [{
+            id: newId,
+            summary: '',
+            description: '',
+            steps: '',
+            actual: '',
+            expected: '',
             stand: defaultStand,
             env: defaultEnv,
             requirementLink: defaultRequirementLink,
             testData: defaultTestData,
             mockup: defaultMockup,
-            severity: '', symptom: [], platform: [], prodBug: defaultProdBug,
-            selected: true, isNew: true, allureDefect: null,
-            aiSummary: '', aiDescription: '', aiSteps: '', aiActual: '', aiExpected: ''
-        }, ...ts]);
-        // NEW: expand the newly added card
+            severity: '',
+            symptom: [],
+            platform: [],
+            prodBug: defaultProdBug,
+            selected: true,
+            isNew: true,
+            allureDefect: null,
+            attachments: [],
+            descriptionAttachments: [],
+            stepsAttachments: [],
+            actualAttachments: [],
+            expectedAttachments: [],
+            aiSummary: '',
+            aiDescription: '',
+            aiSteps: '',
+            aiActual: '',
+            aiExpected: '',
+        }, ...prev]);
+
+        // 4) Развернуть новую карточку (index 0) и сдвинуть старые collapsedStates
         setCollapsedStates(prev => {
-            const newStates = { 0: false }; // new task is at index 0 and expanded
-            Object.keys(prev).forEach(key => {
-                newStates[parseInt(key, 10) + 1] = prev[key];
+            const next = { 0: false };
+            Object.entries(prev).forEach(([key, val]) => {
+                next[Number(key) + 1] = val;
             });
-            return newStates;
+            return next;
         });
+        console.log('%chandleAdd end, tasks after add will be:', 'color: #00f;', /* вы не можете логнуть сразу новый tasks */);
+
     };
 
+
     const handleDelete = i => {
-        setTasks(ts => ts.filter((_, idx) => idx !== i));
-        // NEW: clean up collapsed state
+        console.log(`%chandleDelete index=${i}`, 'color: #f00; font-weight: bold;');
+        setTasks(ts => {
+            const next = ts.filter((_, idx) => idx !== i);
+            console.log(' — tasks после удаления будут:', next);
+            return next;
+        });
         setCollapsedStates(prev => {
             const newStates = {};
             Object.keys(prev).forEach(key => {
@@ -463,58 +914,164 @@ export default function CodeErrorPage({ projects }) {
     };
 
     const handleCreateAll = async () => {
-        if (!affectedVersion) {
-            alert('Выберите затронутую версию.');
-            return;
-        }
+        console.log('handleCreateAll called', { ready, creating });
         setCreating(true);
         setResults([]);
         const out = [];
 
         for (const t of tasks.filter(t => t.selected)) {
-            const desc = `h3. Подробное описание\n${t.description}\n\nh3. Шаги воспроизведения\n${t.steps}\n\nh3. Фактический результат\n${t.actual}\n\nh3. Ожидаемый результат\n${t.expected}\n\n*Стенд:* ${t.stand || 'не указано'}\n*Окружение:* ${t.env || 'не указано'}\n*Тестовые данные:* ${t.testData || 'не указано'}\n*Макет:* ${t.mockup || 'не указано'}`;
+            // 1) Собираем содержимое описания с плейсхолдерами !file!
+            const desc = `h3. Подробное описание
+${t.description}
+
+h3. Шаги воспроизведения
+${t.steps}
+
+h3. Фактический результат
+${t.actual}
+
+h3. Ожидаемый результат
+${t.expected}
+
+*Стенд:* ${t.stand || 'не указано'}
+*Окружение:* ${t.env || 'не указано'}
+*Тестовые данные:* ${t.testData || 'не указано'}
+*Макет:* ${t.mockup || 'не указано'}`;
+
             const fields = {
                 project: { key: jiraProject },
                 issuetype: { id: '12811' },
                 summary: t.summary,
                 description: desc,
-                versions: [{ id: affectedVersion }],
+                versions: [{ id: versionOption.value }],
                 [fieldIds.Severity]: { id: t.severity },
                 [fieldIds.Symptom]: t.symptom.map(id => ({ id })),
                 [fieldIds.Platform]: t.platform.map(id => ({ id }))
             };
             if (t.prodBug) fields[fieldIds.ProdBug] = { id: t.prodBug };
-            if (epicLink) fields[fieldIds['Epic Link']] = epicLink;
-            if (assignee) fields.assignee = { name: assignee };
+            if (!versionOption?.value) {
+                alert('Выберите затронутую версию.');
+                return;
+            }
+            if (epicOption?.value) {
+                fields[fieldIds['Epic Link']] = epicOption.value;
+            }
+            if (assigneeOption?.value) {
+                fields.assignee = { name: assigneeOption.value };
+            }
 
             try {
-                const r = await axios.post(`${config.serverUrl}/jira/create-issue`, { pat: jiraPat, payload: { fields } });
-                const key = r.data.key;
+                // 2) создаём задачу
+                const { data: { key } } = await axios.post(
+                    `${config.serverUrl}/jira/create-issue`,
+                    { pat: jiraPat, payload: { fields } }
+                );
                 out.push({ success: true, summary: t.summary, key });
 
+                // 3) собираем **все** файлы из четырёх разделов + общего
+                const allFiles = [
+                    ...(t.descriptionAttachments || []),
+                    ...(t.stepsAttachments || []),
+                    ...(t.actualAttachments || []),
+                    ...(t.expectedAttachments || []),
+                    ...(t.attachments || [])
+                ];
+
+                // оставляем только те, которые действительно instanceof Blob
+                const blobFiles = allFiles.filter(f => f instanceof Blob);
+
+                if (blobFiles.length) {
+                    const form = new FormData();
+                    blobFiles.forEach(f => form.append('file', f));
+
+                    await axios.post(
+                        `${config.serverUrl}/jira/issue/${key}/attachments`,
+                        form,
+                        {
+                            headers: {
+                                'X-Atlassian-Token': 'no-check',
+                                Authorization: `Bearer ${jiraPat}`
+                            }
+                        }
+                    );
+
+                    await axios.put(
+                        `${config.serverUrl}/jira/issue/${key}`,
+                        {
+                            pat: jiraPat,
+                            payload: { fields: { description: desc } }
+                        }
+                    );
+
+                }
+
                 if (targetStatus) {
-                    await axios.post(`${config.serverUrl}/jira/transition-issues`, { pat: jiraPat, issueKeys: [key], transitionId: targetStatus });
+                    await axios.post(
+                        `${config.serverUrl}/jira/transition-issues`,
+                        { pat: jiraPat, issueKeys: [key], transitionId: targetStatus }
+                    );
                 }
                 if (t.allureDefect) {
                     try {
-                        await axios.post(`${config.serverUrl}/allure/defect/${t.allureDefect.value}/issue`, { integrationId: 67, name: key });
+                        await axios.post(
+                            `${config.serverUrl}/allure/defect/${t.allureDefect.value}/issue`,
+                            { integrationId: 67, name: key }
+                        );
                     } catch (linkErr) {
-                        out.push({ success: false, summary: `Привязка ${t.summary}`, key, error: linkErr.response?.data?.error || linkErr.message });
+                        out.push({
+                            success: false,
+                            summary: `Привязка ${t.summary}`,
+                            key,
+                            error: linkErr.response?.data?.error || linkErr.message
+                        });
                     }
                 }
-            } catch (e) {
-                out.push({ success: false, summary: t.summary, error: e.response?.data?.error || e.message });
+                if (requestLinkIssue && requestLinkType) {
+                    try {
+                        await axios.post(
+                            `${config.serverUrl}/jira/issueLink`,
+                            {
+                                pat: jiraPat,
+                                typeName: requestLinkType,
+                                inwardIssueKey: requestLinkIssue,
+                                outwardIssueKey: key
+                            }
+                        );
+                    } catch (err) {
+                        out.push({
+                            success: false,
+                            summary: `Связь ${t.summary}`,
+                            error: err.response?.data?.error || err.message
+                        });
+                    }
+                }
+
+            } catch (err) {
+                out.push({
+                    success: false,
+                    summary: t.summary,
+                    error: err.response?.data?.error || err.message
+                });
             }
         }
+
         setResults(out);
-        setTasks(ts => ts.filter(t => !out.find(r => r.success && r.summary === t.summary && !r.error?.includes('Привязка'))));
+        // удаляем из задач те, что успешно создались
+        setTasks(ts =>
+            ts.filter(t =>
+                !out.find(r => r.success && r.summary === t.summary && !r.error)
+            )
+        );
         setCreating(false);
     };
+
 
     const ready = !isMetaLoading && !metaError && Object.keys(fieldOptions).length > 0;
     const selectedTasksCount = tasks.filter(t => t.selected).length;
     const navigate = useNavigate();
-
+    const filteredLinkTypes = linkTypes.filter(o =>
+        allowedLinkNames.includes(o.value)
+    );
     return (
         <div className="solution-page">
             <h1>Массовое создание баг-репортов</h1>
@@ -551,7 +1108,22 @@ export default function CodeErrorPage({ projects }) {
 
             <div className="task-controls">
                 <button className="btn btn-secondary" onClick={handleAdd}>➕ Добавить задачу</button>
-                <button className="btn btn-primary" disabled={selectedTasksCount === 0 || !ready} onClick={() => { setResults([]); setModalOpen(true); }}>
+                <button
+                    className="btn btn-secondary"
+                    onClick={handleFillAllWithAI}
+                    disabled={aiFillAllLoading}
+                    style={{ marginLeft: '8px' }}
+                >
+                    {aiFillAllLoading ? 'Заполнение всех…' : '🤖 Заполнить метаданные для всех задач'}
+                </button>
+                <button
+                    className="btn btn-primary"
+                    disabled={selectedTasksCount === 0 || !ready}
+                    onClick={() => {
+                        setResults([]);
+                        setModalOpen(true);
+                    }}
+                >
                     ⚙️ Создать в Jira ({selectedTasksCount})
                 </button>
                 <button className="btn btn-danger" onClick={async () => {
@@ -562,23 +1134,25 @@ export default function CodeErrorPage({ projects }) {
                     🗑️ Очистить всё
                 </button>
             </div>
-            {tasks.length > 3 && (
-                <div className="mini-nav">
-                    {tasks.map((t, i) => (
-                        <button
-                            key={i}
-                            onClick={() => {
-                                const ref = cardRefs.current[i];
-                                if (ref && ref.current) {
-                                    ref.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                                }
-                            }}
-                        >
-                            {i + 1}. {t.summary || 'Без темы'}
-                        </button>
-                    ))}
-                </div>
-            )}
+            {
+                tasks.length > 3 && (
+                    <div className="mini-nav">
+                        {tasks.map((t, i) => (
+                            <button
+                                key={i}
+                                onClick={() => {
+                                    const ref = cardRefs.current[i];
+                                    if (ref && ref.current) {
+                                        ref.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                    }
+                                }}
+                            >
+                                {i + 1}. {t.summary || 'Без темы'}
+                            </button>
+                        ))}
+                    </div>
+                )
+            }
 
             <div className="task-list">
                 <div className="defaults-panel">
@@ -654,68 +1228,154 @@ export default function CodeErrorPage({ projects }) {
                             task={t}
                             onUpdate={handleUpdate}
                             onDelete={handleDelete}
-                            key={i} // Using index as key is okay here because we don't re-order tasks except on add/delete
+                            key={i}
                             index={i}
-                            task={t}
-                            onUpdate={handleUpdate}
-                            onDelete={handleDelete}
+                            //   task={t}
+                            //   onUpdate={handleUpdate}
+                            //   onDelete={handleDelete}
                             fieldOptions={fieldOptions}
                             loadDefectOptions={loadDefectOptions}
                             allureProject={allureProject}
                             onDefectSelect={fetchDefectDetails}
                             runAi={runAi}
                             aiLoading={aiLoading[i]}
-                            isCollapsed={!!collapsedStates[i]} // NEW prop
-                            onToggleCollapse={handleToggleCollapse} // NEW prop
+                            fillFieldsWithAI={fillFieldsWithAI}
+                            aiFillLoading={aiFillLoading[i] || false}
+                            isCollapsed={!!collapsedStates[i]}
+                            onToggleCollapse={handleToggleCollapse}
+                            setAttachmentsMap={setAttachmentsMap}
                         />
                     </div>
                 ))}
             </div>
 
-            {modalOpen && (
-                <div className="modal">
-                    <div className="modal-content">
-                        <button className="modal-close-btn" onClick={() => setModalOpen(false)}>×</button>
-                        <h2>2. Общие поля для ({selectedTasksCount}) задач</h2>
-                        <fieldset disabled={!ready || creating} className="common-fields-group">
-                            <legend>Общие поля Jira</legend>
-                            {/* FIXED: Added field wrapper and label */}
-                            <div className="field full-width">
-                                <label>Epic Link</label>
-                                <input type="text" value={epicLink} onChange={e => setEpicLink(e.target.value)} required placeholder="PROJ-123" />
-                            </div>
-                            <div className="field">
-                                <label>Исполнитель (необязательно)</label>
-                                <AsyncSelect classNamePrefix="select" cacheOptions defaultOptions isClearable loadOptions={loadUserOptions} placeholder="Начните вводить имя..." onChange={opt => setAssignee(opt?.value || '')} noOptionsMessage={() => 'Нет совпадений'} />
-                            </div>
-                            <div className="field">
-                                <label>Затронутая версия*</label>
-                                <AsyncSelect classNamePrefix="select" cacheOptions defaultOptions isClearable loadOptions={loadVersionOptions} placeholder="Начните вводить версию..." onChange={opt => setAffectedVersion(opt?.value || '')} noOptionsMessage={() => 'Нет совпадений'} />
-                            </div>
-                            <div className="field">
-                                <label>Статус после создания (необязательно)</label>
-                                <Select classNamePrefix="select" placeholder="Оставить по умолчанию..." options={transitions.map(t => ({ value: t.id, label: t.name }))} value={transitions.map(t => ({ value: t.id, label: t.name })).find(o => o.value === targetStatus) || null} onChange={opt => setTargetStatus(opt?.value || null)} />
-                            </div>
-                        </fieldset>
-                        <div className="buttons">
-                            <button onClick={handleCreateAll} disabled={!ready || creating || !affectedVersion} className="btn btn-primary">
-                                {creating ? 'Создание…' : `Подтвердить и создать ${selectedTasksCount} задач`}
-                            </button>
-                        </div>
-                        {results.length > 0 && (
-                            <div className="jira-result">
-                                <h3>Результаты создания:</h3>
-                                {results.map((r, i) =>
-                                    r.success
-                                        ? <p key={i} className="success">✅ <b>{r.key}:</b> <a href={`${config.jiraBaseUrl || 'https://jira.abanking.ru'}/browse/${r.key}`} target="_blank" rel="noreferrer">{r.summary}</a></p>
-                                        : <p key={i} className="error">❌ <b>{r.summary}:</b> {r.error}</p>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                </div>
+            {
+                modalOpen && (
+                    <div className="modal">
+                        <div className="modal-content">
+                            <button className="modal-close-btn" onClick={() => setModalOpen(false)}>×</button>
+                            <h2>2. Общие поля для ({selectedTasksCount}) задач</h2>
+                            <fieldset disabled={!ready || creating} className="common-fields-group">
+                                <legend>Общие поля Jira</legend>
 
-            )}
+                                {/* Epic Link */}
+                                <div className="field full-width">
+                                    <label>Epic Link</label>
+                                    <AsyncSelect
+                                        classNamePrefix="select"
+                                        cacheOptions
+                                        defaultOptions
+                                        loadOptions={loadIssueOptions}
+                                        placeholder="Начните вводить Epic Link…"
+                                        value={epicOption}
+                                        onChange={opt => setEpicOption(opt)}
+                                        noOptionsMessage={() => 'Нет совпадений'}
+                                        isClearable
+                                    />
+                                </div>
+
+                                {/* Исполнитель */}
+                                <div className="field">
+                                    <label>Исполнитель (необязательно)</label>
+                                    <AsyncSelect
+                                        classNamePrefix="select"
+                                        cacheOptions
+                                        defaultOptions
+                                        loadOptions={loadUserOptions}
+                                        placeholder="Начните вводить имя…"
+                                        value={assigneeOption}
+                                        onChange={opt => setAssigneeOption(opt)}
+                                        noOptionsMessage={() => 'Нет совпадений'}
+                                        isClearable
+                                    />
+                                </div>
+
+                                {/* Затронутая версия */}
+                                <div className="field">
+                                    <label>Затронутая версия*</label>
+                                    <AsyncSelect
+                                        classNamePrefix="select"
+                                        cacheOptions
+                                        defaultOptions
+                                        loadOptions={loadVersionOptions}
+                                        placeholder="Начните вводить версию…"
+                                        value={versionOption}
+                                        onChange={opt => setVersionOption(opt)}
+                                        noOptionsMessage={() => 'Нет совпадений'}
+                                        isClearable
+                                    />
+                                </div>
+
+                            </fieldset>
+                            <fieldset disabled={!ready || creating} className="common-fields-group">
+                                <legend>Связь запроса</legend>
+                                <div className="field">
+                                    <label>Ключ задачи</label>
+                                    <AsyncSelect
+                                        classNamePrefix="select"
+                                        cacheOptions
+                                        defaultOptions
+                                        loadOptions={async (inputValue) => {
+                                            // Собираем URL с правильным путём и параметрами
+                                            const url = new URL(`${config.serverUrl}/jira/issue/picker`);
+                                            url.searchParams.set('pat', jiraPat);
+                                            url.searchParams.set('query', inputValue || '');
+
+                                            const resp = await fetch(url.toString(), {
+                                                headers: { Accept: 'application/json' }
+                                            });
+                                            if (!resp.ok) return [];
+
+                                            const data = await resp.json(); // [{ key, name, summary }, …]
+                                            return data.map(i => ({
+                                                value: i.key,
+                                                label: `${i.key} — ${i.summary || i.name}`
+                                            }));
+                                        }}
+                                        isClearable
+                                        placeholder="Начните вводить ключ задачи…"
+                                        // теперь храним и показываем полный объект (key + summary)
+                                        value={requestLinkOption}
+                                        onChange={(opt) => {
+                                            setRequestLinkOption(opt);
+                                            setRequestLinkIssue(opt?.value || null);
+                                        }}
+                                        noOptionsMessage={() => 'Ничего не найдено'}
+                                    />
+                                </div>
+                                <div className="field">
+                                    <label>Тип связи</label>
+                                    <Select
+                                        classNamePrefix="select"
+                                        placeholder="Выберите тип..."
+                                        // показываем только отфильтрованные
+                                        options={filteredLinkTypes}
+                                        value={filteredLinkTypes.find(o => o.value === requestLinkType) || null}
+                                        onChange={opt => setRequestLinkType(opt?.value || null)}
+                                        isClearable
+                                    />
+                                </div>
+                            </fieldset>
+                            <div className="buttons">
+                                <button onClick={handleCreateAll} disabled={!ready || creating || !versionOption?.value} className="btn btn-primary">
+                                    {creating ? 'Создание…' : `Подтвердить и создать ${selectedTasksCount} задач`}
+                                </button>
+                            </div>
+                            {results.length > 0 && (
+                                <div className="jira-result">
+                                    <h3>Результаты создания:</h3>
+                                    {results.map((r, i) =>
+                                        r.success
+                                            ? <p key={i} className="success">✅ <b>{r.key}:</b> <a href={`${config.jiraBaseUrl || 'https://jira.abanking.ru'}/browse/${r.key}`} target="_blank" rel="noreferrer">{r.summary}</a></p>
+                                            : <p key={i} className="error">❌ <b>{r.summary}:</b> {r.error}</p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                )
+            }
             <div className="floating-buttons">
                 <button
                     className="btn btn-secondary btn-back"
@@ -730,7 +1390,7 @@ export default function CodeErrorPage({ projects }) {
                     ↑ Вверх
                 </button>
             </div>
-        </div>
+        </div >
 
     );
 }

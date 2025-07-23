@@ -626,3 +626,40 @@ textarea {
 .jira-result .error {
     color: var(--error);
 }
+
+.attached-list {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0;
+}
+
+.attached-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg-input);
+    border-radius: 6px;
+    padding: 6px 12px;
+    margin-bottom: 4px;
+    font-size: 0.9rem;
+    color: var(--text);
+}
+
+.remove-attachment-btn {
+    background-color: var(--danger);
+    border: none;
+    color: white;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+}
+
+.remove-attachment-btn:hover {
+    background-color: var(--danger-hover);
+}

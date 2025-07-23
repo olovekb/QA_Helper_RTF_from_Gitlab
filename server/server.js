@@ -10,11 +10,16 @@ import { exportStructureAllure } from './xmind-parce/export-structure-allure.mjs
 import { analyzeTestCaseWithAI } from './ai-testcase.mjs';
 import { fetchConfluencePage } from './confluenceFetcher.mjs';
 import { analyzeRequirementWithAI } from './analyzeRequirementWithAI.mjs';
+import { Buffer } from 'buffer';
+import multer from 'multer';
+import FormDataLib from 'form-data';
+import axios from 'axios';
 import config from './config.json' assert { type: 'json'};
 
-
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const app = express();
 const PORT = 5000;
+const upload = multer();
 
 const corsOptions = {
     origin: 'https://test-inspector.abanking.ru',
@@ -22,12 +27,102 @@ const corsOptions = {
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
 };
+
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.options('*', cors(corsOptions));
-
+//app.use(cors());
+//app.options('*', cors());
 const limit = pLimit(100);
 
+
+async function fetchJiraMeta(pat, projectKey) {
+    const { data } = await axios.post(
+        `${config.serverUrl}/api/jira/meta`,
+        { pat, projectKey }
+    );
+    // data.options = { Severity: [...], Platform: [...], Symptom: [...] }
+    return data.options;
+}
+
+/**
+ * Определяет список кодов платформ по правилу:
+ * 1) Если в summary есть префикс "<код> | ..." — берём именно эти коды
+ * 2) Иначе смотрим на текст окружения (env) и ищем ключевые слова
+ * 3) Иначе — Desktop по умолчанию
+ *
+ * Коды: 
+ *  D    — Desktop/Web
+ *  A    — Adaptive
+ *  M    — Mobile (iOS/Android)
+ *  S    — Backend
+ *  PWA  — Progressive Web App
+ */
+function detectPlatforms(summary, env) {
+    const result = [];
+
+    // 1) Парсим префикс из summary: "КОД | остальное"
+    if (typeof summary === 'string') {
+        const m = summary.trim().match(/^([A-Za-z]{1,3})\s*\|/);
+        if (m) {
+            const code = m[1].toUpperCase();
+            // если PWA — целиком
+            if (code === 'PWA') {
+                return ['PWA'];
+            }
+            // иначе разбиваем на символы и фильтруем по допустимым
+            for (const ch of code.split('')) {
+                if (['D', 'A', 'M', 'S'].includes(ch) && !result.includes(ch)) {
+                    result.push(ch);
+                }
+            }
+            if (result.length) {
+                return result;
+            }
+        }
+    }
+
+    // 2) Если не нашли в теме — смотрим env
+    if (typeof env === 'string') {
+        const txt = env.toLowerCase();
+        if ((/android|ios/).test(txt)) {
+            result.push('M');
+        }
+        if ((/chrome|firefox|edge|safari|desktop|web/).test(txt)) {
+            result.push('D');
+        }
+        if (txt.includes('adaptive')) {
+            result.push('A');
+        }
+        if (txt.includes('pwa')) {
+            result.push('PWA');
+        }
+        if ((/backend|api/).test(txt)) {
+            result.push('S');
+        }
+        // убираем дубли
+        if (result.length) {
+            return Array.from(new Set(result));
+        }
+    }
+
+    // 3) Иначе — Desktop по умолчанию
+    return ['D'];
+}
+
+
+function buildPlatformMap(platOptions) {
+    const m = {};
+    platOptions.forEach(o => {
+        const n = o.name.toLowerCase();
+        if (n.includes('desktop') || n.includes('web')) m['D'] = o.id;
+        else if (n.includes('adaptive')) m['A'] = o.id;
+        else if (n.includes('ios') || n.includes('android')) m['M'] = o.id;
+        else if (n.includes('pwa')) m['PWA'] = o.id;
+        else if (n.includes('backend')) m['S'] = o.id;
+    });
+    return m;
+}
 
 // Функция фильтрации тест-кейсов
 async function filterCases(allCases, jiraIssue, projectId) {
@@ -467,7 +562,6 @@ app.post('/api/jira/transition-issues', async (req, res) => {
             .json({ error: 'Нужны pat, issueKeys и transitionId' });
     }
 
-    // дальше — ваш код
     const results = [];
     for (const key of issueKeys) {
         try {
@@ -558,6 +652,359 @@ app.get('/api/allure/defect/:defectId/details', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
+app.get('/api/jira/issue/picker', async (req, res) => {
+    const { pat, query } = req.query;
+    if (!pat) {
+        return res.status(400).json({ error: 'pat is required' });
+    }
+
+    try {
+        // Собираем URL с query-параметром
+        const url = new URL('https://jira.abanking.ru/rest/api/2/issue/picker');
+        if (query) {
+            url.searchParams.set('query', query);
+        }
+
+        // Делаем запрос в Jira
+        const response = await fetch(url.toString(), {
+            headers: {
+                Authorization: `Bearer ${pat}`,
+                Accept: 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            // Если Jira вернула ошибку — отдаём её клиенту
+            const errBody = await response.json().catch(() => ({}));
+            const msg = errBody.errorMessages?.join(',') || response.statusText;
+            return res.status(response.status).json({ error: msg });
+        }
+
+        // Парсим результат
+        const data = await response.json();
+        const issues = (data.sections || [])
+            .flatMap(section => section.issues || [])
+            .map(i => ({
+                key: i.key,
+                name: i.name,
+                summary: i.summary
+            }));
+
+        return res.json(issues);
+    }
+    catch (err) {
+        console.error('Error fetching issue picker:', err);
+        return res
+            .status(500)
+            .json({ error: err.message || 'Unknown error' });
+    }
+});
+
+// GET /api/jira/issueLinkTypes — вернуть все типы связей из Jira
+app.get('/api/jira/issueLinkTypes', async (req, res) => {
+    const { pat } = req.query;
+    if (!pat) {
+        return res.status(400).json({ error: 'pat is required' });
+    }
+    try {
+        const response = await fetch(
+            `https://jira.abanking.ru/rest/api/2/issueLinkType`,
+            { headers: { Authorization: `Bearer ${pat}`, Accept: 'application/json' } }
+        );
+        if (!response.ok) throw new Error(`Jira returned ${response.status}`);
+        const data = await response.json();
+        res.json(data.issueLinkTypes);
+    } catch (err) {
+        console.error('Ошибка /api/jira/issueLinkTypes:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/jira/issueLink — связать две задачи
+app.post('/api/jira/issueLink', async (req, res) => {
+    const { pat, typeName, inwardIssueKey, outwardIssueKey } = req.body;
+    if (!pat || !typeName || !inwardIssueKey || !outwardIssueKey) {
+        return res.status(400).json({
+            error: 'pat, typeName, inwardIssueKey and outwardIssueKey are required'
+        });
+    }
+    try {
+        const response = await fetch(
+            `https://jira.abanking.ru/rest/api/2/issueLink`,
+            {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${pat}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    type: { name: typeName },
+                    inwardIssue: { key: inwardIssueKey },
+                    outwardIssue: { key: outwardIssueKey }
+                })
+            }
+        );
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.errorMessages?.join(',') || response.statusText);
+        }
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Ошибка /api/jira/issueLink:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post(
+    '/api/jira/issue/:issueKey/attachments',
+    upload.array('file'),
+    async (req, res) => {
+        const auth = req.headers.authorization;
+        const { issueKey } = req.params;
+        const form = new (await import('form-data')).default();
+
+        for (const file of req.files) {
+
+            const correctName = Buffer
+                .from(file.originalname, 'latin1')
+                .toString('utf8');
+
+            form.append('file', file.buffer, {
+                filename: correctName,
+                contentType: file.mimetype
+            });
+        }
+
+        try {
+            const headers = {
+                ...form.getHeaders(),
+                'X-Atlassian-Token': 'no-check',
+                Authorization: auth
+            };
+            const jiraRes = await axios.post(
+                `https://jira.abanking.ru/rest/api/2/issue/${encodeURIComponent(issueKey)}/attachments`,
+                form,
+                { headers }
+            );
+            return res.json(jiraRes.data);
+        } catch (err) {
+            console.error('Jira attachments error:', err);
+            return res
+                .status(err.response?.status || 500)
+                .json({ error: err.response?.data || err.message });
+        }
+    }
+);
+
+// Обновление полей задачи (например, description с маркерами !file.png!)
+app.put('/api/jira/issue/:issueKey', async (req, res) => {
+    const { issueKey } = req.params;
+    const { pat, payload } = req.body;   // payload ожидаем вида { fields: { description: desc, ... } }
+
+    if (!pat) {
+        return res.status(400).json({ error: 'PAT is required' });
+    }
+    if (!payload || typeof payload !== 'object' || !payload.fields) {
+        return res.status(400).json({ error: 'payload.fields is required' });
+    }
+
+    const jiraBaseUrl = 'https://jira.abanking.ru';
+    try {
+        // Проксируем PUT в Jira
+        const response = await fetch(
+            `${jiraBaseUrl}/rest/api/2/issue/${encodeURIComponent(issueKey)}`,
+            {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${pat}`,
+                    'Content-Type': 'application/json; charset=utf-8'
+                },
+                body: JSON.stringify(payload)
+            }
+        );
+
+        if (!response.ok) {
+            const errBody = await response.json().catch(() => ({}));
+            const msg =
+                errBody.errorMessages?.join(',') ||
+                JSON.stringify(errBody) ||
+                response.statusText;
+            return res.status(response.status).json({ error: msg });
+        }
+
+        // PUT возвращает 204 No Content, но мы можем отдать успех:
+        return res.json({ success: true });
+    } catch (err) {
+        console.error(`Error updating issue ${issueKey}:`, err);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+
+app.post('/api/jira/ai-fill-fields', async (req, res) => {
+    try {
+        const { summary, description, steps, stand, env, pat, projectKey } = req.body;
+        if (!pat || !projectKey) {
+            return res.status(400).json({ error: 'pat и projectKey обязательны' });
+        }
+
+        // 1) Справочники из Jira
+        const options = await fetchJiraMeta(pat, projectKey);
+        const { Severity: sevOptions, Platform: platOptions, Symptom: sympOptions } = options;
+
+        // 2) Построим карту кода→ID
+        const platMap = buildPlatformMap(platOptions);
+
+        // 3) Определим коды окружения
+        const codes = detectPlatforms(summary, env);
+
+        // 4) Откорректируем «M» по env: если только мобильная и нет других кодов
+        let platformIds = [];
+        if (codes.length === 1 && codes[0] === 'M') {
+            const txt = (env || '').toLowerCase();
+            // Ищем в platOptions именно «Native-Android» или «Native-IOS»
+            if (txt.includes('android')) {
+                const opt = platOptions.find(o => o.name.toLowerCase().includes('native-android'));
+                if (opt) platformIds = [opt.id];
+            } else if (txt.includes('ios')) {
+                const opt = platOptions.find(o => o.name.toLowerCase().includes('native-ios'));
+                if (opt) platformIds = [opt.id];
+            }
+            // По умолчанию — Android
+            if (platformIds.length === 0) {
+                const opt = platOptions.find(o => o.name.toLowerCase().includes('native-android'));
+                if (opt) platformIds = [opt.id];
+            }
+        } else {
+            // Обычное кодовое мапирование
+            platformIds = codes.map(c => platMap[c]).filter(Boolean);
+        }
+
+        const prompt = `
+Ты — эксперт по баг‑репортам. Твоя задача — на основании переданных полей выбрать наиболее подходящие значения severity, platform и symptom, а также сгенерировать actual и expected результаты.
+
+**Документация по классификации Severity (тип задачи: Ошибка кода):**
+Серьезность дефекта указывается один раз при заведении задачи и потом может менять только Lead of QA.  
+- **Критическая (critical)**  
+  Массовая блокировка ключевого функционала, потеря данных, утечка конфиденциальной информации.  
+  Примеры:
+  - Потеря паспортных данных клиента при подписании.
+  - Не работает авторизация клиента.
+  - Не проходит оплата на экране эквайринга.
+- **Высокая (major)**  
+  Ощутимые неудобства многим пользователям.  
+  Примеры:
+  - Перезапуск приложения при типичных сценариях.
+  - Разлогин каждые 5 минут.
+- **Средняя (medium)**  
+  Слабое влияние на работу, есть обходные пути.  
+  Примеры:
+  - Диалоговое окно не закрывается автоматически.
+  - Перепутаны направления сортировки.
+- **Низкая (minor)**  
+  Редко обнаруживается, не влияет на основные сценарии.  
+  Примеры:
+  - Опечатка в глубоко вложенном меню.
+  - Неточно отображается время копирования.
+
+**Документация по классификации Symptom:**
+Позволяет классифицировать дефекты по их проявлению (black/grey box) и управлять приоритетом.  
+Типы симптомов:
+- **Вёрстка** — расхождение интерфейса с макетами.
+- **Повреждение/потеря данных** — дефект искажает или уничтожает данные.
+- **Проблема инсталляции** — не собирается сборка или стенд.
+- **Нереализованная функциональность** — часть функционала не реализована.
+- **Краш приложения** — полная остановка или блокировка функционала.
+- **Расхождение с требованиями** — поведение не по спецификации.
+- **Ошибка локализации/в тексте** — орфография, пунктуация, перевод.
+- **Некорректное/неожиданное поведение** — отклонение от неявных требований.
+- **Сбой под нагрузкой** — HTTP‑ошибки, деградация SLA.
+- **Безопасность** — уязвимости, XSS, SQL‑инъекции и т.п.
+
+Верни **чистый JSON** со структурой:
+\`\`\`json
+{
+  "actual": "...",
+  "expected": "...",
+  "severity": "<одно из: ${sevOptions.map(x => x.name).join(', ')}>",
+  "platform": [${platOptions.map(x => `"${x.name}"`).join(', ')}],
+  "symptom": [${sympOptions.map(x => `"${x.name}"`).join(', ')}]
+}
+\`\`\`
+
+Данные для анализа:
+\`\`\`
+SUMMARY: ${summary}
+DESCRIPTION: ${description}
+STEPS: ${steps}
+STAND: ${stand}
+ENV: ${env}
+\`\`\`
+        `;
+
+        // 6) Обращаемся к OpenRouter / OpenAI…
+        const aiJson = await callWithBackoff(OPENROUTER_URL, prompt, config.openRouterAiKey);
+
+        // 7) Парсим JSON из ответа
+        const content = aiJson.choices?.[0]?.message?.content || '';
+        const match = content.match(/\{[\s\S]*\}/);
+        if (!match) throw new Error('AI не вернул JSON');
+        const parsed = JSON.parse(match[0]);
+
+        // 8) Ищем ID для severity и symptom
+        const severityId = sevOptions.find(o =>
+            o.name.toLowerCase() === parsed.severity.toLowerCase()
+        )?.id || null;
+
+        const symptomIds = sympOptions
+            .filter(o => parsed.symptom.map(s => s.toLowerCase()).includes(o.name.toLowerCase()))
+            .map(o => o.id);
+
+        // 9) Возвращаем итог
+        return res.json({
+            actual: parsed.actual,
+            expected: parsed.expected,
+            severity: severityId,
+            platform: platformIds,
+            symptom: symptomIds
+        });
+    } catch (e) {
+        console.error('AI fill error:', e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+//
+// Вспомогательная функция для повторных попыток при 5xx
+//
+async function callWithBackoff(url, prompt, apiKey) {
+    const maxAttempts = 3;
+    let attempt = 0;
+    while (attempt < maxAttempts) {
+        attempt++;
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'deepseek/deepseek-chat-v3-0324:free',
+                messages: [{ role: 'user', content: prompt }]
+            })
+        });
+        if (resp.ok) return await resp.json();
+        if (resp.status >= 500 && resp.status < 600 && attempt < maxAttempts) {
+            await new Promise(r => setTimeout(r, 1000 * attempt));
+            continue;
+        }
+        throw new Error(`OpenRouter ${resp.status}: ${await resp.text()}`);
+    }
+}
+
+
+
 
 // Запуск сервера
 app.listen(PORT, () => {
