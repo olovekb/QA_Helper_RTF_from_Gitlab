@@ -500,7 +500,7 @@ export default function SolutionPage({ projects = [] }) {
   const loadTransitions = useCallback(async () => {
     if (!debProject || !debPat) return;
     try {
-      const sample = 'JMT-14927';
+      const sample = 'JMT-15044';
       const { data } = await axios.get(`${config.serverUrl}/jira/transitions`, { params: { issueKey: sample, pat: jiraPat } });
       setTransitions(data);
     } catch { console.warn('Не удалось загрузить transitions'); }
@@ -854,7 +854,7 @@ export default function SolutionPage({ projects = [] }) {
     const out = [];
 
     for (const t of tasks.filter(t => t.selected)) {
-      const desc = `h3. Исходное требование\n${t.requirement}\n\nh3. Описание проблемы\n${t.description || '(не заполнено)'}\n\nh3. Нарушенные свойства\n${t.properties}\n\nh3. Фактический результат\n{quote}${t.actual || '(не заполнено)'}{quote}\n\nh3. Ожидаемый результат\n{quote}${t.expected || '(не заполнено)'}{quote}\n\nh3. Шаги воспроизведения\n${t.steps || 'не указано'}\n\n*Стенд:* ${t.stand || 'не указано'}\n*Окружение:* ${t.env || 'не указано'}\n*Тестовые данные:* ${t.testData || 'не указано'}\n*Макет:* ${t.mockup || 'не указано'}`;
+      const desc = `h3. Исходное требование\n${t.requirement}\n\nh3. Описание проблемы\n${t.description || '(не заполнено)'}\n\nh3. Нарушенные свойства\n${t.properties}\n\nh3. Фактический результат\n{quote}${t.actual || '(не заполнено)'}{quote}\n\nh3. Ожидаемый результат\n{quote}${t.expected || '(не заполнено)'}{quote}\n*Макет:* ${t.mockup || 'не указано'}\n*Ссылка на требование:* ${t.requirementLink || 'не указано'}`;
 
       const fields = {
         project: { key: jiraProject },
