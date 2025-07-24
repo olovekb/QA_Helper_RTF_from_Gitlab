@@ -13,6 +13,7 @@
     "github-markdown-css": "^5.8.1",
     "idb-keyval": "^6.2.2",
     "jszip": "^3.10.1",
+    "lodash.debounce": "^4.0.8",
     "marked": "^15.0.8",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

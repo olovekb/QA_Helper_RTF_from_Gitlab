@@ -1,5 +1,4 @@
 /* eslint-disable no-undef */
-// src/CodeErrorPage.jsx
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import Select from 'react-select';
@@ -24,8 +23,6 @@ function useDebounce(value, delay) {
 function usePersistentState(key, defaultValue) {
     const [state, setState] = useState(defaultValue);
     const isFirstMount = useRef(true);
-
-    // При монтировании читаем из IndexedDB; если ключа нет – создаём его со defaultValue
     useEffect(() => {
         idbGet(key)
             .then(stored => {
@@ -38,7 +35,6 @@ function usePersistentState(key, defaultValue) {
             .catch(console.warn);
     }, [key]);
 
-    // После первого рендера – при любом изменении state – пишем новое значение в IndexedDB
     useEffect(() => {
         if (isFirstMount.current) {
             isFirstMount.current = false;
@@ -46,7 +42,6 @@ function usePersistentState(key, defaultValue) {
         }
 
         if (key === 'codeErrorTasks') {
-            // НЕ сохраняем тяжёлые File/Blob вместе с задачами
             const toPersist = (Array.isArray(state) ? state : []).map(t => {
                 const {
                     attachments,
@@ -61,7 +56,6 @@ function usePersistentState(key, defaultValue) {
             idbSet(key, toPersist)
                 .catch(err => console.warn('IDB error saving tasks:', err));
         } else {
-            // Обычная запись для всех остальных ключей
             idbSet(key, state)
                 .catch(err => console.warn(`IDB error saving "${key}":`, err));
         }
@@ -72,7 +66,6 @@ function usePersistentState(key, defaultValue) {
 
 
 export const CodeErrorCard = ({
-
     task, index, onUpdate, onDelete,
     fieldOptions, loadDefectOptions, onDefectSelect,
     allureProject, runAi, aiLoading,
@@ -92,15 +85,12 @@ export const CodeErrorCard = ({
         const rawFiles = Array.from(e.clipboardData.files || []);
         if (!rawFiles.length) return;
         e.preventDefault();
-
-        // 1) Создаём новые File с уникальными именами
         const renamedFiles = rawFiles.map((f, idx) => {
             const ext = f.name.split('.').pop();
             const uniqueName = `screenshot-${Date.now()}-${idx}.${ext}`;
             return new File([f], uniqueName, { type: f.type });
         });
 
-        // 2) Генерим плейсхолдеры
         const placeholders = renamedFiles
             .map(f => `!${f.name}|thumbnail!`)
             .join('\n');
@@ -108,13 +98,9 @@ export const CodeErrorCard = ({
         const needsSeparator =
             existingText !== '' && !existingText.endsWith('\n');
         const markup = (needsSeparator ? '\n' : '') + placeholders;
-
-        // 3) Ключ массива вложений в task
         const attKey = field + 'Attachments';
-        // Вот тут берём уже существующий список из task
         const prevList = task[attKey] || [];
 
-        // 5) Обновляем сам task в состоянии (текст + массив preview‑файлов)
         onUpdate(index, {
             ...task,
             [field]: existingText + markup,
@@ -484,7 +470,7 @@ export const CodeErrorCard = ({
 export default function CodeErrorPage({ projects }) {
     console.log('%c<CodeErrorPage/> render', 'color: #999;');
     const [attachmentsMap, setAttachmentsMap] = useAttachmentsMap('codeErrorAttachmentsMap');
-    // ——— блок default-значений
+    // блок default-значений
     const [defaultStand, setDefaultStand] = usePersistentState('defaultStand', '');
     const [defaultEnv, setDefaultEnv] = usePersistentState('defaultEnv', '');
     const [defaultRequirementLink, setDefaultRequirementLink] = usePersistentState('defaultRequirementLink', '');
@@ -492,7 +478,7 @@ export default function CodeErrorPage({ projects }) {
     const [defaultMockup, setDefaultMockup] = usePersistentState('defaultMockup', '');
     const [defaultProdBug, setDefaultProdBug] = usePersistentState('defaultProdBug', '');
 
-    // --- Состояния и хуки ---
+    // Состояния и хуки
     const [tasks, setTasks] = usePersistentState('codeErrorTasks', []);
     const [jiraProject, setJiraProject] = usePersistentState('jiraProject', '');
     const [jiraPat, setJiraPat] = usePersistentState('jiraPat', '');
@@ -512,18 +498,15 @@ export default function CodeErrorPage({ projects }) {
     const [aiLoading, setAiLoading] = useState({});
     const [requestLinkOption, setRequestLinkOption] = usePersistentState('codeErrorReqLink', null);
     const [aiFillAllLoading, setAiFillAllLoading] = useState(false);
-
-
     const [aiFillLoading, setAiFillLoading] = useState({});
     const [linkTypes, setLinkTypes] = useState([]);
-    const [requestLinkIssue, setRequestLinkIssue] = useState(null);
     const [requestLinkType, setRequestLinkType] = usePersistentState('codeErrorReqLinkType', null);
     const debProject = useDebounce(jiraProject, 500);
     const debPat = useDebounce(jiraPat, 500);
     const allowedLinkNames = ['Блокирует', 'Относится', 'Клонирование', 'Порождение'];
     const [collapsedStates, setCollapsedStates] = useState({});
+    const requestLinkIssue = requestLinkOption?.value || null;
     useEffect(() => {
-        // если у первой задачи нет поля selected, значит грузим “старые” задачи — отметим их все
         if (tasks.length > 0 && tasks[0].selected === undefined) {
             setTasks(ts => ts.map(t => ({ ...t, selected: true })));
         }
@@ -534,7 +517,6 @@ export default function CodeErrorPage({ projects }) {
             .catch(console.warn);
     }, []);
     useEffect(() => {
-        // сбросить заранее выбранный дефект во всех тасках
         setTasks(ts => ts.map(t => ({ ...t, allureDefect: null })));
     }, [allureProject, setTasks]);
     useEffect(() => {
@@ -572,12 +554,23 @@ export default function CodeErrorPage({ projects }) {
 
     const loadIssueOptions = async input => {
         if (!jiraProject || !jiraPat) return [];
-        // строим JQL: все задачи в проекте, фильтр по summary
-        const jql = `project = ${jiraProject}` +
-            (input
-                ? ` AND summary ~ "${input.replace(/"/g, '') + '*'}"`
-                : '') +
-            ` ORDER BY created DESC`;
+
+        const q = input.trim();
+        let jql;
+
+        if (/^\d+$/.test(q)) {
+            // пользователь ввёл только цифры — ищем по ключу с префиксом проекта
+            jql = `project = ${jiraProject} AND key = ${jiraProject}-${q}`;
+        } else if (/^[A-Z]+-\d+$/.test(q)) {
+            // пользователь ввёл полный ключ, например "JMT-15019"
+            jql = `project = ${jiraProject} AND key = "${q}"`;
+        } else {
+            // остальное — по summary как и было
+            // добавляем wildcard для начала слова
+            jql = `project = ${jiraProject} AND summary ~ "${q}*"`;
+        }
+
+        jql += ' ORDER BY created DESC';
 
         const url = new URL(`${config.serverUrl}/jira/search`);
         url.searchParams.set('pat', jiraPat);
@@ -588,13 +581,14 @@ export default function CodeErrorPage({ projects }) {
             headers: { Accept: 'application/json' }
         });
         if (!resp.ok) return [];
-        const body = await resp.json();
-        // body.issues: [{ key, fields: { summary } }, …]
-        return body.issues.map(issue => ({
+
+        const { issues } = await resp.json();
+        return issues.map(issue => ({
             value: issue.key,
             label: `${issue.key} — ${issue.fields.summary}`
         }));
     };
+
 
     // Функции загрузки данных
     const loadMeta = useCallback(async () => {
@@ -1315,32 +1309,14 @@ ${t.expected}
                                         classNamePrefix="select"
                                         cacheOptions
                                         defaultOptions
-                                        loadOptions={async (inputValue) => {
-                                            // Собираем URL с правильным путём и параметрами
-                                            const url = new URL(`${config.serverUrl}/jira/issue/picker`);
-                                            url.searchParams.set('pat', jiraPat);
-                                            url.searchParams.set('query', inputValue || '');
-
-                                            const resp = await fetch(url.toString(), {
-                                                headers: { Accept: 'application/json' }
-                                            });
-                                            if (!resp.ok) return [];
-
-                                            const data = await resp.json(); // [{ key, name, summary }, …]
-                                            return data.map(i => ({
-                                                value: i.key,
-                                                label: `${i.key} — ${i.summary || i.name}`
-                                            }));
-                                        }}
-                                        isClearable
+                                        loadOptions={loadIssueOptions}
                                         placeholder="Начните вводить ключ задачи…"
-                                        // теперь храним и показываем полный объект (key + summary)
                                         value={requestLinkOption}
-                                        onChange={(opt) => {
+                                        onChange={opt => {
                                             setRequestLinkOption(opt);
-                                            setRequestLinkIssue(opt?.value || null);
                                         }}
                                         noOptionsMessage={() => 'Ничего не найдено'}
+                                        isClearable
                                     />
                                 </div>
                                 <div className="field">
