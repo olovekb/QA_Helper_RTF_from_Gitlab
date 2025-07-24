@@ -636,8 +636,9 @@ export default function CodeErrorPage({ projects }) {
         setTasks(ts =>
             ts.map(t => ({
                 ...t,
-                // если есть в map — отрендерим
-                attachments: attachmentsMap[t.id]?.common || t.attachments || [],
+                attachments: (t.attachments && t.attachments.length > 0)
+                    ? t.attachments
+                    : (attachmentsMap[t.id]?.common || []),
                 descriptionAttachments: attachmentsMap[t.id]?.description || [],
                 stepsAttachments: attachmentsMap[t.id]?.steps || [],
                 actualAttachments: attachmentsMap[t.id]?.actual || [],
@@ -1299,7 +1300,26 @@ ${t.expected}
                                         isClearable
                                     />
                                 </div>
-
+                                {/* Целевой статус */}
+                                <div className="field">
+                                    <label>Статус задачи</label>
+                                    <Select
+                                        classNamePrefix="select"
+                                        placeholder="Выберите статус…"
+                                        isClearable
+                                        options={transitions.map(t => ({ value: t.id, label: t.name }))}
+                                        value={
+                                            transitions
+                                                .map(t => ({ value: t.id, label: t.name }))
+                                                .find(o => o.value === targetStatus) || null
+                                        }
+                                        onChange={opt => setTargetStatus(opt?.value || null)}
+                                        styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
+                                        menuPortalTarget={document.body}
+                                        menuPosition="fixed"
+                                        menuPlacement="auto"
+                                    />
+                                </div>
                             </fieldset>
                             <fieldset disabled={!ready || creating} className="common-fields-group">
                                 <legend>Связь запроса</legend>
