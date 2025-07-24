@@ -304,6 +304,20 @@ h2 {
     /* поверх всего остального */
 }
 
+.defaults-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.5em;
+}
+
+.defaults-header .collapse-toggle {
+    background: none;
+    border: none;
+    font-size: 1.2em;
+    margin-right: 0.5em;
+    cursor: pointer;
+}
+
 /* Кнопки внутри контейнера */
 .floating-buttons .btn {
     pointer-events: all;

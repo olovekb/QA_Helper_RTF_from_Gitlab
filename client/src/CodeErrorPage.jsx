@@ -515,7 +515,7 @@ export default function CodeErrorPage({ projects }) {
     const [defaultTestData, setDefaultTestData] = usePersistentState('defaultTestData', '');
     const [defaultMockup, setDefaultMockup] = usePersistentState('defaultMockup', '');
     const [defaultProdBug, setDefaultProdBug] = usePersistentState('defaultProdBug', '');
-
+    const [defaultsCollapsed, setDefaultsCollapsed] = useState(false);
     // Состояния и хуки
     const [tasks, setTasks] = usePersistentState('codeErrorTasks', []);
     const [jiraProject, setJiraProject] = usePersistentState('jiraProject', '');
@@ -1066,8 +1066,8 @@ ${t.expected}
                             {
                                 pat: jiraPat,
                                 typeName: requestLinkType,
-                                inwardIssueKey: key,               
-                                outwardIssueKey: requestLinkIssue 
+                                inwardIssueKey: key,
+                                outwardIssueKey: requestLinkIssue
                             }
                         );
                     } catch (err) {
@@ -1188,72 +1188,85 @@ ${t.expected}
             }
 
             <div className="task-list">
-                <div className="defaults-panel">
-                    <h3>Значения по умолчанию для полей</h3>
-                    <div className="field-group">
-                        <div className="field">
-                            <label>Стенд</label>
-                            <input
-                                type="text"
-                                value={defaultStand}
-                                onChange={e => {
-                                    const v = e.target.value;
-                                    setDefaultStand(v);
-                                    // обновляем ВСЕ карточки
-                                    setTasks(ts => ts.map(t => ({ ...t, stand: v })));
-                                }}
-                            />
-                        </div>
-                        <div className="field">
-                            <label>Окружение</label>
-                            <input
-                                type="text"
-                                value={defaultEnv}
-                                onChange={e => {
-                                    const v = e.target.value;
-                                    setDefaultEnv(v);
-                                    setTasks(ts => ts.map(t => ({ ...t, env: v })));
-                                }}
-                            />
-                        </div>
-                        <div className="field">
-                            <label>Ссылка на требование</label>
-                            <input
-                                type="text"
-                                value={defaultRequirementLink}
-                                onChange={e => {
-                                    const v = e.target.value;
-                                    setDefaultRequirementLink(v);
-                                    setTasks(ts => ts.map(t => ({ ...t, requirementLink: v })));
-                                }}
-                            />
-                        </div>
-                        <div className="field">
-                            <label>Тестовые данные</label>
-                            <input
-                                type="text"
-                                value={defaultTestData}
-                                onChange={e => {
-                                    const v = e.target.value;
-                                    setDefaultTestData(v);
-                                    setTasks(ts => ts.map(t => ({ ...t, testData: v })));
-                                }}
-                            />
-                        </div>
-                        <div className="field">
-                            <label>Макет</label>
-                            <input
-                                type="text"
-                                value={defaultMockup}
-                                onChange={e => {
-                                    const v = e.target.value;
-                                    setDefaultMockup(v);
-                                    setTasks(ts => ts.map(t => ({ ...t, mockup: v })));
-                                }}
-                            />
+                <button
+                    className="collapse-toggle"
+                    onClick={() => setDefaultsCollapsed(prev => !prev)}
+                    title={defaultsCollapsed ? "Развернуть" : "Свернуть"}
+                >
+                    {defaultsCollapsed ? 'Развернуть значения по умолчанию ▶' : 'Свернуть значения по умолчанию ▼'}
+                </button>
+                {!defaultsCollapsed && (
+                    <div className="defaults-panel">
+
+
+                        <h3>Значения по умолчанию для полей</h3>
+
+                        <div className="field-group">
+                            <div className="field">
+                                <label>Стенд</label>
+                                <input
+                                    type="text"
+                                    value={defaultStand}
+                                    onChange={e => {
+                                        const v = e.target.value;
+                                        setDefaultStand(v);
+                                        // обновляем ВСЕ карточки
+                                        setTasks(ts => ts.map(t => ({ ...t, stand: v })));
+                                    }}
+                                />
+                            </div>
+
+                            <div className="field">
+                                <label>Окружение</label>
+                                <input
+                                    type="text"
+                                    value={defaultEnv}
+                                    onChange={e => {
+                                        const v = e.target.value;
+                                        setDefaultEnv(v);
+                                        setTasks(ts => ts.map(t => ({ ...t, env: v })));
+                                    }}
+                                />
+                            </div>
+                            <div className="field">
+                                <label>Ссылка на требование</label>
+                                <input
+                                    type="text"
+                                    value={defaultRequirementLink}
+                                    onChange={e => {
+                                        const v = e.target.value;
+                                        setDefaultRequirementLink(v);
+                                        setTasks(ts => ts.map(t => ({ ...t, requirementLink: v })));
+                                    }}
+                                />
+                            </div>
+                            <div className="field">
+                                <label>Тестовые данные</label>
+                                <input
+                                    type="text"
+                                    value={defaultTestData}
+                                    onChange={e => {
+                                        const v = e.target.value;
+                                        setDefaultTestData(v);
+                                        setTasks(ts => ts.map(t => ({ ...t, testData: v })));
+                                    }}
+                                />
+                            </div>
+                            <div className="field">
+                                <label>Макет</label>
+                                <input
+                                    type="text"
+                                    value={defaultMockup}
+                                    onChange={e => {
+                                        const v = e.target.value;
+                                        setDefaultMockup(v);
+                                        setTasks(ts => ts.map(t => ({ ...t, mockup: v })));
+                                    }}
+                                />
+                            </div>
                         </div>
                     </div>
-                </div>
+                )}
                 {tasks.map((t, i) => (
                     <div key={i} ref={cardRefs.current[i]}>
                         <CodeErrorCard
