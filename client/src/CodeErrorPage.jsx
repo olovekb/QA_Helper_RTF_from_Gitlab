@@ -289,10 +289,29 @@ export const CodeErrorCard = ({
                         type="file"
                         multiple
                         onChange={async e => {
-                            const rawFiles = Array.from(e.target.files);
-                            // локально — добавляем File для предпросмотра и отправки
-                            onUpdate(index, { ...task, attachments: [...(task.attachments || []), ...rawFiles] });
-                            // в map — сохраняем сериализованную версию
+                            const MAX_FILE_SIZE = 50 * 1024 * 1024;
+                            const MAX_FILE_COUNT = 20;
+                            let rawFiles = Array.from(e.target.files);
+
+                            const existingCount = (task.attachments || []).length;
+                            if (existingCount + rawFiles.length > MAX_FILE_COUNT) {
+                                alert(`Нельзя прикрепить более ${MAX_FILE_COUNT} файлов (уже ${existingCount}).`);
+                                rawFiles = rawFiles.slice(0, MAX_FILE_COUNT - existingCount);
+                            }
+
+                            const tooBig = rawFiles.filter(f => f.size > MAX_FILE_SIZE);
+                            if (tooBig.length) {
+                                const f = tooBig[0];
+                                alert(`Файл "${f.name}" слишком большой (${(f.size / 1024 / 1024).toFixed(1)} МБ). Максимум 50 МБ.`);
+                                rawFiles = rawFiles.filter(f => f.size <= MAX_FILE_SIZE);
+                            }
+                            if (!rawFiles.length) return;
+
+
+                            onUpdate(index, {
+                                ...task,
+                                attachments: [...(task.attachments || []), ...rawFiles]
+                            });
                             const serialized = await Promise.all(rawFiles.map(f => serializeFile(f)));
                             setAttachmentsMap(m => ({
                                 ...m,
@@ -303,7 +322,6 @@ export const CodeErrorCard = ({
                             }));
                         }}
                     />
-
                     {task.attachments?.length > 0 && (
                         <ul className="attached-list">
                             {task.attachments.map((f, i) => (
@@ -314,8 +332,28 @@ export const CodeErrorCard = ({
                                         type="button"
                                         className="remove-attachment-btn"
                                         onClick={() => {
+                                            // 1) Убираем из UI‑массива
                                             const newAttachments = task.attachments.filter((_, idx) => idx !== i);
                                             onUpdate(index, { ...task, attachments: newAttachments });
+
+                                            // 2) Синхронно убираем из serialized‑мапы
+                                            setAttachmentsMap(m => {
+                                                const entry = m[task.id] || {};
+                                                // удаляем из common
+                                                const common = (entry.common || []).filter(x => x.name !== f.name);
+                                                // если у вас есть field‑specific вложения, аналогично удалите из entry.description, entry.steps и т.д.
+                                                return {
+                                                    ...m,
+                                                    [task.id]: {
+                                                        ...entry,
+                                                        common,
+                                                        // description: (entry.description || []).filter(x => x.name !== f.name),
+                                                        // steps:       (entry.steps       || []).filter(x => x.name !== f.name),
+                                                        // actual:      (entry.actual      || []).filter(x => x.name !== f.name),
+                                                        // expected:    (entry.expected    || []).filter(x => x.name !== f.name),
+                                                    }
+                                                };
+                                            });
                                         }}
                                         title="Удалить файл"
                                     >
@@ -459,7 +497,7 @@ export const CodeErrorCard = ({
                     </button>
                 </div>
             </div>
-        </div>
+        </div >
     );
 };
 

@@ -12,7 +12,6 @@ import { fetchConfluencePage } from './confluenceFetcher.mjs';
 import { analyzeRequirementWithAI } from './analyzeRequirementWithAI.mjs';
 import { Buffer } from 'buffer';
 import multer from 'multer';
-import FormDataLib from 'form-data';
 import axios from 'axios';
 import config from './config.json' assert { type: 'json'};
 import http from 'http';
@@ -21,7 +20,12 @@ import https from 'https';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const app = express();
 const PORT = 5000;
-const upload = multer();
+const upload = multer({
+    limits: {
+        fileSize: 50 * 1024 * 1024,   // максимум 20 МБ на файл
+        files: 20                      // максимум 5 файлов за раз
+    }
+});
 
 
 const corsOptions = {
@@ -32,7 +36,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
 app.options('*', cors(corsOptions));
 //app.use(cors());
 //app.options('*', cors());
