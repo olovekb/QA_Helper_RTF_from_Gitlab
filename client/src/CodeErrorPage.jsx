@@ -1066,8 +1066,8 @@ ${t.expected}
                             {
                                 pat: jiraPat,
                                 typeName: requestLinkType,
-                                inwardIssueKey: requestLinkIssue,
-                                outwardIssueKey: key
+                                inwardIssueKey: key,               
+                                outwardIssueKey: requestLinkIssue 
                             }
                         );
                     } catch (err) {
