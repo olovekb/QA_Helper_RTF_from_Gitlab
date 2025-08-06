@@ -1,6 +1,39 @@
 import express from 'express';
 import cors from 'cors';
-import { getAllureDefectById, getStepsForDefect, analyzeBugWithAI, getAllureDefects, linkIssueToAllureDefect, getAllTestCases, getTestCaseOverview, getTestCaseExpectedResult, getTestCaseLayer, getCaseIssue, getCaseTags, getTestCasePrecondition, getTestCaseStatus, getTestCaseSteps, getTestCaseCustomFields } from './http-service.mjs';
+import {
+    getAllureDefectById,
+    getSharedStepsList,
+    getStepsForDefect,
+    analyzeBugWithAI,
+    getAllureDefects,
+    linkIssueToAllureDefect,
+    getAllTestCases,
+    getTestCaseOverview,
+    getTestCaseExpectedResult,
+    getTestCaseLayer,
+    getCaseIssue,
+    getCaseTags,
+    getTestCasePrecondition,
+    getTestCaseStatus,
+    getTestCaseSteps,
+    getTestCaseCustomFields,
+    createTestCaseAllure,
+    setTestCaseCustomFieldValues,
+    updateTestCase,
+    addStepToTestCase,
+    addTagToTestCase,
+    addLinkToTestCase,
+    linkIssueToTestCase,
+    setTestCaseLayer,
+    setTestCasePriority,
+    setTestCaseVersion,
+    addParameterToTestCase,
+    suggestTestLayers,
+    getProjectCustomFieldSchema,
+    fetchWithAuth,
+    suggestTags,
+    createTag
+} from './http-service.mjs';
 import { spinningLoader } from './spinning-loader.mjs';
 import pLimit from 'p-limit';
 import { formatTestCase } from './format-testcase.mjs';
@@ -16,30 +49,34 @@ import axios from 'axios';
 import config from './config.json' assert { type: 'json'};
 import http from 'http';
 import https from 'https';
+import { customProjectField } from '../server/xmind-parce/customProjectField.js';
+
+const DEFAULT_JIRA_INTEGRATION_ID = config.defaultJiraIntegrationId;
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const app = express();
-const PORT = 5000;
+const PORT = 5001;
 const upload = multer({
     limits: {
-        fileSize: 50 * 1024 * 1024,   // максимум 20 МБ на файл
-        files: 20                      // максимум 5 файлов за раз
+        fileSize: 50 * 1024 * 1024,
+        files: 20
     }
 });
 
-
+/*
 const corsOptions = {
     origin: 'https://test-inspector.abanking.ru',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
 };
+*/
 
-app.use(cors(corsOptions));
+//app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
-app.options('*', cors(corsOptions));
-//app.use(cors());
-//app.options('*', cors());
+//app.options('*', cors(corsOptions));
+app.use(cors());
+app.options('*', cors());
 const limit = pLimit(100);
 
 
@@ -983,11 +1020,16 @@ ENV: ${env}
 });
 
 //
-// Вспомогательная функция для повторных попыток при 5xx
+// Универсальная функция для повторных попыток при 5xx,
+// принимающая либо строку prompt, либо массив сообщений {role, content}
 //
-async function callWithBackoff(url, prompt, apiKey) {
+async function callWithBackoff(url, promptOrMessages, apiKey) {
     const maxAttempts = 3;
     let attempt = 0;
+    const messages = Array.isArray(promptOrMessages)
+        ? promptOrMessages
+        : [{ role: 'user', content: promptOrMessages }];
+
     while (attempt < maxAttempts) {
         attempt++;
         const resp = await fetch(url, {
@@ -998,16 +1040,24 @@ async function callWithBackoff(url, prompt, apiKey) {
             },
             body: JSON.stringify({
                 model: 'deepseek/deepseek-chat-v3-0324:free',
-                messages: [{ role: 'user', content: prompt }]
+                messages: messages
             })
         });
-        if (resp.ok) return await resp.json();
+
+        if (resp.ok) {
+            return await resp.json();
+        }
+
         if (resp.status >= 500 && resp.status < 600 && attempt < maxAttempts) {
             await new Promise(r => setTimeout(r, 1000 * attempt));
             continue;
         }
-        throw new Error(`OpenRouter ${resp.status}: ${await resp.text()}`);
+        const text = await resp.text();
+        throw new Error(`OpenRouter ${resp.status}: ${text}`);
     }
+
+    // Если все попытки исчерпаны без успеха
+    throw new Error('OpenRouter: превышено максимальное число попыток');
 }
 
 const httpAgent = new http.Agent({ keepAlive: true });
@@ -1048,6 +1098,482 @@ app.get('/api/jira/search', async (req, res) => {
         res.status(err.response?.status || 500).json({ error: err.message });
     }
 });
+
+
+
+/**
+ * POST /api/generate-test-cases
+ * Тело: {
+ *   requirements: string[],        // массив текстов требований
+ *   modelStructure: object         // дерево вашей тест-модели
+ * }
+ */
+app.post('/api/generate-test-cases', async (req, res) => {
+    const { requirements, modelStructure } = req.body;
+    if (!Array.isArray(requirements) || !modelStructure) {
+        return res.status(400).json({ error: 'requirements и modelStructure обязательны' });
+    }
+
+    // 1. Не меняем исходный промт — выносим его в system
+    const SYSTEM_PROMPT = `
+Ты — опытный QA-инженер, специализирующийся на разработке тестовой документации. Твоя задача — на основе предоставленной тест-модели и требований сгенерировать полный JSON-массив тест-кейсов, строго следуя Style Guide и принципам «пирамиды тестирования».
+
+## 1. Мы используем сценарный подход с четкой иерархией:
+- **Feature (Фича):** Крупный блок продукта. (Из дерева модели)
+- **Story (Пользовательский сценарий, C1 - E2E):** Полный путь пользователя для достижения цели. (Из дерева модели)
+- **Scenario (Подсценарий, C2-C3 - Integration):** Атомарный шаг или логическая часть внутри Story. (Из дерева модели)
+- **Code (C4 - Unit):** Проверка на уровне кода, не используется в этой генерации.
+
+## 2. Философия «пирамиды»
+1. **Сдвигаем проверки вниз**  
+   - Всё, что можно надёжно покрыть интеграционно (валидация поля, проверка API-контракта, классы эквивалентности, граничные значения), выносим в Integration.  
+   - **E2E (C1) оставляем только**:  
+     - полную «чёрную» happy-path от авторизации до финального результата,  
+     - 1–2 ключевых негативных блока (отказ/прерывание) и альтернативный поток.
+     - Должна иметь feature и story  
+   - **Удалить из E2E** все подробные проверки форматов полей — такие проверки уходят в integration.  
+2. **E2E (C1)**  
+   - **Обязательно** первые шаги:  
+     1. «Авторизоваться»  
+     2. «Перейти на …» и т. д.  
+   - Не повторять атомарные проверки полей в E2E.  
+3. **Integration (C2–C3)**  
+   - Начинается с **инициализации**: «Замокать/смонтировать компонент», «Выполнить API-запрос».  
+   - Один тест = одна атомарная проверка + единый \`expected\`.  
+   - **Integration не ездит по страницам** — изоляция компонента или API-вызова.  
+   - Теги для фронта: D/A/M/PWA, для бэка: S.
+   - Должна иметь feature и story и scenario
+   - ОБЯЗАТЕЛЬНО включать поле "scenario": точный текст узла Scenario из модели.   
+
+## 3. Формат
+Выход — **только** JSON-массив без обёрток:
+\`\`\`json
+[
+  {
+    "feature": "...",
+    "story": "...",
+    "scenario": "...",              // Если тест integration
+    "title": "...",
+    "precondition": "...",          // опционально, для integration: инициализация или мок
+    "steps": ["Авторизоваться", …], // E2E: всегда начинается с Авторизоваться
+    "expected": "...",
+    "tags": ["D","PWA"],            // front: D/A/M/PWA, back: S
+    "layer": "E2E Tests",           // или "Integration frontend Tests"/"Integration backend Tests"
+    "priority": "High"              // опционально
+  }
+]
+\`\`\`
+
+## 4. Генерация
+1. Для **каждой Story**  
+   - Сгенерировать минимум 2–3 E2E-теста:
+     1. Позитивный путь (авторизация → полная happy-flow)  
+     2. Один ключевой негативный отказ (ошибка API или прерывание)  
+     3. Альтернативный поток (например rollback или отмена).  
+2. Для **каждого Scenario**  
+   - Сгенерировать набор интеграционных тестов (минимум 3–5 шт.):
+     - Позитивный (валидные данные)  
+     - Негативный (невалидный формат, пустое, превышение лимита)  
+     - Контрактное (status codes, error payload)
+     - **Каждый Integration-тест ОБЯЗАТЕЛЬНО** имеет поле "scenario" со значением из modelStructure  
+   - В \`precondition\` описать мок/инициализацию.  
+   - Шаги — только «Выполнить запрос» или «Смонтировать компонент и вызвать метод».  
+
+## 5. Входные данные
+**Модель:**
+\${JSON.stringify(modelStructure, null, 2)}
+
+**Требования:**
+\${requirements.map((r, i) => \`\${i + 1}. \${r}\`).join('\\n')}
+
+## 6. Тест-дизайн
+- Использовать классы эквивалентности и BVA (Boundary Value Analysis).  
+- Формировать decision-tables и state-transition tests.  
+- Применять pairwise / orthogonal массивы для комбинаций данных.  
+- Выполнять error-guessing на основе бизнес-правил.   
+
+## 7. Дополнительные паттерны
+- Проверять REST-контракты: content-type, schema, CORS, error payload.  
+- Покрывать асинхронные UI-виджеты (тайм-ау́ты, retry-механизмы).  
+- Применять чек-листы из лучших статей по QA (например, Куликова).  
+
+Тесты должны быть только на русском языке.
+`;
+
+    // 2. Передаём модель и требования отдельно в user
+    const userPrompt = `
+Сгенерируй JSON-массив тест-кейсов на русском языке.
+
+Модель:
+${JSON.stringify(modelStructure, null, 2)}
+
+Требования:
+${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+`;
+
+    try {
+        // Отправляем в OpenRouter / OpenAI двумя сообщениями
+        const ai = await callWithBackoff(
+            OPENROUTER_URL,
+            [
+                { role: 'system', content: SYSTEM_PROMPT },
+                { role: 'user', content: userPrompt }
+            ],
+            config.openRouterAiKey
+        );
+
+        const content = ai.choices?.[0]?.message?.content || '';
+
+        // Парсим JSON как раньше
+        let jsonText = null;
+        const jsonFence = content.match(/```json\s*([\s\S]*?)```/);
+        if (jsonFence) {
+            jsonText = jsonFence[1];
+        } else {
+            const arrMatch = content.match(/(\[[\s\S]*\])/);
+            if (arrMatch) {
+                jsonText = arrMatch[1];
+            }
+        }
+
+        if (!jsonText) {
+            throw new Error('AI не вернул JSON-массив в ожидаемом формате');
+        }
+
+        // Обрезаем лишние запятые и парсим
+        jsonText = jsonText.replace(/,\s*([}\]])/g, '$1');
+        const cases = JSON.parse(jsonText);
+
+        res.json({ cases });
+    } catch (err) {
+        console.error('Ошибка в /api/generate-test-cases:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+const transformToHierarchy = (flatList) => {
+    // Используем Map для группировки по имени фичи, чтобы избежать дубликатов
+    const featuresMap = new Map();
+
+    flatList.forEach(item => {
+        const { Feature: featureName, Story: storyName, Scenario: scenarioTexts } = item;
+
+        if (!featureName || !storyName || !Array.isArray(scenarioTexts)) {
+            // Пропускаем некорректные элементы от AI
+            return;
+        }
+
+        // 1. Получаем или создаем узел фичи (Feature)
+        if (!featuresMap.has(featureName)) {
+            featuresMap.set(featureName, {
+                text: featureName, // Используем 'text' для совместимости с фронтендом
+                stories: [],
+            });
+        }
+        const featureNode = featuresMap.get(featureName);
+
+        // 2. Ищем или создаем узел истории (Story) внутри фичи
+        let storyNode = featureNode.stories.find(s => s.text === storyName);
+        if (!storyNode) {
+            storyNode = {
+                text: storyName, // Используем 'text'
+                scenarios: [],   // Используем 'scenarios' во множественном числе
+            };
+            featureNode.stories.push(storyNode);
+        }
+
+        // 3. Преобразуем массив строк-сценариев в массив объектов
+        const scenarioNodes = scenarioTexts.map(text => ({
+            text: text // Каждый сценарий - это объект с полем 'text'
+        }));
+
+        // 4. Добавляем новые сценарии к истории
+        storyNode.scenarios.push(...scenarioNodes);
+    });
+
+    // Возвращаем сгруппированные данные в виде массива
+    return Array.from(featuresMap.values());
+};
+
+app.post('/api/generate-test-model', async (req, res) => {
+    const { requirements } = req.body;
+    if (!requirements || typeof requirements !== 'string') {
+        return res.status(400).json({ error: 'Поле "requirements" обязательно и должно быть строкой' });
+    }
+    const prompt = `
+Ты — выдающийся QA-архитектор, мастер декомпозиции требований. Твоя задача — проанализировать предоставленные требования к продукту и создать исчерпывающую, иерархическую тестовую модель.
+
+## 1. Цель
+Создать структуру для тестовой документации, которая позволит точно оценивать тестовое покрытие, декомпозировать тесты и визуализировать их.
+
+## 2. Структура дерева (Обязательный формат)
+Ты должен строго следовать этой иерархии:
+- **Feature (Фича / Блок продукта):** Крупный, независимый блок функциональности.
+  - **Story (Пользовательский сценарий - C1 - E2E):** Полный путь пользователя для достижения конкретной цели. Описывает "что" пользователь хочет сделать.
+    - **Scenario (Подсценарий / шаг сценария - C2-C3 - Integration):** Атомарный шаг, действие или логическая часть внутри Story. Описывает "как" пользователь это делает.
+## Структура и поля (ОБЯЗАТЕЛЬНО К СОБЛЮДЕНИЮ)
+Ты должен сгенерировать JSON-массив. Каждый объект в массиве представляет собой "Feature" и должен иметь следующую структуру:
+{
+  "text": "Название фичи",
+  "stories": [
+    {
+      "text": "Название пользовательской истории (Story)",
+      "scenarios": [
+        { "text": "Текст первого сценария (Scenario)" },
+        { "text": "Текст второго сценария (Scenario)" }
+      ]
+    }
+  ]
+}
+## 3. Правила декомпозиции
+- **Будь исчерпывающим:** Продумай позитивные (happy path), негативные и граничные сценарии на основе требований.
+- **Логическая группировка:** Сгруппируй связанные пользовательские сценарии (Story) под одной общей фичей (Feature).
+- **Атомарность:** Каждый \`Scenario\` должен представлять собой одно логическое действие или проверку.
+- **Тестовая модель должна описывать функциональную логику:** Нефункциональное нужно отбрасывать и делать тестовую модель так, чтобы она была максимальна коротка и максимально описывала test coverage.
+
+## Пример: 
+Feature - "Авторизация и регистрация";
+Story - "Регистрация пользователя"
+Scenario - "Ввести номер телефона", "Ввести email", "Прожать чекбоксы согласия", "Нажать кнопку 'Зарегистрироваться'"
+
+## 4. Входные данные: Требования к продукту
+${requirements}
+
+## 5. Задание и формат вывода
+Проанализируй приведённые выше требования и сгенерируй тестовую модель.
+Твой ответ должен быть **ТОЛЬКО чистым JSON-массивом** без каких-либо пояснений, комментариев или markdown-обёрток.
+`;
+
+    try {
+        const ai = await callWithBackoff(OPENROUTER_URL, prompt, config.openRouterAiKey);
+        let content = ai.choices?.[0]?.message?.content?.trim();
+
+        // --- ОТЛАДКА ---
+        console.log("--- 1. СЫРОЙ ОТВЕТ ОТ AI ---");
+        console.log(content);
+        // -----------------
+
+        if (!content) {
+            throw new Error('AI не вернул содержимого');
+        }
+
+        if (content.startsWith('```')) {
+            content = content.replace(/^```json\s*|\s*```$/g, '');
+        }
+
+        let parsedJson;
+        try {
+            parsedJson = JSON.parse(content);
+        } catch (parseErr) {
+            console.error('ОШИБКА ПАРСИНГА JSON:', parseErr.message);
+            throw new Error('Не удалось распарсить JSON от AI');
+        }
+
+        // --- ОТЛАДКА ---
+        console.log("--- 2. JSON ПОСЛЕ ПАРСИНГА ---");
+        console.log(JSON.stringify(parsedJson, null, 2));
+        // -----------------
+
+        // Проверяем, вернул ли AI уже вложенную структуру или старую плоскую.
+        const isFlat = parsedJson.length > 0 && parsedJson[0].hasOwnProperty('Feature');
+
+        // --- ОТЛАДКА ---
+        console.log(`--- 3. РЕЗУЛЬТАТ ПРОВЕРКИ isFlat: ${isFlat} ---`);
+        // -----------------
+
+        const finalModel = isFlat ? transformToHierarchy(parsedJson) : parsedJson;
+
+        // --- ОТЛАДКА ---
+        console.log("--- 4. ФИНАЛЬНАЯ МОДЕЛЬ ДЛЯ ОТПРАВКИ ---");
+        console.log(JSON.stringify(finalModel, null, 2));
+        // -----------------
+
+        return res.status(200).json(finalModel);
+
+    } catch (err) {
+        console.error('ГЛОБАЛЬНАЯ ОШИБКА в /api/generate-test-model:', err);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+
+
+/**
+ * GET /api/shared-steps
+ * Query:
+ *   - projectId (обязательный)
+ *   - page      (опционально, default=0)
+ *   - size      (опционально, default=20)
+ *   - archived  (опционально, default=false)
+ *   - search    (опционально) — подстрока для фильтрации по имени шага
+ */
+app.get('/api/shared-steps', async (req, res) => {
+    try {
+        const {
+            projectId,
+            page = '0',
+            size = '20',
+            archived = 'false',
+            search = ''
+        } = req.query;
+
+        if (!projectId) {
+            return res.status(400).json({ error: 'projectId is required' });
+        }
+
+        const data = await getSharedStepsList({
+            projectId,
+            page: Number(page),
+            size: Number(size),
+            archived: archived === 'true',
+            search: String(search)
+        });
+
+        res.json(data);
+    } catch (err) {
+        console.error('Ошибка в /api/shared-steps:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+app.post('/api/create-test-cases', async (req, res) => {
+    const { projectId, cases } = req.body;
+    if (!projectId || !Array.isArray(cases)) {
+        return res.status(400).json({ error: 'projectId и массив cases обязательны' });
+    }
+
+    try {
+        // 1) Загрузили словарь слоёв
+        const layers = await suggestTestLayers();
+        const layerMap = Object.fromEntries(layers.map(l => [l.name, l.id]));
+
+        // 2) Схема кастомных полей
+        const schema = await getProjectCustomFieldSchema(projectId);
+        const cfKeyToId = schema.reduce((m, e) => {
+            m[e.key] = e.customField.id;
+            return m;
+        }, {});
+
+        // 3) Подгружаем существующие проектные теги (чтобы потом создавать новые, если их нет)
+        const projectTags = await suggestTags(projectId);
+
+        const created = [];
+        for (const c of cases) {
+            // 4) Создаём TC
+            const tc = await createTestCaseAllure({ projectId, name: c.title });
+            const testCaseId = tc.id;
+
+            // 5) Обновляем precondition и expectedResult
+            await updateTestCase(testCaseId, {
+                precondition: c.precondition,
+                expectedResult: c.expected,
+            });
+
+            // 6) Добавляем шаги
+            let lastStepId;
+            for (const step of c.steps || []) {
+                const params = { testCaseId };
+                if (typeof step === 'object' && step.sharedStepId) {
+                    params.sharedStepId = step.sharedStepId;
+                } else {
+                    params.body = typeof step === 'string' ? step : step.text;
+                }
+                if (lastStepId) params.afterId = lastStepId;
+                const added = await addStepToTestCase(testCaseId, params);
+                lastStepId = added.id;
+            }
+
+            // 7) Теги — делаем единый PATCH c полем tags
+            if (Array.isArray(c.tags) && c.tags.length) {
+                // 7.1) Убедиться, что все имена тегов существуют в проекте
+                for (const tagName of c.tags) {
+                    if (!projectTags.some(t => t.name === tagName)) {
+                        const newTag = await createTag(tagName);
+                        projectTags.push(newTag);
+                    }
+                }
+                // 7.2) Собираем payload для PATCH
+                const tagsPayload = c.tags.map(name => ({ name }));
+                await fetchWithAuth(
+                    `${config.baseUrl}/testcase/${testCaseId}`,
+                    {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tags: tagsPayload })
+                    }
+                );
+            }
+
+            // 8) Ссылки — как раньше
+            if (Array.isArray(c.links) && c.links.length) {
+                const existing = (await fetchWithAuth(
+                    `${config.baseUrl}/testcase/${testCaseId}`
+                ).then(r => r.json())).links || [];
+                const toAdd = c.links.map(l => ({
+                    name: l.text,
+                    url: l.url,
+                    ...(l.type ? { type: l.type } : {})
+                }));
+                await fetchWithAuth(
+                    `${config.baseUrl}/testcase/${testCaseId}`,
+                    {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ links: existing.concat(toAdd) })
+                    }
+                );
+            }
+
+            // 9) Jira Issue
+            if (c.jiraIssueOption?.value) {
+                const integrationId = c.jiraIssueOption.integrationId || config.defaultJiraIntegrationId;
+                await linkIssueToTestCase(
+                    testCaseId,
+                    integrationId,
+                    c.jiraIssueOption.value
+                );
+            }
+
+            // 10) Слой
+            if (c.layer && layerMap[c.layer] != null) {
+                await setTestCaseLayer(testCaseId, layerMap[c.layer]);
+            }
+
+            // 11) Кастомные поля
+            const cfv = [];
+            if (c.feature && cfKeyToId.feature) {
+                cfv.push({ customField: { id: cfKeyToId.feature }, name: c.feature });
+            }
+            if (c.story && cfKeyToId.story) {
+                cfv.push({ customField: { id: cfKeyToId.story }, name: c.story });
+            }
+            if (c.scenario && cfKeyToId.scenario) {
+                cfv.push({ customField: { id: cfKeyToId.scenario }, name: c.scenario });
+            }
+            if (c.version && cfKeyToId.version) {
+                cfv.push({ customField: { id: cfKeyToId.version }, name: c.version });
+            }
+            if (c.priority && cfKeyToId.priority) {
+                cfv.push({ customField: { id: cfKeyToId.priority }, name: c.priority });
+            }
+            if (cfv.length) {
+                await setTestCaseCustomFieldValues(testCaseId, cfv);
+            }
+
+            created.push({ id: testCaseId });
+        }
+
+        res.json({ success: true, created });
+    } catch (err) {
+        console.error('Ошибка при массовом создании ТК:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+
 
 // Запуск сервера
 app.listen(PORT, () => {

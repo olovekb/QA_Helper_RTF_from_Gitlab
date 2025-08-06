@@ -60,7 +60,7 @@ async function refreshJwtToken() {
 }
 
 // Обёртка для fetch
-async function fetchWithAuth(url, options = {}) {
+export async function fetchWithAuth(url, options = {}) {
     options.headers = {
         ...HEADERS, // Текущие заголовки
         ...(options.headers || {}), // Дополнительные заголовки из запроса
@@ -405,4 +405,332 @@ export async function getStepsForDefect(defectId) {
     });
 
     return lines;
+}
+
+
+/**
+ * Получить список общих шагов (shared steps) с поддержкой pagination и поиска
+ * @param {Object} opts
+ * @param {string|number} opts.projectId – ID проекта (обязательный)
+ * @param {number} [opts.page=0] – номер страницы (для lazy loading)
+ * @param {number} [opts.size=20] – сколько элементов вернуть за один запрос
+ * @param {boolean} [opts.archived=false] – включить архивные или нет
+ * @param {string} [opts.search] – текстовый фильтр
+ */
+export async function getSharedStepsList({
+    projectId,
+    page = 0,
+    size = 20,
+    archived = false,
+    search = ''
+}) {
+    if (!projectId) {
+        throw new Error('projectId is required to fetch shared steps');
+    }
+
+    const params = new URLSearchParams({
+        projectId: String(projectId),
+        page: String(page),
+        size: String(size),
+        archived: String(archived),
+    });
+    if (search) {
+        params.set('search', search.trim());
+    }
+
+    const url = `${BASE_URL}/sharedstep?${params.toString()}`;
+    const response = await fetchWithAuth(url);
+
+    if (!response.ok) {
+        const text = await response.text().catch(() => response.statusText);
+        throw new Error(`Ошибка получения shared steps: ${text}`);
+    }
+
+    // возвращаем весь JSON (в нём обычно есть content, totalPages, totalElements и пр.)
+    return response.json();
+}
+
+
+// 1. Создать ТК
+export async function createTestCaseAllure({ projectId, name }) {
+    const resp = await fetchWithAuth(`${BASE_URL}/testcase`, {
+        method: 'POST',
+        body: JSON.stringify({ projectId, name }),
+    });
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Allure API create test case failed ${resp.status}: ${txt}`);
+    }
+    return resp.json(); // { id, projectId, name, ... }
+}
+
+// 2. Обновить основные поля (precondition + expectedResult)
+export async function updateTestCase(testCaseId, { precondition, expectedResult }) {
+    const body = { id: testCaseId };
+    if (precondition !== undefined) body.precondition = precondition;
+    if (expectedResult !== undefined) body.expectedResult = expectedResult;
+    const resp = await fetchWithAuth(`${BASE_URL}/testcase/${testCaseId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Allure PATCH test case failed ${resp.status}: ${txt}`);
+    }
+    return resp.json();
+}
+
+// 3. Добавить шаг (body или sharedStepId + вставить после afterId)
+export async function addStepToTestCase(testCaseId, { body, sharedStepId, afterId }) {
+    const payload = { testCaseId };
+    if (sharedStepId !== undefined) payload.sharedStepId = sharedStepId;
+    else payload.body = body;
+    if (afterId !== undefined) payload.afterId = afterId;
+    const resp = await fetchWithAuth(`${BASE_URL}/testcase/step`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Allure POST step failed ${resp.status}: ${txt}`);
+    }
+    return resp.json(); // возвращает созданный шаг с полем id
+}
+
+// 4. Добавить тег к ТК
+export async function addTagToTestCase(testCaseId, name) {
+    // endpoint ожидает массив из одного объекта { name }
+    const resp = await fetchWithAuth(
+        `${BASE_URL}/testcase/${testCaseId}/tag`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify([{ name }])
+        }
+    );
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Allure POST tag to TC failed: ${txt}`);
+    }
+}
+
+
+/**
+ * Добавить (или обновить) внешние/внутренние ссылки у тест-кейса
+ */
+export async function addLinkToTestCase(testCaseId, { name, url, type }) {
+    // Собираем один элемент массива links
+    const linkObj = { name, url };
+    if (type) {
+        linkObj.type = type;
+    }
+    // Отправляем PATCH /testcase/{id} { links: [ ... ] }
+    const resp = await fetchWithAuth(
+        `${BASE_URL}/testcase/${testCaseId}`,
+        {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ links: [linkObj] })
+        }
+    );
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Allure PATCH testcase links failed ${resp.status}: ${txt}`);
+    }
+    return resp.json();
+}
+
+/**
+ * Привязать к тест-кейсу задачу из Jira
+ * @param {number} testCaseId
+ * @param {number} integrationId — ID интеграции (например, 67)
+ * @param {string} issueName — ключ задачи, например "JM-1292"
+ */
+export async function linkIssueToTestCase(testCaseId, integrationId, issueName) {
+    // Формируем массив DTO, как в вашем curl
+    const payload = [{
+        integrationId,
+        name: issueName
+    }];
+    const resp = await fetchWithAuth(
+        `${BASE_URL}/testcase/${testCaseId}/issue`,
+        {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            headers: { 'Content-Type': 'application/json' }
+        }
+    );
+    if (!resp.ok) {
+        const txt = await resp.text().catch(() => resp.statusText);
+        throw new Error(`Allure POST issue link failed ${resp.status}: ${txt}`);
+    }
+    return resp.json();
+}
+
+// 7. Установить layer / priority / version
+export async function setTestCaseLayer(testCaseId, testLayerId) {
+    const resp = await fetchWithAuth(`${BASE_URL}/testcase/${testCaseId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ testLayerId }),
+    });
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Allure PATCH layer failed ${resp.status}: ${txt}`);
+    }
+    return resp.json();
+}
+export async function setTestCasePriority(testCaseId, priority) {
+    const resp = await fetchWithAuth(`${BASE_URL}/testcase/${testCaseId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ priority }),
+    });
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Allure PATCH priority failed ${resp.status}: ${txt}`);
+    }
+    return resp.json();
+}
+export async function setTestCaseVersion(testCaseId, version) {
+    const resp = await fetchWithAuth(`${BASE_URL}/testcase/${testCaseId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ version }),
+    });
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Allure PATCH version failed ${resp.status}: ${txt}`);
+    }
+    return resp.json();
+}
+
+// 8. Добавить параметр
+export async function addParameterToTestCase(testCaseId, { name, value, type }) {
+    const payload = { name, value };
+    if (type) payload.type = type;
+    const resp = await fetchWithAuth(`${BASE_URL}/testcase/${testCaseId}/parameter`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Allure POST parameter failed ${resp.status}: ${txt}`);
+    }
+    return resp.json();
+}
+
+// 9. Создать значение кастомного поля на уровне проекта
+export async function createProjectCustomFieldValue(projectId, customFieldId, name) {
+    const resp = await fetchWithAuth(`${BASE_URL}/project/${projectId}/cfv`, {
+        method: 'POST',
+        body: JSON.stringify({
+            customField: { id: customFieldId },
+            name,
+        }),
+    });
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Allure POST project cfv failed ${resp.status}: ${txt}`);
+    }
+    return resp.json();
+}
+
+/**
+ * Устанавливает значения кастомных полей для тест-кейса
+ * @param {string|number} testCaseId
+ * @param {Array<{ customField: { id: number }, name: string }>} cfvArray
+ */
+export async function setTestCaseCustomFieldValues(testCaseId, cfvArray) {
+    const resp = await fetchWithAuth(
+        `${BASE_URL}/testcase/${testCaseId}/cfv`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cfvArray),
+        }
+    );
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Allure POST testcase cfv failed ${resp.status}: ${txt}`);
+    }
+    return resp.json();
+}
+
+/**
+ * Получить доступные слои тестирования (test layers)
+ * @param {number} [size=20] - сколько элементов запрошить
+ * @returns {Promise<Array<{id: number, name: string}>>}
+ */
+export async function suggestTestLayers(size = 20) {
+    const resp = await fetchWithAuth(
+        `${BASE_URL}/testlayer/suggest?size=${encodeURIComponent(size)}`,
+        {
+            headers: { 'Accept': 'application/json' }
+        }
+    );
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Allure GET test layers failed ${resp.status}: ${txt}`);
+    }
+    const json = await resp.json();
+    // В ответе ожидаем { content: [ { id, name }, ... ], ... }
+    return Array.isArray(json.content) ? json.content : [];
+}
+
+
+export async function getProjectCustomFieldSchema(projectId) {
+    const resp = await fetchWithAuth(
+        `${BASE_URL}/cfschema?projectId=${projectId}`,
+        { headers: { 'Accept': 'application/json' } }
+    );
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Allure GET cfschema failed ${resp.status}: ${txt}`);
+    }
+    // распарсим один раз
+    const data = await resp.json();
+    console.log('cfschema content:', data.content);
+    return data.content;
+}
+
+export async function createTag(name) {
+    const resp = await fetchWithAuth(
+        `${BASE_URL}/tag`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        }
+    );
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Allure POST tag failed: ${txt}`);
+    }
+    return resp.json(); // { id, name }
+}
+
+
+/**
+ * Предложить существующие теги проекта
+ * @param {number|string} projectId
+ * @param {number} [size=20]
+ * @returns {Promise<Array<{id: number, name: string}>>}
+ */
+export async function suggestTags(projectId, size = 20) {
+    const resp = await fetchWithAuth(
+        `${BASE_URL}/tag/suggest?projectId=${encodeURIComponent(projectId)}&size=${size}`,
+        { headers: { 'Accept': 'application/json' } }
+    );
+    if (!resp.ok) {
+        const txt = await resp.text().catch(() => resp.statusText);
+        throw new Error(`Allure GET tag suggest failed ${resp.status}: ${txt}`);
+    }
+    const json = await resp.json();
+    // некоторые эндпоинты возвращают { content: [...] }
+    if (Array.isArray(json)) {
+        return json;
+    }
+    if (Array.isArray(json.content)) {
+        return json.content;
+    }
+    // а если неожиданно вернулось что-то другое — просто попытка вернуть сам ответ
+    return [];
 }

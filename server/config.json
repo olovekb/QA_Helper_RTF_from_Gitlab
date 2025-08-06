@@ -6,7 +6,8 @@
     "url":  "https://abanking.qatools.cloud",
     "jiraUrl":  "https://jira.abanking.ru/browse",
     "huggingfaceToken":  "__REDACTED__",
-    "serverUrl":  "https://test-inspector.abanking.ru/api",
+    "serverUrl":  "http://localhost:5001",
+    "defaultJiraIntegrationId":  67,
     "openRouterAiKey":  "__REDACTED__",
     "openAiToken":  "__REDACTED__"
 }

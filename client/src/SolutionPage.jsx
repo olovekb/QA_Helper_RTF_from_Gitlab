@@ -12,6 +12,10 @@ import useAttachmentsMap from './components/useAttachmentsMap'
 import { serializeFile } from './components/fileStorage'
 import { marked } from 'marked';
 import 'github-markdown-css/github-markdown-dark.css';
+import TestModelGeneratorModal from './components/test-model/TestModelGeneratorModal';
+import TestModelReviewModal from './components/test-model/TestModelReviewModal';
+
+const EMPTY_INITIAL_CASES = [];
 
 marked.setOptions({
   gfm: true,
@@ -410,6 +414,12 @@ export default function SolutionPage({ projects = [] }) {
   const allowedLinkNames = ['Блокирует', 'Относится', 'Клонирование', 'Порождение'];
   const [collapsedStates, setCollapsedStates] = useState({});
   const requestLinkIssue = requestLinkOption?.value || null;
+  const [isGenModalOpen, setGenModalOpen] = useState(false);
+  const [isReviewModalOpen, setReviewModalOpen] = useState(false);
+  const [generatedCases, setGeneratedCases] = useState([]);
+
+
+
   useEffect(() => {
     if (tasks.length > 0 && tasks[0].selected === undefined) {
       setTasks(ts => ts.map(t => ({ ...t, selected: true })));
@@ -476,6 +486,56 @@ export default function SolutionPage({ projects = [] }) {
       value: issue.key,
       label: `${issue.key} — ${issue.fields.summary}`
     }));
+  };
+
+  const prepareRequirements = () => {
+    const reqsFromTasks = tasks.map(t => t.requirement?.trim()).filter(r => r);
+    return reqsFromTasks.length > 0
+      ? reqsFromTasks
+      : [
+        inputMode === 'text'
+          ? solutionText.trim()
+          : `Confluence Page ID: ${confluencePageId.trim()}`
+      ];
+  };
+
+  const handleGenerateModel = async (modelStructure) => {
+    // 1) Собираем требования из задач
+    const reqsFromTasks = tasks
+      .map(t => t.requirement?.trim())
+      .filter(r => r);
+    // 2) Если ничего не набралось — падаём на полный текст или Confluence
+    const requirements = reqsFromTasks.length > 0
+      ? reqsFromTasks
+      : [
+        inputMode === 'text'
+          ? solutionText.trim()
+          : `Confluence Page ID: ${confluencePageId.trim()}`
+      ];
+
+    try {
+      const { data } = await axios.post(
+        `${config.serverUrl}/generate-test-cases`,
+        { requirements, modelStructure }, {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+      }
+      );
+      setGeneratedCases(data.cases);
+      setGenModalOpen(false);
+      setReviewModalOpen(true);
+    } catch (err) {
+      console.error('generate-test-cases error:', err);
+      alert('Ошибка генерации тест-кейсов: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  // вызывается из ревью, отправляет финальный список в Allure и закрывает
+  const handleConfirmSend = finalCases => {
+    // … тут ваша логика отправки в Allure …
+    console.log('Отправляем в Allure:', finalCases);
+    setReviewModalOpen(false);
   };
 
   const loadMeta = useCallback(async () => {
@@ -985,7 +1045,25 @@ export default function SolutionPage({ projects = [] }) {
             <label>Jira PAT (Personal Access Token)</label>
             <input type="password" value={jiraPat} onChange={e => setJiraPat(e.target.value)} placeholder="Ваш токен доступа Jira" />
           </div>
+          <div className="field">
+            <label>Проект Allure</label>
+            <Select
+              classNamePrefix="select"
+              placeholder="Выберите проект Allure…"
+              options={projects.map(p => ({ value: p.id, label: p.name }))}
+              value={
+                projects
+                  .map(p => ({ value: p.id, label: p.name }))
+                  .find(o => o.value === allureProject) || null
+              }
+              isClearable
+              onChange={opt => setAllureProject(opt?.value || '')}
+              styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
+              menuPortalTarget={document.body}
+            />
+          </div>
         </div>
+
         {isMetaLoading && <p className="status-message loading">Загрузка метаданных Jira…</p>}
         {metaError && <p className="status-message error">{metaError}</p>}
         {ready && <p className="status-message success">Метаданные Jira успешно загружены</p>}
@@ -1054,6 +1132,28 @@ export default function SolutionPage({ projects = [] }) {
           ))}
         </div>
       )}
+      {/* --- Кнопка и две модалки для тест‑модели --- */}
+      <button onClick={() => setGenModalOpen(true)} className="btn btn-secondary" style={{ marginBottom: 16 }}>
+        🧱 Сгенерировать тест-кейсы
+      </button>
+
+      <TestModelGeneratorModal
+        isOpen={isGenModalOpen}
+        onClose={() => setGenModalOpen(false)}
+        onGenerate={handleGenerateModel}
+        initialCases={EMPTY_INITIAL_CASES}
+        requirements={prepareRequirements()}
+      />
+
+      <TestModelReviewModal
+        isOpen={isReviewModalOpen}
+        onClose={() => setReviewModalOpen(false)}
+        onConfirmSend={handleConfirmSend}
+        initialCases={generatedCases}
+        projectId={allureProject}
+        jiraProject={jiraProject}
+        jiraPat={jiraPat}
+      />
       {/* Основной список задач */}
       <div className="task-list">
         {tasks.map((t, i) => (

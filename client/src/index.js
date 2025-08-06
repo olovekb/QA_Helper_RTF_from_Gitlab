@@ -32,8 +32,11 @@ root.render(
     <Routes>
       <Route path="/" element={<App projects={projects} />} />
       <Route path="/tia" element={<TIAPage projects={projects} />} />
-      <Route path="/solution" element={<SolutionPage />} />
       <Route path="/code-error" element={<CodeErrorPage projects={projects} />} />
+      <Route
+        path="/solution"
+        element={<SolutionPage projects={projects} />} />
+
     </Routes>
   </Router>
 );
