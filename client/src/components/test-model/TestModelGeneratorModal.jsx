@@ -356,16 +356,37 @@ const TreeVisualizer = ({ treeData }) => {
 
 // --- TreeNode Component (No changes) ---
 const TreeNode = ({ node, index, path, handlers }) => {
-    let type, children, childType, placeholder, icon;
+    const level = path.length;
 
-    if ('stories' in node) {
-        type = 'feature'; children = node.stories; childType = 'story'; placeholder = 'Feature'; icon = <FolderIcon />;
-    } else if ('scenarios' in node) {
-        type = 'story'; children = node.scenarios; childType = 'scenario'; placeholder = 'Story'; icon = <StoryIcon />;
-    } else if ('codes' in node) {
-        type = 'scenario'; children = node.codes; childType = 'code'; placeholder = 'Scenario'; icon = <ScenarioIcon />;
+    let type, children, childType, placeholder, icon;
+    if (level === 1) {
+        // корень — Feature
+        type = 'feature';
+        children = node.stories;
+        childType = 'story';
+        placeholder = 'Feature';
+        icon = <FolderIcon />;
+    } else if (level === 2) {
+        // второй уровень — Story
+        type = 'story';
+        children = node.scenarios;
+        childType = 'scenario';
+        placeholder = 'Story';
+        icon = <StoryIcon />;
+    } else if (level === 3) {
+        // третий уровень — Scenario
+        type = 'scenario';
+        children = node.codes;
+        childType = 'code';
+        placeholder = 'Scenario';
+        icon = <ScenarioIcon />;
     } else {
-        type = 'code'; placeholder = 'Code/Unit Test'; icon = <CodeFileIcon />;
+        // четвёртый и далее — Code / Unit Test
+        type = 'code';
+        children = null;
+        childType = null;
+        placeholder = 'Code/Unit Test';
+        icon = <CodeFileIcon />;
     }
 
     return (
@@ -478,7 +499,6 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
 
         } catch (error) {
             console.error("Ошибка при генерации тестовой модели:", error);
-            // Using a custom modal for alerts is better, but window.alert is a fallback
             window.alert("Не удалось сгенерировать тестовую модель: " + (error.response?.data?.error || error.message));
         } finally {
             setIsGeneratingModel(false);

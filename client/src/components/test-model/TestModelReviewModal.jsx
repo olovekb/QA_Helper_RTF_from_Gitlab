@@ -81,7 +81,12 @@ const createNewTestCase = (feature, story, scenario = '') => ({
 const buildTreeFromCases = (cases) => {
     const tree = {};
     (cases || []).forEach((c) => {
-        const testCase = { ...c, id: c.id || generateId() };
+        const testCase = {
+            ...c,
+            id: c.id || generateId(),
+            priority: c.priority ?? 'Medium',
+            version: c.version ?? undefined,
+        };
         const { feature, story, scenario = '' } = testCase;
         if (!tree[feature]) tree[feature] = { stories: {}, isExpanded: true };
         if (!tree[feature].stories[story])
@@ -99,20 +104,36 @@ const buildTreeFromCases = (cases) => {
 };
 
 const flattenTreeToCases = (tree) => {
-    const flatCases = [];
-    Object.entries(tree).forEach(([featureName, fData]) => {
-        Object.entries(fData.stories).forEach(([storyName, storyNode]) => {
-            (storyNode.cases || []).forEach((c) =>
-                flatCases.push({ ...c, feature: featureName, story: storyName, scenario: '' })
-            );
-            Object.entries(storyNode.scenarios).forEach(([scenarioName, scNode]) => {
-                (scNode.cases || []).forEach((c) =>
-                    flatCases.push({ ...c, feature: featureName, story: storyName, scenario: scenarioName })
-                );
+    const flat = [];
+
+    Object.entries(tree).forEach(([feature, fData]) => {
+        Object.entries(fData.stories).forEach(([story, sData]) => {
+
+            // кейсы без сценариев
+            (sData.cases || []).forEach(c => {
+                const base = {
+                    ...c,
+                    feature,
+                    story,
+                    scenario: '',
+                    priority: c.priority,
+                    version: c.version,
+                };
+                flat.push(base);
             });
+
+            // кейсы с сценарием
+            Object.entries(sData.scenarios).forEach(([scenario, scData]) => {
+                (scData.cases || []).forEach(c => {
+                    const base = { ...c, feature, story, scenario, priority: c.priority, version: c.version };
+                    flat.push(base);
+                });
+            });
+
         });
     });
-    return flatCases;
+
+    return flat;
 };
 
 // --- UI COMPONENTS ---
@@ -820,7 +841,7 @@ export default function TestModelReviewModal({
         )
             .then(() => {
                 if (onConfirmSend) onConfirmSend(cases);
-                // onClose();
+                onClose();
             })
             .catch(err => {
                 console.error('Ошибка при отправке тест-кейсов:', err);
