@@ -4,6 +4,8 @@ import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import config from '../../config.json';
 import axios from 'axios';
 import AsyncSelect from 'react-select/async';
+import { StyleInjector, LoaderOverlay } from './TestModelGeneratorModal';
+import JSZip from 'jszip';
 
 // --- Иконки (простые SVG для независимости от библиотек) ---
 const ChevronDown = () => (
@@ -523,7 +525,7 @@ const ScenarioNode = ({
 
                 <div className="add-buttons">
                     <button className="add-node-btn" onClick={() => onAddTestCase(path)}>
-                        + Тест-кейс
+                        + Тест-кейс scenario
                     </button>
                 </div>
             </>
@@ -603,7 +605,7 @@ const StoryNode = ({
 
                 <div className="add-buttons">
                     <button className="add-node-btn" onClick={() => onAddTestCase(path)}>
-                        + Тест-кейс
+                        + Тест-кейс story
                     </button>
                     <button className="add-node-btn" onClick={() => onAddScenario(path)}>
                         + Сценарий
@@ -691,6 +693,9 @@ export default function TestModelReviewModal({
 }) {
     const [treeData, setTreeData] = useState({});
     const [sharedStepsOptions, setSharedStepsOptions] = useState([]);
+    const [isSending, setIsSending] = useState(false);
+    const [allureLink, setAllureLink] = useState(null);
+    const [isGenerating, setIsGenerating] = useState(false);
 
     useEffect(() => {
         if (!isOpen || !projectId) return;
@@ -725,6 +730,254 @@ export default function TestModelReviewModal({
             return prevTree;
         });
     }, []);
+
+    const handleGenerateXmind = async () => {
+        setIsGenerating(true);
+
+        const generateId = () => Math.random().toString(36).substr(2, 9);
+
+        try {
+            // --- 1) Сборка иерархии для content.json ---
+            const featureTopics = Object.entries(treeData).map(
+                ([featureName, featureData]) => {
+                    const storyTopics = Object.entries(featureData.stories).map(
+                        ([storyName, storyData]) => {
+                            // объединяем кейсы и сценарии
+                            const casesAndScenarios = [
+                                // простые кейсы
+                                ...storyData.cases.map(caseItem => {
+                                    // определяем маркер по layer
+                                    const markers = [];
+                                    if (caseItem.layer.includes("frontend")) markers.push({ markerId: "flag-green" });
+                                    if (caseItem.layer.includes("backend")) markers.push({ markerId: "flag-purple" });
+                                    return {
+                                        id: caseItem.id || generateId(),
+                                        class: "topic",
+                                        title: caseItem.title,
+                                        // для границ
+                                        testType:
+                                            caseItem.layer === "E2E Tests"
+                                                ? "e2e"
+                                                : caseItem.layer.startsWith("Integration")
+                                                    ? "integration"
+                                                    : null,
+                                        markers: markers.length ? markers : undefined,
+                                    };
+                                }),
+                                // сценарии
+                                ...Object.entries(storyData.scenarios).map(
+                                    ([scenarioName, scenarioData]) => {
+                                        // собираем дочерние кейсы
+                                        const childrenArray = scenarioData.cases.map(caseItem => {
+                                            const markers = [];
+                                            if (caseItem.layer.includes("frontend")) markers.push({ markerId: "flag-green" });
+                                            if (caseItem.layer.includes("backend")) markers.push({ markerId: "flag-purple" });
+                                            return {
+                                                id: caseItem.id || generateId(),
+                                                class: "topic",
+                                                title: caseItem.title,
+                                                testType:
+                                                    caseItem.layer === "E2E Tests"
+                                                        ? "e2e"
+                                                        : caseItem.layer.startsWith("Integration")
+                                                            ? "integration"
+                                                            : null,
+                                                markers: markers.length ? markers : undefined,
+                                            };
+                                        });
+
+                                        // вычисляем границы внутри сценария
+                                        const intIdxs = [];
+                                        const e2eIdxs = [];
+                                        childrenArray.forEach((it, idx) => {
+                                            if (it.testType === "integration") intIdxs.push(idx);
+                                            if (it.testType === "e2e") e2eIdxs.push(idx);
+                                        });
+                                        const boundaries = [];
+                                        if (intIdxs.length) {
+                                            boundaries.push({
+                                                id: generateId(),
+                                                range: `(${intIdxs[0]},${intIdxs[intIdxs.length - 1]})`,
+                                                title: "Интеграционные тесты",
+                                            });
+                                        }
+                                        if (e2eIdxs.length) {
+                                            boundaries.push({
+                                                id: generateId(),
+                                                range: `(${e2eIdxs[0]},${e2eIdxs[e2eIdxs.length - 1]})`,
+                                                title: "E2E тесты",
+                                            });
+                                        }
+
+                                        return {
+                                            id: generateId(),
+                                            class: "topic",
+                                            title: scenarioName,
+                                            branch: "folded",
+                                            markers: [{ markerId: "people-blue" }],
+                                            children: { attached: childrenArray },
+                                            boundaries: boundaries.length ? boundaries : undefined,
+                                        };
+                                    }
+                                ),
+                            ];
+
+                            // общие границы для story
+                            const intAll = [];
+                            const e2eAll = [];
+                            casesAndScenarios.forEach((item, idx) => {
+                                if (item.testType === "integration") intAll.push(idx);
+                                if (item.testType === "e2e") e2eAll.push(idx);
+                            });
+                            const storyBoundaries = [];
+                            if (intAll.length) {
+                                storyBoundaries.push({
+                                    id: generateId(),
+                                    range: `(${intAll[0]},${intAll[intAll.length - 1]})`,
+                                    title: "Интеграционные тесты",
+                                });
+                            }
+                            if (e2eAll.length) {
+                                storyBoundaries.push({
+                                    id: generateId(),
+                                    range: `(${e2eAll[0]},${e2eAll[e2eAll.length - 1]})`,
+                                    title: "E2E тесты",
+                                });
+                            }
+
+                            return {
+                                id: generateId(),
+                                class: "topic",
+                                title: storyName,
+                                branch: "folded",
+                                children: { attached: casesAndScenarios },
+                                boundaries: storyBoundaries.length ? storyBoundaries : undefined,
+                            };
+                        }
+                    );
+
+                    return {
+                        id: generateId(),
+                        class: "topic",
+                        title: featureName,
+                        branch: "folded",
+                        children: { attached: storyTopics },
+                    };
+                }
+            );
+
+            // --- 2) Формирование content.json ---
+            const contentJson = [
+                {
+                    id: generateId(),
+                    class: "sheet",
+                    title: "Тест-модель",
+                    rootTopic: {
+                        id: generateId(),
+                        class: "topic",
+                        title: jiraProject,
+                        structureClass: "org.xmind.ui.timeline.horizontal",
+                        children: {
+                            attached: [
+                                {
+                                    id: generateId(),
+                                    class: "topic",
+                                    title: "Условные обозначения",
+                                    children: {
+                                        attached: [
+                                            {
+                                                id: generateId(),
+                                                title: "Покрыт тестами",
+                                                markers: [{ markerId: "task-done" }],
+                                            },
+                                            {
+                                                id: generateId(),
+                                                title: "Фронтенд-поведение",
+                                                markers: [{ markerId: "flag-green" }],
+                                            },
+                                            {
+                                                id: generateId(),
+                                                title: "Бекенд-поведение",
+                                                markers: [{ markerId: "flag-purple" }],
+                                            },
+                                            {
+                                                id: generateId(),
+                                                title: "Пользовательские сценарии",
+                                                markers: [{ markerId: "people-blue" }],
+                                            },
+                                        ],
+                                    },
+                                },
+                                ...featureTopics,
+                            ],
+                        },
+                    },
+                    theme: {
+                        map: {
+                            id: "423cea10-5cf2-4b9c-a86a-10cba3fa1981",
+                            properties: { "svg:fill": "#ffffff" },
+                        },
+                        centralTopic: {
+                            id: "c8f9a13b-cef1-4f3b-96aa-09472b8358f0",
+                            properties: { "svg:fill": "#3949AB" },
+                        },
+                        mainTopic: {
+                            id: "50792793-7789-468b-9722-4e2ec235f632",
+                            properties: { "svg:fill": "#EEEEEE" },
+                        },
+                        subTopic: {
+                            id: "a36e6db3-7a1f-4996-8f4b-f6bcffceeb5f",
+                            properties: { "svg:fill": "#EEEEEE" },
+                        },
+                    },
+                },
+            ];
+
+            // --- 3) metadata.json ---
+            const metadataJson = {
+                dataStructureVersion: "2",
+                creator: { name: "YourAppName", version: "1.0.0" },
+                layoutEngineVersion: "3",
+            };
+
+            // --- 4) manifest.json ---
+            const manifestJson = {
+                "file-entries": {
+                    "content.json": {},
+                    "metadata.json": {},
+                },
+            };
+
+            // --- 5) Упаковка в .xmind ---
+            const zip = new JSZip();
+            zip.file("content.json", JSON.stringify(contentJson, null, 2));
+            zip.file("metadata.json", JSON.stringify(metadataJson, null, 2));
+            zip.file("manifest.json", JSON.stringify(manifestJson, null, 2));
+
+            const blob = await zip.generateAsync({
+                type: "blob",
+                mimeType: "application/vnd.xmind.xmind",
+            });
+
+            // --- 6) Скачивание ---
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `${jiraProject}-test-model-${Date.now()}.xmind`;
+            document.body.appendChild(a);
+            a.click();
+            URL.revokeObjectURL(url);
+            a.remove();
+        } catch (err) {
+            console.error("Ошибка при генерации XMind файла:", err);
+        } finally {
+            setIsGenerating(false);
+        }
+    };
+
+
+
+
 
     const handleDeleteCase = useCallback((caseId) => {
         setTreeData((prevTree) => {
@@ -829,25 +1082,35 @@ export default function TestModelReviewModal({
     }, []);
 
 
-    const handleConfirm = () => {
+    const handleConfirm = async () => {
         const cases = flattenTreeToCases(treeData);
-        axios.post(
-            `${config.serverUrl}/create-test-cases`,
-            {
-                projectId,
-                cases
-            },
-            { headers: { 'Content-Type': 'application/json' } }
-        )
-            .then(() => {
-                if (onConfirmSend) onConfirmSend(cases);
-                onClose();
-            })
-            .catch(err => {
-                console.error('Ошибка при отправке тест-кейсов:', err);
-                alert('Не удалось отправить тест-кейсы: ' + (err.response?.data?.error || err.message));
-            });
+        setIsSending(true);
+
+        try {
+            const resp = await axios.post(
+                `${config.serverUrl}/create-test-cases`,
+                { projectId, cases },
+                { headers: { 'Content-Type': 'application/json' } }
+            );
+
+            // resp.data.created = [{ id: 123501 }, { id: 123502 }, ...]
+            const firstCreated = resp.data.created?.[0]?.id;
+            if (!firstCreated) {
+                throw new Error('Сервер вернул пустой список созданных кейсов');
+            }
+
+            // Собираем ссылку на Allure
+            const link = `${config.url}/project/${projectId}/test-cases/${firstCreated}`;
+            setAllureLink(link);
+        } catch (err) {
+            console.error(err);
+            alert('Ошибка при отправке: ' + err.message);
+        } finally {
+            setIsSending(false);
+        }
     };
+
+
 
     return (
         <Modal
@@ -858,105 +1121,235 @@ export default function TestModelReviewModal({
             appElement={typeof window !== 'undefined' ? document.getElementById('root') : undefined}
         >
             <style>{`
-        .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:1000;}
-        .modal-content{background:#161b22;color:#c9d1d9;border-radius:8px;width:95%;max-width:1200px;height:90vh;display:flex;flex-direction:column;overflow:hidden;border:1px solid #30363d;}
-        .modal-header{padding:16px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #30363d;}
-        .modal-header h2{margin:0;font-size:1.25rem;}
-        .close-btn{background:none;border:none;color:#8b949e;font-size:24px;cursor:pointer;}
-        .modal-body{flex:1 1 auto;overflow-y:auto;padding:16px 24px;}
-        .modal-footer{padding:12px 24px;display:flex;justify-content:flex-end;gap:12px;border-top:1px solid #30363d;}
-        .button-primary{background:#238636;color:#fff;border:1px solid #2ea043;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:500;}
-        .button-secondary{background:#21262d;color:#c9d1d9;border:1px solid #30363d;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:500;}
-        .tree-node{margin-bottom:4px;}
-        .node-header{display:flex;align-items:center;padding:4px 8px;border-radius:6px;cursor:pointer;transition:background-color .2s;}
-        .node-header:hover{background:rgba(139,148,158,0.1);}
-        .node-icon{margin-right:8px;color:#8b949e;display:flex;align-items:center;}
-        .node-title{flex:1;}
-        .feature-title{font-size:1.1rem;font-weight:bold;color:#58a6ff;}
-        .pl-4{padding-left:1rem;}
-        .node-children{padding-top:4px;padding-left:16px;border-left:1px solid #30363d;min-height:10px;}
-        .node-children.is-over{background:rgba(88,166,255,0.1);border-left-color:#58a6ff;}
-        .add-buttons{padding-left:24px;padding-top:8px;}
-        .add-node-btn{background:none;border:1px dashed #30363d;color:#8b949e;padding:4px 10px;border-radius:6px;font-size:.8rem;cursor:pointer;margin-right:8px;}
-        .add-node-btn:hover{background:#30363d;color:#c9d1d9;}
-        .case-card{background:#21262d;border:1px solid #30363d;border-radius:6px;margin:8px 0;}
-        .case-card.is-dragging{box-shadow:0 0 15px rgba(88,166,255,0.5);border-color:#58a6ff;}
-        .case-card-header{display:flex;align-items:center;padding:10px 12px;}
-        .drag-handle{cursor:grab;margin-right:8px;}
-        .case-card-header .node-title{cursor:pointer;flex:1;}
-        .delete-btn{background:none;border:none;color:#f85149;font-size:20px;cursor:pointer;line-height:1;opacity:.6;}
-        .delete-btn:hover{opacity:1;}
-        .case-card-details{padding:12px;border-top:1px solid #30363d;margin-top:8px;}
-        .case-field{margin-bottom:14px;}
-        .case-field label{display:block;margin-bottom:6px;font-size:.85rem;color:#8b949e;}
-        .case-field input,.case-field textarea,.case-field select{width:100%;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:8px 10px;color:#c9d1d9;box-sizing:border-box;}
-        .case-field input:focus,.case-field textarea:focus,.case-field select:focus{outline:none;border-color:#58a6ff;}
-        .field-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;}
-        .array-item{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;}
-        .array-item>*{flex:1;}
-        .link-item input{width:50%;}
-        .remove-item-btn{background:#373e47;border:1px solid #484f58;color:#c9d1d9;border-radius:4px;width:38px;height:38px;font-size:1.2rem;cursor:pointer;flex:0 0 auto;}
-        .remove-item-btn:hover{background:#f85149;border-color:#f85149;color:#fff;}
-        .add-item-btn{background:none;border:1px solid #30363d;color:#8b949e;padding:6px 10px;border-radius:4px;font-size:.85rem;cursor:pointer;margin-top:4px;}
-        .add-item-btn:hover{background:#30363d;color:#c9d1d9;}
-      `}</style>
+      .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:1000;}
+      .modal-content{background:#161b22;color:#c9d1d9;border-radius:8px;width:95%;max-width:1200px;height:90vh;display:flex;flex-direction:column;overflow:hidden;border:1px solid #30363d;}
+      .modal-header{padding:16px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #30363d;}
+      .modal-header h2{margin:0;font-size:1.25rem;}
+      .close-btn{background:none;border:none;color:#8b949e;font-size:24px;cursor:pointer;}
+      .modal-body{flex:1 1 auto;overflow-y:auto;padding:16px 24px;}
+      .modal-footer{padding:12px 24px;display:flex;justify-content:flex-end;gap:12px;border-top:1px solid #30363d;}
+      .button-primary{background:#238636;color:#fff;border:1px solid #2ea043;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:500;}
+      .button-secondary{background:#21262d;color:#c9d1d9;border:1px solid #30363d;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:500;}
+      .tree-node{margin-bottom:4px;}
+      .node-header{display:flex;align-items:center;padding:4px 8px;border-radius:6px;cursor:pointer;transition:background-color .2s;}
+      .node-header:hover{background:rgba(139,148,158,0.1);}
+      .node-icon{margin-right:8px;color:#8b949e;display:flex;align-items:center;}
+      .node-title{flex:1;}
+      .feature-title{font-size:1.1rem;font-weight:bold;color:#58a6ff;}
+      .pl-4{padding-left:1rem;}
+      .node-children{padding-top:4px;padding-left:16px;border-left:1px solid #30363d;min-height:10px;}
+      .node-children.is-over{background:rgba(88,166,255,0.1);border-left-color:#58a6ff;}
+      .add-buttons{padding-left:24px;padding-top:8px;}
+      .add-node-btn{background:none;border:1px dashed #30363d;color:#8b949e;padding:4px 10px;border-radius:6px;font-size:.8rem;cursor:pointer;margin-right:8px;}
+      .add-node-btn:hover{background:#30363d;color:#c9d1d9;}
+      .case-card{background:#21262d;border:1px solid #30363d;border-radius:6px;margin:8px 0;}
+      .case-card.is-dragging{box-shadow:0 0 15px rgba(88,166,255,0.5);border-color:#58a6ff;}
+      .case-card-header{display:flex;align-items:center;padding:10px 12px;}
+      .drag-handle{cursor:grab;margin-right:8px;}
+      .case-card-header .node-title{cursor:pointer;flex:1;}
+      .delete-btn{background:none;border:none;color:#f85149;font-size:20px;cursor:pointer;line-height:1;opacity:.6;}
+      .delete-btn:hover{opacity:1;}
+      .case-card-details{padding:12px;border-top:1px solid #30363d;margin-top:8px;}
+      .case-field{margin-bottom:14px;}
+      .case-field label{display:block;margin-bottom:6px;font-size:.85rem;color:#8b949e;}
+      .case-field input,.case-field textarea,.case-field select{width:100%;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:8px 10px;color:#c9d1d9;box-sizing:border-box;}
+      .case-field input:focus,.case-field textarea:focus,.case-field select:focus{outline:none;border-color:#58a6ff;}
+      .field-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;}
+      .array-item{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;}
+      .array-item>*{flex:1;}
+      .link-item input{width:50%;}
+      .remove-item-btn{background:#373e47;border:1px solid #484f58;color:#c9d1d9;border-radius:4px;width:38px;height:38px;font-size:1.2rem;cursor:pointer;flex:0 0 auto;}
+      .remove-item-btn:hover{background:#f85149;border-color:#f85149;color:#fff;}
+      .add-item-btn{background:none;border:1px solid #30363d;color:#8b949e;padding:6px 10px;border-radius:4px;font-size:.85rem;cursor:pointer;margin-top:4px;}
+      .add-item-btn:hover{background:#30363d;color:#c9d1d9;}
+       .loader-overlay {
+        position: absolute;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background-color: rgba(13, 17, 23, 0.8);
+        z-index: 1001;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        backdrop-filter: blur(5px);
+      }
+      .spinner {
+        width: 50px;
+        height: 50px;
+        border: 4px solid #30363d;
+        border-top-color: #58a6ff;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-bottom: 20px;
+      }
+      .loader-text {
+        font-size: 1.1rem;
+        font-weight: 500;
+        color: #c9d1d9;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+       .success-body {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        text-align: center;
+      }
+      .success-body p {
+        font-size: 1.25rem;
+        margin-bottom: 16px;
+        color: #c9d1d9;
+      }
+      .success-body a {
+        font-size: 1.15rem;
+        color: #58a6ff;
+        text-decoration: none;
+        border-bottom: 1px solid transparent;
+        transition: border-color .2s;
+      }
+      .success-body a:hover {
+        border-color: #58a6ff;
+      }
+        /* Стили для shared-step-item */
+.array-item.shared-step-item {
+  background: #1f242b;           /* чуть более светлый фон, чем у контейнера */
+  border: 1px dashed #484f58;    /* пунктирная граница */
+  border-radius: 4px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
 
-            <div className="modal-header">
-                <h2>Ревью и редактирование тест-кейсов</h2>
-                <button className="close-btn" onClick={onClose}>×</button>
-            </div>
+.array-item.shared-step-item .shared-step-label {
+  flex: 1;
+  font-style: italic;
+  color: #8b949e;
+}
 
-            <main className="modal-body">
-                <DragDropContext onDragEnd={onDragEnd}>
-                    <Droppable droppableId="features" type="STRUCTURE">
-                        {(prov) => (
-                            <div ref={prov.innerRef} {...prov.droppableProps}>
-                                {Object.entries(treeData).map(([featureName, featureData], idx) => (
-                                    <Draggable key={featureName} draggableId={featureName} index={idx} type="STRUCTURE">
-                                        {(dragProv) => (
-                                            <div
-                                                ref={dragProv.innerRef}
-                                                {...dragProv.draggableProps}
-                                            // структура тоже через иконку перетаскивается
-                                            >
-                                                <FeatureNode
-                                                    name={featureName}
-                                                    featureData={featureData}
-                                                    path={[featureName]}
-                                                    onUpdate={handleUpdateCase}
-                                                    onDelete={handleDeleteCase}
-                                                    onAddStory={(path) => handleAdd(path, 'story')}
-                                                    onAddScenario={(path) => handleAdd(path, 'scenario')}
-                                                    onToggleExpand={handleToggleExpand}
-                                                    onAddTestCase={(path) => handleAdd(path, 'case')}
-                                                    projectId={projectId}
-                                                    jiraProject={jiraProject}
-                                                    jiraPat={jiraPat}
-                                                    onDeleteNode={handleDeleteNode}
-                                                />
-                                            </div>
-                                        )}
-                                    </Draggable>
-                                ))}
-                                {prov.placeholder}
-                            </div>
-                        )}
-                    </Droppable>
-                </DragDropContext>
+/* Убираем кнопку перетаскивания у общих шагов */
+.array-item.shared-step-item .drag-handle {
+  visibility: hidden;
+}
 
-                <button
-                    className="add-node-btn"
-                    style={{ width: '100%', marginTop: '16px', padding: '8px' }}
-                    onClick={() => handleAdd([], 'feature')}
-                >
-                    + Добавить фичу
-                </button>
-            </main>
+/* Скрываем textarea и заменяем её на просто лейбл */
+.array-item.shared-step-item textarea {
+  display: none;
+}
+  
+    `}</style>
 
-            <footer className="modal-footer">
-                <button className="button-secondary" onClick={onClose}>Отмена</button>
-                <button className="button-primary" onClick={handleConfirm}>Отправить в Allure</button>
-            </footer>
+            {/* Loader поверх всего */}
+            {(isSending || isGenerating) && (
+                <div className="loader-overlay">
+                    <div className="spinner" />
+                    <div className="loader-text">
+                        {isGenerating
+                            ? 'Генерация XMind…'
+                            : 'Отправка тест-кейсов в Allure…'}
+                    </div>
+                </div>
+            )}
+
+            {allureLink ? (
+                // --- экран успеха ---
+                <>
+                    <div className="modal-header">
+                        <h2>Успешно отправлено</h2>
+                        <button
+                            className="close-btn"
+                            onClick={() => { setAllureLink(null); onClose(); }}
+                        >×</button>
+                    </div>
+                    <div className="modal-body" style={{ textAlign: 'center' }}>
+                        <p>Тест-кейсы созданы в Allure по ссылке:</p>
+                        <a href={allureLink} target="_blank" rel="noopener noreferrer">
+                            {allureLink}
+                        </a>
+                    </div>
+                    <div className="modal-footer">
+                        <button
+                            className="button-primary"
+                            onClick={() => { setAllureLink(null); onClose(); }}
+                        >
+                            Закрыть
+                        </button>
+                    </div>
+                </>
+            ) : (
+                // --- ваш обычный экран ревью/редактирования ---
+                <>
+                    <div className="modal-header">
+                        <h2>Ревью и редактирование тест-кейсов</h2>
+                        <button className="close-btn" onClick={onClose} disabled={isSending}>×</button>
+                    </div>
+
+                    <main className="modal-body">
+                        <DragDropContext onDragEnd={onDragEnd}>
+                            <Droppable droppableId="features" type="STRUCTURE">
+                                {(prov) => (
+                                    <div ref={prov.innerRef} {...prov.droppableProps}>
+                                        {Object.entries(treeData).map(([featureName, featureData], idx) => (
+                                            <Draggable key={featureName} draggableId={featureName} index={idx} type="STRUCTURE">
+                                                {(dragProv) => (
+                                                    <div ref={dragProv.innerRef} {...dragProv.draggableProps}>
+                                                        <FeatureNode
+                                                            name={featureName}
+                                                            featureData={featureData}
+                                                            path={[featureName]}
+                                                            onUpdate={handleUpdateCase}
+                                                            onDelete={handleDeleteCase}
+                                                            onAddStory={(path) => handleAdd(path, 'story')}
+                                                            onAddScenario={(path) => handleAdd(path, 'scenario')}
+                                                            onToggleExpand={handleToggleExpand}
+                                                            onAddTestCase={(path) => handleAdd(path, 'case')}
+                                                            projectId={projectId}
+                                                            jiraProject={jiraProject}
+                                                            jiraPat={jiraPat}
+                                                            onDeleteNode={handleDeleteNode}
+                                                        />
+                                                    </div>
+                                                )}
+                                            </Draggable>
+                                        ))}
+                                        {prov.placeholder}
+                                    </div>
+                                )}
+                            </Droppable>
+                        </DragDropContext>
+
+                        <button
+                            className="add-node-btn"
+                            style={{ width: '100%', marginTop: '16px', padding: '8px' }}
+                            onClick={() => handleAdd([], 'feature')}
+                            disabled={isSending}
+                        >
+                            + Добавить фичу
+                        </button>
+                    </main>
+
+                    <footer className="modal-footer">
+                        <button className="button-secondary" onClick={onClose} disabled={isSending}>
+                            Отмена
+                        </button>
+                        <button
+                            className="button-primary"
+                            onClick={handleGenerateXmind}
+                            disabled={isSending || !Object.keys(treeData).length}
+                            style={{ marginRight: '8px' }}
+                        >
+                            Сгенерировать Xmind
+                        </button>
+                        <button className="button-primary" onClick={handleConfirm} disabled={isSending}>
+                            Отправить в Allure
+                        </button>
+                    </footer>
+                </>
+            )}
         </Modal>
     );
+
+
 }

@@ -55,7 +55,7 @@ const DEFAULT_JIRA_INTEGRATION_ID = config.defaultJiraIntegrationId;
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const app = express();
-const PORT = 5001;
+const PORT = 5000;
 const upload = multer({
     limits: {
         fileSize: 50 * 1024 * 1024,
@@ -63,20 +63,20 @@ const upload = multer({
     }
 });
 
-/*
+
 const corsOptions = {
     origin: 'https://test-inspector.abanking.ru',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
 };
-*/
 
-//app.use(cors(corsOptions));
+
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 //app.options('*', cors(corsOptions));
-app.use(cors());
-app.options('*', cors());
+//app.use(cors());
+//app.options('*', cors());
 const limit = pLimit(100);
 
 
