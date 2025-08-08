@@ -344,7 +344,7 @@ ${expected || '<пусто>'}
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-            model: 'deepseek/deepseek-chat-v3-0324:free',
+            model: 'qwen/qwen3-235b-a22b:free',
             messages: [{ role: 'user', content: prompt }]
         })
     });

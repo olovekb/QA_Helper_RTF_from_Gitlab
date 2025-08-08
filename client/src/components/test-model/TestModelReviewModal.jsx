@@ -45,6 +45,16 @@ const CaseIcon = () => (
         <polyline points="10 9 9 9 8 9" />
     </svg>
 );
+
+const CodeIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+        viewBox="0 0 24 24" fill="none" stroke="#d29922"
+        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        {/* < /> */}
+        <polyline points="10 6 6 12 10 18" />
+        <polyline points="14 6 18 12 14 18" />
+    </svg>
+);
 // Иконка перетаскивания (шесть точек)
 const DragHandleIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -56,21 +66,32 @@ const DragHandleIcon = () => (
     </svg>
 );
 
+const debouncePromise = (fn, delay = 300) => {
+    let t;
+    return (...args) =>
+        new Promise((resolve) => {
+            clearTimeout(t);
+            t = setTimeout(async () => resolve(await fn(...args)), delay);
+        });
+};
+
+
 // --- UTILITY FUNCTIONS ---
 const generateId = () => `case_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-const createNewTestCase = (feature, story, scenario = '') => ({
+const createNewTestCase = (feature, story, scenario = '', code = '') => ({
     id: generateId(),
     title: 'Новый тест-кейс',
     feature,
     story,
     scenario,
+    code,
     precondition: '',
     sharedSteps: [],
     steps: [''],
     expected: '',
     tags: [],
-    layer: 'E2E',
+    layer: 'E2E Tests',
     links: [],
     jiraIssue: '',
     priority: 'Medium',
@@ -89,15 +110,22 @@ const buildTreeFromCases = (cases) => {
             priority: c.priority ?? 'Medium',
             version: c.version ?? undefined,
         };
-        const { feature, story, scenario = '' } = testCase;
+        const { feature, story, scenario = '', code = '' } = testCase;
         if (!tree[feature]) tree[feature] = { stories: {}, isExpanded: true };
         if (!tree[feature].stories[story])
             tree[feature].stories[story] = { scenarios: {}, cases: [], isExpanded: true };
         if (scenario && !tree[feature].stories[story].scenarios[scenario]) {
-            tree[feature].stories[story].scenarios[scenario] = { cases: [], isExpanded: true };
+            tree[feature].stories[story].scenarios[scenario] = { codes: {}, cases: [], isExpanded: true };
         }
         if (scenario) {
-            tree[feature].stories[story].scenarios[scenario].cases.push(testCase);
+            if (code) {
+                if (!tree[feature].stories[story].scenarios[scenario].codes[code]) {
+                    tree[feature].stories[story].scenarios[scenario].codes[code] = { cases: [], isExpanded: true };
+                }
+                tree[feature].stories[story].scenarios[scenario].codes[code].cases.push(testCase);
+            } else {
+                tree[feature].stories[story].scenarios[scenario].cases.push(testCase);
+            }
         } else {
             tree[feature].stories[story].cases.push(testCase);
         }
@@ -118,17 +146,27 @@ const flattenTreeToCases = (tree) => {
                     feature,
                     story,
                     scenario: '',
+                    code: c.code || '',
                     priority: c.priority,
                     version: c.version,
                 };
                 flat.push(base);
             });
 
-            // кейсы с сценарием
+            // кейсы со сценариями
             Object.entries(sData.scenarios).forEach(([scenario, scData]) => {
+                // кейсы прямо под сценарием
                 (scData.cases || []).forEach(c => {
-                    const base = { ...c, feature, story, scenario, priority: c.priority, version: c.version };
+                    const base = { ...c, feature, story, scenario, code: c.code || '', priority: c.priority, version: c.version };
                     flat.push(base);
+                });
+
+                // кейсы под конкретными code-узлами (unit)
+                Object.entries(scData.codes || {}).forEach(([code, codeData]) => {
+                    (codeData.cases || []).forEach(c => {
+                        const base = { ...c, feature, story, scenario, code, priority: c.priority, version: c.version };
+                        flat.push(base);
+                    });
                 });
             });
 
@@ -150,6 +188,28 @@ export function TestCaseCard({
 }) {
     const [isExpanded, setIsExpanded] = useState(false);
     const [sharedOptions, setSharedOptions] = useState([]);
+
+    const PAGE_SIZE = 20;
+
+    const loadSharedStepOptions = React.useMemo(
+        () =>
+            debouncePromise(async (inputValue) => {
+                if (!projectId) return [];
+                const { data } = await axios.get(`${config.serverUrl}/shared-steps`, {
+                    params: {
+                        projectId,
+                        page: 0,
+                        size: PAGE_SIZE,
+                        archived: false,
+                        search: String(inputValue || '').trim(),
+                    },
+                });
+                const items = data?.content || [];
+                return items.map((s) => ({ value: s.id, label: s.name }));
+            }, 300),
+        [projectId]
+    );
+
 
     const handleFieldChange = (field, value) =>
         onUpdate(testCase.id, { ...testCase, [field]: value });
@@ -305,33 +365,7 @@ export function TestCaseCard({
                                         classNamePrefix="select"
                                         cacheOptions
                                         defaultOptions
-                                        loadOptions={(inputValue) =>
-                                            axios
-                                                .get(`${config.serverUrl}/shared-steps`, {
-                                                    params: { projectId, query: inputValue },
-                                                })
-                                                .then((res) =>
-                                                    res.data.content.map((s) => ({
-                                                        value: s.id,
-                                                        label: s.name,
-                                                    }))
-                                                )
-                                        }
-                                        onMenuOpen={() =>
-                                            axios
-                                                .get(`${config.serverUrl}/shared-steps`, {
-                                                    params: { projectId, query: '' },
-                                                })
-                                                .then((res) =>
-                                                    setSharedOptions(
-                                                        res.data.content.map((s) => ({
-                                                            value: s.id,
-                                                            label: s.name,
-                                                        }))
-                                                    )
-                                                )
-                                        }
-                                        options={sharedOptions}
+                                        loadOptions={loadSharedStepOptions}
                                         placeholder="+ Добавить общий шаг…"
                                         onChange={(opt) =>
                                             opt &&
@@ -340,6 +374,7 @@ export function TestCaseCard({
                                                 text: opt.label,
                                             })
                                         }
+                                        noOptionsMessage={() => 'Ничего не найдено'}
                                         styles={{
                                             container: (base) => ({ ...base, marginTop: 4 }),
                                             menuPortal: (base) => ({ ...base, zIndex: 9999 }),
@@ -382,6 +417,8 @@ export function TestCaseCard({
                                         <option value="Integration backend Tests">
                                             Integration backend Tests
                                         </option>
+                                        <option value="Unit frontend Tests">Unit frontend Tests</option>
+                                        <option value="Unit backend Tests">Unit backend Tests</option>
                                     </select>
                                 </div>
                                 <div className="case-field">
@@ -473,22 +510,98 @@ const Node = ({ droppableId, children }) => (
     </Droppable>
 );
 
-const ScenarioNode = ({
+const CodeNode = ({
     name,
     cases,
     path,
     onUpdate,
     onDelete,
-    onToggleExpand,
+    onToggleExpandSelf, // <— новое имя
     isExpanded,
     onAddTestCase,
     projectId,
     jiraProject,
     jiraPat,
     onDeleteNode
+}) => {
+    const hasFE = Array.isArray(cases) && cases.some(c => String(c.layer || '').toLowerCase().includes('frontend'));
+    const hasBE = Array.isArray(cases) && cases.some(c => String(c.layer || '').toLowerCase().includes('backend'));
+
+    return (
+        <div className="tree-node code-node">
+            <div
+                className="node-header code-header"
+                onClick={(e) => { e.stopPropagation(); onToggleExpandSelf(); }} // <— стопим всплытие
+            >
+                <div className="node-icon">{isExpanded ? <ChevronDown /> : <ChevronRight />}</div>
+                <div className="node-icon"><CodeIcon /></div>
+                <span className="node-title">{name}</span>
+
+                <div className="node-badges" onClick={(e) => e.stopPropagation()}>
+                    {hasFE && <span className="badge badge-fe" title="Фронтенд-поведение">FE</span>}
+                    {hasBE && <span className="badge badge-be" title="Бэкенд-поведение">BE</span>}
+                </div>
+
+                <button
+                    className="delete-btn"
+                    onClick={e => {
+                        e.stopPropagation();
+                        if (window.confirm('Удалить code-узел и все кейсы в нём?')) {
+                            onDeleteNode(path, 'code');
+                        }
+                    }}
+                >
+                    ×
+                </button>
+            </div>
+
+            {isExpanded && (
+                <>
+                    <Node droppableId={JSON.stringify(path)}>
+                        {cases.map((c, i) => (
+                            <TestCaseCard
+                                key={c.id}
+                                testCase={c}
+                                index={i}
+                                onUpdate={onUpdate}
+                                onDelete={onDelete}
+                                projectId={projectId}
+                                jiraProject={jiraProject}
+                                jiraPat={jiraPat}
+                            />
+                        ))}
+                    </Node>
+                    <div className="add-buttons">
+                        <button className="add-node-btn" onClick={() => onAddTestCase(path)}>
+                            + Тест-кейс code
+                        </button>
+                    </div>
+                </>
+            )}
+        </div>
+    );
+};
+
+
+
+const ScenarioNode = ({
+    name,
+    cases,
+    scenarioData,
+    path,
+    onUpdate,
+    onDelete,
+    onToggleExpand,
+    isExpanded,
+    onAddTestCase,
+    onAddCode,
+    projectId,
+    jiraProject,
+    jiraPat,
+    onDeleteNode
 }) => (
     <div className="tree-node scenario-node">
-        <div className="node-header" onClick={onToggleExpand}>
+        <div className="node-header" onClick={() => onToggleExpand(path)}>
             <div className="node-icon">{isExpanded ? <ChevronDown /> : <ChevronRight />}</div>
             <div className="node-icon">
                 <ScenarioIcon />
@@ -523,9 +636,31 @@ const ScenarioNode = ({
                     ))}
                 </Node>
 
+                {/* Code-узлы (юниты живут здесь) */}
+                {Object.entries(scenarioData?.codes || {}).map(([codeName, codeData]) => (
+                    <CodeNode
+                        key={codeName}
+                        name={codeName}
+                        cases={codeData.cases}
+                        path={[...path, codeName]}           // [feature, story, scenario, code]
+                        isExpanded={codeData.isExpanded}
+                        onUpdate={onUpdate}
+                        onDelete={onDelete}
+                        onToggleExpandSelf={() => onToggleExpand([...path, codeName])}
+                        onAddTestCase={onAddTestCase}
+                        projectId={projectId}
+                        jiraProject={jiraProject}
+                        jiraPat={jiraPat}
+                        onDeleteNode={onDeleteNode}
+                    />
+                ))}
+
                 <div className="add-buttons">
                     <button className="add-node-btn" onClick={() => onAddTestCase(path)}>
                         + Тест-кейс scenario
+                    </button>
+                    <button className="add-node-btn" onClick={() => onAddCode(path)}>
+                        + Код (unit-узел)
                     </button>
                 </div>
             </>
@@ -542,6 +677,7 @@ const StoryNode = ({
     onAddScenario,
     onToggleExpand,
     onAddTestCase,
+    onAddCode,
     projectId,
     jiraProject,
     jiraPat,
@@ -590,12 +726,14 @@ const StoryNode = ({
                         key={scenarioName}
                         name={scenarioName}
                         cases={scenarioData.cases}
+                        scenarioData={scenarioData}
                         path={[...path, scenarioName]}
                         isExpanded={scenarioData.isExpanded}
                         onUpdate={onUpdate}
                         onDelete={onDelete}
-                        onToggleExpand={() => onToggleExpand([...path, scenarioName])}
+                        onToggleExpand={onToggleExpand}
                         onAddTestCase={onAddTestCase}
+                        onAddCode={onAddCode}
                         projectId={projectId}
                         jiraProject={jiraProject}
                         jiraPat={jiraPat}
@@ -626,6 +764,7 @@ const FeatureNode = ({
     onAddScenario,
     onToggleExpand,
     onAddTestCase,
+    onAddCode,
     projectId,
     jiraProject,
     jiraPat,
@@ -664,6 +803,7 @@ const FeatureNode = ({
                         onDelete={onDelete}
                         onAddScenario={onAddScenario}
                         onAddTestCase={onAddTestCase}
+                        onAddCode={onAddCode}
                         onToggleExpand={onToggleExpand}
                         projectId={projectId}
                         jiraProject={jiraProject}
@@ -707,7 +847,13 @@ export default function TestModelReviewModal({
             )
             .catch(console.error);
     }, [isOpen, projectId, initialCases]);
-
+    const handleCloseWithConfirm = useCallback(() => {
+        if (isGenerating || isSending) return; // не даём закрыть во время процессов
+        if (window.confirm('Вы уверены? Данные не сохранятся')) {
+            setAllureLink(null); // на всякий случай очищаем состояние успеха
+            onClose();
+        }
+    }, [isGenerating, isSending, onClose]);
     const handleUpdateCase = useCallback((caseId, updatedCase) => {
         setTreeData((prevTree) => {
             const newTree = JSON.parse(JSON.stringify(prevTree));
@@ -720,10 +866,19 @@ export default function TestModelReviewModal({
                         return newTree;
                     }
                     for (const sc in storyNode.scenarios) {
+                        // сценарный уровень
                         idx = (storyNode.scenarios[sc].cases || []).findIndex((c) => c.id === caseId);
                         if (idx !== -1) {
                             storyNode.scenarios[sc].cases[idx] = updatedCase;
                             return newTree;
+                        }
+                        // code-уровень
+                        for (const code in (storyNode.scenarios[sc].codes || {})) {
+                            idx = (storyNode.scenarios[sc].codes[code].cases || []).findIndex((c) => c.id === caseId);
+                            if (idx !== -1) {
+                                storyNode.scenarios[sc].codes[code].cases[idx] = updatedCase;
+                                return newTree;
+                            }
                         }
                     }
                 }
@@ -734,7 +889,7 @@ export default function TestModelReviewModal({
     const handleGenerateXmind = async () => {
         setIsGenerating(true);
 
-        const generateId = () => Math.random().toString(36).substr(2, 9);
+        const generateIdLocal = () => Math.random().toString(36).substr(2, 9);
 
         try {
             // --- 1) Сборка иерархии для content.json ---
@@ -742,111 +897,122 @@ export default function TestModelReviewModal({
                 ([featureName, featureData]) => {
                     const storyTopics = Object.entries(featureData.stories).map(
                         ([storyName, storyData]) => {
-                            // объединяем кейсы и сценарии
-                            const casesAndScenarios = [
-                                // простые кейсы
-                                ...storyData.cases.map(caseItem => {
-                                    // определяем маркер по layer
+
+                            // кейсы напрямую под story
+                            const directStoryCases = (storyData.cases || []).map(caseItem => {
+                                const markers = [];
+                                if ((caseItem.layer || '').includes("frontend")) markers.push({ markerId: "flag-green" });
+                                if ((caseItem.layer || '').includes("backend")) markers.push({ markerId: "flag-purple" });
+                                const layer = caseItem.layer || "";
+                                let testType = null;
+                                if (layer === "E2E Tests") testType = "e2e";
+                                else if (layer.startsWith("Integration")) testType = "integration";
+                                else if (layer.startsWith("Unit")) testType = "unit";
+                                return {
+                                    id: caseItem.id || generateIdLocal(),
+                                    class: "topic",
+                                    title: caseItem.title,
+                                    testType,
+                                    markers: markers.length ? markers : undefined,
+                                };
+                            });
+
+                            const scenarioTopics = Object.entries(storyData.scenarios || {}).map(([scenarioName, scenarioData]) => {
+                                // 1) дети-сценарии (e2e/integration)
+                                const scenarioChildren = (scenarioData.cases || []).map(caseItem => {
                                     const markers = [];
-                                    if (caseItem.layer.includes("frontend")) markers.push({ markerId: "flag-green" });
-                                    if (caseItem.layer.includes("backend")) markers.push({ markerId: "flag-purple" });
+                                    if ((caseItem.layer || '').includes("frontend")) markers.push({ markerId: "flag-green" });
+                                    if ((caseItem.layer || '').includes("backend")) markers.push({ markerId: "flag-purple" });
+                                    const layer = caseItem.layer || "";
+                                    let testType = null;
+                                    if (layer === "E2E Tests") testType = "e2e";
+                                    else if (layer.startsWith("Integration")) testType = "integration";
+                                    else if (layer.startsWith("Unit")) testType = "unit";
                                     return {
-                                        id: caseItem.id || generateId(),
+                                        id: caseItem.id || generateIdLocal(),
                                         class: "topic",
                                         title: caseItem.title,
-                                        // для границ
-                                        testType:
-                                            caseItem.layer === "E2E Tests"
-                                                ? "e2e"
-                                                : caseItem.layer.startsWith("Integration")
-                                                    ? "integration"
-                                                    : null,
+                                        testType,
                                         markers: markers.length ? markers : undefined,
                                     };
-                                }),
-                                // сценарии
-                                ...Object.entries(storyData.scenarios).map(
-                                    ([scenarioName, scenarioData]) => {
-                                        // собираем дочерние кейсы
-                                        const childrenArray = scenarioData.cases.map(caseItem => {
-                                            const markers = [];
-                                            if (caseItem.layer.includes("frontend")) markers.push({ markerId: "flag-green" });
-                                            if (caseItem.layer.includes("backend")) markers.push({ markerId: "flag-purple" });
-                                            return {
-                                                id: caseItem.id || generateId(),
-                                                class: "topic",
-                                                title: caseItem.title,
-                                                testType:
-                                                    caseItem.layer === "E2E Tests"
-                                                        ? "e2e"
-                                                        : caseItem.layer.startsWith("Integration")
-                                                            ? "integration"
-                                                            : null,
-                                                markers: markers.length ? markers : undefined,
-                                            };
-                                        });
+                                });
 
-                                        // вычисляем границы внутри сценария
-                                        const intIdxs = [];
-                                        const e2eIdxs = [];
-                                        childrenArray.forEach((it, idx) => {
-                                            if (it.testType === "integration") intIdxs.push(idx);
-                                            if (it.testType === "e2e") e2eIdxs.push(idx);
-                                        });
-                                        const boundaries = [];
-                                        if (intIdxs.length) {
-                                            boundaries.push({
-                                                id: generateId(),
-                                                range: `(${intIdxs[0]},${intIdxs[intIdxs.length - 1]})`,
-                                                title: "Интеграционные тесты",
-                                            });
-                                        }
-                                        if (e2eIdxs.length) {
-                                            boundaries.push({
-                                                id: generateId(),
-                                                range: `(${e2eIdxs[0]},${e2eIdxs[e2eIdxs.length - 1]})`,
-                                                title: "E2E тесты",
-                                            });
-                                        }
-
+                                // 2) code-узлы с unit
+                                const codeTopics = Object.entries(scenarioData.codes || {}).map(([codeName, codeData]) => {
+                                    const unitChildren = (codeData.cases || []).map(caseItem => {
+                                        const markers = [];
+                                        if ((caseItem.layer || '').toLowerCase().includes("frontend")) markers.push({ markerId: "flag-green" });
+                                        if ((caseItem.layer || '').toLowerCase().includes("backend")) markers.push({ markerId: "flag-purple" });
                                         return {
-                                            id: generateId(),
+                                            id: caseItem.id || generateIdLocal(),
                                             class: "topic",
-                                            title: scenarioName,
-                                            branch: "folded",
-                                            markers: [{ markerId: "people-blue" }],
-                                            children: { attached: childrenArray },
-                                            boundaries: boundaries.length ? boundaries : undefined,
+                                            title: caseItem.title,
+                                            testType: "unit",
+                                            markers: markers.length ? markers : undefined,
                                         };
-                                    }
-                                ),
-                            ];
+                                    });
 
-                            // общие границы для story
-                            const intAll = [];
-                            const e2eAll = [];
+                                    // ← НОВОЕ: FE/BE маркеры у самого code-узла
+                                    const hasFE = (codeData.cases || []).some(c => (c.layer || '').toLowerCase().includes('frontend'));
+                                    const hasBE = (codeData.cases || []).some(c => (c.layer || '').toLowerCase().includes('backend'));
+                                    const codeMarkers = [];
+                                    if (hasFE) codeMarkers.push({ markerId: "flag-green" });
+                                    if (hasBE) codeMarkers.push({ markerId: "flag-purple" });
+
+                                    const unitIdxs = unitChildren.map((_, idx) => idx);
+                                    const boundaries = unitIdxs.length
+                                        ? [{ id: generateIdLocal(), range: `(${unitIdxs[0]},${unitIdxs[unitIdxs.length - 1]})`, title: "Unit тесты" }]
+                                        : undefined;
+
+                                    return {
+                                        id: generateIdLocal(),
+                                        class: "topic",
+                                        title: codeName,
+                                        branch: "folded",
+                                        children: { attached: unitChildren },
+                                        boundaries,
+                                        markers: codeMarkers.length ? codeMarkers : undefined, // ← НОВОЕ
+                                    };
+                                });
+
+
+                                const childrenArray = [...scenarioChildren, ...codeTopics];
+
+                                // Границы по E2E/Integration среди прямых детей сценария
+                                const intIdxs = [], e2eIdxs = [];
+                                childrenArray.forEach((it, idx) => {
+                                    if (it.testType === "integration") intIdxs.push(idx);
+                                    if (it.testType === "e2e") e2eIdxs.push(idx);
+                                });
+                                const boundaries = [];
+                                if (intIdxs.length) boundaries.push({ id: generateIdLocal(), range: `(${intIdxs[0]},${intIdxs[intIdxs.length - 1]})`, title: "Интеграционные тесты" });
+                                if (e2eIdxs.length) boundaries.push({ id: generateIdLocal(), range: `(${e2eIdxs[0]},${e2eIdxs[e2eIdxs.length - 1]})`, title: "E2E тесты" });
+
+                                return {
+                                    id: generateIdLocal(),
+                                    class: "topic",
+                                    title: scenarioName,
+                                    branch: "folded",
+                                    markers: [{ markerId: "people-blue" }],
+                                    children: { attached: childrenArray },
+                                    boundaries: boundaries.length ? boundaries : undefined,
+                                };
+                            });
+
+                            const casesAndScenarios = [...directStoryCases, ...scenarioTopics];
+
+                            // story-level границы (для прямых детей story)
+                            const intAll = []; const e2eAll = [];
                             casesAndScenarios.forEach((item, idx) => {
                                 if (item.testType === "integration") intAll.push(idx);
                                 if (item.testType === "e2e") e2eAll.push(idx);
                             });
                             const storyBoundaries = [];
-                            if (intAll.length) {
-                                storyBoundaries.push({
-                                    id: generateId(),
-                                    range: `(${intAll[0]},${intAll[intAll.length - 1]})`,
-                                    title: "Интеграционные тесты",
-                                });
-                            }
-                            if (e2eAll.length) {
-                                storyBoundaries.push({
-                                    id: generateId(),
-                                    range: `(${e2eAll[0]},${e2eAll[e2eAll.length - 1]})`,
-                                    title: "E2E тесты",
-                                });
-                            }
+                            if (intAll.length) storyBoundaries.push({ id: generateIdLocal(), range: `(${intAll[0]},${intAll[intAll.length - 1]})`, title: "Интеграционные тесты" });
+                            if (e2eAll.length) storyBoundaries.push({ id: generateIdLocal(), range: `(${e2eAll[0]},${e2eAll[e2eAll.length - 1]})`, title: "E2E тесты" });
 
                             return {
-                                id: generateId(),
+                                id: generateIdLocal(),
                                 class: "topic",
                                 title: storyName,
                                 branch: "folded",
@@ -857,7 +1023,7 @@ export default function TestModelReviewModal({
                     );
 
                     return {
-                        id: generateId(),
+                        id: generateIdLocal(),
                         class: "topic",
                         title: featureName,
                         branch: "folded",
@@ -869,48 +1035,15 @@ export default function TestModelReviewModal({
             // --- 2) Формирование content.json ---
             const contentJson = [
                 {
-                    id: generateId(),
+                    id: generateIdLocal(),
                     class: "sheet",
                     title: "Тест-модель",
                     rootTopic: {
-                        id: generateId(),
+                        id: generateIdLocal(),
                         class: "topic",
                         title: jiraProject,
                         structureClass: "org.xmind.ui.timeline.horizontal",
-                        children: {
-                            attached: [
-                                {
-                                    id: generateId(),
-                                    class: "topic",
-                                    title: "Условные обозначения",
-                                    children: {
-                                        attached: [
-                                            {
-                                                id: generateId(),
-                                                title: "Покрыт тестами",
-                                                markers: [{ markerId: "task-done" }],
-                                            },
-                                            {
-                                                id: generateId(),
-                                                title: "Фронтенд-поведение",
-                                                markers: [{ markerId: "flag-green" }],
-                                            },
-                                            {
-                                                id: generateId(),
-                                                title: "Бекенд-поведение",
-                                                markers: [{ markerId: "flag-purple" }],
-                                            },
-                                            {
-                                                id: generateId(),
-                                                title: "Пользовательские сценарии",
-                                                markers: [{ markerId: "people-blue" }],
-                                            },
-                                        ],
-                                    },
-                                },
-                                ...featureTopics,
-                            ],
-                        },
+                        children: { attached: [...featureTopics] }
                     },
                     theme: {
                         map: {
@@ -975,10 +1108,6 @@ export default function TestModelReviewModal({
         }
     };
 
-
-
-
-
     const handleDeleteCase = useCallback((caseId) => {
         setTreeData((prevTree) => {
             const newTree = JSON.parse(JSON.stringify(prevTree));
@@ -990,6 +1119,11 @@ export default function TestModelReviewModal({
                         storyNode.scenarios[sc].cases = (
                             storyNode.scenarios[sc].cases || []
                         ).filter((c) => c.id !== caseId);
+                        for (const code in (storyNode.scenarios[sc].codes || {})) {
+                            storyNode.scenarios[sc].codes[code].cases = (
+                                storyNode.scenarios[sc].codes[code].cases || []
+                            ).filter((c) => c.id !== caseId);
+                        }
                     }
                 }
             return newTree;
@@ -1011,22 +1145,28 @@ export default function TestModelReviewModal({
             });
             return;
         }
-        const srcPath = JSON.parse(source.droppableId);
+        const srcPath = JSON.parse(source.droppableId);      // [f,s], [f,s,sc], [f,s,sc,code]
         const dstPath = JSON.parse(destination.droppableId);
+
+        const getCasesArrayByPath = (tree, path) => {
+            const [f, s, sc, code] = path;
+            if (path.length === 2) return tree[f].stories[s].cases;
+            if (path.length === 3) return tree[f].stories[s].scenarios[sc].cases;
+            if (path.length === 4) return tree[f].stories[s].scenarios[sc].codes[code].cases;
+            throw new Error('Unsupported path: ' + JSON.stringify(path));
+        };
+
         setTreeData((prevTree) => {
             const newTree = JSON.parse(JSON.stringify(prevTree));
-            const [f, s, sc] = srcPath;
-            let srcArr = sc
-                ? newTree[f].stories[s].scenarios[sc].cases
-                : newTree[f].stories[s].cases;
+            const srcArr = getCasesArrayByPath(newTree, srcPath);
             const [moved] = srcArr.splice(source.index, 1);
+
             moved.feature = dstPath[0];
             moved.story = dstPath[1];
             moved.scenario = dstPath[2] || '';
-            const [df, ds, dsc] = dstPath;
-            let dstArr = dsc
-                ? newTree[df].stories[ds].scenarios[dsc].cases
-                : newTree[df].stories[ds].cases;
+            moved.code = dstPath[3] || '';
+
+            const dstArr = getCasesArrayByPath(newTree, dstPath);
             dstArr.splice(destination.index, 0, moved);
             return newTree;
         });
@@ -1035,11 +1175,16 @@ export default function TestModelReviewModal({
     const handleAdd = (path, type) => {
         setTreeData((prevTree) => {
             const newTree = JSON.parse(JSON.stringify(prevTree));
-            const [f, s] = path;
+            const [f, s, sc, code] = path;
             if (type === 'case') {
-                const nc = createNewTestCase(f, s, path[2] || '');
-                if (path.length === 3) newTree[f].stories[s].scenarios[path[2]].cases.push(nc);
-                else newTree[f].stories[s].cases.push(nc);
+                const nc = createNewTestCase(f, s, path[2] || '', path[3] || '');
+                if (path.length === 4) {
+                    newTree[f].stories[s].scenarios[sc].codes[code].cases.push(nc);
+                } else if (path.length === 3) {
+                    newTree[f].stories[s].scenarios[sc].cases.push(nc);
+                } else {
+                    newTree[f].stories[s].cases.push(nc);
+                }
             } else {
                 const name = prompt(`Введите название (${type}):`);
                 if (!name) return prevTree;
@@ -1047,7 +1192,9 @@ export default function TestModelReviewModal({
                 if (type === 'story' && !newTree[f].stories[name])
                     newTree[f].stories[name] = { scenarios: {}, cases: [], isExpanded: true };
                 if (type === 'scenario' && !newTree[f].stories[s].scenarios[name])
-                    newTree[f].stories[s].scenarios[name] = { cases: [], isExpanded: true };
+                    newTree[f].stories[s].scenarios[name] = { codes: {}, cases: [], isExpanded: true };
+                if (type === 'code' && !newTree[f].stories[s].scenarios[sc].codes[name])
+                    newTree[f].stories[s].scenarios[sc].codes[name] = { cases: [], isExpanded: true };
             }
             return newTree;
         });
@@ -1056,26 +1203,29 @@ export default function TestModelReviewModal({
     const handleToggleExpand = (path) => {
         setTreeData((prevTree) => {
             const newTree = JSON.parse(JSON.stringify(prevTree));
-            const [f, s, sc] = path;
+            const [f, s, sc, code] = path;
             let node = newTree[f];
             if (s && !sc) node = node.stories[s];
-            if (sc) node = node.stories[s].scenarios[sc];
+            if (sc && !code) node = node.stories[s].scenarios[sc];
+            if (code) node = node.stories[s].scenarios[sc].codes[code];
             node.isExpanded = !node.isExpanded;
             return newTree;
         });
     };
 
-    // Удаление фичи/истории/сценария по пути и типу
+    // Удаление фичи/истории/сценария/кода по пути и типу
     const handleDeleteNode = useCallback((path, type) => {
         setTreeData(prev => {
             const newTree = JSON.parse(JSON.stringify(prev));
-            const [f, s, sc] = path;
+            const [f, s, sc, code] = path;
             if (type === 'feature') {
                 delete newTree[f];
             } else if (type === 'story') {
                 delete newTree[f].stories[s];
             } else if (type === 'scenario') {
                 delete newTree[f].stories[s].scenarios[sc];
+            } else if (type === 'code') {
+                delete newTree[f].stories[s].scenarios[sc].codes[code];
             }
             return newTree;
         });
@@ -1083,7 +1233,30 @@ export default function TestModelReviewModal({
 
 
     const handleConfirm = async () => {
-        const cases = flattenTreeToCases(treeData);
+        const rawCases = flattenTreeToCases(treeData);
+        const cases = rawCases.map(c => ({
+            feature: c.feature,
+            story: c.story,
+            scenario: c.scenario || undefined,
+            codeNode: c.code || undefined,              // <— не «code», чтобы не конфликтовало
+            title: (c.title || '').trim(),
+            precondition: (c.precondition || '').trim(),
+            steps: (c.steps || []).map(s => typeof s === 'string' ? s : { sharedStepId: s.sharedStepId }),
+            expected: (c.expected || '').trim(),
+            tags: (c.tags || []).filter(Boolean),
+            layer: c.layer,
+            priority: c.priority || 'Medium',
+            version: c.version || 'stable',
+            links: (c.links || []).filter(l => l?.text || l?.url),
+            jiraIssue: c.jiraIssueOption?.value || c.jiraIssue || undefined,
+            // Если хочешь передавать уже в формате кастомок:
+            customFields: [
+                { name: 'Scenario', value: c.scenario || '' },
+                { name: 'Code', value: c.code || '' },
+                { name: 'Version', value: c.version || 'stable' },
+                { name: 'Priority', value: c.priority || 'Medium' },
+            ]
+        }));
         setIsSending(true);
 
         try {
@@ -1115,7 +1288,7 @@ export default function TestModelReviewModal({
     return (
         <Modal
             isOpen={isOpen}
-            onRequestClose={onClose}
+            onRequestClose={handleCloseWithConfirm}
             overlayClassName="modal-overlay"
             className="modal-content"
             appElement={typeof window !== 'undefined' ? document.getElementById('root') : undefined}
@@ -1238,7 +1411,24 @@ export default function TestModelReviewModal({
 .array-item.shared-step-item textarea {
   display: none;
 }
-  
+
+/* Чуть сильнее смещаем code-узел вправо, чтобы визуально отличался от сценария */
+.code-node{ margin-left: 12px; }
+
+/* Цвет заголовка code-узла (у тебя уже был, на всякий случай оставляю) */
+.code-node .node-title{ color:#d29922; }
+
+/* Бейджи FE/BE (если ещё не добавлял из прошлой правки) */
+.node-badges{ display:flex; gap:6px; margin-left:8px; }
+.badge{ font-size:10px; padding:2px 6px; border-radius:999px; line-height:1; border:1px solid transparent; }
+.badge-fe{ background:#3fb950; color:#0b1117; border-color:#2ea043; }
+.badge-be{ background:#a371f7; color:#0b1117; border-color:#8957e5; }
+/* Чтобы хедер кода не перекрывался ничем и клик не «залипал» */
+.code-header { position: relative; z-index: 2; }
+.scenario-node > .node-header { position: relative; z-index: 1; }
+
+/* Чуть правее code-узел, чтобы визуально отличался */
+.code-node { margin-left: 12px; }
     `}</style>
 
             {/* Loader поверх всего */}
@@ -1260,7 +1450,7 @@ export default function TestModelReviewModal({
                         <h2>Успешно отправлено</h2>
                         <button
                             className="close-btn"
-                            onClick={() => { setAllureLink(null); onClose(); }}
+                            onClick={handleCloseWithConfirm}
                         >×</button>
                     </div>
                     <div className="modal-body" style={{ textAlign: 'center' }}>
@@ -1272,18 +1462,18 @@ export default function TestModelReviewModal({
                     <div className="modal-footer">
                         <button
                             className="button-primary"
-                            onClick={() => { setAllureLink(null); onClose(); }}
+                            onClick={handleCloseWithConfirm}
                         >
                             Закрыть
                         </button>
                     </div>
                 </>
             ) : (
-                // --- ваш обычный экран ревью/редактирования ---
+                // --- экран ревью/редактирования ---
                 <>
                     <div className="modal-header">
                         <h2>Ревью и редактирование тест-кейсов</h2>
-                        <button className="close-btn" onClick={onClose} disabled={isSending}>×</button>
+                        <button className="close-btn" onClick={handleCloseWithConfirm} disabled={isSending}>×</button>
                     </div>
 
                     <main className="modal-body">
@@ -1305,6 +1495,7 @@ export default function TestModelReviewModal({
                                                             onAddScenario={(path) => handleAdd(path, 'scenario')}
                                                             onToggleExpand={handleToggleExpand}
                                                             onAddTestCase={(path) => handleAdd(path, 'case')}
+                                                            onAddCode={(path) => handleAdd(path, 'code')}
                                                             projectId={projectId}
                                                             jiraProject={jiraProject}
                                                             jiraPat={jiraPat}
@@ -1331,7 +1522,7 @@ export default function TestModelReviewModal({
                     </main>
 
                     <footer className="modal-footer">
-                        <button className="button-secondary" onClick={onClose} disabled={isSending}>
+                        <button className="button-secondary" onClick={handleCloseWithConfirm} disabled={isSending}>
                             Отмена
                         </button>
                         <button

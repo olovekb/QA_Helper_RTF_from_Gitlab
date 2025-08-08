@@ -85,7 +85,7 @@ export async function analyzeRequirementWithAI(requirementText, context = '—',
     'Content-Type': 'application/json'
   };
   const body = JSON.stringify({
-    model: 'deepseek/deepseek-chat-v3-0324:free',
+    model: 'qwen/qwen3-235b-a22b:free',
     max_tokens: 5000,
     temperature: 0.0,
     messages: [{ role: 'user', content: prompt }]

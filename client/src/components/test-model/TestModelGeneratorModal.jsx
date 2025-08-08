@@ -551,6 +551,13 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
         setIsResizing(false);
     }, []);
 
+    const handleCloseWithConfirm = () => {
+        if (isGeneratingModel || isGeneratingCases) return;
+        if (window.confirm('Вы уверены? Данные не сохранятся')) {
+            onClose();
+        }
+    };
+
     const handleMouseMove = useCallback((e) => {
         if (isResizing && editorPaneRef.current) {
             const newWidth = e.clientX - editorPaneRef.current.getBoundingClientRect().left;
@@ -599,12 +606,14 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
                 newItem.scenarios = buildTreeWithIds(item.scenarios, 3);
             }
             if (depth === 3) {
-                // для AI-сценариев: всегда делаем массив codes (пустой, если ничего нет)
-                newItem.codes = Array.isArray(item.codes)
-                    ? buildTreeWithIds(item.codes, 4)
-                    : [];
+                const raw = Array.isArray(item.codes)
+                    ? item.codes
+                    : Array.isArray(item.code)
+                        ? item.code
+                        : [];
+                newItem.codes = buildTreeWithIds(raw, 4);
+                if ('code' in newItem) delete newItem.code;
             }
-            // на depth=4 у нас уже “код” — глубже не углубляемся
 
             return newItem;
         });
@@ -633,8 +642,12 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
             const node = nodes[i];
             if (node.id === head) {
                 if (tail.length === 0) return { node, parent, index: i, siblings: nodes };
-                // Developer Comment: This finds the children array regardless of its name ('stories', 'scenarios', etc.)
-                const childrenKey = Object.keys(node).find(k => Array.isArray(node[k]));
+
+                const childrenKey =
+                    Array.isArray(node.stories) ? 'stories' :
+                        Array.isArray(node.scenarios) ? 'scenarios' :
+                            Array.isArray(node.codes) ? 'codes' :
+                                null;
                 if (childrenKey) return findNodeAndParent(node[childrenKey], tail, node);
             }
         }
@@ -797,7 +810,7 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
     // Show a simple loading state until initial data is processed
     if (isLoading && isOpen) {
         return (
-            <Modal isOpen={true} onRequestClose={onClose} overlayClassName="modal-overlay" className="modal-content">
+            <Modal isOpen={true} onRequestClose={handleCloseWithConfirm} overlayClassName="modal-overlay" className="modal-content">
                 <LoaderOverlay text="Загрузка редактора..." />
             </Modal>
         );
@@ -807,7 +820,7 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
     const loaderText = isGeneratingModel ? "Генерация тестовой модели..." : "Генерация тест-кейсов...";
 
     return (
-        <Modal isOpen={isOpen} onRequestClose={isBusy ? () => { } : onClose} overlayClassName="modal-overlay" className="modal-content">
+        <Modal isOpen={isOpen} onRequestClose={isBusy ? () => { } : handleCloseWithConfirm} overlayClassName="modal-overlay" className="modal-content">
             <StyleInjector />
             {isBusy && <LoaderOverlay text={loaderText} />}
 
@@ -823,7 +836,7 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
                         Сгенерировать модель по требованиям
                     </button>
                 </div>
-                <button className="close-btn" onClick={onClose} disabled={isBusy}>×</button>
+                <button className="close-btn" onClick={handleCloseWithConfirm} disabled={isBusy}>×</button>
             </div>
 
             <div className="modal-main-split">
@@ -846,7 +859,7 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
                                 </button>
                             </div>
                             <div className="modal-footer">
-                                <button type="button" className="button-base button-secondary" onClick={onClose} disabled={isBusy}>Отмена</button>
+                                <button type="button" className="button-base button-secondary" onClick={handleCloseWithConfirm} disabled={isBusy}>Отмена</button>
                                 <button type="submit" className="button-base button-primary" disabled={isBusy || treeData.length === 0}>
                                     Сгенерировать тест-кейсы
                                 </button>

@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import JSON5 from 'json5';
 import {
     getAllureDefectById,
     getSharedStepsList,
@@ -57,10 +58,8 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const app = express();
 const PORT = 5000;
 const upload = multer({
-    limits: {
-        fileSize: 50 * 1024 * 1024,
-        files: 20
-    }
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 50 * 1024 * 1024, files: 20 }
 });
 
 
@@ -73,11 +72,34 @@ const corsOptions = {
 
 
 app.use(cors(corsOptions));
+
 app.use(express.json({ limit: '50mb' }));
-//app.options('*', cors(corsOptions));
+app.options('*', cors(corsOptions));
 //app.use(cors());
 //app.options('*', cors());
 const limit = pLimit(100);
+
+
+function normalizeModelStructure(model) {
+    const walk = (arr, depth = 1) => (arr || []).map(item => {
+        const out = { ...item };
+        if (depth === 1 && Array.isArray(out.stories)) {
+            out.stories = walk(out.stories, 2);
+        }
+        if (depth === 2 && Array.isArray(out.scenarios)) {
+            out.scenarios = walk(out.scenarios, 3);
+        }
+        if (depth === 3) {
+            const raw = Array.isArray(out.codes) ? out.codes
+                : Array.isArray(out.code) ? out.code
+                    : [];
+            out.codes = walk(raw, 4);
+            if ('code' in out) delete out.code;
+        }
+        return out;
+    });
+    return Array.isArray(model) ? walk(model, 1) : walk([model], 1);
+}
 
 
 async function fetchJiraMeta(pat, projectKey) {
@@ -152,6 +174,93 @@ function detectPlatforms(summary, env) {
 
     // 3) Иначе — Desktop по умолчанию
     return ['D'];
+}
+
+function buildFillJiraFieldsTool({ sevOptions, platOptions, sympOptions }) {
+    const sevEnum = sevOptions.map(o => o.name);
+    const platEnum = platOptions.map(o => o.name);
+    const sympEnum = sympOptions.map(o => o.name);
+
+    return {
+        type: "function",
+        function: {
+            name: "fill_jira_fields",
+            description: "Верни подобранные значения и тексты для баг-репорта",
+            parameters: {
+                type: "object",
+                properties: {
+                    actual: { type: "string", description: "Фактический результат (лаконично, по сути)" },
+                    expected: { type: "string", description: "Ожидаемый результат (лаконично, по сути)" },
+                    severity: { type: "string", enum: sevEnum },
+                    platform: { type: "array", items: { type: "string", enum: platEnum } },
+                    symptom: { type: "array", items: { type: "string", enum: sympEnum } }
+                },
+                required: ["actual", "expected", "severity", "platform", "symptom"],
+                additionalProperties: false
+            }
+        }
+    };
+}
+
+
+
+function extractJsonArray(text) {
+    // 1) fenced ```json``` — самый честный путь
+    const fence = text.match(/```json\s*([\s\S]*?)```/i);
+    if (fence) return fence[1].trim();
+
+    // 2) Собираем все кандидаты «сбалансированных» массивов
+    const candidates = [];
+    for (let i = 0; i < text.length; i++) {
+        if (text[i] !== '[') continue;
+        let depth = 0, inString = false, esc = false;
+        for (let j = i; j < text.length; j++) {
+            const ch = text[j];
+            if (inString) {
+                if (esc) { esc = false; continue; }
+                if (ch === '\\') { esc = true; continue; }
+                if (ch === '"') { inString = false; continue; }
+            } else {
+                if (ch === '"') { inString = true; continue; }
+                if (ch === '[') depth++;
+                if (ch === ']') {
+                    depth--;
+                    if (depth === 0) {
+                        const chunk = text.slice(i, j + 1);
+                        candidates.push(chunk);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3) Сортируем по «похожести на наши кейсы»
+    const score = s =>
+        (s.length > 500 ? 3 : 0) +
+        (s.includes('{') ? 3 : 0) +
+        (/"feature"\s*:/.test(s) ? 2 : 0) +
+        (/"story"\s*:/.test(s) ? 1 : 0);
+
+    candidates.sort((a, b) => score(b) - score(a));
+    return candidates[0] || null;
+}
+
+function cleanupJsonText(s) {
+    // Подчистить наиболее частые артефакты
+    let t = s;
+
+    // убрать висячие запятые перед } или ]
+    t = t.replace(/,\s*(?=[}\]])/g, '');
+
+    // ключи без кавычек → в кавычки
+    t = t.replace(/([{,]\s*)([A-Za-z0-9_]+)\s*:/g, '$1"$2":');
+
+    // убрать markdown-комменты // и строки-«пули» в начале строки
+    t = t.replace(/^\s*\/\/.*$/gm, '');
+    t = t.replace(/^\s*-\s+.*$/gm, '');
+
+    return t.trim();
 }
 
 
@@ -892,138 +1001,154 @@ app.post('/api/jira/ai-fill-fields', async (req, res) => {
         if (!pat || !projectKey) {
             return res.status(400).json({ error: 'pat и projectKey обязательны' });
         }
-
-        // 1) Справочники из Jira
+        const stepsStr = Array.isArray(steps) ? steps.join('\n- ') : (steps ?? '');
+        // 1) Метаданные JIRA
         const options = await fetchJiraMeta(pat, projectKey);
         const { Severity: sevOptions, Platform: platOptions, Symptom: sympOptions } = options;
 
-        // 2) Построим карту кода→ID
+        // 2) Хелперы маппинга → id
+        const nameToId = (arr, name) =>
+            (arr || []).find(o => o.name.toLowerCase() === String(name || '').toLowerCase())?.id || null;
+        const namesToIds = (arr, names) => {
+            const set = new Set((names || []).map(n => String(n || '').toLowerCase()));
+            return (arr || [])
+                .filter(o => set.has(String(o.name).toLowerCase()))
+                .map(o => o.id);
+        };
+
+        // 3) Базовый эвристический fallback платформ (как у тебя было)
         const platMap = buildPlatformMap(platOptions);
-
-        // 3) Определим коды окружения
-        const codes = detectPlatforms(summary, env);
-
-        // 4) Откорректируем «M» по env: если только мобильная и нет других кодов
-        let platformIds = [];
-        if (codes.length === 1 && codes[0] === 'M') {
+        const detectedCodes = detectPlatforms(summary, env);
+        let detectedPlatformIds = [];
+        if (detectedCodes.length === 1 && detectedCodes[0] === 'M') {
             const txt = (env || '').toLowerCase();
-            // Ищем в platOptions именно «Native-Android» или «Native-IOS»
+            let opt = null;
             if (txt.includes('android')) {
-                const opt = platOptions.find(o => o.name.toLowerCase().includes('native-android'));
-                if (opt) platformIds = [opt.id];
+                opt = platOptions.find(o => o.name.toLowerCase().includes('native-android'));
             } else if (txt.includes('ios')) {
-                const opt = platOptions.find(o => o.name.toLowerCase().includes('native-ios'));
-                if (opt) platformIds = [opt.id];
+                opt = platOptions.find(o => o.name.toLowerCase().includes('native-ios'));
             }
-            // По умолчанию — Android
-            if (platformIds.length === 0) {
-                const opt = platOptions.find(o => o.name.toLowerCase().includes('native-android'));
-                if (opt) platformIds = [opt.id];
+            if (!opt) {
+                opt = platOptions.find(o => o.name.toLowerCase().includes('native-android'));
             }
+            if (opt) detectedPlatformIds = [opt.id];
         } else {
-            // Обычное кодовое мапирование
-            platformIds = codes.map(c => platMap[c]).filter(Boolean);
+            detectedPlatformIds = detectedCodes.map(c => platMap[c]).filter(Boolean);
         }
 
+        // 4) Промпт
         const prompt = `
-Ты — эксперт по баг‑репортам. Твоя задача — на основании переданных полей выбрать наиболее подходящие значения severity, platform и symptom, а также сгенерировать actual и expected результаты.
+Ты — эксперт по баг-репортам. На основе входных данных выбери severity, platform и symptom строго из переданных списков (ничего своего не выдумывай), а также сгенерируй короткие, точные actual/expected.
 
-**Документация по классификации Severity (тип задачи: Ошибка кода):**
-Серьезность дефекта указывается один раз при заведении задачи и потом может менять только Lead of QA.  
-- **Критическая (critical)**  
-  Массовая блокировка ключевого функционала, потеря данных, утечка конфиденциальной информации.  
-  Примеры:
-  - Потеря паспортных данных клиента при подписании.
-  - Не работает авторизация клиента.
-  - Не проходит оплата на экране эквайринга.
-- **Высокая (major)**  
-  Ощутимые неудобства многим пользователям.  
-  Примеры:
-  - Перезапуск приложения при типичных сценариях.
-  - Разлогин каждые 5 минут.
-- **Средняя (medium)**  
-  Слабое влияние на работу, есть обходные пути.  
-  Примеры:
-  - Диалоговое окно не закрывается автоматически.
-  - Перепутаны направления сортировки.
-- **Низкая (minor)**  
-  Редко обнаруживается, не влияет на основные сценарии.  
-  Примеры:
-  - Опечатка в глубоко вложенном меню.
-  - Неточно отображается время копирования.
+Критерии:
+- severity: оцени реальное влияние (см. справку ниже), выбирай один вариант.
+- platform/symptom: выбери 1..N из справочника, если применимо.
+- actual/expected: лаконично, без воды, по сути — 1–3 предложения.
 
-**Документация по классификации Symptom:**
-Позволяет классифицировать дефекты по их проявлению (black/grey box) и управлять приоритетом.  
-Типы симптомов:
-- **Вёрстка** — расхождение интерфейса с макетами.
-- **Повреждение/потеря данных** — дефект искажает или уничтожает данные.
-- **Проблема инсталляции** — не собирается сборка или стенд.
-- **Нереализованная функциональность** — часть функционала не реализована.
-- **Краш приложения** — полная остановка или блокировка функционала.
-- **Расхождение с требованиями** — поведение не по спецификации.
-- **Ошибка локализации/в тексте** — орфография, пунктуация, перевод.
-- **Некорректное/неожиданное поведение** — отклонение от неявных требований.
-- **Сбой под нагрузкой** — HTTP‑ошибки, деградация SLA.
-- **Безопасность** — уязвимости, XSS, SQL‑инъекции и т.п.
+Справка по Severity:
+- Критическая — блокировка ключевого функционала, потеря/утечка данных.
+- Высокая — ощутимые неудобства многим пользователям.
+- Средняя — слабое влияние, есть обходные пути.
+- Низкая — не влияет на основные сценарии.
 
-Верни **чистый JSON** со структурой:
-\`\`\`json
-{
-  "actual": "...",
-  "expected": "...",
-  "severity": "<одно из: ${sevOptions.map(x => x.name).join(', ')}>",
-  "platform": [${platOptions.map(x => `"${x.name}"`).join(', ')}],
-  "symptom": [${sympOptions.map(x => `"${x.name}"`).join(', ')}]
-}
-\`\`\`
+Доступные значения:
+- severity: ${sevOptions.map(x => x.name).join(', ')}
+- platform: ${platOptions.map(x => x.name).join(', ')}
+- symptom: ${sympOptions.map(x => x.name).join(', ')}
 
-Данные для анализа:
-\`\`\`
+Входные данные:
 SUMMARY: ${summary}
 DESCRIPTION: ${description}
-STEPS: ${steps}
+STEPS: ${stepsStr}
 STAND: ${stand}
 ENV: ${env}
-\`\`\`
-        `;
+`.trim();
 
-        // 6) Обращаемся к OpenRouter / OpenAI…
-        const aiJson = await callWithBackoff(OPENROUTER_URL, prompt, config.openRouterAiKey);
+        // 5) Вызов модели с tool-calling
+        const tools = [buildFillJiraFieldsTool({ sevOptions, platOptions, sympOptions })];
+        const ai = await callWithBackoff(
+            OPENROUTER_URL,
+            [
+                { role: 'system', content: 'Ты возвращаешь строго структурированный ответ через function call.' },
+                { role: 'user', content: prompt }
+            ],
+            config.openRouterAiKey,
+            {
+                tools,
+                tool_choice: { type: "function", function: { name: "fill_jira_fields" } },
+                temperature: 0.4,
+                top_p: 0.95
+            }
+        );
 
-        // 7) Парсим JSON из ответа
-        const content = aiJson.choices?.[0]?.message?.content || '';
-        const match = content.match(/\{[\s\S]*\}/);
-        if (!match) throw new Error('AI не вернул JSON');
-        const parsed = JSON.parse(match[0]);
+        // 6) Извлекаем tool args; если нет — фолбэк на текст
+        let args = extractToolArgs(ai, "fill_jira_fields");
+        if (!args) {
+            const content = ai.choices?.[0]?.message?.content || '';
+            const m = content.match(/\{[\s\S]*\}/);
+            if (!m) throw new Error('AI не вернул JSON/ToolCall');
+            args = JSON5.parse(m[0]);
+        }
 
-        // 8) Ищем ID для severity и symptom
-        const severityId = sevOptions.find(o =>
-            o.name.toLowerCase() === parsed.severity.toLowerCase()
-        )?.id || null;
+        // 7) Приводим к ID
+        const severityId = nameToId(sevOptions, args.severity);
+        const platformIdsByName = namesToIds(platOptions, args.platform);
+        const symptomIds = namesToIds(sympOptions, args.symptom);
 
-        const symptomIds = sympOptions
-            .filter(o => parsed.symptom.map(s => s.toLowerCase()).includes(o.name.toLowerCase()))
-            .map(o => o.id);
+        // 8) Платформы: если AI не выбрал ничего валидного — берём fallback
+        const platform = platformIdsByName.length ? platformIdsByName : detectedPlatformIds;
 
-        // 9) Возвращаем итог
+        // 9) Ответ
         return res.json({
-            actual: parsed.actual,
-            expected: parsed.expected,
-            severity: severityId,
-            platform: platformIds,
-            symptom: symptomIds
+            actual: args.actual,
+            expected: args.expected,
+            severity: severityId,  // одно значение (id)
+            platform,              // массив id
+            symptom: symptomIds    // массив id
         });
+
     } catch (e) {
         console.error('AI fill error:', e);
         return res.status(500).json({ error: e.message });
     }
 });
 
+
+
+function extractToolArgs(aiResponse, preferredFnName) {
+    const msg = aiResponse?.choices?.[0]?.message || {};
+    const calls = msg.tool_calls || [];
+    if (calls.length) {
+        const call = preferredFnName
+            ? calls.find(c => c.function?.name === preferredFnName) || calls[0]
+            : calls[0];
+        const args = call.function?.arguments || '{}';
+        try { return JSON.parse(args); } catch { return JSON5.parse(args); }
+    }
+    if (msg.function_call?.arguments) {
+        const raw = msg.function_call.arguments;
+        try { return JSON.parse(raw); } catch { return JSON5.parse(raw); }
+    }
+    return null;
+}
+
+
+
 //
 // Универсальная функция для повторных попыток при 5xx,
 // принимающая либо строку prompt, либо массив сообщений {role, content}
 //
-async function callWithBackoff(url, promptOrMessages, apiKey) {
+async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
+    const {
+        model = 'qwen/qwen3-235b-a22b:free',
+        tools,
+        tool_choice,
+        response_format,
+        temperature = 0.4,
+        top_p = 0.95,
+        extra = {}
+    } = opts;
+
     const maxAttempts = 3;
     let attempt = 0;
     const messages = Array.isArray(promptOrMessages)
@@ -1032,20 +1157,63 @@ async function callWithBackoff(url, promptOrMessages, apiKey) {
 
     while (attempt < maxAttempts) {
         attempt++;
+        const payload = {
+            model,
+            messages,
+            temperature,
+            top_p,
+            ...extra
+        };
+        if (tools) payload.tools = tools;
+        if (tool_choice) payload.tool_choice = tool_choice;
+        if (response_format) payload.response_format = response_format;
+
         const resp = await fetch(url, {
             method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                model: 'deepseek/deepseek-chat-v3-0324:free',
-                messages: messages
-            })
+            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
 
         if (resp.ok) {
-            return await resp.json();
+            const bodyText = await resp.text();
+            if (!bodyText || !/[{\[]/.test(bodyText)) {
+                throw new Error(`Empty or invalid JSON response from AI: "${bodyText}"`);
+            }
+            try {
+                return JSON.parse(bodyText);
+            } catch {
+                return JSON5.parse(bodyText);
+            }
+        }
+
+        if (resp.status === 429) {
+            // пробуем достать время ожидания
+            const retryAfter = resp.headers.get('retry-after'); // сек
+            const resetHdr = resp.headers.get('x-ratelimit-reset'); // иногда timestamp (сек или мс)
+            let waitMs = 60_000; // дефолт: минута
+
+            if (retryAfter && !Number.isNaN(Number(retryAfter))) {
+                waitMs = Number(retryAfter) * 1000;
+            } else if (resetHdr && !Number.isNaN(Number(resetHdr))) {
+                const n = Number(resetHdr);
+                // бывает Unix sec, бывает ms — определим по величине
+                const resetMs = n > 1e12 ? n : n * 1000;
+                waitMs = Math.max(0, resetMs - Date.now());
+            } else {
+                // если в теле есть метаданные — парсим на всякий
+                const text = await resp.text().catch(() => '');
+                const m = text.match(/"X-RateLimit-Reset":"?(\d+)"?/i);
+                if (m) {
+                    const n = Number(m[1]);
+                    const resetMs = n > 1e12 ? n : n * 1000;
+                    waitMs = Math.max(0, resetMs - Date.now());
+                }
+            }
+
+            const err = new Error(`Пожалуйста, повторите запрос через 1 минуту, есть небольшая очередь`);
+            err.code = 429;
+            err.waitSeconds = Math.max(1, Math.ceil(waitMs / 1000));
+            throw err;
         }
 
         if (resp.status >= 500 && resp.status < 600 && attempt < maxAttempts) {
@@ -1056,9 +1224,137 @@ async function callWithBackoff(url, promptOrMessages, apiKey) {
         throw new Error(`OpenRouter ${resp.status}: ${text}`);
     }
 
-    // Если все попытки исчерпаны без успеха
     throw new Error('OpenRouter: превышено максимальное число попыток');
 }
+
+
+function buildSubmitCasesTool(allowedCodes = []) {
+    return {
+        type: "function",
+        function: {
+            name: "submit_cases",
+            description: "Верни итоговые тест-кейсы строго в массиве cases",
+            parameters: {
+                type: "object",
+                properties: {
+                    cases: {
+                        type: "array",
+                        items: {
+                            type: "object",
+                            properties: {
+                                feature: { type: "string" },
+                                story: { type: "string" },
+                                scenario: { type: "string" },
+                                // ВАЖНО: code только из модели. Поле опционально.
+                                ...(allowedCodes.length
+                                    ? { code: { type: "string", enum: allowedCodes } }
+                                    : { code: { type: "string" } }),
+                                title: { type: "string" },
+                                precondition: { type: "string" },
+                                steps: { type: "array", items: { type: "string" } },
+                                expected: { type: "string" },
+                                tags: { type: "array", items: { type: "string" } },
+                                layer: {
+                                    type: "string", enum: [
+                                        "E2E Tests",
+                                        "Integration frontend Tests", "Integration backend Tests",
+                                        "Unit frontend Tests", "Unit backend Tests"
+                                    ]
+                                },
+                                priority: { type: "string", enum: ["Critical", "High", "Medium", "Low"] },
+                                version: { type: "string" },
+                                links: {
+                                    type: "array",
+                                    items: {
+                                        type: "object",
+                                        properties: {
+                                            text: { type: "string" },
+                                            url: { type: "string" },
+                                            type: { type: "string" }
+                                        }
+                                    }
+                                },
+                                jiraIssueOption: {
+                                    type: "object",
+                                    properties: {
+                                        value: { type: "string" },
+                                        integrationId: { type: "string" }
+                                    }
+                                }
+                            },
+                            required: ["title", "layer"]
+                        }
+                    }
+                },
+                required: ["cases"],
+                additionalProperties: false
+            }
+        }
+    };
+}
+
+
+function buildSubmitModelTool() {
+    return {
+        type: "function",
+        function: {
+            name: "submit_test_model",
+            description: "Верни иерархическую тест-модель (Feature→Story→Scenario→Code) строго в массиве model",
+            parameters: {
+                type: "object",
+                properties: {
+                    model: {
+                        type: "array",
+                        items: {
+                            type: "object",
+                            properties: {
+                                text: { type: "string" },                 // Feature name
+                                stories: {
+                                    type: "array",
+                                    items: {
+                                        type: "object",
+                                        properties: {
+                                            text: { type: "string" },           // Story name
+                                            scenarios: {
+                                                type: "array",
+                                                items: {
+                                                    type: "object",
+                                                    properties: {
+                                                        text: { type: "string" },     // Scenario text
+                                                        codes: {
+                                                            type: "array",
+                                                            items: {
+                                                                type: "object",
+                                                                properties: {
+                                                                    text: { type: "string" } // Code action
+                                                                },
+                                                                required: ["text"],
+                                                                additionalProperties: false
+                                                            }
+                                                        }
+                                                    },
+                                                    required: ["text"],
+                                                    additionalProperties: false
+                                                }
+                                            }
+                                        },
+                                        required: ["text", "scenarios"],
+                                        additionalProperties: false
+                                    }
+                                }
+                            },
+                            required: ["text", "stories"],
+                            additionalProperties: false
+                        }
+                    }
+                },
+                required: ["model"],
+                additionalProperties: false
+            }
+        }
+    };
+}
+
 
 const httpAgent = new http.Agent({ keepAlive: true });
 const httpsAgent = new https.Agent({ keepAlive: true });
@@ -1109,148 +1405,262 @@ app.get('/api/jira/search', async (req, res) => {
  * }
  */
 app.post('/api/generate-test-cases', async (req, res) => {
-    const { requirements, modelStructure } = req.body;
+    const { requirements, modelStructure: rawModel } = req.body;
+    const modelStructure = normalizeModelStructure(rawModel);
+    const allowedCodes = Array.from(new Set(
+        (modelStructure || []).flatMap(f =>
+            (f.stories || []).flatMap(st =>
+                (st.scenarios || []).flatMap(sc =>
+                    (sc.codes || []).map(cd => (cd?.text || '').trim()).filter(Boolean)
+                )
+            )
+        )
+    ));
     if (!Array.isArray(requirements) || !modelStructure) {
         return res.status(400).json({ error: 'requirements и modelStructure обязательны' });
     }
 
-    // 1. Не меняем исходный промт — выносим его в system
     const SYSTEM_PROMPT = `
-Ты — опытный QA-инженер, специализирующийся на разработке тестовой документации. Твоя задача — на основе предоставленной тест-модели и требований сгенерировать полный JSON-массив тест-кейсов, строго следуя Style Guide и принципам «пирамиды тестирования».
+Ты — скрупулёзный SDET (Software Development Engineer in Test), создающий атомарные и исчерпывающие тест-кейсы для импорта в Allure. На основе входной тест-модели (modelStructure) и требований сгенерируй JSON-массив тест-кейсов, НЕУКОСНИТЕЛЬНО следуя Style Guide ниже.
 
-## 1. Мы используем сценарный подход с четкой иерархией:
-- **Feature (Фича):** Крупный блок продукта. (Из дерева модели)
-- **Story (Пользовательский сценарий, C1 - E2E):** Полный путь пользователя для достижения цели. (Из дерева модели)
-- **Scenario (Подсценарий, C2-C3 - Integration):** Атомарный шаг или логическая часть внутри Story. (Из дерева модели)
-- **Code (C4 - Unit):** Проверка на уровне кода, не используется в этой генерации.
+# 1) Главная директива
+Преобразуй КАЖДЫЙ значимый узел из modelStructure (Story, Scenario, Code) в набор соответствующих тест-кейсов (E2E, Integration, Unit). Не пропускай узлы и не выдумывай новые.
 
-## 2. Философия «пирамиды»
-1. **Сдвигаем проверки вниз**  
-   - Всё, что можно надёжно покрыть интеграционно (валидация поля, проверка API-контракта, классы эквивалентности, граничные значения), выносим в Integration.  
-   - **E2E (C1) оставляем только**:  
-     - полную «чёрную» happy-path от авторизации до финального результата,  
-     - 1–2 ключевых негативных блока (отказ/прерывание) и альтернативный поток.
-     - Должна иметь feature и story  
-   - **Удалить из E2E** все подробные проверки форматов полей — такие проверки уходят в integration.  
-2. **E2E (C1)**  
-   - **Обязательно** первые шаги:  
-     1. «Авторизоваться»  
-     2. «Перейти на …» и т. д.  
-   - Не повторять атомарные проверки полей в E2E.  
-3. **Integration (C2–C3)**  
-   - Начинается с **инициализации**: «Замокать/смонтировать компонент», «Выполнить API-запрос».  
-   - Один тест = одна атомарная проверка + единый \`expected\`.  
-   - **Integration не ездит по страницам** — изоляция компонента или API-вызова.  
-   - Теги для фронта: D/A/M/PWA, для бэка: S.
-   - Должна иметь feature и story и scenario
-   - ОБЯЗАТЕЛЬНО включать поле "scenario": точный текст узла Scenario из модели.   
+# 2) Пирамида тестирования — нерушимые правила
+1) Сдвигай проверки вниз: детальные проверки (валидации, границы, форматы) — в Integration/Unit, а не в E2E.
+2) E2E (C1) — только сквозные бизнес-сценарии:
+   • Чёрный ящик, имитация реального пользователя.
+   • ВСЕГДА начинаются шагами: «Авторизоваться…», «Перейти на страницу…».
+   • НЕЛЬЗЯ проверять сообщения отдельных полей и вводить невалидные данные полей — максимум 1–2 ключевых негативных сценария на уровне всего потока (например, «ошибка сервера при сохранении»).
+3) Integration (C2–C3) — взаимодействия компонент/эндпоинтов:
+   • В рамках одного компонента (FE) или одного API-вызова (BE), без навигации по страницам.
+   • Основная работа: классы эквивалентности, граничные значения (BVA), контракты API.
+4) Unit (C4) — одна функция/метод, строгий AAA (Arrange-Act-Assert).
 
-## 3. Формат
-Выход — **только** JSON-массив без обёрток:
-\`\`\`json
-[
-  {
-    "feature": "...",
-    "story": "...",
-    "scenario": "...",              // Если тест integration
-    "title": "...",
-    "precondition": "...",          // опционально, для integration: инициализация или мок
-    "steps": ["Авторизоваться", …], // E2E: всегда начинается с Авторизоваться
-    "expected": "...",
-    "tags": ["D","PWA"],            // front: D/A/M/PWA, back: S
-    "layer": "E2E Tests",           // или "Integration frontend Tests"/"Integration backend Tests"
-    "priority": "High"              // опционально
-  }
-]
-\`\`\`
+# 3) Allure Style Guide (сводка отдела)
+— 1 тест-кейс = 1 проверка или 1 пользовательский сценарий.  
+— Тест-кейсы независимы друг от друга.  
+— Название информативно и по возможности уникально («Загрузка нового справочника», а не «Проверка справочников»).  
+— Предусловия (если есть) — только то, что подготавливается вне тестируемого приложения профилем исполнителя (данные в БД, настройки, сиды, интеграции, состояние устройства и т.п.).  
+— Шаги:
+   • Один шаг = одно действие. Всегда с глагола («Открыть», «Ввести», «Нажать»).  
+   • Общие повторяющиеся блоки — оформлять как shared steps (концептуально; в JSON шаги всё равно плоские).  
+   • Сценарные тесты: начинать с полного пользовательского пути (обычно с авторизации).  
+   • Атомарные тесты: начинать с инициализации изолированного компонента/эндпоинта (без «навигации»).  
+— Ожидаемый результат (обязателен) отражает СУТЬ проверки/сценария, формулирован чётко и без условных «если… то…».  
+— Вложения/файлы/мок-данные добавляются при необходимости (при наличии макетов/данных).  
+— Ссылки: указывать Confluence/макеты, если есть.  
+— Jira: указать связанное задание (ключ).  
+— Приоритет и версия:
+   • Версия по умолчанию — "stable" для новых кейсов.  
+   • При доработках — клонировать кейс и указать нужную версию.  
 
-## 4. Генерация
-1. Для **каждой Story**  
-   - Сгенерировать минимум 2–3 E2E-теста:
-     1. Позитивный путь (авторизация → полная happy-flow)  
-     2. Один ключевой негативный отказ (ошибка API или прерывание)  
-     3. Альтернативный поток (например rollback или отмена).  
-2. Для **каждого Scenario**  
-   - Сгенерировать набор интеграционных тестов (минимум 3–5 шт.):
-     - Позитивный (валидные данные)  
-     - Негативный (невалидный формат, пустое, превышение лимита)  
-     - Контрактное (status codes, error payload)
-     - **Каждый Integration-тест ОБЯЗАТЕЛЬНО** имеет поле "scenario" со значением из modelStructure  
-   - В \`precondition\` описать мок/инициализацию.  
-   - Шаги — только «Выполнить запрос» или «Смонтировать компонент и вызвать метод».  
+# 4) Теги (ОБЯЗАТЕЛЬНО)
+В массиве "tags" используй:
+— Платформа интерфейса: D (desktop), A (adaptive), M (mobile), PWA (если уместно). Если платформа из контекста неочевидна — ставь "D".  
+— Бэкенд-проверки: добавь "S" (для Integration backend Tests и любых API-ориентированных проверок).  
+— Номер требования: добавь тег с идентификатором требования (например, "REQ-123") если он явно присутствует во входе; если нет — пропусти.  
+Примеры наборов тегов:
+• FE E2E/Integration (десктоп): ["D"]  
+• BE Integration: ["S"] или ["D","S"] если тест затрагивает интерфейсно-зависимые артефакты  
+• С требованием: ["D","REQ-123"]
 
-## 5. Входные данные
-**Модель:**
-\${JSON.stringify(modelStructure, null, 2)}
+# 5) Выходной формат: СТРОГО ТОЛЬКО JSON-массив
+Используй ровно один из трёх шаблонов ниже в зависимости от "layer". Никаких комментариев/markdown.
 
-**Требования:**
-\${requirements.map((r, i) => \`\${i + 1}. \${r}\`).join('\\n')}
+## Шаблон: "layer": "E2E Tests"
+{
+  "feature": "Название фичи из модели",
+  "story": "Название истории из модели",
+  "title": "Название, описывающее ВЕСЬ сценарий (например, 'Успешное создание виджета авторизованным пользователем')",
+  "steps": [
+    "Авторизоваться как 'user_role'",
+    "Перейти на страницу 'Название страницы'",
+    "Нажать кнопку 'Создать виджет'",
+    "Заполнить поле 'Название' валидным значением",
+    "Нажать кнопку 'Сохранить'"
+  ],
+  "expected": "Система отображает сообщение об успешном создании. Виджет появляется в общем списке.",
+  "tags": ["D"],
+  "layer": "E2E Tests",
+  "priority": "High"
+}
 
-## 6. Тест-дизайн
-- Использовать классы эквивалентности и BVA (Boundary Value Analysis).  
-- Формировать decision-tables и state-transition tests.  
-- Применять pairwise / orthogonal массивы для комбинаций данных.  
-- Выполнять error-guessing на основе бизнес-правил.   
+## Шаблон: "layer": "Integration frontend Tests" / "Integration backend Tests"
+{
+  "feature": "Название фичи из модели",
+  "story": "Название истории из модели",
+  "scenario": "ТОЧНОЕ название сценария из модели",
+  "title": "Конкретная проверка (например, 'Валидация поля «Имя» при вводе более 100 символов')",
+  "precondition": "Компонент/эндпоинт подготовлен. (Коротко по существу, без кода.)",
+  "steps": [
+    "Ввести в поле 'Имя' строку длиной 101 символ",
+    "Снять фокус с поля"
+  ],
+  "expected": "Под полем 'Имя' отображается текст ошибки 'Превышена максимальная длина'. Кнопка 'Сохранить' неактивна.",
+  "tags": ["D"],
+  "layer": "Integration frontend Tests",
+  "priority": "Medium"
+}
 
-## 7. Дополнительные паттерны
-- Проверять REST-контракты: content-type, schema, CORS, error payload.  
-- Покрывать асинхронные UI-виджеты (тайм-ау́ты, retry-механизмы).  
-- Применять чек-листы из лучших статей по QA (например, Куликова).  
+## Шаблон: "layer": "Unit frontend Tests" / "Unit backend Tests"
+{
+  "feature": "Название фичи из модели",
+  "story": "Название истории из модели",
+  "scenario": "Название сценария, к которому относится модуль",
+  "code": "ТОЛЬКО если совпадает с codes[].text из модели (иначе — не указывать)",
+  "title": "Кратко: что проверяем (описательно, без имён функций и синтаксиса)",
+  "precondition": "Arrange: подготовить входные данные/контекст (описательно, без программного синтаксиса).",
+  "steps": [
+    "Act: выполнить проверяемое действие в изоляции (описательно).",
+    "Act: передать подготовленные входные данные.",
+    "Act: получить результат."
+  ],
+  "expected": "Assert: результат соответствует ожидаемому (описательно, без кода и идентификаторов).",
+  "tags": ["Unit"],
+  "layer": "Unit frontend Tests",
+  "priority": "Low"
+}
+Правила для Unit:
+— НЕ придумывать имена функций/классов и не использовать синтаксис языков.  
+— "code" заполняется СТРОГО из codes[].text, иначе это поле опускается.
 
-Тесты должны быть только на русском языке.
-`;
+Допустимые дополнительные поля (если есть во входе или явно уместны): 
+• "links": [{ "text": "...", "url": "..." }], • "jiraIssue": "ABC-123", • "version": "stable" (по умолчанию для новых), • "attachments": [...], • "parameters": "..." (использовать только если во входе явно заданы параметры; для DDT/Pairwise — но не выдумывать).
 
-    // 2. Передаём модель и требования отдельно в user
+# 6) Правила генерации набора тест-кейсов
+Для КАЖДОЙ Story: 
+— 1–2 E2E-теста: Happy Path и (при необходимости) один ключевой Negative Path на уровне потока.
+
+Для КАЖДОГО Scenario:
+— 3–5 Integration-тестов (главный объём): позитивные/негативные случаи, BVA, классы эквивалентности, контракты API.  
+— Поле "scenario" должно 1:1 совпадать с текстом узла.
+
+Для КАЖДОГО Code:
+— 2–4 Unit-теста по AAA (описательно).  
+— "code" копировать из модели, если текст совпадает; иначе не указывать.
+
+# 7) Техники тест-дизайна (обязательно применять, если применимо)
+— BVA: мин, макс, мин-1, макс+1.  
+— Классы эквивалентности: валидный/невалидный/пустой/null.  
+— Error-guessing: разумные «углы».
+
+# 8) Чек-лист перед выводом
+— Все кейсы независимы; по одному «смыслу» на кейс.  
+— В E2E есть «Авторизоваться…» и «Перейти на страницу…».  
+— Детальные проверки (валидации полей и т.п.) не просочились в E2E.  
+— "scenario" (для Integration/Unit) совпадает с моделью.  
+— Теги проставлены по правилам: D/A/M/PWA; "S" для бэкенда; номер требования — только если есть во входе.  
+— "version" = "stable" для новых кейсов (если не указано иное).  
+
+# 9) Формат ответа
+Выведи СТРОГО один JSON-массив кейсов без каких-либо комментариев, текста или Markdown.`
+
+
     const userPrompt = `
 Сгенерируй JSON-массив тест-кейсов на русском языке.
-
 Модель:
 ${JSON.stringify(modelStructure, null, 2)}
 
 Требования:
 ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
-`;
+
+ДОПУСТИМЫЕ ЗНАЧЕНИЯ ДЛЯ "code" (если используешь):
+${allowedCodes.map(c => `- ${c}`).join('\n')}
+
+⚠️ ВАЖНО: 
+- Ответ только чистый JSON–массив, без markdown и пояснений.
+- Все строки в двойных кавычках.
+- Для Unit: "code" можно указывать только из списка выше. Если не подходит — не указывай "code".
+`.trim();
+
+    // мелкая санитация/валидация результата
+    const sanitize = (arr) => {
+        const ALLOWED_LAYERS = new Set([
+            "E2E Tests",
+            "Integration frontend Tests", "Integration backend Tests",
+            "Unit frontend Tests", "Unit backend Tests"
+        ]);
+        const trimText = (s, n = 1200) => String(s ?? '').trim().slice(0, n);
+        const allowedCodeSet = new Set(allowedCodes);
+        return (arr || [])
+            .filter(x => x && typeof x === 'object')
+            .map(x => {
+                const steps = Array.isArray(x.steps) ? x.steps.map(s => trimText(s, 600)).slice(0, 40) : [];
+                const tags = Array.isArray(x.tags) ? Array.from(new Set(x.tags.map(t => String(t).trim()).filter(Boolean))) : [];
+                const layer = ALLOWED_LAYERS.has(x.layer) ? x.layer : null;
+
+                const codeRaw = trimText(x.code, 200);
+                const code = allowedCodeSet.has(codeRaw) ? codeRaw : undefined; // ← важно
+
+                return {
+                    feature: trimText(x.feature, 300),
+                    story: trimText(x.story, 300),
+                    scenario: trimText(x.scenario, 400),
+                    ...(code ? { code } : {}),
+                    title: trimText(x.title, 400),
+                    precondition: trimText(x.precondition, 1200),
+                    steps,
+                    expected: trimText(x.expected, 1200),
+                    tags,
+                    layer,
+                    priority: x.priority && ["Critical", "High", "Medium", "Low"].includes(x.priority) ? x.priority : "Medium",
+                    version: trimText(x.version, 80),
+                    links: Array.isArray(x.links) ? x.links.slice(0, 20).map(l => ({
+                        text: trimText(l.text, 200),
+                        url: trimText(l.url, 800),
+                        ...(l.type ? { type: trimText(l.type, 40) } : {})
+                    })) : [],
+                    jiraIssueOption: x.jiraIssueOption && x.jiraIssueOption.value ? {
+                        value: String(x.jiraIssueOption.value),
+                        integrationId: x.jiraIssueOption.integrationId ? String(x.jiraIssueOption.integrationId) : undefined
+                    } : undefined
+                };
+            })
+            .filter(x => x.title && x.layer);
+    };
 
     try {
-        // Отправляем в OpenRouter / OpenAI двумя сообщениями
+        const tools = [buildSubmitCasesTool(allowedCodes)];
+
         const ai = await callWithBackoff(
             OPENROUTER_URL,
             [
                 { role: 'system', content: SYSTEM_PROMPT },
                 { role: 'user', content: userPrompt }
             ],
-            config.openRouterAiKey
+            config.openRouterAiKey,
+            {
+                tools,
+                tool_choice: { type: "function", function: { name: "submit_cases" } },
+                temperature: 0.25,
+                top_p: 0.9
+            }
         );
 
-        const content = ai.choices?.[0]?.message?.content || '';
+        // 1) Основной путь — tool call
+        let args = extractToolArgs(ai, "submit_cases");
+        let cases;
 
-        // Парсим JSON как раньше
-        let jsonText = null;
-        const jsonFence = content.match(/```json\s*([\s\S]*?)```/);
-        if (jsonFence) {
-            jsonText = jsonFence[1];
+        if (args && Array.isArray(args.cases)) {
+            cases = args.cases;
         } else {
-            const arrMatch = content.match(/(\[[\s\S]*\])/);
-            if (arrMatch) {
-                jsonText = arrMatch[1];
-            }
+            // 2) Фолбэк на «сырой» JSON из content
+            const content = ai.choices?.[0]?.message?.content || '';
+            const rawJsonCandidate = extractJsonArray(content);
+            if (!rawJsonCandidate) throw new Error('Не удалось найти JSON-массив в ответе AI');
+            const jsonText = cleanupJsonText(rawJsonCandidate);
+            let parsed = JSON5.parse(jsonText);
+            if (!Array.isArray(parsed)) throw new Error('AI вернул не массив');
+            cases = parsed;
         }
 
-        if (!jsonText) {
-            throw new Error('AI не вернул JSON-массив в ожидаемом формате');
-        }
-
-        // Обрезаем лишние запятые и парсим
-        jsonText = jsonText.replace(/,\s*([}\]])/g, '$1');
-        const cases = JSON.parse(jsonText);
-
-        res.json({ cases });
+        return res.json({ cases: sanitize(cases) });
     } catch (err) {
         console.error('Ошибка в /api/generate-test-cases:', err);
         res.status(500).json({ error: err.message });
     }
 });
-
 
 const transformToHierarchy = (flatList) => {
     // Используем Map для группировки по имени фичи, чтобы избежать дубликатов
@@ -1301,98 +1711,128 @@ app.post('/api/generate-test-model', async (req, res) => {
     if (!requirements || typeof requirements !== 'string') {
         return res.status(400).json({ error: 'Поле "requirements" обязательно и должно быть строкой' });
     }
-    const prompt = `
-Ты — выдающийся QA-архитектор, мастер декомпозиции требований. Твоя задача — проанализировать предоставленные требования к продукту и создать исчерпывающую, иерархическую тестовую модель.
+    const SYSTEM_PROMPT = `
+Ты — выдающийся QA-архитектор с исключительным талантом к синтезу и декомпозиции. Твоя главная сила — видеть за разрозненными требованиями целостную картину и ценность для пользователя.
 
 ## 1. Цель
-Создать структуру для тестовой документации, которая позволит точно оценивать тестовое покрытие, декомпозировать тесты и визуализировать их.
+Создать иерархическую тестовую модель (Feature → Story → Scenario → Code) на основе предоставленных требований.
 
-## 2. Структура дерева (Обязательный формат)
-Ты должен строго следовать этой иерархии:
-- **Feature (Фича / Блок продукта):** Крупный, независимый блок функциональности.
-  - **Story (Пользовательский сценарий - C1 - E2E):** Полный путь пользователя для достижения конкретной цели. Описывает "что" пользователь хочет сделать.
-    - **Scenario (Подсценарий / шаг сценария - C2-C3 - Integration):** Атомарный шаг, действие или логическая часть внутри Story. Описывает "как" пользователь это делает.
-## Структура и поля (ОБЯЗАТЕЛЬНО К СОБЛЮДЕНИЮ)
-Ты должен сгенерировать JSON-массив. Каждый объект в массиве представляет собой "Feature" и должен иметь следующую структуру:
-{
-  "text": "Название фичи",
-  "stories": [
-    {
-      "text": "Название пользовательской истории (Story)",
-      "scenarios": [
-        { "text": "Текст первого сценария (Scenario)" },
-        { "text": "Текст второго сценария (Scenario)" }
-      ]
-    }
-  ]
-}
-## 3. Правила декомпозиции
-- **Будь исчерпывающим:** Продумай позитивные (happy path), негативные и граничные сценарии на основе требований.
-- **Логическая группировка:** Сгруппируй связанные пользовательские сценарии (Story) под одной общей фичей (Feature).
-- **Атомарность:** Каждый \`Scenario\` должен представлять собой одно логическое действие или проверку.
-- **Тестовая модель должна описывать функциональную логику:** Нефункциональное нужно отбрасывать и делать тестовую модель так, чтобы она была максимальна коротка и максимально описывала test coverage.
+## 2. Ключевой принцип декомпозиции (САМОЕ ВАЖНОЕ!)
+- **Сначала Синтез, потом Анализ.** Прочитай ВСЕ требования. Твоя первая задача — определить 1-3 **высокоуровневых пользовательских потока (Story)**, которые приносят конечную ценность.
+- **Ценность важнее действия.** Story — это то, **зачем** пользователь пришел (например, «Ввести и проверить реквизиты»), а не то, **как** он это делает («Вставить из буфера»).
+- **НЕ СОЗДАВАЙ** новую Story для каждого "Целевого действия" или "Вида сценария" из текста требований. Это всего лишь шаги (Scenarios) внутри одной большой Story.
 
-## Пример: 
-Feature - "Авторизация и регистрация";
-Story - "Регистрация пользователя"
-Scenario - "Ввести номер телефона", "Ввести email", "Прожать чекбоксы согласия", "Нажать кнопку 'Зарегистрироваться'"
+## 3. Структура дерева (строго соблюдать)
+- **Feature (Фича):** Большой независимый блок продукта.
+  • Если требования описывают единственный блок — генерировать ровно один Feature и вложить в него все Stories.
+- **Story (C1-E2E):** **Целостный пользовательский сценарий, приносящий ценность.** Формулируется как завершенное действие.
+  • Пример: «Ввести и валидировать реквизиты в поле», «Настроить виджет в конструкторе».
+  • **НЕ дробить** на отдельные случаи ввода (ввод с клавиатуры, вставка из буфера, очистка — это всё Scenarios внутри одной Story).
+- **Scenario (C2–C3-Integration):** **Атомарное ДЕЙСТВИЕ пользователя** внутри Story, формулируется инфинитивом.
+  • Пример: «Ввести символы вручную», «Вставить номер из буфера», «Очистить поле», «Выбрать режим 'карта'».
+  • Не описывать здесь поведение системы.
+- **Code (C4-Unit):** **РЕАКЦИЯ системы** на действие пользователя, описываемое инфинитивом.
+  • Пример: «Применить маску ввода», «Отобразить иконку платежной системы», «Рассчитать контрольную сумму», «Отправить API запрос».
+  • **Не использовать** слово «Проверка» или «Проверить».
 
-## 4. Входные данные: Требования к продукту
+## 4. Формат вывода (обязательно)
+Выход — **ТОЛЬКО** чистый JSON-массив без комментариев и markdown. ❗️ Строго: выводи **только** JSON-массив, без лишних пробелов внутри строк, без комментариев и без markdown.  
+Все ключи и строки должны быть в кавычках, между элементами — запятые. 
+\`\`\`json
+[
+  {
+    "text": "Название Feature",
+    "stories": [
+      {
+        "text": "Название Story",
+        "scenarios": [
+          {
+            "text": "Первый Scenario",
+            "codes": [
+              { "text": "Первое системное действие" }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]
+\`\`\`
+
+## 5. Пример для понимания логики
+**Feature:** «Управление виджетами»
+**Story:** «Добавить новый виджет» (Это целостный поток, дающий ценность — новый виджет в системе)
+  - **Scenarios:** (Это атомарные шаги пользователя для достижения цели)
+    - «Открыть форму создания»
+    - «Заполнить поле 'Название'»
+    - «Выбрать тип виджета»
+    - «Нажать кнопку 'Сохранить'»
+  - **Code:** (Это реакции системы на последнее действие 'Нажать кнопку')
+    - «Отправить POST-запрос на /api/widgets»
+    - «Отобразить уведомление об успехе»
+    - «Закрыть форму создания»
+
+## 6. Входные данные: Требования к продукту
 ${requirements}
 
-## 5. Задание и формат вывода
-Проанализируй приведённые выше требования и сгенерируй тестовую модель.
-Твой ответ должен быть **ТОЛЬКО чистым JSON-массивом** без каких-либо пояснений, комментариев или markdown-обёрток.
-`;
+## 7. Задание
+Основываясь на **ключевом принципе декомпозиции (п.2)** и всех правилах, проанализируй требования и сгенерируй тестовую модель в формате JSON. Ответ — **только** чистый JSON. Обязательно тестовая модель только на русском языке
+`.trim();
+
 
     try {
-        const ai = await callWithBackoff(OPENROUTER_URL, prompt, config.openRouterAiKey);
-        let content = ai.choices?.[0]?.message?.content?.trim();
+        const tools = [buildSubmitModelTool()];
+        const ai = await callWithBackoff(
+            OPENROUTER_URL,
+            [
+                { role: 'system', content: SYSTEM_PROMPT },
+                { role: 'user', content: requirements }
+            ],
+            config.openRouterAiKey,
+            {
+                tools,
+                tool_choice: { type: "function", function: { name: "submit_test_model" } },
+                temperature: 0.3,
+                top_p: 0.9
+            }
+        );
 
-        // --- ОТЛАДКА ---
-        console.log("--- 1. СЫРОЙ ОТВЕТ ОТ AI ---");
-        console.log(content);
-        // -----------------
+        // 1) Пытаемся забрать tool-call
+        let args = extractToolArgs(ai, "submit_test_model");
+        let model;
 
-        if (!content) {
-            throw new Error('AI не вернул содержимого');
+        if (args && Array.isArray(args.model)) {
+            model = args.model;
+        } else {
+            // 2) Фолбэк: из content вырезаем массив
+            let content = ai.choices?.[0]?.message?.content?.trim();
+            if (!content) throw new Error('AI не вернул результата');
+
+            const firstBracket = content.indexOf('[');
+            const lastBracket = content.lastIndexOf(']');
+            if (firstBracket === -1 || lastBracket === -1) throw new Error('Не найден JSON-массив');
+            let jsonText = content.slice(firstBracket, lastBracket + 1);
+            jsonText = jsonText.replace(/"(\s*)"code":/g, '", "code":');
+
+            let parsed = JSON5.parse(jsonText);
+            // если плоская структура — поднимем
+            const isFlat = parsed.length > 0 && parsed[0].hasOwnProperty('Feature');
+            model = isFlat ? transformToHierarchy(parsed) : parsed;
         }
 
-        if (content.startsWith('```')) {
-            content = content.replace(/^```json\s*|\s*```$/g, '');
-        }
-
-        let parsedJson;
-        try {
-            parsedJson = JSON.parse(content);
-        } catch (parseErr) {
-            console.error('ОШИБКА ПАРСИНГА JSON:', parseErr.message);
-            throw new Error('Не удалось распарсить JSON от AI');
-        }
-
-        // --- ОТЛАДКА ---
-        console.log("--- 2. JSON ПОСЛЕ ПАРСИНГА ---");
-        console.log(JSON.stringify(parsedJson, null, 2));
-        // -----------------
-
-        // Проверяем, вернул ли AI уже вложенную структуру или старую плоскую.
-        const isFlat = parsedJson.length > 0 && parsedJson[0].hasOwnProperty('Feature');
-
-        // --- ОТЛАДКА ---
-        console.log(`--- 3. РЕЗУЛЬТАТ ПРОВЕРКИ isFlat: ${isFlat} ---`);
-        // -----------------
-
-        const finalModel = isFlat ? transformToHierarchy(parsedJson) : parsedJson;
-
-        // --- ОТЛАДКА ---
-        console.log("--- 4. ФИНАЛЬНАЯ МОДЕЛЬ ДЛЯ ОТПРАВКИ ---");
-        console.log(JSON.stringify(finalModel, null, 2));
-        // -----------------
-
+        const finalModel = normalizeModelStructure(model);
         return res.status(200).json(finalModel);
-
     } catch (err) {
         console.error('ГЛОБАЛЬНАЯ ОШИБКА в /api/generate-test-model:', err);
+        if (err.code === 429 || err.message === 'RATE_LIMIT') {
+            const s = Number(err.waitSeconds) || 60;
+            // округлим до минут, но не потеряем секунды если мало
+            const msg = s >= 60
+                ? `Пожалуйста, подождите ${Math.ceil(s / 60)} мин и повторите запрос.`
+                : `Пожалуйста, подождите ${s} сек и повторите запрос.`;
+
+            return res.status(429).json({ error: msg, waitSeconds: s });
+        }
         return res.status(500).json({ error: err.message });
     }
 });
@@ -1451,10 +1891,14 @@ app.post('/api/create-test-cases', async (req, res) => {
 
         // 2) Схема кастомных полей
         const schema = await getProjectCustomFieldSchema(projectId);
-        const cfKeyToId = schema.reduce((m, e) => {
-            m[e.key] = e.customField.id;
-            return m;
-        }, {});
+        const cfMap = {};
+        for (const e of schema) {
+            const id = e?.customField?.id;
+            const key = e?.key;
+            const name = e?.customField?.name;
+            if (id && key) cfMap[String(key).toLowerCase()] = id;
+            if (id && name) cfMap[String(name).toLowerCase()] = id;
+        }
 
         // 3) Подгружаем существующие проектные теги (чтобы потом создавать новые, если их нет)
         const projectTags = await suggestTags(projectId);
@@ -1527,13 +1971,10 @@ app.post('/api/create-test-cases', async (req, res) => {
             }
 
             // 9) Jira Issue
-            if (c.jiraIssueOption?.value) {
-                const integrationId = c.jiraIssueOption.integrationId || config.defaultJiraIntegrationId;
-                await linkIssueToTestCase(
-                    testCaseId,
-                    integrationId,
-                    c.jiraIssueOption.value
-                );
+            const jiraKey = c?.jiraIssueOption?.value || c?.jiraIssue;
+            if (jiraKey) {
+                const integrationId = c?.jiraIssueOption?.integrationId || config.defaultJiraIntegrationId;
+                await linkIssueToTestCase(testCaseId, integrationId, jiraKey);
             }
 
             // 10) Слой
@@ -1542,25 +1983,44 @@ app.post('/api/create-test-cases', async (req, res) => {
             }
 
             // 11) Кастомные поля
-            const cfv = [];
-            if (c.feature && cfKeyToId.feature) {
-                cfv.push({ customField: { id: cfKeyToId.feature }, name: c.feature });
+            const cfvById = new Map();
+
+            const putCF = (fieldNameOrKey, raw) => {
+                if (raw == null) return;
+                const val = String(raw).trim();
+                if (!val) return;                      // не шлём пустые значения
+                const id = cfMap[String(fieldNameOrKey).toLowerCase()];
+                if (!id) return;                       // такого CF нет в проекте
+                // Последняя запись побеждает, без дублей по одному ID
+                cfvById.set(id, { customField: { id }, name: val });
+            };
+
+            // стандартные поля из кейса
+            putCF('Feature', c.feature);
+            putCF('Story', c.story);
+            putCF('Scenario', c.scenario);
+            putCF('Version', c.version);
+            putCF('Priority', c.priority);
+
+            // поддержка Code:
+            // 1) если бэкенд когда-то получит c.code — возьмём его
+            // 2) фронт сейчас шлёт codeNode
+            // 3) а ещё может прийти из customFields
+            putCF('Code', c.code || c.codeNode);
+
+            // добираем то, что пришло в cases[].customFields (если фронт их шлёт)
+            if (Array.isArray(c.customFields)) {
+                for (const { name, value } of c.customFields) {
+                    if (!name) continue;
+                    putCF(name, value);
+                }
             }
-            if (c.story && cfKeyToId.story) {
-                cfv.push({ customField: { id: cfKeyToId.story }, name: c.story });
-            }
-            if (c.scenario && cfKeyToId.scenario) {
-                cfv.push({ customField: { id: cfKeyToId.scenario }, name: c.scenario });
-            }
-            if (c.version && cfKeyToId.version) {
-                cfv.push({ customField: { id: cfKeyToId.version }, name: c.version });
-            }
-            if (c.priority && cfKeyToId.priority) {
-                cfv.push({ customField: { id: cfKeyToId.priority }, name: c.priority });
-            }
+
+            const cfv = Array.from(cfvById.values());
             if (cfv.length) {
                 await setTestCaseCustomFieldValues(testCaseId, cfv);
             }
+
 
             created.push({ id: testCaseId });
         }
