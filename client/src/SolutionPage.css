@@ -286,3 +286,7 @@ h2 {
   color: #58a6ff;              /* остатим ярко-синий, но на тёмном фоне читается */
   text-decoration: underline;  /* подчёркивание для наглядности */
 }
+
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.preview { max-height: 420px; overflow: auto; padding: 12px; border: 1px solid #333; border-radius: 8px; }
+

@@ -14,6 +14,11 @@ import { marked } from 'marked';
 import 'github-markdown-css/github-markdown-dark.css';
 import TestModelGeneratorModal from './components/test-model/TestModelGeneratorModal';
 import TestModelReviewModal from './components/test-model/TestModelReviewModal';
+import * as pdfjsLib from 'pdfjs-dist/build/pdf';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+
 
 const EMPTY_INITIAL_CASES = [];
 
@@ -417,6 +422,7 @@ export default function SolutionPage({ projects = [] }) {
   const [isGenModalOpen, setGenModalOpen] = useState(false);
   const [isReviewModalOpen, setReviewModalOpen] = useState(false);
   const [generatedCases, setGeneratedCases] = useState([]);
+  const [pdfExtracting, setPdfExtracting] = useState(false);
 
 
 
@@ -499,6 +505,148 @@ export default function SolutionPage({ projects = [] }) {
       ];
   };
 
+
+  // группируем текстовые фрагменты в строки по Y
+  const groupByRows = (items, tol = 2) => {
+    const buckets = new Map();
+    for (const it of items) {
+      const x = it.transform[4], y = it.transform[5];
+      const key = Math.round(y / tol) * tol; // «корзина» по Y
+      const arr = buckets.get(key) || [];
+      arr.push({ str: it.str, x, y, w: it.width || 0 });
+      buckets.set(key, arr);
+    }
+    // PDF ось Y растет вверх — сортируем от верхней строки к нижней
+    const rows = [...buckets.entries()]
+      .sort((a, b) => b[0] - a[0])
+      .map(([, arr]) => arr.sort((a, b) => a.x - b.x));
+    return rows;
+  };
+
+  // кластеризуем X-позиции, чтобы понять «колонки»
+  const detectColumns = (rows, tol = 12) => {
+    const xs = [];
+    rows.forEach(r => r.forEach(c => xs.push(c.x)));
+    xs.sort((a, b) => a - b);
+    const cols = [];
+    for (const x of xs) {
+      const hit = cols.find(v => Math.abs(v - x) <= tol);
+      if (!hit) cols.push(x);
+    }
+    // убираем шум: берем только «популярные» X, которые встречались часто
+    const counts = cols.map(cx =>
+      rows.reduce((acc, r) => acc + (r.some(c => Math.abs(c.x - cx) <= tol) ? 1 : 0), 0)
+    );
+    const avg = counts.reduce((a, b) => a + b, 0) / (counts.length || 1);
+    const stableCols = cols.filter((_, i) => counts[i] >= avg * 0.6);
+    return stableCols.sort((a, b) => a - b);
+  };
+
+  // строим одну «строку таблицы» по ближайшей колонке
+  const placeIntoColumns = (cells, colXs, tol = 12) => {
+    const row = Array(colXs.length).fill('');
+    for (const c of cells) {
+      let idx = 0, best = Infinity;
+      for (let i = 0; i < colXs.length; i++) {
+        const d = Math.abs(c.x - colXs[i]);
+        if (d < best) { best = d; idx = i; }
+      }
+      if (best <= tol) {
+        row[idx] = row[idx] ? `${row[idx]} ${c.str}` : c.str;
+      } else {
+        // «выбившийся» текст считаем последней колонкой
+        row[row.length - 1] = row[row.length - 1]
+          ? `${row[row.length - 1]} ${c.str}` : c.str;
+      }
+    }
+    return row.map(s => s.trim());
+  };
+
+  // считаем «насколько это таблица»: много повторных межсловных зазоров по X
+  const looksLikeTable = (rows) => {
+    let tableishLines = 0;
+    for (const r of rows) {
+      let bigGaps = 0;
+      for (let i = 1; i < r.length; i++) {
+        const prev = r[i - 1], cur = r[i];
+        const gap = cur.x - (prev.x + (prev.w || 0));
+        if (gap > 18) bigGaps++;
+      }
+      if (bigGaps >= 2) tableishLines++;
+    }
+    return tableishLines >= Math.max(3, rows.length * 0.2);
+  };
+
+  // fallback — собрать обычную строку с пробелами/« | » по большим зазорам
+  const joinWithGaps = (cells) => {
+    let s = '';
+    for (let i = 0; i < cells.length; i++) {
+      const cur = cells[i], prev = cells[i - 1];
+      if (i > 0) {
+        const gap = cur.x - (prev.x + (prev.w || 0));
+        s += gap > 18 ? ' | ' : (gap > 6 ? ' ' : '');
+      }
+      s += cur.str;
+    }
+    return s;
+  };
+
+  // ===== обработчик загрузки PDF =====
+  /** @param {File} file */
+  const handlePdfUpload = async (file) => {
+    setPdfExtracting(true);
+    try {
+      const buf = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      const pages = [];
+
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const tc = await page.getTextContent({ normalizeWhitespace: true });
+        const rows = groupByRows(tc.items, 2);
+
+        let pageMd = '';
+        if (looksLikeTable(rows)) {
+          const colXs = detectColumns(rows, 12);
+          const mdRows = rows.map(r => placeIntoColumns(r, colXs, 12));
+          const widths = mdRows[0]?.map((_, i) =>
+            Math.max(...mdRows.map(row => (row[i] || '').length))
+          ) || [];
+          const pad = (s, i) => (s || '').padEnd(widths[i] || 3, ' ');
+          if (mdRows.length) {
+            pageMd += `| ${mdRows[0].map((c, i) => pad(c, i)).join(' | ')} |\n`;
+            pageMd += `| ${widths.map(w => '-'.repeat(Math.max(3, w))).join(' | ')} |\n`;
+            for (let i = 1; i < mdRows.length; i++) {
+              pageMd += `| ${mdRows[i].map((c, j) => pad(c, j)).join(' | ')} |\n`;
+            }
+          }
+        } else {
+          pageMd = rows.map(joinWithGaps).join('\n');
+        }
+
+        pages.push(pageMd.trim());
+      }
+
+      let text = pages.join('\n\n--- page ---\n\n');
+
+      // починка переносов/дефисов/буллитов
+      text = text
+        .replace(/(\S)-\n(\S)/g, '$1$2')   // склейка слов, разорванных дефисом
+        .replace(/[ \t]+\n/g, '\n')        // убираем хвостовые пробелы
+        .replace(/[•◦▪]/g, '-');           // буллиты → markdown-списки
+
+      setSolutionText(text);
+      setInputMode('text'); // дальше ваш обычный поток «текст»
+      if (!text) alert('В PDF нет текстового слоя (скан). Для таблиц нужен OCR.');
+    } catch (e) {
+      alert('Не удалось извлечь текст из PDF: ' + (e?.message || e));
+    } finally {
+      setPdfExtracting(false);
+    }
+  };
+
+
+
   const handleGenerateModel = async (modelStructure) => {
     // 1) Собираем требования из задач
     const reqsFromTasks = tasks
@@ -517,9 +665,9 @@ export default function SolutionPage({ projects = [] }) {
       const { data } = await axios.post(
         `${config.serverUrl}/generate-test-cases`,
         { requirements, modelStructure }, {
-          headers: {
-            'Content-Type': 'application/json'
-          }
+        headers: {
+          'Content-Type': 'application/json'
+        }
       }
       );
       setGeneratedCases(data.cases);
@@ -1073,16 +1221,53 @@ export default function SolutionPage({ projects = [] }) {
         <div className="input-tabs">
           <button className={inputMode === 'text' ? 'active' : ''} onClick={() => setInputMode('text')}>Вставить текст</button>
           <button className={inputMode === 'confluence' ? 'active' : ''} onClick={() => setInputMode('confluence')}>Загрузить из Confluence</button>
+          <button className={inputMode === 'pdf' ? 'active' : ''} onClick={() => setInputMode('pdf')}>Загрузить PDF</button>
         </div>
 
-        {inputMode === 'text' ? (
-          <textarea placeholder="Вставьте текст требований для анализа..." value={solutionText} onChange={e => setSolutionText(e.target.value)} rows={10} />
-        ) : (
-          <div className="confluence-inputs">
-            <input type="text" placeholder="Confluence Page ID (напр., 133465419)" name="confluencePageId" autoComplete="off" value={confluencePageId} onChange={e => setConfluencePageId(e.target.value)} />
-            <input type="password" placeholder="Ваш Bearer токен для Confluence" name="confluenceToken" autoComplete="new-password" value={bearerToken} onChange={e => setBearerToken(e.target.value)} />
+        {inputMode === 'pdf' && (
+          <div className="pdf-inputs">
+            <input type="file" accept="application/pdf"
+              onChange={e => e.target.files?.[0] && handlePdfUpload(e.target.files[0])} />
+            {pdfExtracting && <p>Извлекается текст из PDF…</p>}
           </div>
         )}
+
+        {inputMode === 'text' ? (
+          <div className="md-split">
+            <textarea
+              placeholder="Вставьте текст требований для анализа..."
+              value={solutionText}
+              onChange={e => setSolutionText(e.target.value)}
+              rows={12}
+              className="md-editor"
+            />
+            <div
+              className="md-preview markdown-body"
+              // ВАЖНО: marked.parse превращает Markdown в HTML
+              dangerouslySetInnerHTML={{ __html: marked.parse(solutionText || '') }}
+            />
+          </div>
+        ) : (
+          <div className="confluence-inputs">
+            <input
+              type="text"
+              placeholder="Confluence Page ID (напр., 133465419)"
+              name="confluencePageId"
+              autoComplete="off"
+              value={confluencePageId}
+              onChange={e => setConfluencePageId(e.target.value)}
+            />
+            <input
+              type="password"
+              placeholder="Ваш Bearer токен для Confluence"
+              name="confluenceToken"
+              autoComplete="new-password"
+              value={bearerToken}
+              onChange={e => setBearerToken(e.target.value)}
+            />
+          </div>
+        )}
+
 
         <textarea className="context-input" placeholder="Дополнительный контекст для анализа (необязательно)" value={contextText} onChange={e => setContextText(e.target.value)} rows={3} />
         <textarea className="context-input" placeholder="Глоссарий проекта: АС - Автоматизированная Система, ФЛ - Физическое лицо (необязательно)" value={glossary} onChange={e => setGlossary(e.target.value)} rows={3} />
