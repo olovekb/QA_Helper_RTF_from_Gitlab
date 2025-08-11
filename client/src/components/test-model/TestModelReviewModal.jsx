@@ -889,150 +889,229 @@ export default function TestModelReviewModal({
     const handleGenerateXmind = async () => {
         setIsGenerating(true);
 
+        const STYLE_IDS = {
+            e2e: 'b-e2e',
+            integration: 'b-int',
+            unit: 'b-unit',
+        };
+
+        const SHEET_BOUNDARY_STYLES = [
+            {
+                id: 'b-e2e', class: 'org.xmind.ui.boundary',
+                properties: { 'svg:stroke': '#22c55e', 'svg:fill': '#dcfce7' }
+            },
+            {
+                id: 'b-int', class: 'org.xmind.ui.boundary',
+                properties: { 'svg:stroke': '#38bdf8', 'svg:fill': '#e0f2fe' }
+            },
+            {
+                id: 'b-unit', class: 'org.xmind.ui.boundary',
+                properties: { 'svg:stroke': '#a78bfa', 'svg:fill': '#ede9fe' }
+            },
+        ];
+
+        const BOUNDARY_STYLE = {
+            e2e: { 'svg:fill': '#DCFCE7', 'svg:stroke': '#22C55E' }, // зелёный
+            integration: { 'svg:fill': '#E0F2FE', 'svg:stroke': '#38BDF8' }, // голубой
+            unit: { 'svg:fill': '#EDE9FE', 'svg:stroke': '#A78BFA' }, // фиолетовый
+        };
+
+        const TYPE_MARKERS = {
+            feature: "tag-blue",
+            story: "tag-orange",
+            scenario: "tag-purple",
+            code: "tag-yellow",
+        };
+
+        const BOUNDARY_STYLES = {
+            e2e: { lineColor: "#22c55e", fillColor: "#dcfce7" },          // зелёный
+            integration: { lineColor: "#38bdf8", fillColor: "#e0f2fe" },  // голубой
+            unit: { lineColor: "#a78bfa", fillColor: "#ede9fe" },         // фиолетовый
+        };
+
+        const withTypeMeta = (topic, type) => ({
+            ...topic,
+            labels: [...(topic.labels || []), type.toUpperCase()],
+            markers: [...(topic.markers || []), { markerId: TYPE_MARKERS[type] }],
+        });
+
         const generateIdLocal = () => Math.random().toString(36).substr(2, 9);
 
         try {
-            // --- 1) Сборка иерархии для content.json ---
-            const featureTopics = Object.entries(treeData).map(
-                ([featureName, featureData]) => {
-                    const storyTopics = Object.entries(featureData.stories).map(
-                        ([storyName, storyData]) => {
+            // 1) Строим иерархию
+            const featureTopics = Object.entries(treeData).map(([featureName, featureData]) => {
+                const storyTopics = Object.entries(featureData.stories).map(([storyName, storyData]) => {
+                    // кейсы прямо под story
+                    const directStoryCases = (storyData.cases || []).map((caseItem) => {
+                        const markers = [];
+                        if ((caseItem.layer || "").toLowerCase().includes("frontend")) markers.push({ markerId: "flag-green" });
+                        if ((caseItem.layer || "").toLowerCase().includes("backend")) markers.push({ markerId: "flag-purple" });
+                        const layer = caseItem.layer || "";
+                        let testType = null;
+                        if (layer === "E2E Tests") testType = "e2e";
+                        else if (layer.startsWith("Integration")) testType = "integration";
+                        else if (layer.startsWith("Unit")) testType = "unit";
+                        return {
+                            id: caseItem.id || generateIdLocal(),
+                            class: "topic",
+                            title: caseItem.title,
+                            testType,
+                            markers: markers.length ? markers : undefined,
+                        };
+                    });
 
-                            // кейсы напрямую под story
-                            const directStoryCases = (storyData.cases || []).map(caseItem => {
+                    const scenarioTopics = Object.entries(storyData.scenarios || {}).map(([scenarioName, scenarioData]) => {
+                        const scenarioChildren = (scenarioData.cases || []).map((caseItem) => {
+                            const markers = [];
+                            if ((caseItem.layer || "").toLowerCase().includes("frontend")) markers.push({ markerId: "flag-green" });
+                            if ((caseItem.layer || "").toLowerCase().includes("backend")) markers.push({ markerId: "flag-purple" });
+                            const layer = caseItem.layer || "";
+                            let testType = null;
+                            if (layer === "E2E Tests") testType = "e2e";
+                            else if (layer.startsWith("Integration")) testType = "integration";
+                            else if (layer.startsWith("Unit")) testType = "unit";
+                            return {
+                                id: caseItem.id || generateIdLocal(),
+                                class: "topic",
+                                title: caseItem.title,
+                                testType,
+                                markers: markers.length ? markers : undefined,
+                            };
+                        });
+
+                        // code-узлы (unit)
+                        const codeTopics = Object.entries(scenarioData.codes || {}).map(([codeName, codeData]) => {
+                            const unitChildren = (codeData.cases || []).map((caseItem) => {
                                 const markers = [];
-                                if ((caseItem.layer || '').includes("frontend")) markers.push({ markerId: "flag-green" });
-                                if ((caseItem.layer || '').includes("backend")) markers.push({ markerId: "flag-purple" });
-                                const layer = caseItem.layer || "";
-                                let testType = null;
-                                if (layer === "E2E Tests") testType = "e2e";
-                                else if (layer.startsWith("Integration")) testType = "integration";
-                                else if (layer.startsWith("Unit")) testType = "unit";
+                                if ((caseItem.layer || "").toLowerCase().includes("frontend")) markers.push({ markerId: "flag-green" });
+                                if ((caseItem.layer || "").toLowerCase().includes("backend")) markers.push({ markerId: "flag-purple" });
                                 return {
                                     id: caseItem.id || generateIdLocal(),
                                     class: "topic",
                                     title: caseItem.title,
-                                    testType,
+                                    testType: "unit",
                                     markers: markers.length ? markers : undefined,
                                 };
                             });
 
-                            const scenarioTopics = Object.entries(storyData.scenarios || {}).map(([scenarioName, scenarioData]) => {
-                                // 1) дети-сценарии (e2e/integration)
-                                const scenarioChildren = (scenarioData.cases || []).map(caseItem => {
-                                    const markers = [];
-                                    if ((caseItem.layer || '').includes("frontend")) markers.push({ markerId: "flag-green" });
-                                    if ((caseItem.layer || '').includes("backend")) markers.push({ markerId: "flag-purple" });
-                                    const layer = caseItem.layer || "";
-                                    let testType = null;
-                                    if (layer === "E2E Tests") testType = "e2e";
-                                    else if (layer.startsWith("Integration")) testType = "integration";
-                                    else if (layer.startsWith("Unit")) testType = "unit";
-                                    return {
-                                        id: caseItem.id || generateIdLocal(),
-                                        class: "topic",
-                                        title: caseItem.title,
-                                        testType,
-                                        markers: markers.length ? markers : undefined,
-                                    };
-                                });
+                            const hasFE = (codeData.cases || []).some((c) => (c.layer || "").toLowerCase().includes("frontend"));
+                            const hasBE = (codeData.cases || []).some((c) => (c.layer || "").toLowerCase().includes("backend"));
+                            const codeMarkers = [];
+                            if (hasFE) codeMarkers.push({ markerId: "flag-green" });
+                            if (hasBE) codeMarkers.push({ markerId: "flag-purple" });
 
-                                // 2) code-узлы с unit
-                                const codeTopics = Object.entries(scenarioData.codes || {}).map(([codeName, codeData]) => {
-                                    const unitChildren = (codeData.cases || []).map(caseItem => {
-                                        const markers = [];
-                                        if ((caseItem.layer || '').toLowerCase().includes("frontend")) markers.push({ markerId: "flag-green" });
-                                        if ((caseItem.layer || '').toLowerCase().includes("backend")) markers.push({ markerId: "flag-purple" });
-                                        return {
-                                            id: caseItem.id || generateIdLocal(),
-                                            class: "topic",
-                                            title: caseItem.title,
-                                            testType: "unit",
-                                            markers: markers.length ? markers : undefined,
-                                        };
-                                    });
-
-                                    // ← НОВОЕ: FE/BE маркеры у самого code-узла
-                                    const hasFE = (codeData.cases || []).some(c => (c.layer || '').toLowerCase().includes('frontend'));
-                                    const hasBE = (codeData.cases || []).some(c => (c.layer || '').toLowerCase().includes('backend'));
-                                    const codeMarkers = [];
-                                    if (hasFE) codeMarkers.push({ markerId: "flag-green" });
-                                    if (hasBE) codeMarkers.push({ markerId: "flag-purple" });
-
-                                    const unitIdxs = unitChildren.map((_, idx) => idx);
-                                    const boundaries = unitIdxs.length
-                                        ? [{ id: generateIdLocal(), range: `(${unitIdxs[0]},${unitIdxs[unitIdxs.length - 1]})`, title: "Unit тесты" }]
-                                        : undefined;
-
-                                    return {
-                                        id: generateIdLocal(),
-                                        class: "topic",
-                                        title: codeName,
-                                        branch: "folded",
-                                        children: { attached: unitChildren },
-                                        boundaries,
-                                        markers: codeMarkers.length ? codeMarkers : undefined, // ← НОВОЕ
-                                    };
-                                });
-
-
-                                const childrenArray = [...scenarioChildren, ...codeTopics];
-
-                                // Границы по E2E/Integration среди прямых детей сценария
-                                const intIdxs = [], e2eIdxs = [];
-                                childrenArray.forEach((it, idx) => {
-                                    if (it.testType === "integration") intIdxs.push(idx);
-                                    if (it.testType === "e2e") e2eIdxs.push(idx);
-                                });
-                                const boundaries = [];
-                                if (intIdxs.length) boundaries.push({ id: generateIdLocal(), range: `(${intIdxs[0]},${intIdxs[intIdxs.length - 1]})`, title: "Интеграционные тесты" });
-                                if (e2eIdxs.length) boundaries.push({ id: generateIdLocal(), range: `(${e2eIdxs[0]},${e2eIdxs[e2eIdxs.length - 1]})`, title: "E2E тесты" });
-
-                                return {
+                            const unitIdxs = unitChildren.map((_, idx) => idx);
+                            const boundaries = unitIdxs.length
+                                ? [{
                                     id: generateIdLocal(),
-                                    class: "topic",
-                                    title: scenarioName,
-                                    branch: "folded",
-                                    markers: [{ markerId: "people-blue" }],
-                                    children: { attached: childrenArray },
-                                    boundaries: boundaries.length ? boundaries : undefined,
-                                };
-                            });
+                                    range: `(${unitIdxs[0]},${unitIdxs[unitIdxs.length - 1]})`,
+                                    title: "Unit тесты",
+                                    styleId: 'b-unit'
+                                }]
+                                : undefined;
 
-                            const casesAndScenarios = [...directStoryCases, ...scenarioTopics];
-
-                            // story-level границы (для прямых детей story)
-                            const intAll = []; const e2eAll = [];
-                            casesAndScenarios.forEach((item, idx) => {
-                                if (item.testType === "integration") intAll.push(idx);
-                                if (item.testType === "e2e") e2eAll.push(idx);
-                            });
-                            const storyBoundaries = [];
-                            if (intAll.length) storyBoundaries.push({ id: generateIdLocal(), range: `(${intAll[0]},${intAll[intAll.length - 1]})`, title: "Интеграционные тесты" });
-                            if (e2eAll.length) storyBoundaries.push({ id: generateIdLocal(), range: `(${e2eAll[0]},${e2eAll[e2eAll.length - 1]})`, title: "E2E тесты" });
-
-                            return {
+                            const codeTopic = {
                                 id: generateIdLocal(),
                                 class: "topic",
-                                title: storyName,
+                                title: codeName,
                                 branch: "folded",
-                                children: { attached: casesAndScenarios },
-                                boundaries: storyBoundaries.length ? storyBoundaries : undefined,
+                                children: { attached: unitChildren },
+                                boundaries,
+                                markers: codeMarkers.length ? codeMarkers : undefined,
                             };
-                        }
-                    );
 
-                    return {
+                            return withTypeMeta(codeTopic, "code");
+                        });
+
+                        const childrenArray = [...scenarioChildren, ...codeTopics];
+
+                        // границы внутри сценария
+                        const intIdxs = [];
+                        const e2eIdxs = [];
+                        childrenArray.forEach((it, idx) => {
+                            if (it.testType === "integration") intIdxs.push(idx);
+                            if (it.testType === "e2e") e2eIdxs.push(idx);
+                        });
+
+                        const boundaries = [];
+                        if (intIdxs.length)
+                            boundaries.push({
+                                id: generateIdLocal(),
+                                range: `(${intIdxs[0]},${intIdxs[intIdxs.length - 1]})`,
+                                title: "Интеграционные тесты",
+                                styleId: 'b-int'
+                            });
+                        if (e2eIdxs.length)
+                            boundaries.push({
+                                id: generateIdLocal(),
+                                range: `(${e2eIdxs[0]},${e2eIdxs[e2eIdxs.length - 1]})`,
+                                title: "E2E тесты",
+                                style: BOUNDARY_STYLE.e2e,
+                            });
+
+                        const scenarioTopic = {
+                            id: generateIdLocal(),
+                            class: "topic",
+                            title: scenarioName,
+                            branch: "folded",
+                            markers: [{ markerId: "people-blue" }],
+                            children: { attached: childrenArray },
+                            boundaries: boundaries.length ? boundaries : undefined,
+                        };
+
+                        return withTypeMeta(scenarioTopic, "scenario");
+                    });
+
+                    const casesAndScenarios = [...directStoryCases, ...scenarioTopics];
+
+                    // story-level границы
+                    const intAll = [];
+                    const e2eAll = [];
+                    casesAndScenarios.forEach((item, idx) => {
+                        if (item.testType === "integration") intAll.push(idx);
+                        if (item.testType === "e2e") e2eAll.push(idx);
+                    });
+
+                    const storyBoundaries = [];
+                    if (intAll.length)
+                        storyBoundaries.push({
+                            id: generateIdLocal(),
+                            range: `(${intAll[0]},${intAll[intAll.length - 1]})`,
+                            title: "Интеграционные тесты",
+                            styleId: 'b-int'
+                        });
+                    if (e2eAll.length)
+                        storyBoundaries.push({
+                            id: generateIdLocal(),
+                            range: `(${e2eAll[0]},${e2eAll[e2eAll.length - 1]})`,
+                            title: "E2E тесты",
+                            style: BOUNDARY_STYLE.e2e,
+                        });
+
+                    const storyTopic = {
                         id: generateIdLocal(),
                         class: "topic",
-                        title: featureName,
+                        title: storyName,
                         branch: "folded",
-                        children: { attached: storyTopics },
+                        children: { attached: casesAndScenarios },
+                        boundaries: storyBoundaries.length ? storyBoundaries : undefined,
                     };
-                }
-            );
 
-            // --- 2) Формирование content.json ---
+                    return withTypeMeta(storyTopic, "story");
+                });
+
+                const featureTopic = {
+                    id: generateIdLocal(),
+                    class: "topic",
+                    title: featureName,
+                    branch: "folded",
+                    children: { attached: storyTopics },
+                };
+
+                return withTypeMeta(featureTopic, "feature");
+            });
+
+            // 2) content.json
             const contentJson = [
                 {
                     id: generateIdLocal(),
@@ -1043,45 +1122,31 @@ export default function TestModelReviewModal({
                         class: "topic",
                         title: jiraProject,
                         structureClass: "org.xmind.ui.timeline.horizontal",
-                        children: { attached: [...featureTopics] }
+                        children: { attached: featureTopics },
                     },
                     theme: {
-                        map: {
-                            id: "423cea10-5cf2-4b9c-a86a-10cba3fa1981",
-                            properties: { "svg:fill": "#ffffff" },
-                        },
-                        centralTopic: {
-                            id: "c8f9a13b-cef1-4f3b-96aa-09472b8358f0",
-                            properties: { "svg:fill": "#3949AB" },
-                        },
-                        mainTopic: {
-                            id: "50792793-7789-468b-9722-4e2ec235f632",
-                            properties: { "svg:fill": "#EEEEEE" },
-                        },
-                        subTopic: {
-                            id: "a36e6db3-7a1f-4996-8f4b-f6bcffceeb5f",
-                            properties: { "svg:fill": "#EEEEEE" },
-                        },
+                        map: { id: "423cea10-5cf2-4b9c-a86a-10cba3fa1981", properties: { "svg:fill": "#ffffff" } },
+                        centralTopic: { id: "c8f9a13b-cef1-4f3b-96aa-09472b8358f0", properties: { "svg:fill": "#3949AB" } },
+                        mainTopic: { id: "50792793-7789-468b-9722-4e2ec235f632", properties: { "svg:fill": "#EEEEEE" } },
+                        subTopic: { id: "a36e6db3-7a1f-4996-8f4b-f6bcffceeb5f", properties: { "svg:fill": "#EEEEEE" } },
                     },
+                    styles: SHEET_BOUNDARY_STYLES,
                 },
             ];
 
-            // --- 3) metadata.json ---
+            // 3) metadata.json
             const metadataJson = {
                 dataStructureVersion: "2",
                 creator: { name: "YourAppName", version: "1.0.0" },
                 layoutEngineVersion: "3",
             };
 
-            // --- 4) manifest.json ---
+            // 4) manifest.json
             const manifestJson = {
-                "file-entries": {
-                    "content.json": {},
-                    "metadata.json": {},
-                },
+                "file-entries": { "content.json": {}, "metadata.json": {} },
             };
 
-            // --- 5) Упаковка в .xmind ---
+            // 5) упаковка
             const zip = new JSZip();
             zip.file("content.json", JSON.stringify(contentJson, null, 2));
             zip.file("metadata.json", JSON.stringify(metadataJson, null, 2));
@@ -1092,7 +1157,7 @@ export default function TestModelReviewModal({
                 mimeType: "application/vnd.xmind.xmind",
             });
 
-            // --- 6) Скачивание ---
+            // 6) скачивание
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
@@ -1107,6 +1172,7 @@ export default function TestModelReviewModal({
             setIsGenerating(false);
         }
     };
+
 
     const handleDeleteCase = useCallback((caseId) => {
         setTreeData((prevTree) => {

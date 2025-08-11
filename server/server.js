@@ -1993,7 +1993,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
         if (err && (err.code === 429 || /rate.?limit/i.test(err.message))) {
             const s = Number(err.waitSeconds) || 60;
             return res.status(429).json({
-                error: 'Лимит скорости модели. Повторите позже.',
+                error: 'Лимит скорости модели. Повторите запрос через 1 минуту.',
                 waitSeconds: s
             });
         }
