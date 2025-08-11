@@ -817,7 +817,7 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
     }
 
     const isBusy = isGeneratingModel || isGeneratingCases;
-    const loaderText = isGeneratingModel ? "Генерация тестовой модели..." : "Генерация тест-кейсов...";
+    const loaderText = isGeneratingModel ? "Генерация тестовой модели..." : `При больших требованиях генерация может быть пару минут, сходи покури или попей чай`;
 
     return (
         <Modal isOpen={isOpen} onRequestClose={isBusy ? () => { } : handleCloseWithConfirm} overlayClassName="modal-overlay" className="modal-content">
