@@ -1241,11 +1241,6 @@ export default function SolutionPage({ projects = [] }) {
               rows={12}
               className="md-editor"
             />
-            <div
-              className="md-preview markdown-body"
-              // ВАЖНО: marked.parse превращает Markdown в HTML
-              dangerouslySetInnerHTML={{ __html: marked.parse(solutionText || '') }}
-            />
           </div>
         ) : (
           <div className="confluence-inputs">
