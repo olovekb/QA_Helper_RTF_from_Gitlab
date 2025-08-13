@@ -1521,6 +1521,10 @@ app.post('/api/generate-test-cases', async (req, res) => {
         ]);
         const trimText = (s, n = 1200) => String(s ?? '').trim().slice(0, n);
         const allowedCodeSet = new Set(allowedCodes);
+        const take = (s, n) => {
+            const t = trimText(s, n);
+            return t ? t : undefined;
+        };
         return (arr || [])
             .filter(x => x && typeof x === 'object')
             .map(x => {
@@ -1532,9 +1536,9 @@ app.post('/api/generate-test-cases', async (req, res) => {
                 const code = allowedCodeSet.has(codeRaw) ? codeRaw : undefined;
 
                 return {
-                    feature: trimText(x.feature, 300),
-                    story: trimText(x.story, 300),
-                    scenario: trimText(x.scenario, 400),
+                    ...(take(x.feature, 300) ? { feature: take(x.feature, 300) } : {}),
+                    ...(take(x.story, 300) ? { story: take(x.story, 300) } : {}),
+                    ...(take(x.scenario, 400) ? { scenario: take(x.scenario, 400) } : {}),
                     ...(code ? { code } : {}),
                     title: trimText(x.title, 400),
                     precondition: trimText(x.precondition, 1200),
@@ -1563,9 +1567,11 @@ app.post('/api/generate-test-cases', async (req, res) => {
         const scenarioSet = new Set();
         const codeTo = new Map();              // "код шага" → { scenario, story, feature }
         const scenarioToParent = new Map();    // "сценарий" → { story, feature }
+        const storyToFeature = new Map();
 
         for (const f of (model || [])) {
             for (const st of (f.stories || [])) {
+                if (st?.text?.trim()) storyToFeature.set(st.text.trim(), f.text?.trim() || '');
                 for (const sc of (st.scenarios || [])) {
                     scenarioSet.add(sc.text);
                     scenarioToParent.set(sc.text, { story: st.text, feature: f.text });
@@ -1575,13 +1581,20 @@ app.post('/api/generate-test-cases', async (req, res) => {
                 }
             }
         }
-        return { scenarioSet, codeTo, scenarioToParent };
+        return { scenarioSet, codeTo, scenarioToParent, storyToFeature };
     }
 
     function fixAgainstModel(cases, idx) {
         const out = [];
         for (const tc of (cases || [])) {
             const layer = String(tc.layer || '');
+
+            // E2E: story обязателен, feature восстанавливаем по карте story->feature
+            if (layer === 'E2E Tests') {
+                if (!tc.story || !idx.storyToFeature.has(tc.story)) continue; // неизвестная Story — выбрасываем
+                const feat = idx.storyToFeature.get(tc.story);
+                if (!tc.feature || tc.feature !== feat) tc.feature = feat;
+            }
 
             // Unit: нужен корректный code → восстанавливаем scenario/story/feature по карте
             if (layer.startsWith('Unit')) {
@@ -1605,6 +1618,12 @@ app.post('/api/generate-test-cases', async (req, res) => {
 
             // Если scenario указан, но его нет в модели — выкидываем (ловим «Проверка»)
             if (tc.scenario && !idx.scenarioSet.has(tc.scenario)) continue;
+
+            // Общая страховка: если есть Story из модели — фича должна быть ровно её родитель
+            if (tc.story && idx.storyToFeature.has(tc.story)) {
+                const mustFeature = idx.storyToFeature.get(tc.story);
+                if (tc.feature !== mustFeature) tc.feature = mustFeature;
+            }
 
             out.push(tc);
         }
@@ -1987,6 +2006,13 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
         const idx = buildModelIndex(modelStructure);
         allCases = sanitize(allCases);
         allCases = fixAgainstModel(allCases, idx);
+
+        // Если в модели всего одна Feature — принудительно выставим её всем кейсам
+        const uniqueFeatures = [...new Set((modelStructure || []).map(f => f?.text?.trim()).filter(Boolean))];
+        if (uniqueFeatures.length === 1) {
+            const theOnlyFeature = uniqueFeatures[0];
+            allCases = allCases.map(tc => ({ ...tc, feature: theOnlyFeature }));
+        }
 
         // Аудит покрытия и догенерация недостающего
         const missing = auditCoverage(modelStructure, allCases);
