@@ -1138,93 +1138,133 @@ function extractToolArgs(aiResponse, preferredFnName) {
 // принимающая либо строку prompt, либо массив сообщений {role, content}
 //
 async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
-    const {
-        model = 'qwen/qwen3-235b-a22b:free',
-        tools,
-        tool_choice,
-        response_format,
-        temperature = 0.4,
-        top_p = 0.95,
-        extra = {}
-    } = opts;
+  const {
+    model = 'qwen/qwen3-235b-a22b:free',
+    tools,
+    tool_choice,
+    response_format,
+    temperature = 0.4,
+    top_p = 0.95,
+    extra = {},
+    maxAttempts = 8,          // больше попыток: учитываем очереди у провайдера
+    minWaitMs = 1500,         // минимальный бэкофф
+    maxWaitMs = 120000,       // верхняя граница ожидания между ретраями
+    logRateLimit = true       // логировать лимит-хедеры для диагностики
+  } = opts;
 
-    const maxAttempts = 3;
-    let attempt = 0;
-    const messages = Array.isArray(promptOrMessages)
-        ? promptOrMessages
-        : [{ role: 'user', content: promptOrMessages }];
+  const messages = Array.isArray(promptOrMessages)
+    ? promptOrMessages
+    : [{ role: 'user', content: promptOrMessages }];
 
-    while (attempt < maxAttempts) {
-        attempt++;
-        const payload = {
-            model,
-            messages,
-            temperature,
-            top_p,
-            ...extra
-        };
-        if (tools) payload.tools = tools;
-        if (tool_choice) payload.tool_choice = tool_choice;
-        if (response_format) payload.response_format = response_format;
+  // экспоненциальный бэкофф с небольшим джиттером
+  const backoff = (attemptIdx) => {
+    const base = Math.min(minWaitMs * Math.pow(2, attemptIdx - 1), maxWaitMs);
+    const jitter = 1 + Math.random() * 0.2; // +0..20%
+    return Math.floor(base * jitter);
+  };
 
-        const resp = await fetch(url, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+  let attempt = 0;
 
-        if (resp.ok) {
-            const bodyText = await resp.text();
-            if (!bodyText || !/[{\[]/.test(bodyText)) {
-                throw new Error(`Empty or invalid JSON response from AI: "${bodyText}"`);
-            }
-            try {
-                return JSON.parse(bodyText);
-            } catch {
-                return JSON5.parse(bodyText);
-            }
-        }
+  while (attempt < maxAttempts) {
+    attempt++;
 
-        if (resp.status === 429) {
-            // пробуем достать время ожидания
-            const retryAfter = resp.headers.get('retry-after'); // сек
-            const resetHdr = resp.headers.get('x-ratelimit-reset'); // иногда timestamp (сек или мс)
-            let waitMs = 60_000; // дефолт: минута
+    const payload = {
+      model,
+      messages,
+      temperature,
+      top_p,
+      ...extra
+    };
+    if (tools) payload.tools = tools;
+    if (tool_choice) payload.tool_choice = tool_choice;
+    if (response_format) payload.response_format = response_format;
 
-            if (retryAfter && !Number.isNaN(Number(retryAfter))) {
-                waitMs = Number(retryAfter) * 1000;
-            } else if (resetHdr && !Number.isNaN(Number(resetHdr))) {
-                const n = Number(resetHdr);
-                // бывает Unix sec, бывает ms — определим по величине
-                const resetMs = n > 1e12 ? n : n * 1000;
-                waitMs = Math.max(0, resetMs - Date.now());
-            } else {
-                // если в теле есть метаданные — парсим на всякий
-                const text = await resp.text().catch(() => '');
-                const m = text.match(/"X-RateLimit-Reset":"?(\d+)"?/i);
-                if (m) {
-                    const n = Number(m[1]);
-                    const resetMs = n > 1e12 ? n : n * 1000;
-                    waitMs = Math.max(0, resetMs - Date.now());
-                }
-            }
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
 
-            const err = new Error(`Пожалуйста, повторите запрос через 1 минуту, есть небольшая очередь`);
-            err.code = 429;
-            err.waitSeconds = Math.max(1, Math.ceil(waitMs / 1000));
-            throw err;
-        }
-
-        if (resp.status >= 500 && resp.status < 600 && attempt < maxAttempts) {
-            await new Promise(r => setTimeout(r, 1000 * attempt));
-            continue;
-        }
-        const text = await resp.text();
-        throw new Error(`OpenRouter ${resp.status}: ${text}`);
+    // Успешно — парсим и выходим
+    if (resp.ok) {
+      const text = await resp.text();
+      if (!text || !/[{\[]/.test(text)) {
+        throw new Error(`Empty or invalid JSON response from AI: "${text}"`);
+      }
+      try {
+        return JSON.parse(text);
+      } catch {
+        // JSON5 импортирован у вас выше
+        return JSON5.parse(text);
+      }
     }
 
-    throw new Error('OpenRouter: превышено максимальное число попыток');
+    // ==== 429: подождать и повторить внутри функции ====
+    if (resp.status === 429) {
+      // Собираем все подсказки по времени ожидания
+      const h = (name) => resp.headers.get(name);
+      const ra = parseFloat(h('retry-after') || '0'); // секунды
+      const rMain = parseFloat(h('x-ratelimit-reset') || '0');
+      const rReq = parseFloat(h('x-ratelimit-reset-requests') || '0');
+      const rTok = parseFloat(h('x-ratelimit-reset-tokens') || '0');
+      const remaining = h('x-ratelimit-remaining') || h('x-ratelimit-remaining-requests') || h('x-ratelimit-remaining-tokens');
+
+      let waitMs = 0;
+
+      // Retry-After — самый надёжный
+      if (ra && !Number.isNaN(ra)) {
+        waitMs = Math.max(waitMs, Math.round(ra * 1000));
+      }
+
+      // Иногда приходит timestamp (в сек/мс) или "через N секунд"
+      const now = Date.now();
+      for (const v of [rMain, rReq, rTok]) {
+        if (!v || Number.isNaN(v)) continue;
+        // Если значение похоже на timestamp в мс — просто разница,
+        // если похоже на секунды — умножаем на 1000.
+        const ms = v > 1e12 ? (v - now) : Math.round(v * 1000);
+        if (ms > 0) waitMs = Math.max(waitMs, ms);
+      }
+
+      // Фолбэк — экспоненциальный бэкофф
+      if (!waitMs || waitMs < 1000) waitMs = backoff(attempt);
+
+      if (logRateLimit) {
+        console.warn('[callWithBackoff] 429 rate limit. Waiting ms:', waitMs, {
+          retryAfter: h('retry-after'),
+          xRateReset: h('x-ratelimit-reset'),
+          xRateResetReq: h('x-ratelimit-reset-requests'),
+          xRateResetTok: h('x-ratelimit-reset-tokens'),
+          remaining
+        });
+      }
+
+      await new Promise(r => setTimeout(r, Math.min(waitMs, maxWaitMs)));
+      // и пробуем снова
+      continue;
+    }
+
+    // 5xx: подождать и повторить
+    if (resp.status >= 500 && resp.status < 600) {
+      const waitMs = backoff(attempt);
+      if (logRateLimit) {
+        console.warn(`[callWithBackoff] ${resp.status} from upstream. Retry in ${waitMs}ms`);
+      }
+      await new Promise(r => setTimeout(r, waitMs));
+      continue;
+    }
+
+    // Остальные ошибки — читаем тело и бросаем
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`OpenRouter ${resp.status}: ${errText || resp.statusText}`);
+  }
+
+  throw new Error('OpenRouter: превышено число попыток (после 429/5xx)');
 }
+
 
 
 function buildSubmitCasesTool(allowedCodes = []) {
