@@ -1138,131 +1138,131 @@ function extractToolArgs(aiResponse, preferredFnName) {
 // принимающая либо строку prompt, либо массив сообщений {role, content}
 //
 async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
-  const {
-    model = 'qwen/qwen3-235b-a22b:free',
-    tools,
-    tool_choice,
-    response_format,
-    temperature = 0.4,
-    top_p = 0.95,
-    extra = {},
-    maxAttempts = 8,          // больше попыток: учитываем очереди у провайдера
-    minWaitMs = 1500,         // минимальный бэкофф
-    maxWaitMs = 120000,       // верхняя граница ожидания между ретраями
-    logRateLimit = true       // логировать лимит-хедеры для диагностики
-  } = opts;
+    const {
+        model = 'qwen/qwen3-235b-a22b:free',
+        tools,
+        tool_choice,
+        response_format,
+        temperature = 0.4,
+        top_p = 0.95,
+        extra = {},
+        maxAttempts = 8,          // больше попыток: учитываем очереди у провайдера
+        minWaitMs = 1500,         // минимальный бэкофф
+        maxWaitMs = 120000,       // верхняя граница ожидания между ретраями
+        logRateLimit = true       // логировать лимит-хедеры для диагностики
+    } = opts;
 
-  const messages = Array.isArray(promptOrMessages)
-    ? promptOrMessages
-    : [{ role: 'user', content: promptOrMessages }];
+    const messages = Array.isArray(promptOrMessages)
+        ? promptOrMessages
+        : [{ role: 'user', content: promptOrMessages }];
 
-  // экспоненциальный бэкофф с небольшим джиттером
-  const backoff = (attemptIdx) => {
-    const base = Math.min(minWaitMs * Math.pow(2, attemptIdx - 1), maxWaitMs);
-    const jitter = 1 + Math.random() * 0.2; // +0..20%
-    return Math.floor(base * jitter);
-  };
-
-  let attempt = 0;
-
-  while (attempt < maxAttempts) {
-    attempt++;
-
-    const payload = {
-      model,
-      messages,
-      temperature,
-      top_p,
-      ...extra
+    // экспоненциальный бэкофф с небольшим джиттером
+    const backoff = (attemptIdx) => {
+        const base = Math.min(minWaitMs * Math.pow(2, attemptIdx - 1), maxWaitMs);
+        const jitter = 1 + Math.random() * 0.2; // +0..20%
+        return Math.floor(base * jitter);
     };
-    if (tools) payload.tools = tools;
-    if (tool_choice) payload.tool_choice = tool_choice;
-    if (response_format) payload.response_format = response_format;
 
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    });
+    let attempt = 0;
 
-    // Успешно — парсим и выходим
-    if (resp.ok) {
-      const text = await resp.text();
-      if (!text || !/[{\[]/.test(text)) {
-        throw new Error(`Empty or invalid JSON response from AI: "${text}"`);
-      }
-      try {
-        return JSON.parse(text);
-      } catch {
-        // JSON5 импортирован у вас выше
-        return JSON5.parse(text);
-      }
-    }
+    while (attempt < maxAttempts) {
+        attempt++;
 
-    // ==== 429: подождать и повторить внутри функции ====
-    if (resp.status === 429) {
-      // Собираем все подсказки по времени ожидания
-      const h = (name) => resp.headers.get(name);
-      const ra = parseFloat(h('retry-after') || '0'); // секунды
-      const rMain = parseFloat(h('x-ratelimit-reset') || '0');
-      const rReq = parseFloat(h('x-ratelimit-reset-requests') || '0');
-      const rTok = parseFloat(h('x-ratelimit-reset-tokens') || '0');
-      const remaining = h('x-ratelimit-remaining') || h('x-ratelimit-remaining-requests') || h('x-ratelimit-remaining-tokens');
+        const payload = {
+            model,
+            messages,
+            temperature,
+            top_p,
+            ...extra
+        };
+        if (tools) payload.tools = tools;
+        if (tool_choice) payload.tool_choice = tool_choice;
+        if (response_format) payload.response_format = response_format;
 
-      let waitMs = 0;
-
-      // Retry-After — самый надёжный
-      if (ra && !Number.isNaN(ra)) {
-        waitMs = Math.max(waitMs, Math.round(ra * 1000));
-      }
-
-      // Иногда приходит timestamp (в сек/мс) или "через N секунд"
-      const now = Date.now();
-      for (const v of [rMain, rReq, rTok]) {
-        if (!v || Number.isNaN(v)) continue;
-        // Если значение похоже на timestamp в мс — просто разница,
-        // если похоже на секунды — умножаем на 1000.
-        const ms = v > 1e12 ? (v - now) : Math.round(v * 1000);
-        if (ms > 0) waitMs = Math.max(waitMs, ms);
-      }
-
-      // Фолбэк — экспоненциальный бэкофф
-      if (!waitMs || waitMs < 1000) waitMs = backoff(attempt);
-
-      if (logRateLimit) {
-        console.warn('[callWithBackoff] 429 rate limit. Waiting ms:', waitMs, {
-          retryAfter: h('retry-after'),
-          xRateReset: h('x-ratelimit-reset'),
-          xRateResetReq: h('x-ratelimit-reset-requests'),
-          xRateResetTok: h('x-ratelimit-reset-tokens'),
-          remaining
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
         });
-      }
 
-      await new Promise(r => setTimeout(r, Math.min(waitMs, maxWaitMs)));
-      // и пробуем снова
-      continue;
+        // Успешно — парсим и выходим
+        if (resp.ok) {
+            const text = await resp.text();
+            if (!text || !/[{\[]/.test(text)) {
+                throw new Error(`Empty or invalid JSON response from AI: "${text}"`);
+            }
+            try {
+                return JSON.parse(text);
+            } catch {
+                // JSON5 импортирован у вас выше
+                return JSON5.parse(text);
+            }
+        }
+
+        // ==== 429: подождать и повторить внутри функции ====
+        if (resp.status === 429) {
+            // Собираем все подсказки по времени ожидания
+            const h = (name) => resp.headers.get(name);
+            const ra = parseFloat(h('retry-after') || '0'); // секунды
+            const rMain = parseFloat(h('x-ratelimit-reset') || '0');
+            const rReq = parseFloat(h('x-ratelimit-reset-requests') || '0');
+            const rTok = parseFloat(h('x-ratelimit-reset-tokens') || '0');
+            const remaining = h('x-ratelimit-remaining') || h('x-ratelimit-remaining-requests') || h('x-ratelimit-remaining-tokens');
+
+            let waitMs = 0;
+
+            // Retry-After — самый надёжный
+            if (ra && !Number.isNaN(ra)) {
+                waitMs = Math.max(waitMs, Math.round(ra * 1000));
+            }
+
+            // Иногда приходит timestamp (в сек/мс) или "через N секунд"
+            const now = Date.now();
+            for (const v of [rMain, rReq, rTok]) {
+                if (!v || Number.isNaN(v)) continue;
+                // Если значение похоже на timestamp в мс — просто разница,
+                // если похоже на секунды — умножаем на 1000.
+                const ms = v > 1e12 ? (v - now) : Math.round(v * 1000);
+                if (ms > 0) waitMs = Math.max(waitMs, ms);
+            }
+
+            // Фолбэк — экспоненциальный бэкофф
+            if (!waitMs || waitMs < 1000) waitMs = backoff(attempt);
+
+            if (logRateLimit) {
+                console.warn('[callWithBackoff] 429 rate limit. Waiting ms:', waitMs, {
+                    retryAfter: h('retry-after'),
+                    xRateReset: h('x-ratelimit-reset'),
+                    xRateResetReq: h('x-ratelimit-reset-requests'),
+                    xRateResetTok: h('x-ratelimit-reset-tokens'),
+                    remaining
+                });
+            }
+
+            await new Promise(r => setTimeout(r, Math.min(waitMs, maxWaitMs)));
+            // и пробуем снова
+            continue;
+        }
+
+        // 5xx: подождать и повторить
+        if (resp.status >= 500 && resp.status < 600) {
+            const waitMs = backoff(attempt);
+            if (logRateLimit) {
+                console.warn(`[callWithBackoff] ${resp.status} from upstream. Retry in ${waitMs}ms`);
+            }
+            await new Promise(r => setTimeout(r, waitMs));
+            continue;
+        }
+
+        // Остальные ошибки — читаем тело и бросаем
+        const errText = await resp.text().catch(() => '');
+        throw new Error(`OpenRouter ${resp.status}: ${errText || resp.statusText}`);
     }
 
-    // 5xx: подождать и повторить
-    if (resp.status >= 500 && resp.status < 600) {
-      const waitMs = backoff(attempt);
-      if (logRateLimit) {
-        console.warn(`[callWithBackoff] ${resp.status} from upstream. Retry in ${waitMs}ms`);
-      }
-      await new Promise(r => setTimeout(r, waitMs));
-      continue;
-    }
-
-    // Остальные ошибки — читаем тело и бросаем
-    const errText = await resp.text().catch(() => '');
-    throw new Error(`OpenRouter ${resp.status}: ${errText || resp.statusText}`);
-  }
-
-  throw new Error('OpenRouter: превышено число попыток (после 429/5xx)');
+    throw new Error('OpenRouter: превышено число попыток (после 429/5xx)');
 }
 
 
@@ -2141,25 +2141,36 @@ app.post('/api/generate-test-model', async (req, res) => {
 
 ## 2. Ключевой принцип декомпозиции (САМОЕ ВАЖНОЕ!)
 - **Сначала Синтез, потом Анализ.** Прочитай ВСЕ требования. Твоя первая задача — определить 1-3 **высокоуровневых пользовательских потока (Story)**, которые приносят конечную ценность.
-- **Ценность важнее действия.** Story — это то, **зачем** пользователь пришел (например, «Ввести и проверить реквизиты»), а не то, **как** он это делает («Вставить из буфера»).
-- **НЕ СОЗДАВАЙ** новую Story для каждого "Целевого действия" или "Вида сценария" из текста требований. Это всего лишь шаги (Scenarios) внутри одной большой Story.
 
 ## 3. Структура дерева (строго соблюдать)
 - **Feature (Фича):** Большой независимый блок продукта.
-  • Если требования описывают единственный блок — генерировать ровно один Feature и вложить в него все Stories.
-- **Story (C1-E2E):** **Целостный пользовательский сценарий, приносящий ценность.** Формулируется как завершенное действие.
-  • Пример: «Ввести и валидировать реквизиты в поле», «Настроить виджет в конструкторе».
-  • **НЕ дробить** на отдельные случаи ввода (ввод с клавиатуры, вставка из буфера, очистка — это всё Scenarios внутри одной Story).
+- **Story (C1-E2E):** **Целостный пользовательский сценарий, приносящий ценность.**
 - **Scenario (C2–C3-Integration):** **Атомарное ДЕЙСТВИЕ пользователя** внутри Story, формулируется инфинитивом.
-  • Пример: «Ввести символы вручную», «Вставить номер из буфера», «Очистить поле», «Выбрать режим 'карта'».
-  • Не описывать здесь поведение системы.
-- **Code (C4-Unit):** **РЕАКЦИЯ системы** на действие пользователя, описываемое инфинитивом.
-  • Пример: «Применить маску ввода», «Отобразить иконку платежной системы», «Рассчитать контрольную сумму», «Отправить API запрос».
-  • **Не использовать** слово «Проверка» или «Проверить».
+- **Code (C4-Unit):** **РЕАКЦИЯ системы** на действие пользователя, описываемое инфинитивом. **Не использовать** слово «Проверка».
+
+## 3.1. Правила Детализации (ПРИОРИТЕТ!)
+- **Если в требованиях есть раздел "Пользовательские сценарии" (или похожий по смыслу), используй его как главный источник для декомпозиции.**
+- **Каждый пронумерованный шаг пользователя из этих сценариев должен стать отдельным \`Scenario\` в тестовой модели.**
+- **Описание реакции системы на действие пользователя — это \`Code\` внутри этого \`Scenario\`.**
+
+// --- НОВОЕ ПРАВИЛО ---
+## 3.2. Принцип Абстракции Данных (ВЫСШИЙ ПРИОРИТЕТ!)
+- **Не вставляй конкретные данные из примеров (значения, названия, тексты ошибок) в итоговую модель.**
+- **Твоя задача — распознать КОНКРЕТНЫЕ ПРИМЕРЫ в требованиях, но в итоговой модели заменить их на АБСТРАКТНЫЕ ОПИСАНИЯ.**
+- Цель — создать универсальную тестовую модель, которая описывает *что* проверять, а не *с какими именно данными*.
+
+- **Примеры абстракции:**
+  - НЕПРАВИЛЬНО: "Выбрать программу '27 LADA FREE'"
+  - **ПРАВИЛЬНО:** "Выбрать значение, соответствующее условию зависимости А"
+
+  - НЕПРАВИЛЬНО: "Ввести в поле значение '90'"
+  - **ПРАВИЛЬНО:** "Ввести значение, не соответствующее правилам валидации"
+
+  - НЕПРАВИЛЬНО: "Отобразить текст ошибки 'Срок кредита...'"
+  - **ПРАВИЛЬНО:** "Отобразить текст ошибки, соответствующий сработавшему условию"
 
 ## 4. Формат вывода (обязательно)
-Выход — **ТОЛЬКО** чистый JSON-массив без комментариев и markdown. ❗️ Строго: выводи **только** JSON-массив, без лишних пробелов внутри строк, без комментариев и без markdown.  
-Все ключи и строки должны быть в кавычках, между элементами — запятые. 
+Выход — **ТОЛЬКО** чистый JSON-массив без комментариев и markdown.
 \`\`\`json
 [
   {
@@ -2181,25 +2192,13 @@ app.post('/api/generate-test-model', async (req, res) => {
 ]
 \`\`\`
 
-## 5. Пример для понимания логики
-**Feature:** «Управление виджетами»
-**Story:** «Добавить новый виджет» (Это целостный поток, дающий ценность — новый виджет в системе)
-  - **Scenarios:** (Это атомарные шаги пользователя для достижения цели)
-    - «Открыть форму создания»
-    - «Заполнить поле 'Название'»
-    - «Выбрать тип виджета»
-    - «Нажать кнопку 'Сохранить'»
-  - **Code:** (Это реакции системы на последнее действие 'Нажать кнопку')
-    - «Отправить POST-запрос на /api/widgets»
-    - «Отобразить уведомление об успехе»
-    - «Закрыть форму создания»
-
-## 6. Входные данные: Требования к продукту
+## 5. Входные данные: Требования к продукту
 ${requirements}
 
-## 7. Задание
-Основываясь на **ключевом принципе декомпозиции (п.2)** и всех правилах, проанализируй требования и сгенерируй тестовую модель в формате JSON. Ответ — **только** чистый JSON. Обязательно тестовая модель только на русском языке
+## 6. Задание
+Основываясь на **принципах декомпозиции (п.2), детализации (п.3.1) и абстракции (п.3.2)**, проанализируй требования и сгенерируй тестовую модель в формате JSON. Ответ — **только** чистый JSON. Обязательно тестовая модель только на русском языке.
 `.trim();
+
 
 
     try {
