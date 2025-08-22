@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import Select from 'react-select';
 import AsyncSelect from 'react-select/async';
+import CreatableSelect from 'react-select/creatable';
 import { get as idbGet, set as idbSet, clear as idbClear } from 'idb-keyval';
 import './SolutionPage.css';
 import config from './config.json';
@@ -377,6 +378,36 @@ export const SolutionCard = ({
   );
 };
 
+
+// --- Confluence helpers (ID/URL -> pageId) ---
+const getConfluencePageId = (raw) => {
+  if (!raw) return '';
+  const s = String(raw).trim();
+  if (/^\d+$/.test(s)) return s;
+  try {
+    const u = new URL(s);
+    // обычный вид: .../pages/viewpage.action?pageId=123456
+    const pid = u.searchParams.get('pageId');
+    if (pid) return pid;
+    // иногда id в конце пути или как last segment — попробуем выдрать цифры
+    const m = u.href.match(/pageId=(\d+)/i) || u.pathname.match(/(\d{5,})$/);
+    return m ? m[1] : '';
+  } catch {
+    return '';
+  }
+};
+
+const parseManyPageIds = (rawList) => {
+  if (!rawList) return [];
+  return [...new Set(
+    String(rawList)
+      .split(/[,\s]+/)
+      .map(getConfluencePageId)
+      .filter(Boolean)
+  )];
+};
+
+
 export default function SolutionPage({ projects = [] }) {
   const [attachmentsMap, setAttachmentsMap] = useAttachmentsMap('solutionAttachmentsMap');
   const [defaultStand, setDefaultStand] = usePersistentState('defaultStand', '');
@@ -423,6 +454,11 @@ export default function SolutionPage({ projects = [] }) {
   const [isReviewModalOpen, setReviewModalOpen] = useState(false);
   const [generatedCases, setGeneratedCases] = useState([]);
   const [pdfExtracting, setPdfExtracting] = useState(false);
+  const [glossaryPageId, setGlossaryPageId] = usePersistentState('glossaryPageId', '');
+  const [contextPageIdsInput, setContextPageIdsInput] = usePersistentState('contextPageIdsInput', '');
+  const [contextPageIds, setContextPageIds] = usePersistentState('contextPageIds', []);
+
+  const [contextInstruction, setContextInstruction] = usePersistentState('contextInstruction', '');
 
 
 
@@ -440,10 +476,23 @@ export default function SolutionPage({ projects = [] }) {
     setTasks(ts => ts.map(t => ({ ...t, allureDefect: null })));
   }, [allureProject, setTasks]);
   const cardRefs = useRef([]);
+  useEffect(() => {
+    // Миграция: если новый массив пуст, но в старом поле есть данные — распарсить
+    if (!Array.isArray(contextPageIds) || contextPageIds.length) return;
+    const parsed = parseManyPageIds(contextPageIdsInput);
+    if (parsed.length) setContextPageIds(parsed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // запускаем один раз
 
   useEffect(() => {
     cardRefs.current = tasks.map((_, i) => cardRefs.current[i] || React.createRef());
   }, [tasks]);
+
+  const scrollToTask = useCallback((i) => {
+    const el = document.getElementById(`task-${i}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
 
   const loadLinkTypes = useCallback(async () => {
     if (!jiraPat) return;
@@ -494,15 +543,49 @@ export default function SolutionPage({ projects = [] }) {
     }));
   };
 
+
+  const buildRequirementsPayload = ({ includeRequirements = false } = {}) => {
+    const parsedGlossaryId = getConfluencePageId(glossaryPageId);
+    const parsedContextIds = (Array.isArray(contextPageIds) ? contextPageIds : [])
+      .map(getConfluencePageId)
+      .filter(Boolean);
+
+
+    const payload = {
+      // без requirements по умолчанию
+      text: (inputMode === 'text' || inputMode === 'pdf') ? solutionText.trim() : undefined,
+      pageId: (inputMode === 'confluence') ? confluencePageId.trim() : undefined,
+      bearerToken: bearerToken?.trim() || undefined,
+      glossary: glossary?.trim() || undefined,
+      glossaryPageId: parsedGlossaryId || undefined,
+      context: contextText?.trim() || undefined,
+      contextPageIds: parsedContextIds.length ? [...new Set(parsedContextIds)] : undefined,
+      contextInstruction: contextInstruction?.trim() || undefined,
+    };
+
+    if (includeRequirements) {
+      payload.requirements = prepareRequirements();
+    }
+
+    // подчистим undefined-ключи
+    Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
+    return payload;
+  };
+
+
   const prepareRequirements = () => {
     const reqsFromTasks = tasks.map(t => t.requirement?.trim()).filter(r => r);
-    return reqsFromTasks.length > 0
-      ? reqsFromTasks
-      : [
-        inputMode === 'text'
-          ? solutionText.trim()
-          : `Confluence Page ID: ${confluencePageId.trim()}`
-      ];
+    if (reqsFromTasks.length > 0) {
+      return reqsFromTasks;
+    }
+
+    // если явно вставили текст → берём текст
+    if (inputMode === 'text') {
+      return solutionText.trim() ? [solutionText.trim()] : [];
+    }
+
+    // во всех остальных режимах (confluence/pdf) — ничего не возвращаем
+    return [];
   };
 
 
@@ -648,23 +731,12 @@ export default function SolutionPage({ projects = [] }) {
 
 
   const handleGenerateModel = async (modelStructure) => {
-    // 1) Собираем требования из задач
-    const reqsFromTasks = tasks
-      .map(t => t.requirement?.trim())
-      .filter(r => r);
-    // 2) Если ничего не набралось — падаём на полный текст или Confluence
-    const requirements = reqsFromTasks.length > 0
-      ? reqsFromTasks
-      : [
-        inputMode === 'text'
-          ? solutionText.trim()
-          : `Confluence Page ID: ${confluencePageId.trim()}`
-      ];
+    const payloadBase = buildRequirementsPayload({ includeRequirements: true });
 
     try {
       const { data } = await axios.post(
         `${config.serverUrl}/generate-test-cases`,
-        { requirements, modelStructure }, {
+        { ...payloadBase, modelStructure }, {
         headers: {
           'Content-Type': 'application/json'
         }
@@ -968,20 +1040,13 @@ export default function SolutionPage({ projects = [] }) {
   const handleAnalyzeSolution = async () => {
     setLoading(true);
     setAnalysisResult(null);
-    // setTasks([]);
 
-    const payload = {
-      context: contextText || undefined,
-      project: undefined,
-      glossary: glossary || undefined,
-    };
-
-    if (inputMode === 'confluence') {
-      payload.pageId = confluencePageId.trim();
-      payload.bearerToken = bearerToken.trim();
-    } else {
-      payload.text = solutionText;
-    }
+    // единый билдер уже:
+    // - берет contextPageIds (из мультиселекта) И/ИЛИ contextPageIdsInput
+    // - вынимает из URL чистые pageId
+    // - делает dedup
+    // - подставляет bearerToken при наличии
+    const payload = buildRequirementsPayload({ includeRequirements: false });
 
     try {
       const resp = await axios.post(`${config.serverUrl}/analyze/solution`, payload);
@@ -999,6 +1064,8 @@ export default function SolutionPage({ projects = [] }) {
       setLoading(false);
     }
   };
+
+
 
   const parseDocumentationErrors = (response) => {
     if (!response) return [];
@@ -1219,9 +1286,9 @@ export default function SolutionPage({ projects = [] }) {
 
       <div className="input-area">
         <div className="input-tabs">
-          <button className={inputMode === 'text' ? 'active' : ''} onClick={() => setInputMode('text')}>Вставить текст</button>
-          <button className={inputMode === 'confluence' ? 'active' : ''} onClick={() => setInputMode('confluence')}>Загрузить из Confluence</button>
-          <button className={inputMode === 'pdf' ? 'active' : ''} onClick={() => setInputMode('pdf')}>Загрузить PDF</button>
+          <button type="button" className={inputMode === 'confluence' ? 'active' : ''} onClick={() => setInputMode('confluence')}>Загрузить из Confluence</button>
+          <button type="button" className={inputMode === 'text' ? 'active' : ''} onClick={() => setInputMode('text')}>Вставить текст</button>
+          <button type="button" className={inputMode === 'pdf' ? 'active' : ''} onClick={() => setInputMode('pdf')}>Загрузить PDF</button>
         </div>
 
         {inputMode === 'pdf' && (
@@ -1260,12 +1327,58 @@ export default function SolutionPage({ projects = [] }) {
               value={bearerToken}
               onChange={e => setBearerToken(e.target.value)}
             />
+
           </div>
+
+
         )}
+        {/* --- Новые поля для глоссария и контекста из Confluence --- */}
+        <div className="confluence-inputs">
+          <input
+            type="text"
+            placeholder="Глоссарий: Confluence Page ID или URL (необязательно)"
+            value={glossaryPageId}
+            onChange={e => setGlossaryPageId(e.target.value)}
+          />
+          <div className="ctx-select">
+            <CreatableSelect
+              classNamePrefix="select"
+              isMulti
+              placeholder="Доп. контекст: добавьте Page ID/URL и нажмите Enter"
+              value={(contextPageIds || []).map(v => ({ value: v, label: v }))}
+              onChange={(opts) => {
+                const vals = (opts || []).map(o => o.value);
+                setContextPageIds(vals);
+                // дополнительная синхронизация "на всякий":
+                setContextPageIdsInput(vals.length ? vals.join(' ') : '');
+              }}
 
+              onCreateOption={(inputValue) => setContextPageIds([...(contextPageIds || []), inputValue])}
+              formatCreateLabel={(inputValue) => `Добавить: ${inputValue}`}
+              menuPortalTarget={document.body}
+              menuPosition="fixed"
+              styles={{
+                container: (base) => ({ ...base, width: '100%' }),
+                control: (base) => ({ ...base, minHeight: 44 }),
+                valueContainer: (base) => ({
+                  ...base,
+                  flexWrap: 'nowrap',     // чтобы чипы не ломались в столбик
+                  overflowX: 'auto',      // горизонтальный скролл, если много ID
+                }),
+                multiValue: (base) => ({ ...base, marginRight: 8 }),
+                menuPortal: (base) => ({ ...base, zIndex: 9999 }),
+              }}
+            />
+          </div>
 
-        <textarea className="context-input" placeholder="Дополнительный контекст для анализа (необязательно)" value={contextText} onChange={e => setContextText(e.target.value)} rows={3} />
-        <textarea className="context-input" placeholder="Глоссарий проекта: АС - Автоматизированная Система, ФЛ - Физическое лицо (необязательно)" value={glossary} onChange={e => setGlossary(e.target.value)} rows={3} />
+          <textarea
+            className="context-input"
+            placeholder="Инструкция к доп. контексту: что именно брать из ссылок (напр.: 'используй только разделы «Термины» и «Ограничения»')"
+            value={contextInstruction}
+            onChange={e => setContextInstruction(e.target.value)}
+            rows={2}
+          />
+        </div>
 
         <button className="analyze-button" onClick={handleAnalyzeSolution} disabled={!canAnalyze}>
           {loading ? 'Анализируется...' : '🚀 Запустить AI-анализ'}
@@ -1298,14 +1411,9 @@ export default function SolutionPage({ projects = [] }) {
       {tasks.length > 3 && (
         <div className="mini-nav">
           {tasks.map((t, i) => (
-            <button
+            <button type="button"
               key={i}
-              onClick={() => {
-                const ref = cardRefs.current[i];
-                if (ref && ref.current) {
-                  ref.current.scrollIntoView({ top: 0, behavior: 'smooth', block: 'start' });
-                }
-              }}
+              onClick={() => scrollToTask(i)}
             >
               {i + 1}. {t.summary || 'Без темы'}
             </button>
@@ -1337,7 +1445,7 @@ export default function SolutionPage({ projects = [] }) {
       {/* Основной список задач */}
       <div className="task-list">
         {tasks.map((t, i) => (
-          <div key={t.id} ref={cardRefs.current[i]}>
+          <div key={t.id} id={`task-${i}`} ref={cardRefs.current[i]}>
             <SolutionCard
               index={i}
               task={t}

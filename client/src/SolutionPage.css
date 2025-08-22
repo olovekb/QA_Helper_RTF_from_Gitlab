@@ -18,6 +18,50 @@ h2 {
   padding-bottom: 10px;
 }
 
+.task-card {
+  scroll-margin-top: 84px;
+}
+
+.ids-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.id-chip {
+  background: #1f2937;
+  /* тёмный фон */
+  border: 1px solid #374151;
+  /* тонкая граница */
+  color: #e5e7eb;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Широкий селект доп. контекста */
+.confluence-inputs .ctx-select {
+  min-width: 420px;
+  /* видно длинные ID */
+  width: 100%;
+}
+
+/* если блок confluence-inputs — grid, расширим среднюю колонку */
+@media (min-width: 1024px) {
+  .confluence-inputs {
+    grid-template-columns: 1fr 2fr 2fr;
+    /* было равными — стало больше места для селекта */
+    gap: 12px;
+  }
+}
+
+/* аккуратнее чипы с цифрами */
+.confluence-inputs .select__multi-value__label {
+  font-variant-numeric: tabular-nums;
+}
+
 /* Input Area */
 .input-area {
   background-color: #161b22;
@@ -265,17 +309,24 @@ h2 {
 /* Делаем фон выпавших “успешных” элементов тёмно-зелёным,
    а текст — светлым */
 .jira-result li.success {
-  background-color: #213f20;   /* тёмно-зелёный фон */
-  color: #c9d1d9;              /* светло-серый текст */
-  padding: 8px 12px;           /* отступы для читабельности */
-  border-radius: 4px;          /* скруглённые углы */
-  margin-bottom: 6px;          /* расстояние между строк */
+  background-color: #213f20;
+  /* тёмно-зелёный фон */
+  color: #c9d1d9;
+  /* светло-серый текст */
+  padding: 8px 12px;
+  /* отступы для читабельности */
+  border-radius: 4px;
+  /* скруглённые углы */
+  margin-bottom: 6px;
+  /* расстояние между строк */
 }
 
 /* Аналогично сделаем фон “ошибочных” элементов тёмно-красным */
 .jira-result li.error {
-  background-color: #3f1f1f;   /* тёмно-красный фон */
-  color: #f85149;              /* ярко-красный текст */
+  background-color: #3f1f1f;
+  /* тёмно-красный фон */
+  color: #f85149;
+  /* ярко-красный текст */
   padding: 8px 12px;
   border-radius: 4px;
   margin-bottom: 6px;
@@ -283,10 +334,22 @@ h2 {
 
 /* Чтобы ссылки внутри списка тоже были контрастнее */
 .jira-result li a {
-  color: #58a6ff;              /* остатим ярко-синий, но на тёмном фоне читается */
-  text-decoration: underline;  /* подчёркивание для наглядности */
+  color: #58a6ff;
+  /* остатим ярко-синий, но на тёмном фоне читается */
+  text-decoration: underline;
+  /* подчёркивание для наглядности */
 }
 
-.split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.preview { max-height: 420px; overflow: auto; padding: 12px; border: 1px solid #333; border-radius: 8px; }
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
 
+.preview {
+  max-height: 420px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #333;
+  border-radius: 8px;
+}

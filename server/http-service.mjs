@@ -33,12 +33,10 @@ export async function getJwtToken() {
             {
                 headers: {
                     "Accept": "application/json",
-                    // "Expect": "",
                 }
             }
         );
         clearInterval(spinnerInterval);
-        // Извлекаем access_token из ответа
         const jwtToken = response.data.access_token;
         return jwtToken;
     } catch (error) {

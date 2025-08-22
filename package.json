@@ -22,12 +22,16 @@
     "jsdom": "^26.1.0",
     "json5": "^2.2.3",
     "multer": "^1.4.5-lts.1",
-    "node-fetch": "^3.3.2",
+    "node-fetch": "^2.7.0",
     "openai": "^4.73.0",
     "p-limit": "6.1.0",
     "react": "^18.3.1",
     "react-router-dom": "^6.28.0",
+    "sharp": "^0.34.3",
     "strip-ansi": "^7.1.0",
+    "tesseract.js": "^6.0.1",
+    "turndown": "^7.2.1",
+    "turndown-plugin-gfm": "^1.0.2",
     "xml2js": "^0.6.2"
   }
 }

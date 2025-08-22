@@ -9,10 +9,6 @@ import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
 import config from '../../config.json';
 
-// --- Developer Comment:
-// Для улучшения читаемости и поддержки, я вынес стили, иконки и мелкие
-// компоненты за пределы основной логики. Это соответствует принципу Single Responsibility.
-
 // --- Component-specific styles ---
 export const StyleInjector = () => {
     const styles = `
@@ -342,7 +338,7 @@ export const LoaderOverlay = ({ text }) => {
 
 Modal.setAppElement('#root');
 
-// --- Icons (No changes) ---
+
 const ChevronDown = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>;
 const ChevronRight = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>;
 const FolderIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>;
@@ -351,11 +347,7 @@ const ScenarioIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" he
 const CodeFileIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>;
 
 
-// --- TreeVisualizer Component (No functional changes needed, respects new styles) ---
 const TreeVisualizer = ({ treeData }) => {
-    // ... (This component code is quite good, no major changes needed, it will just re-render with new data)
-    // ... For brevity, I'm omitting the original code of TreeVisualizer as it's logically sound.
-    // ... The original code provided in the prompt can be pasted here directly.
     const nodeWidth = 220;
     const nodeHeight = 50;
 
@@ -653,21 +645,120 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
         }
         return null;
     };
+    const sanitizeRequirementsForPayload = (req, inputMode) => {
+        // если грузим из Confluence — текст требований не нужен
+        if (inputMode === 'confluence') return '';
 
+        const s = Array.isArray(req) ? req.join('\n\n---\n\n') : String(req || '').trim();
+
+        // строка целиком — только "Confluence Page ID: 123456"
+        if (/^confluence\s*page\s*id\s*:\s*\d+\s*$/i.test(s)) return '';
+
+        // вырежем возможную строку с Page ID, вдруг она замешалась в текст
+        const cleaned = s.replace(/^\s*confluence\s*page\s*id\s*:\s*\d+\s*$/gmi, '').trim();
+
+        return cleaned;
+    };
+
+    // --- helpers (локальные, без регрессии) ---
+    const getConfluencePageId = (raw) => {
+        if (!raw) return '';
+        const s = String(raw).trim();
+        if (/^\d+$/.test(s)) return s;
+        try {
+            const u = new URL(s);
+            const pid = u.searchParams.get('pageId');
+            if (pid) return pid;
+            const m = u.href.match(/pageId=(\d+)/i) || u.pathname.match(/(\d{5,})$/);
+            return m ? m[1] : '';
+        } catch {
+            // поддержим формат "Confluence Page ID: 133465419"
+            const m = s.match(/confluence\s*page\s*id[:\s]*([0-9]+)/i);
+            return m ? m[1] : '';
+        }
+    };
+
+    const parseManyPageIds = (rawList) => {
+        if (!rawList) return [];
+        return [...new Set(
+            String(rawList)
+                .split(/[,\s]+/)
+                .map(getConfluencePageId)
+                .filter(Boolean)
+        )];
+    };
+
+    // --- новый handleGenerateModel ---
     const handleGenerateModel = async () => {
         setIsGeneratingModel(true);
         try {
-            const requirementsString = Array.isArray(requirements) ? requirements.join('\n\n') : requirements;
-            const { data } = await axios.post(`${config.serverUrl}/generate-test-model`, { requirements: requirementsString });
+
+            // 2) Тянем всё, что уже лежит в IndexedDB (SolutionPage это туда кладёт)
+            const [
+                inputMode,
+                idbConfluencePageId,
+                idbBearerToken,
+                idbGlossary,
+                idbGlossaryPageId,
+                idbContextPageIds,        // ← читаем современное хранилище (мультиселект)
+                idbContextInstruction,
+                idbContextText,
+            ] = await Promise.all([
+                idbGet('inputMode').catch(() => undefined),
+                idbGet('confluencePageId').catch(() => undefined),
+                idbGet('bearerToken').catch(() => undefined),
+                idbGet('glossary').catch(() => undefined),
+                idbGet('glossaryPageId').catch(() => undefined),
+                idbGet('contextPageIds').catch(() => undefined),   // ← вот оно
+                idbGet('contextInstruction').catch(() => undefined),
+                idbGet('contextText').catch(() => undefined),
+            ]);
+            const requirementsString = sanitizeRequirementsForPayload(requirements, inputMode);
+            // 3) Пытаемся аккуратно извлечь pageId (работает и для "Confluence Page ID: 123")
+            const pageIdFromReq =
+                Array.isArray(requirements)
+                    ? '' // когда с задач — уже чистый текст, pageId берём из IDB
+                    : getConfluencePageId(requirementsString);
+
+            const pageId =
+                getConfluencePageId(idbConfluencePageId) || pageIdFromReq || '';
+
+            const glossaryPageId = getConfluencePageId(idbGlossaryPageId);
+            const contextPageIds = Array.isArray(idbContextPageIds)
+                ? [...new Set(idbContextPageIds.map(getConfluencePageId).filter(Boolean))]
+                : [];
+
+            const payload = {
+                ...(requirementsString ? { requirements: requirementsString } : {}),
+                pageId: pageId || undefined,
+                bearerToken: idbBearerToken || undefined,
+                glossary: idbGlossary || undefined,
+                glossaryPageId: glossaryPageId || undefined,
+                context: idbContextText || undefined,
+                contextPageIds: contextPageIds.length ? contextPageIds : undefined, // ← ок
+                contextInstruction: idbContextInstruction || undefined,
+                inputMode: inputMode || undefined,
+            };
+
+            const { data } = await axios.post(
+                `${config.serverUrl}/generate-test-model`,
+                payload
+            );
+
+            // 5) Рендерим полученную модель
             const newTree = buildTreeWithIds(data);
             setTreeData(newTree);
         } catch (error) {
-            console.error("Ошибка при генерации тестовой модели:", error);
-            window.alert("Не удалось сгенерировать тестовую модель: " + (error.response?.data?.error || error.message));
+            console.error('Ошибка при генерации тестовой модели:', error);
+            window.alert(
+                'Не удалось сгенерировать тестовую модель: ' +
+                (error.response?.data?.error || error.message)
+            );
         } finally {
             setIsGeneratingModel(false);
         }
     };
+
 
     const handlers = useMemo(() => ({
         onAddNode: (path, type) => {
@@ -817,7 +908,7 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
     }
 
     const isBusy = isGeneratingModel || isGeneratingCases;
-    const loaderText = isGeneratingModel ? "Генерация тестовой модели..." : `При больших требованиях генерация может быть пару минут, сходи покури или попей чай`;
+    const loaderText = isGeneratingModel ? "Генерация тестовой модели..." : `При больших требованиях генерация может быть минут 10, сходи покури или попей чай`;
 
     return (
         <Modal isOpen={isOpen} onRequestClose={isBusy ? () => { } : handleCloseWithConfirm} overlayClassName="modal-overlay" className="modal-content">

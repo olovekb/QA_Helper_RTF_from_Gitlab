@@ -50,13 +50,13 @@ import axios from 'axios';
 import config from './config.json' assert { type: 'json'};
 import http from 'http';
 import https from 'https';
-import { customProjectField } from '../server/xmind-parce/customProjectField.js';
+import { prepareContextWithAI } from './contextRefiner.mjs';
 
 const DEFAULT_JIRA_INTEGRATION_ID = config.defaultJiraIntegrationId;
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const app = express();
-const PORT = 5000;
+const PORT = 5001;
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 50 * 1024 * 1024, files: 20 }
@@ -78,6 +78,105 @@ app.options('*', cors(corsOptions));
 //app.use(cors());
 //app.options('*', cors());
 const limit = pLimit(100);
+
+
+
+// Универсальный рефайнер требований: подтягивает Confluence, сжимает глоссарий/контекст через prepareContextWithAI,
+// возвращает совместимый интерфейс: { refinedArray, refinedText }
+async function contextRefiner({
+    requirements,            // string | string[] | undefined
+    text,                    // string | undefined
+    pageId,                  // string|number | undefined
+    glossary,                // string | undefined
+    glossaryPageId,          // string|number | undefined
+    context,                 // string | string[] | undefined
+    contextPageIds,          // string|string[]|number[] | undefined
+    contextInstruction,      // string | undefined
+    bearerToken,             // string | undefined
+    maxGlossary = 25,        // можно прокидывать из тела запроса
+    maxContext = 16         // можно прокидывать из тела запроса
+}) {
+    const normIds = (v) => {
+        if (!v) return [];
+        if (Array.isArray(v)) return v.map(String).filter(Boolean);
+        return String(v).split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+    };
+
+    // 0) База требований: массив/строка/Confluence pageId
+    let baseList = Array.isArray(requirements)
+        ? requirements.map(String)
+        : [];
+
+    let baseText = String(text || '').trim();
+
+    if (!baseList.length && !baseText && pageId) {
+        if (!bearerToken) throw new Error('Для загрузки требования из Confluence нужен bearerToken');
+        const { markdown } = await fetchConfluencePage(bearerToken, pageId, { inlineTextAttachments: true });
+        baseText = markdown || '';
+    }
+
+    if (!baseList.length && baseText) {
+        baseList = [baseText];
+    }
+
+    // 1) Глоссарий: строка + (опц.) страница
+    let glossaryText = glossary || '';
+    if (glossaryPageId) {
+        if (!bearerToken) throw new Error('Для загрузки глоссария из Confluence нужен bearerToken');
+        const { markdown } = await fetchConfluencePage(bearerToken, glossaryPageId, { inlineTextAttachments: true });
+        glossaryText = [glossaryText, markdown].filter(Boolean).join('\n\n---\n\n');
+    }
+
+    // 2) Доп. контекст: строка ИЛИ массив строк + (опц.) список страниц
+    let contextText = normalizeContextInput(context);
+    const ctxIds = normIds(contextPageIds);
+
+    if (ctxIds.length) {
+        if (!bearerToken) throw new Error('Для загрузки доп. контекста из Confluence нужен bearerToken');
+        const blocks = [];
+        if (contextInstruction?.trim()) {
+            blocks.push(`**Инструкция к доп. контексту:** ${contextInstruction.trim()}\n`);
+        }
+        for (const cid of ctxIds) {
+            try {
+                const { markdown } = await fetchConfluencePage(bearerToken, cid, { inlineTextAttachments: true });
+                blocks.push(`\n---\n### Доп. контекст: Confluence pageId=${cid}\n\n${markdown}`);
+            } catch (e) {
+                blocks.push(`\n---\n### Доп. контекст: Confluence pageId=${cid}\n\n(Не удалось загрузить: ${e.message})`);
+            }
+        }
+        contextText = [contextText, blocks.join('\n')].filter(Boolean).join('\n\n');
+    }
+
+    // 3) Сжать глоссарий/контекст через prepareContextWithAI (требования — без изменений по смыслу)
+    const reqJoined = baseList.length ? baseList.join('\n\n---\n\n') : (baseText || '');
+    const { requirements_md, mini_glossary_md, context_md } = await prepareContextWithAI({
+        requirements: reqJoined || '',
+        glossary: glossaryText || '',
+        context: contextText || '',
+        contextHint: contextInstruction || '—',
+        maxGlossary,
+        maxContext
+    });
+
+    // 4) Сформировать "шапку" и вернуть в старом формате
+    const header = [
+        mini_glossary_md && mini_glossary_md.trim() && `# Глоссарий\n${mini_glossary_md.trim()}`,
+        context_md && context_md.trim() && `# Контекст\n${context_md.trim()}`
+    ].filter(Boolean).join('\n\n');
+
+    const refinedArray = (baseList.length ? baseList : [requirements_md || reqJoined || ''])
+        .map(r => [header, r].filter(Boolean).join('\n\n'));
+
+    const refinedText = [header, (requirements_md || reqJoined || '')]
+        .filter(Boolean)
+        .join('\n\n');
+
+    return { refinedArray, refinedText };
+}
+
+
+
 
 function normalizeModelStructure(model) {
     const walk = (arr, depth = 1) => (arr || []).map(item => {
@@ -444,50 +543,125 @@ app.post('/api/ai-recommendation', async (req, res) => {
     }
 });
 
+/** Строка/массив -> массив pageId */
+function normalizePageIds(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v.filter(Boolean).map(String);
+    return String(v)
+        .split(/[,\s]+/)
+        .map(s => s.trim())
+        .filter(Boolean);
+}
+
+/** Строка или массив строк -> единый markdown-блок с разделителями */
+function normalizeContextInput(v) {
+    if (!v) return '';
+    if (Array.isArray(v)) {
+        return v
+            .map(s => String(s || '').trim())
+            .filter(Boolean)
+            .join('\n\n---\n\n');
+    }
+    return String(v);
+}
+
+
 /**
- * POST /analyze/solution
- * Тело: { text: string, context?: string, project?: string }
+ * POST /api/analyze/solution
+ * Тело: { text?: string, pageId?: string|number, context?: string, project?: string,
+ *         glossary?: string, bearerToken?: string,
+ *         glossaryPageId?: string|number,
+ *         contextPageIds?: string|string[]|number[],
+ *         contextInstruction?: string }
  */
 app.post('/api/analyze/solution', async (req, res) => {
     try {
-        const { text, pageId, context, project, glossary, bearerToken } = req.body;
+        const {
+            text, pageId, context, project, glossary, bearerToken,
+            glossaryPageId,
+            contextPageIds,
+            contextInstruction
+        } = req.body;
 
         if (!text && !pageId) {
-            throw new Error('Параметр text или pageId обязателен.');
+            return res.status(400).json({ success: false, error: 'Параметр text или pageId обязателен.' });
         }
 
+        // 1) Основное требование
         let requirementText = text;
+        let collectedAttachments = [];
+
         if (pageId) {
             if (!bearerToken) {
-                throw new Error('Для получения страницы Confluence требуется bearerToken');
+                return res.status(400).json({ success: false, error: 'Для получения страницы Confluence требуется bearerToken' });
+            }
+            const { markdown, attachments } = await fetchConfluencePage(bearerToken, pageId);
+            requirementText = markdown;
+            collectedAttachments = attachments || [];
+        }
+
+        // 2) Глоссарий
+        let glossaryText = glossary || '';
+        if (glossaryPageId) {
+            if (!bearerToken) {
+                return res.status(400).json({ success: false, error: 'Для загрузки глоссария из Confluence требуется bearerToken' });
             }
             try {
-                requirementText = await fetchConfluencePage(bearerToken, pageId);
+                const { markdown } = await fetchConfluencePage(bearerToken, glossaryPageId, { inlineTextAttachments: true });
+                glossaryText = markdown;
             } catch (e) {
-                throw new Error(`Не удалось получить страницу Confluence: ${e.message}`);
+                // Если хотите «мягкий» сценарий — замените throw на console.warn
+                throw new Error(`Не удалось получить глоссарий из Confluence (pageId=${glossaryPageId}): ${e.message}`);
             }
         }
 
+        // 3) Доп. контекст (строка ИЛИ массив строк) + страницы
+        let contextText = normalizeContextInput(context);
+        const ctxIds = normalizePageIds(contextPageIds);
+
+
+        if (ctxIds.length) {
+            if (!bearerToken) {
+                return res.status(400).json({ success: false, error: 'Для загрузки доп. контекста из Confluence требуется bearerToken' });
+            }
+
+            const parts = [];
+            if (contextInstruction?.trim()) {
+                parts.push(`**Инструкция к доп. контексту:** ${contextInstruction.trim()}\n`);
+            }
+            for (const cid of ctxIds) {
+                try {
+                    const { markdown } = await fetchConfluencePage(bearerToken, cid, { inlineTextAttachments: true });
+                    parts.push(`\n---\n### Доп. контекст: Confluence pageId=${cid}\n\n${markdown}`);
+                } catch (e) {
+                    parts.push(`\n---\n### Доп. контекст: Confluence pageId=${cid}\n\n(Не удалось загрузить: ${e.message})`);
+                }
+            }
+            contextText = [contextText, parts.join('\n')].filter(Boolean).join('\n\n');
+        }
+
+        // 4) Анализ (с префильтром)
         const aiResponse = await analyzeRequirementWithAI(
             requirementText,
-            context,
-            project,
-            glossary
+            contextText,
+            project,            // можно undefined — внутри есть дефолт '—'
+            glossaryText,
+            { prefilter: true, contextHint: contextInstruction || '—' }
         );
 
         const result = {
-            ai: {
-                success: true,
-                response: aiResponse
-            }
+            ai: { success: true, response: aiResponse },
+            attachments: collectedAttachments.length ? collectedAttachments : undefined
         };
 
-        res.json({ success: true, data: result });
+        return res.json({ success: true, data: result });
 
     } catch (err) {
-        res.status(400).json({ success: false, error: err.message });
+        return res.status(400).json({ success: false, error: err.message });
     }
 });
+
+
 app.post('/api/jira/create-issue', async (req, res) => {
     const { pat, payload } = req.body;
 
@@ -1076,7 +1250,8 @@ ENV: ${env}
                 tools,
                 tool_choice: { type: "function", function: { name: "fill_jira_fields" } },
                 temperature: 0.4,
-                top_p: 0.95
+                top_p: 0.95,
+                extra: { transforms: 'middle-out' }
             }
         );
 
@@ -1444,11 +1619,26 @@ app.get('/api/jira/search', async (req, res) => {
  * }
  */
 app.post('/api/generate-test-cases', async (req, res) => {
-    const { requirements, modelStructure: rawModel } = req.body;
+    const {
+        requirements,
+        modelStructure: rawModel,
+        // новые поля для рефайна контекста:
+        text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken
+    } = req.body;
     const modelStructure = normalizeModelStructure(rawModel);
 
-    if (!Array.isArray(requirements) || !modelStructure) {
+    if ((!Array.isArray(requirements) && typeof requirements !== 'string') || !modelStructure) {
         return res.status(400).json({ error: 'requirements и modelStructure обязательны' });
+    }
+    let refinedReqs = requirements;
+    try {
+        const { refinedArray } = await contextRefiner({
+            requirements,
+            text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken
+        });
+        refinedReqs = refinedArray;
+    } catch (e) {
+        console.warn('[generate-test-cases] contextRefiner warning:', e.message);
     }
 
     // Глобальный список допустимых code (по всей модели) — нужен sanitize()
@@ -1704,6 +1894,22 @@ app.post('/api/generate-test-cases', async (req, res) => {
    • Основная работа: классы эквивалентности, граничные значения (BVA), контракты API.
 4) Unit (C4) — одна функция/метод, строгий AAA (Arrange-Act-Assert).
 
+## 2.1) Для слоев "E2E Tests" и "Integration Tests" (Строгий "Чёрный Ящик")
+- **Действия (Steps):** Описывай только действия пользователя в интерфейсе (клик, ввод, скролл, навигация).
+- **Результат (Expected):** Описывай только видимые пользователю изменения в UI или ответы, определённые в API-контракте.
+- **ЗАПРЕЩЕНО:** Додумывать детали реализации, такие как вызовы внутренних функций, работа с базой данных, кэширование, или отправка HTTP-запросов.
+
+  - **Неправильно (гадание о реализации):** "Вызывается GET-запрос для фильтрации."
+  - **Правильно (наблюдаемый результат):** "В списке остаются только элементы, содержащие 'X'."
+
+  - **Неправильно:** "Нажать Enter для применения фильтра."
+  - **Правильно:** "Ввести в поле фильтра 'X'". Если нужно явно завершить действие — "Снять фокус с поля".
+
+## 2.2) Для слоя "Unit Tests" (Условный "Белый Ящик")
+- Ты **МОЖЕШЬ** описывать внутреннюю логику, но **ТОЛЬКО** если она основана на узле \`code\` из входной тестовой модели.
+- **Шаги (Steps):** Описывай подготовку данных (Arrange) и вызов действия (Act) в терминах, близких к узлу \`code\`.
+- **Результат (Expected):** Описывай проверку результата (Assert), соответствующую узлу \`code\`.
+- **Если узел \`code\` отсутствует в модели для данного сценария, ты ОБЯЗАН вернуться к принципу "Чёрного Ящика"** и описать Unit-тест в терминах "входные данные -> результат", не выдумывая названий функций.
 # 3) Allure Style Guide (сводка отдела)
 — 1 тест-кейс = 1 проверка или 1 пользовательский сценарий.  
 — Тест-кейсы независимы друг от друга.  
@@ -1949,7 +2155,8 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                 tools,
                 tool_choice: { type: "function", function: { name: "submit_cases" } },
                 temperature: 0.25,
-                top_p: 0.9
+                top_p: 0.9,
+                extra: { transforms: 'middle-out' }
             }
         );
 
@@ -2034,7 +2241,8 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                 tools,
                 tool_choice: { type: "function", function: { name: "submit_cases" } },
                 temperature: 0.25,
-                top_p: 0.9
+                top_p: 0.9,
+                extra: { transforms: 'middle-out' }
             }
         );
 
@@ -2059,7 +2267,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
         // Генерация по кускам
         const parts = [];
         for (const chunk of storyChunks) {
-            const chunkCases = await genLimit(() => genForChunk(chunk, requirements, BASE_SYSTEM_PROMPT));
+            const chunkCases = await genLimit(() => genForChunk(chunk, refinedReqs, BASE_SYSTEM_PROMPT));
             parts.push(chunkCases);
         }
         let allCases = parts.flat();
@@ -2075,11 +2283,12 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             const theOnlyFeature = uniqueFeatures[0];
             allCases = allCases.map(tc => ({ ...tc, feature: theOnlyFeature }));
         }
-
+        console.log('Требования для тест кейсов')
+        console.log(refinedReqs)
         // Аудит покрытия и догенерация недостающего
         const missing = auditCoverage(modelStructure, allCases);
         if (missing.missingE2E.length || missing.missingSc.length || missing.missingCd.length) {
-            let extra = await genLimit(() => gapFill(modelStructure, requirements, missing, BASE_SYSTEM_PROMPT));
+            let extra = await genLimit(() => gapFill(modelStructure, refinedReqs, missing, BASE_SYSTEM_PROMPT));
             extra = sanitize(extra);
             extra = fixAgainstModel(extra, idx);
             allCases = allCases.concat(extra);
@@ -2151,10 +2360,31 @@ const transformToHierarchy = (flatList) => {
 };
 
 app.post('/api/generate-test-model', async (req, res) => {
-    const { requirements } = req.body;
-    if (!requirements || typeof requirements !== 'string') {
-        return res.status(400).json({ error: 'Поле "requirements" обязательно и должно быть строкой' });
+    const {
+        requirements,          // string | string[]
+        // новые поля:
+        text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken
+    } = req.body;
+    if (!requirements && !text && !pageId) {
+        return res.status(400).json({ error: 'Нужно передать requirements (строка/массив), либо text, либо pageId' });
     }
+
+    // Приводим к строке требований, предварительно прогнав через contextRefiner
+    let reqStringForModel = '';
+    try {
+        const { refinedText, refinedArray } = await contextRefiner({
+            requirements: Array.isArray(requirements) ? requirements : (requirements ? [requirements] : undefined),
+            text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken
+        });
+        // Если был массив — лучше собрать одну строку для модели
+        reqStringForModel = refinedText || (refinedArray?.join('\n\n') ?? '');
+    } catch (e) {
+        console.warn('[generate-test-model] contextRefiner warning:', e.message);
+        reqStringForModel = typeof requirements === 'string' ? requirements : (Array.isArray(requirements) ? requirements.join('\n\n') : (text || ''));
+    }
+
+    console.log('Требования для тест модели')
+    console.log(reqStringForModel)
     const SYSTEM_PROMPT = `
 Ты — выдающийся QA-архитектор с исключительным талантом к синтезу и декомпозиции. Твоя главная сила — видеть за разрозненными требованиями целостную картину и ценность для пользователя.
 
@@ -2175,21 +2405,22 @@ app.post('/api/generate-test-model', async (req, res) => {
 - **Каждый пронумерованный шаг пользователя из этих сценариев должен стать отдельным \`Scenario\` в тестовой модели.**
 - **Описание реакции системы на действие пользователя — это \`Code\` внутри этого \`Scenario\`.**
 
-// --- НОВОЕ ПРАВИЛО ---
-## 3.2. Принцип Абстракции Данных (ВЫСШИЙ ПРИОРИТЕТ!)
-- **Не вставляй конкретные данные из примеров (значения, названия, тексты ошибок) в итоговую модель.**
-- **Твоя задача — распознать КОНКРЕТНЫЕ ПРИМЕРЫ в требованиях, но в итоговой модели заменить их на АБСТРАКТНЫЕ ОПИСАНИЯ.**
-- Цель — создать универсальную тестовую модель, которая описывает *что* проверять, а не *с какими именно данными*.
+## 3.2. Принцип Абстракции Данных и Реализации (ВЫСШИЙ ПРИОРИТЕТ!)
+- **Не вставляй конкретные данные из примеров** (значения, названия, тексты ошибок) в итоговую модель.
+- **Не вставляй детали технической реализации.**
+- Твоя задача — распознать КОНКРЕТНЫЕ ПРИМЕРЫ в требованиях, но в итоговой модели заменить их на **АБСТРАКТНЫЕ ОПИСАНИЯ ДЕЙСТВИЙ И РЕАКЦИЙ.**
+- Сосредоточься на связке **"действие пользователя (Scenario) -> видимая реакция системы (Code)"**. Модель должна быть независима от конкретной технологии.
 
-- **Примеры абстракции:**
+- **Примеры абстракции данных:**
   - НЕПРАВИЛЬНО: "Выбрать программу '27 LADA FREE'"
-  - **ПРАВИЛЬНО:** "Выбрать значение, соответствующее условию зависимости А"
+  - **ПРАВИЛЬНО:** "Выбрать значение, соответствующее условию зависимости"
 
-  - НЕПРАВИЛЬНО: "Ввести в поле значение '90'"
-  - **ПРАВИЛЬНО:** "Ввести значение, не соответствующее правилам валидации"
-
-  - НЕПРАВИЛЬНО: "Отобразить текст ошибки 'Срок кредита...'"
-  - **ПРАВИЛЬНО:** "Отобразить текст ошибки, соответствующий сработавшему условию"
+- **Примеры абстракции реализации:**
+  - НЕПРАВИЛЬНО (деталь): \`Scenario: "Отправить GET-запрос на /api/users"\`
+  - **ПРАВИЛЬНО (действие):** \`Scenario: "Запросить список пользователей"\`
+  
+  - НЕПРАВИЛЬНО (деталь): \`Code: "Загрузить данные из кэша"\`
+  - **ПРАВИЛЬНО (реакция):** \`Code: "Отобразить список пользователей"\`
 
 ## 4. Формат вывода (обязательно)
 Выход — **ТОЛЬКО** чистый JSON-массив без комментариев и markdown.
@@ -2215,7 +2446,7 @@ app.post('/api/generate-test-model', async (req, res) => {
 \`\`\`
 
 ## 5. Входные данные: Требования к продукту
-${requirements}
+${reqStringForModel}
 
 ## 6. Задание
 Основываясь на **принципах декомпозиции (п.2), детализации (п.3.1) и абстракции (п.3.2)**, проанализируй требования и сгенерируй тестовую модель в формате JSON. Ответ — **только** чистый JSON. Обязательно тестовая модель только на русском языке.
@@ -2229,14 +2460,15 @@ ${requirements}
             OPENROUTER_URL,
             [
                 { role: 'system', content: SYSTEM_PROMPT },
-                { role: 'user', content: requirements }
+                { role: 'user', content: reqStringForModel }
             ],
             config.openRouterAiKey,
             {
                 tools,
                 tool_choice: { type: "function", function: { name: "submit_test_model" } },
                 temperature: 0.3,
-                top_p: 0.9
+                top_p: 0.9,
+                extra: { transforms: 'middle-out' }
             }
         );
 

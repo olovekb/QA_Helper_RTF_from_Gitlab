@@ -1,123 +1,238 @@
+// analyzeRequirementWithAI.mjs
 import fetch from 'node-fetch';
 import fs from 'fs';
-import { analyzeRequirements as staticAnalyze } from './requirements-testing.mjs';
+import { prepareContextWithAI } from './contextRefiner.mjs';
+import config from './config.json' assert { type: 'json' };
+// Жёсткая инструкция к финальному ответу: только нужные Markdown-блоки
+const SYSTEM_ENFORCER =
+  'Ты — старший эксперт по системному анализу. ' +
+  'Верни ТОЛЬКО набор Markdown-блоков строго заданного формата (только в ```), ' +
+  'без каких-либо пояснений вне блоков. ' +
+  'Если нет ошибок — верни пустую строку.';
+
+// Вынес настройки OpenRouter в константы
+const API_TOKEN = config.openRouterAiKey;
+
+const URL = 'https://openrouter.ai/api/v1/chat/completions';
+const MODEL = 'qwen/qwen3-235b-a22b:free';
 
 /**
  * Анализирует требование с учётом статического анализа и LLM.
  *
- * @param {string} requirementText — текст требования для анализа
- * @param {string} [context='—'] — необязательный контекст
- * @param {string} [project='—'] — необязательный идентификатор проекта
- * @param {string} [glossary='—'] — необязательный глосарий проекта
- * @returns {Promise<string>} — ответ AI в виде отформатированного текста
+ * @param {string} requirementText — текст требования (сырой)
+ * @param {string} [context='—'] — доп. контекст (сырой, можно большой)
+ * @param {string} [project='—'] — идентификатор проекта
+ * @param {string} [glossary='—'] — глоссарий (сырой, можно большой)
+ * @param {object} [opts]
+ * @param {boolean} [opts.prefilter=true] — включать ли промежуточную “уборку”
+ * @param {string}  [opts.contextHint='—'] — подсказка что вытаскивать из контекста
+ * @returns {Promise<string>} — ответ AI (markdown-блоки по вашему шаблону)
  */
-export async function analyzeRequirementWithAI(requirementText, context = '—', project = '—', glossary = '—') {
+export async function analyzeRequirementWithAI(
+  requirementText,
+  context = '—',
+  project = '—',
+  glossary = '—',
+  opts = {}
+) {
+  const {
+    prefilter = true,
+    contextHint = '—'
+  } = opts;
 
-  // Составляем промпт
-  const prompt = `Вы — старший эксперт по системному анализу и тестированию ПО. Ваша задача — проверить качество требований по ISO/IEC/IEEE 29148 и QA‑практикам. Вы должны находить ошибки документации и выдавать ТОЛЬКО Markdown-блоки в строго заданном формате. Никаких заголовков, пояснений или текста вне блоков.
+  // ---------- 0) Промежуточная "уборка" ----------
+  let cleanedReq = requirementText;
+  let miniGlossary = glossary;
+  let filteredContext = context;
 
-  Анализируйте следующие требования:
-  ---------------------------------------
-  ${requirementText}
-  ---------------------------------------
-  
-  **Контекст**: ${context}
-  **Проект**: ${project}
-  **Глоссарий проекта (сокращения и термины):**: ${glossary}
-  
-  **Критерии проверки:**
-  1. Завершённость — полная информация без пропусков (негативные сценарии, параметры)
-  2. Атомарность — описывает одну ситуацию/условие, без объединения нескольких
-  3. Непротиворечивость — нет внутренних или межтребовательных конфликтов
-  4. Недвусмысленность — однозначная формулировка без расплывчатых слов и неочевидных аббревиатур
-  5. Выполнимость — технологически и ресурсно реализуемо
-  6. Обязательность — ясно, обязательно ли требование, опционально или устарело
-  7. Корректность и проверяемость — есть чёткий критерий проверки, нет опечаток, адекватный уровень детализации
-  
-  **Инструкция по анализу:**
-  Сначала по каждому требованию проведи внутренний анализ шаг за шагом. Для каждого из 7 критериев (Завершённость, Атомарность и т.д.) подумай, нарушен ли он. Если да, то почему. Только после этого внутреннего анализа сформируй итоговый ответ в Markdown-блоках. Не показывай свои рассуждения в итоговом ответе.
+  if (prefilter) {
+    try {
+      const refined = await prepareContextWithAI({
+        requirements: requirementText,
+        glossary,
+        context,
+        contextHint,
+        maxGlossary: 25,
+        maxContext: 30
+      });
+      if (refined?.requirements_md?.trim()) cleanedReq = refined.requirements_md;
+      if (refined?.mini_glossary_md?.trim()) miniGlossary = refined.mini_glossary_md;
+      if (refined?.context_md?.trim()) filteredContext = refined.context_md;
+    } catch (e) {
+      console.warn('[analyze] prefilter failed, fallback to original input:', e.message);
+    }
+  }
 
-  **Формат ответа — обязательно использовать ровно этот шаблон Markdown**:
-  
-  Для каждого требования:
-  
-  \`\`\`
-  ### [Текст требования]
-  
-  **Ошибка документации**:
-  - **Тема**: [краткое название дефекта] в части «[цитата из проблемного фрагмента требования]»
-  - **Описание**: [в чём несоответствие]
-  - **Нарушены свойства**: [список свойств через запятую]
-  - **Фактический результат**: [что написано сейчас]
-  - **Ожидаемый результат**: [что нужно написать, или уточняющий вопрос]
-  \`\`\`
-  
-  **Правила:**
-  - Никакого текста вне блоков
-  - Каждый блок начинается и заканчивается \`\`\`
-  - Между блоками — одна пустая строка
-  - Не добавлять заголовки, списки, markdown за пределами шаблона
-  - Если нет ошибок — не выводить ничего
-  - Формулировки внутри блока — только по делу, без вступлений
-  - Уточняющие вопросы писать ТОЛЬКО в поле "Ожидаемый результат"
-  
-  **Пример:**
-  
-  \`\`\`
-  ### Если параметр count = 0, текст "Счета к оплате" должен отображаться без счётчика.
-  
-  **Ошибка документации**:
-  - **Тема**: Нет описания альтернативного отображения при count=0 в части «если count = 0»
-  - **Описание**: не указано, что должно быть показано вместо счётчика
-  - **Нарушены свойства**: Завершённость, Проверяемость
-  - **Фактический результат**: «текст "Счета к оплате" должен отображаться без счётчика»
-  - **Ожидаемый результат**: Уточнить формулировку: “Если count = 0, отображать только заголовок ‘Счета к оплате’ без цифрового индикатора.”
-  \`\`\`
-  `;
+  // ---------- 1) Финальный промпт ----------
+  const prompt = `Вы — старший эксперт по системному анализу и тестированию ПО. Ваша задача — проверить качество требований по ISO/IEC/IEEE 29148 и QA-практикам. Вы должны находить ошибки документации и выдавать ТОЛЬКО Markdown-блоки в строго заданном формате. Никаких заголовков, пояснений или текста вне блоков.
+
+Анализируйте следующие требования:
+---------------------------------------
+${cleanedReq}
+---------------------------------------
+
+**Дополнительный контекст**:
+${filteredContext || '—'}
+
+**Проект**: ${project}
+
+**Глоссарий проекта (сокращения и термины):**
+${miniGlossary || '—'}
+
+**Критерии проверки:**
+1. Завершённость — полная информация без пропусков (негативные сценарии, параметры)
+2. Атомарность — описывает одну ситуацию/условие, без объединения нескольких
+3. Непротиворечивость — нет внутренних или межтребовательных конфликтов
+4. Недвусмысленность — однозначная формулировка без расплывчатых слов и неочевидных аббревиатур
+5. Выполнимость — технологически и ресурсно реализуемо
+6. Обязательность — ясно, обязательно ли требование, опционально или устарело
+7. Корректность и проверяемость — есть чёткий критерий проверки, нет опечаток, адекватный уровень детализации
+
+**Инструкция по анализу:**
+Сначала по каждому требованию проведи внутренний анализ шаг за шагом. Для каждого из 7 критериев (Завершённость, Атомарность и т.д.) подумай, нарушен ли он. Если да, то почему. Только после этого внутреннего анализа сформируй итоговый ответ в Markdown-блоках. Не показывай свои рассуждения в итоговом ответе.
+Перед анализом восстанови вложенность списков:
+— последовательности вида «1.» затем «a.)/i.)/–» трактуй как вложенные подпункты предыдущего пункта;
+— если отступы отсутствуют, используй порядок приоритетов уровней: число → буква → римская → маркер «–»;
+— не меняй порядок элементов.
+
+**Формат ответа — обязательно использовать ровно этот шаблон Markdown**:
+
+Для каждого требования:
+
+\`\`\`
+### [Текст требования]
+
+**Ошибка документации**:
+- **Тема**: [краткое название дефекта] в части «[цитата из проблемного фрагмента требования]»
+- **Описание**: [в чём несоответствие]
+- **Нарушены свойства**: [список свойств через запятую]
+- **Фактический результат**: [что написано сейчас]
+- **Ожидаемый результат**: [что нужно написать, или уточняющий вопрос]
+\`\`\`
+
+**Правила:**
+- Никакого текста вне блоков
+- Каждый блок начинается и заканчивается \`\`\`
+- Между блоками — одна пустая строка
+- Не добавлять заголовки, списки, markdown за пределами шаблона
+- Если нет ошибок — не выводить ничего
+- Формулировки внутри блока — только по делу, без вступлений
+- Уточняющие вопросы писать ТОЛЬКО в поле "Ожидаемый результат"
+
+**Пример:**
+
+\`\`\`
+### Если параметр count = 0, текст "Счета к оплате" должен отображаться без счётчика.
+
+**Ошибка документации**:
+- **Тема**: Нет описания альтернативного отображения при count=0 в части «если count = 0»
+- **Описание**: не указано, что должно быть показано вместо счётчика
+- **Нарушены свойства**: Завершённость, Проверяемость
+- **Фактический результат**: «текст "Счета к оплате" должен отображаться без счётчика»
+- **Ожидаемый результат**: Уточнить формулировку: “Если count = 0, отображать только заголовок ‘Счета к оплате’ без цифрового индикатора.”
+\`\`\`
+`;
+  console.log('[analyze] Финальный промпт:\n', prompt);
 
 
-  console.log('Итоговый сформированный промт:\n ' + prompt)
-
-  const API_TOKEN = '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';
-  const URL = 'https://openrouter.ai/api/v1/chat/completions';
+  // ---------- 2) Вызов LLM с ретраями ----------
   const headers = {
     Authorization: `Bearer ${API_TOKEN}`,
     'Content-Type': 'application/json'
   };
-  const body = JSON.stringify({
-    model: 'qwen/qwen3-235b-a22b:free',
-    max_tokens: 5000,
-    temperature: 0.0,
-    messages: [{ role: 'user', content: prompt }]
-  });
 
-  // 3) Выполняем с retry при 5xx/502
+  const makeBody = () =>
+    JSON.stringify({
+      model: MODEL,
+      max_tokens: 5000,
+      temperature: 0.0,
+      messages: [
+        { role: 'system', content: SYSTEM_ENFORCER },
+        { role: 'user', content: prompt }
+      ]
+    });
+
   const maxRetries = 3;
+  let rateRetries = 0;
+
+  // Лёгкие настройки ретраев по rate-limit (можно переопределить через env)
+  const RATE_LIMIT_MAX_RETRIES = Number(process.env.RATE_LIMIT_MAX_RETRIES || 7);
+  const RETRY_AFTER_DEFAULT_MS = Number(process.env.RETRY_AFTER_DEFAULT_MS || 20000);
+
+  const getRetryAfterMs = (res) => {
+    try {
+      const h = res?.headers?.get?.('retry-after');
+      if (!h) return RETRY_AFTER_DEFAULT_MS;
+      const secs = Number(h);
+      if (!Number.isNaN(secs) && secs > 0) return secs * 1000;
+      const when = Date.parse(h);
+      if (!Number.isNaN(when)) {
+        const diff = when - Date.now();
+        return diff > 0 ? diff : RETRY_AFTER_DEFAULT_MS;
+      }
+      return RETRY_AFTER_DEFAULT_MS;
+    } catch {
+      return RETRY_AFTER_DEFAULT_MS;
+    }
+  };
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const res = await fetch(URL, { method: 'POST', headers, body });
-      const data = await res.json();
-      console.log('AI raw response:', JSON.stringify(data, null, 2));
+      const res = await fetch(URL, { method: 'POST', headers, body: makeBody() });
 
-      if (data.error) {
-        throw new Error(data.error.message || JSON.stringify(data.error));
+      // Прямой 429 от сервера
+      if (res.status === 429) {
+        const waitMs = getRetryAfterMs(res);
+        console.warn(`[analyze] 429 rate-limited, wait ${waitMs}ms (retry ${rateRetries + 1}/${RATE_LIMIT_MAX_RETRIES})`);
+        await new Promise(r => setTimeout(r, waitMs));
+        rateRetries++;
+        if (rateRetries > RATE_LIMIT_MAX_RETRIES) {
+          throw new Error('Rate limit exceeded repeatedly (HTTP 429)');
+        }
+        attempt--; // не сжигаем попытку
+        continue;
       }
+
+      const data = await res.json().catch(() => ({}));
+
+      // 429 может прийти в теле при 200 OK
+      const bodyCode = data?.error?.code || data?.error?.status;
+      const bodyMsg = data?.error?.message || '';
+      if (res.status === 429 || bodyCode === 429 || /rate.?limit/i.test(String(bodyMsg))) {
+        const waitMs = getRetryAfterMs(res);
+        console.warn(`[analyze] 429(body) rate-limited, wait ${waitMs}ms (retry ${rateRetries + 1}/${RATE_LIMIT_MAX_RETRIES})`);
+        await new Promise(r => setTimeout(r, waitMs));
+        rateRetries++;
+        if (rateRetries > RATE_LIMIT_MAX_RETRIES) {
+          throw new Error('Rate limit exceeded repeatedly (429 via body)');
+        }
+        attempt--; // не сжигаем попытку
+        continue;
+      }
+
+      if (!res.ok || data?.error) {
+        const errMsg = data?.error?.message || JSON.stringify(data?.error || {});
+        throw new Error(`${res.status} ${res.statusText}: ${errMsg}`.trim());
+      }
+
       const content = data.choices?.[0]?.message?.content?.trim();
-      if (!content) {
-        throw new Error('Ответ от модели пустой');
+      if (!content) throw new Error('Ответ от модели пустой');
+
+      // Cохраняем для отладки
+      try {
+        fs.writeFileSync('requirement-analysis.txt', content, 'utf8');
+      } catch (e) {
+        console.warn('Не удалось записать requirement-analysis.txt:', e.message);
       }
 
-      fs.writeFileSync('requirement-analysis.txt', content, 'utf8');
-      console.log('Результат анализа записан в requirement-analysis.txt');
       return content;
-
     } catch (err) {
-      // если это серверная 5xx или 502 — попробуем повторить
-      const code = err.message.match(/\b50\d\b/);
-      if (attempt < maxRetries && code) {
+      // если это серверная 5xx — попробуем повторить
+      const is5xx = /\b5\d{2}\b/.test(err.message) || /ECONNRESET|ETIMEDOUT/i.test(err.message);
+      if (attempt < maxRetries && is5xx) {
         const delay = 1000 * 2 ** (attempt - 1);
-        console.warn(`Попытка ${attempt} не удалась (${err.message}), повтор через ${delay}ms...`);
-        await new Promise(r => setTimeout(r, delay));
+        console.warn(`[analyze] попытка ${attempt} не удалась (${err.message}), retry через ${delay}ms...`);
+        await new Promise((r) => setTimeout(r, delay));
         continue;
       }
       console.error('Ошибка анализа требования:', err.message);
