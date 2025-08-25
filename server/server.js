@@ -1314,7 +1314,7 @@ function extractToolArgs(aiResponse, preferredFnName) {
 //
 async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
     const {
-        model = 'deepseek/deepseek-r1-0528:free',
+        model = 'qwen/qwen3-235b-a22b:free',
         tools,
         tool_choice,
         response_format,
