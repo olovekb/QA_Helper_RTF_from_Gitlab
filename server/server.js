@@ -564,105 +564,6 @@ function normalizeContextInput(v) {
     }
     return String(v);
 }
-// ==== chunking helpers for /api/analyze/solution ====
-
-function splitRequirementIntoChunks(markdown, opts = {}) {
-    const {
-        maxChars = 8000,       // целевой размер чанка
-        minChars = 2500,       // стараться не делать слишком мелкие
-        headingRegex = /^(#{1,4}|\d+\.)\s+/   // H1..H4 или нумерация "1. ..."
-    } = opts;
-
-    if (!markdown || typeof markdown !== 'string') return [];
-
-    const lines = markdown.replace(/\r\n/g, '\n').split('\n');
-    const chunks = [];
-    let buf = [];
-    let curLen = 0;
-
-    const pushBuf = () => {
-        const text = buf.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-        if (text) chunks.push(text);
-        buf = [];
-        curLen = 0;
-    };
-
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-
-        const isHeading = headingRegex.test(line);
-        const wantBreak = (curLen >= maxChars * 0.6) && isHeading;
-
-        if (wantBreak) {
-            pushBuf();
-        }
-
-        buf.push(line);
-        curLen += line.length + 1;
-
-        if (curLen >= maxChars) {
-            // переполнен — аккуратно дорежем по пустым строкам
-            let j = buf.length - 1;
-            while (j > 0 && (buf[j].trim() !== '' && !headingRegex.test(buf[j]))) j--;
-            if (j > 0) {
-                const left = buf.slice(0, j + 1);
-                const right = buf.slice(j + 1);
-                const leftText = left.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-                if (leftText) chunks.push(leftText);
-                buf = right;
-                curLen = buf.join('\n').length;
-            } else {
-                pushBuf();
-            }
-        }
-    }
-    pushBuf();
-
-    // Склеиваем совсем мелкие хвосты
-    const compact = [];
-    for (const c of chunks) {
-        if (!compact.length) { compact.push(c); continue; }
-        const last = compact[compact.length - 1];
-        if (c.length < minChars || last.length < minChars) {
-            compact[compact.length - 1] = (last + '\n\n---\n\n' + c).trim();
-        } else {
-            compact.push(c);
-        }
-    }
-    return compact;
-}
-
-function mergeAiAnalyzeResults(parts) {
-    if (!Array.isArray(parts) || !parts.length) return '';
-
-    const allStrings = parts.every(p => typeof p === 'string');
-    if (allStrings) return parts.join('\n\n---\n\n');
-
-    const allArrays = parts.every(Array.isArray);
-    if (allArrays) return parts.flat();
-
-    const allObjects = parts.every(p => p && typeof p === 'object' && !Array.isArray(p));
-    if (allObjects) {
-        // Пытаемся конкатить общие «массивные» поля, остальное — из первого + meta.chunks
-        const arrayKeys = new Set();
-        parts.forEach(o => Object.keys(o).forEach(k => { if (Array.isArray(o[k])) arrayKeys.add(k); }));
-        const base = { ...parts[0] };
-        for (const k of arrayKeys) {
-            base[k] = parts.flatMap(o => Array.isArray(o[k]) ? o[k] : []);
-        }
-        // Если есть текстовые поля, склеим мягко
-        for (const key of ['text', 'markdown', 'summary', 'description']) {
-            if (parts.some(o => typeof o[key] === 'string')) {
-                base[key] = parts.map(o => (o[key] || '')).filter(Boolean).join('\n\n---\n\n');
-            }
-        }
-        base._mergeMeta = { chunkCount: parts.length };
-        return base;
-    }
-
-    // Гетерогенный случай — вернём массив частичных результатов
-    return parts;
-}
 
 
 /**
@@ -686,7 +587,7 @@ app.post('/api/analyze/solution', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Параметр text или pageId обязателен.' });
         }
 
-        // 1) Основное требование (+ вложения с Confluence)
+        // 1) Основное требование
         let requirementText = text;
         let collectedAttachments = [];
 
@@ -709,6 +610,7 @@ app.post('/api/analyze/solution', async (req, res) => {
                 const { markdown } = await fetchConfluencePage(bearerToken, glossaryPageId, { inlineTextAttachments: true });
                 glossaryText = markdown;
             } catch (e) {
+                // Если хотите «мягкий» сценарий — замените throw на console.warn
                 throw new Error(`Не удалось получить глоссарий из Confluence (pageId=${glossaryPageId}): ${e.message}`);
             }
         }
@@ -716,6 +618,7 @@ app.post('/api/analyze/solution', async (req, res) => {
         // 3) Доп. контекст (строка ИЛИ массив строк) + страницы
         let contextText = normalizeContextInput(context);
         const ctxIds = normalizePageIds(contextPageIds);
+
 
         if (ctxIds.length) {
             if (!bearerToken) {
@@ -737,46 +640,17 @@ app.post('/api/analyze/solution', async (req, res) => {
             contextText = [contextText, parts.join('\n')].filter(Boolean).join('\n\n');
         }
 
-        // 4) Разбивка требований на чанки (без изменения контракта ответа)
-        const CHUNK_MAX = 8000;     // ~ безопасный размер под free-модели с учётом system+context
-        const chunks = splitRequirementIntoChunks(String(requirementText || ''), { maxChars: CHUNK_MAX });
-
-        // Фолбэк: даже если пусто после разбивки — не ломаемся
-        const inputs = chunks.length ? chunks : [String(requirementText || '')];
-
-        // 5) Последовательно анализируем (не параллелим — меньше 429/таймаутов)
-        const run = pLimit(1);
-        const perChunk = [];
-        for (let i = 0; i < inputs.length; i++) {
-            const chunkText = inputs[i];
-            /* важно: контракт analyzeRequirementWithAI не меняем */
-            // Доп. неразрушающие хинты в options — игнорятся реализацией, если она их не знает
-            const partial = await run(() => analyzeRequirementWithAI(
-                chunkText,
-                contextText,
-                project,
-                glossaryText,
-                {
-                    prefilter: true,
-                    contextHint: contextInstruction || '—',
-                    chunkIndex: i + 1,
-                    chunkTotal: inputs.length
-                }
-            ));
-            perChunk.push(partial);
-        }
-
-        // 6) Безопасное слияние результатов (строки → join, массивы → concat, объекты → объединяем массивные поля)
-        const merged = mergeAiAnalyzeResults(perChunk);
+        // 4) Анализ (с префильтром)
+        const aiResponse = await analyzeRequirementWithAI(
+            requirementText,
+            contextText,
+            project,            // можно undefined — внутри есть дефолт '—'
+            glossaryText,
+            { prefilter: true, contextHint: contextInstruction || '—' }
+        );
 
         const result = {
-            ai: {
-                success: true,
-                response: merged,
-                meta: {
-                    chunks: inputs.length
-                }
-            },
+            ai: { success: true, response: aiResponse },
             attachments: collectedAttachments.length ? collectedAttachments : undefined
         };
 
@@ -785,7 +659,6 @@ app.post('/api/analyze/solution', async (req, res) => {
     } catch (err) {
         return res.status(400).json({ success: false, error: err.message });
     }
-
 });
 
 
