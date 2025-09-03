@@ -715,7 +715,7 @@ app.post('/api/jira/create-issue', async (req, res) => {
 // Эндпоинт для получения метаданных проекта (поля, пользователи, версии)
 app.post('/api/jira/meta', async (req, res) => {
     const jiraBase = 'https://jira.abanking.ru';
-    const issueKey = 'JMT-983';               // берём из вашего CURL
+    const issueKey = 'NPP-15541';               // берём из вашего CURL
     const { pat, projectKey } = req.body;     // передаёте с фронта
 
     if (!pat || !projectKey) {
