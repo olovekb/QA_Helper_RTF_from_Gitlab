@@ -744,7 +744,9 @@ app.post('/api/jira/meta', async (req, res) => {
             Symptom: 'Симптом',
             Platform: 'Платформа',
             ProdBug: 'Баг с прода',
-            'Epic Link': 'Epic Link'
+            'Epic Link': 'Epic Link',
+            'Основной исполнитель': 'Основной исполнитель',
+            'Ревьюеры': 'Ревьюеры'
         };
 
         const options = {};
