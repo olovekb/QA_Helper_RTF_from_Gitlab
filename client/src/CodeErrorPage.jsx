@@ -544,6 +544,17 @@ export default function CodeErrorPage({ projects }) {
     const allowedLinkNames = ['Блокирует', 'Относится', 'Клонирование', 'Порождение'];
     const [collapsedStates, setCollapsedStates] = useState({});
     const requestLinkIssue = requestLinkOption?.value || null;
+    const [mainExecutorOption, setMainExecutorOption] =
+        usePersistentState('codeErrorMainExecutor', null);
+    const [reviewerOption, setReviewerOption] =
+        usePersistentState('codeErrorReviewers', []);
+
+    useEffect(() => {
+        if (reviewerOption && !Array.isArray(reviewerOption)) {
+            setReviewerOption([reviewerOption]);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
     useEffect(() => {
         if (tasks.length > 0 && tasks[0].selected === undefined) {
             setTasks(ts => ts.map(t => ({ ...t, selected: true })));
@@ -992,16 +1003,30 @@ ${t.expected}
             if (assigneeOption?.value) {
                 fields.assignee = { name: assigneeOption.value };
             }
+            const MAIN_EXECUTOR_CF = 'customfield_13210';
+            const REVIEWERS_CF = 'customfield_13812';
+            const mainExecFieldId = fieldIds['Основной исполнитель'] || MAIN_EXECUTOR_CF;
+            const reviewersFieldId = fieldIds['Ревьюеры'] || fieldIds['Ревьюер'] || REVIEWERS_CF;
+
+            if (mainExecFieldId && mainExecutorOption?.value) {
+                fields[mainExecFieldId] = { name: mainExecutorOption.value };
+            }
+            if (reviewersFieldId) {
+                const opts = Array.isArray(reviewerOption)
+                    ? reviewerOption
+                    : (reviewerOption ? [reviewerOption] : []);
+                if (opts.length) {
+                    fields[reviewersFieldId] = opts.map(o => ({ name: o.value }));
+                }
+            }
 
             try {
-                // 2) создаём задачу
                 const { data: { key } } = await axios.post(
                     `${config.serverUrl}/jira/create-issue`,
                     { pat: jiraPat, payload: { fields } }
                 );
                 out.push({ success: true, summary: t.summary, key });
 
-                // 3) собираем **все** файлы из четырёх разделов + общего
                 const allFiles = [
                     ...(t.descriptionAttachments || []),
                     ...(t.stepsAttachments || []),
@@ -1335,7 +1360,38 @@ ${t.expected}
                                         isClearable
                                     />
                                 </div>
+                                {/* Основной исполнитель */}
+                                <div className="field">
+                                    <label>Основной исполнитель (необязательно)</label>
+                                    <AsyncSelect
+                                        classNamePrefix="select"
+                                        cacheOptions
+                                        defaultOptions
+                                        loadOptions={loadUserOptions}
+                                        placeholder="Начните вводить имя…"
+                                        value={mainExecutorOption}
+                                        onChange={opt => setMainExecutorOption(opt)}
+                                        noOptionsMessage={() => 'Нет совпадений'}
+                                        isClearable
+                                    />
+                                </div>
 
+                                {/* Ревьюеры */}
+                                <div className="field">
+                                    <label>Ревьюеры (необязательно)</label>
+                                    <AsyncSelect
+                                        classNamePrefix="select"
+                                        cacheOptions
+                                        defaultOptions
+                                        loadOptions={loadUserOptions}
+                                        placeholder="Начните вводить имена…"
+                                        isMulti
+                                        value={reviewerOption || []}
+                                        onChange={opts => setReviewerOption(opts || [])}
+                                        noOptionsMessage={() => 'Нет совпадений'}
+                                        isClearable
+                                    />
+                                </div>
                                 {/* Затронутая версия */}
                                 <div className="field">
                                     <label>Затронутая версия*</label>

@@ -459,9 +459,17 @@ export default function SolutionPage({ projects = [] }) {
   const [contextPageIds, setContextPageIds] = usePersistentState('contextPageIds', []);
 
   const [contextInstruction, setContextInstruction] = usePersistentState('contextInstruction', '');
+  const [mainExecutorOption, setMainExecutorOption] =
+    usePersistentState('solutionMainExecutor', null);
+  const [reviewerOption, setReviewerOption] =
+    usePersistentState('solutionReviewer', []);
 
-
-
+  useEffect(() => {
+    if (reviewerOption && !Array.isArray(reviewerOption)) {
+      setReviewerOption([reviewerOption]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     if (tasks.length > 0 && tasks[0].selected === undefined) {
       setTasks(ts => ts.map(t => ({ ...t, selected: true })));
@@ -1144,6 +1152,17 @@ export default function SolutionPage({ projects = [] }) {
       if (assigneeOption?.value) {
         fields.assignee = { name: assigneeOption.value };
       }
+      if (fieldIds['Основной исполнитель'] && mainExecutorOption?.value) {
+        fields[fieldIds['Основной исполнитель']] = { name: mainExecutorOption.value };
+      }
+      const REVIEWERS_CF = 'customfield_13812';
+      const reviewersFieldId = fieldIds['Ревьюеры'] || fieldIds['Ревьюер'] || REVIEWERS_CF;
+      if (reviewersFieldId) {
+        const opts = Array.isArray(reviewerOption) ? reviewerOption : (reviewerOption ? [reviewerOption] : []);
+        if (opts.length) {
+          fields[reviewersFieldId] = opts.map(o => ({ name: o.value }));
+        }
+      }
 
       try {
         const { data: { key } } = await axios.post(
@@ -1504,7 +1523,36 @@ export default function SolutionPage({ projects = [] }) {
                   isClearable
                 />
               </div>
+              <div className="field">
+                <label>Основной исполнитель</label>
+                <AsyncSelect
+                  classNamePrefix="select"
+                  cacheOptions
+                  defaultOptions
+                  loadOptions={loadUserOptions}
+                  placeholder="Начните вводить имя…"
+                  value={mainExecutorOption}
+                  onChange={opt => setMainExecutorOption(opt)}
+                  noOptionsMessage={() => 'Нет совпадений'}
+                  isClearable
+                />
+              </div>
 
+              <div className="field">
+                <label>Ревьюеры</label>
+                <AsyncSelect
+                  classNamePrefix="select"
+                  cacheOptions
+                  defaultOptions
+                  isMulti
+                  loadOptions={loadUserOptions}
+                  placeholder="Начните вводить имена…"
+                  value={reviewerOption || []}
+                  onChange={opts => setReviewerOption(opts || [])}
+                  noOptionsMessage={() => 'Нет совпадений'}
+                  isClearable
+                />
+              </div>
               <div className="field">
                 <label>Статус задачи</label>
                 <Select
