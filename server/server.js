@@ -610,43 +610,43 @@ app.post('/api/analyze/solution', async (req, res) => {
                 const { markdown } = await fetchConfluencePage(bearerToken, glossaryPageId, { inlineTextAttachments: true });
                 glossaryText = markdown;
             } catch (e) {
-                // Если хотите «мягкий» сценарий — замените throw на console.warn
+
                 throw new Error(`Не удалось получить глоссарий из Confluence (pageId=${glossaryPageId}): ${e.message}`);
             }
         }
 
-        // 3) Доп. контекст (строка ИЛИ массив строк) + страницы
         let contextText = normalizeContextInput(context);
         const ctxIds = normalizePageIds(contextPageIds);
-
+        const contextPages = [];
 
         if (ctxIds.length) {
             if (!bearerToken) {
                 return res.status(400).json({ success: false, error: 'Для загрузки доп. контекста из Confluence требуется bearerToken' });
             }
 
-            const parts = [];
-            if (contextInstruction?.trim()) {
-                parts.push(`**Инструкция к доп. контексту:** ${contextInstruction.trim()}\n`);
-            }
             for (const cid of ctxIds) {
                 try {
                     const { markdown } = await fetchConfluencePage(bearerToken, cid, { inlineTextAttachments: true });
-                    parts.push(`\n---\n### Доп. контекст: Confluence pageId=${cid}\n\n${markdown}`);
+
+                    contextPages.push(markdown);
                 } catch (e) {
-                    parts.push(`\n---\n### Доп. контекст: Confluence pageId=${cid}\n\n(Не удалось загрузить: ${e.message})`);
+
+                    contextPages.push(`Confluence pageId=${cid}\n\n(Не удалось загрузить: ${e.message})`);
                 }
             }
-            contextText = [contextText, parts.join('\n')].filter(Boolean).join('\n\n');
         }
 
         // 4) Анализ (с префильтром)
         const aiResponse = await analyzeRequirementWithAI(
             requirementText,
             contextText,
-            project,            // можно undefined — внутри есть дефолт '—'
+            project,
             glossaryText,
-            { prefilter: true, contextHint: contextInstruction || '—' }
+            {
+                prefilter: true,
+                contextHint: contextInstruction || '—',
+                contextPages
+            }
         );
 
         const result = {

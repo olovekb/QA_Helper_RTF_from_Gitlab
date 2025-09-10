@@ -26,16 +26,15 @@ const SYSTEM_JSON_ONLY =
     'ВСЕ значения — JSON-строки, экранируй внутри: \\" , \\\\ , \\n. ' +
     'Ответ ДОЛЖЕН начинаться с { и заканчиваться }.';
 
-// === Ограничения (символы) ===
-const CLIP_REQ_IN = 40000;   // только для внутреннего контекста к LLM
-const CLIP_GLS_IN = 20000;
-const CLIP_CTX_IN = 20000;
-const LIMIT_GLS_OUT = 6000;
-const LIMIT_CTX_OUT = 8000;
+const CLIP_REQ_IN = 100000;
+const CLIP_GLS_IN = 120000;
+const CLIP_CTX_IN = 240000;
+const LIMIT_GLS_OUT = 16000;
+const LIMIT_CTX_OUT = 24000;
 
 // === Чанкование ===
-const CHUNK_SIZE_GLOSSARY = 8000;
-const CHUNK_SIZE_CONTEXT = 8000;
+const CHUNK_SIZE_GLOSSARY = 64000;
+const CHUNK_SIZE_CONTEXT = 64000;
 
 // === Retry / Rate-limit ===
 const MAX_ATTEMPTS_TOTAL = 6;
@@ -527,15 +526,15 @@ ${chunks[i]}
 
         let out = null, part = '';
 
-        if (TOOLS_ENABLED) {
-            const tool = buildTool('submit_glossary', 'mini_glossary_md', 'Return mini_glossary_md list');
-            out = await callTools(messages, tool, { maxTokens: 700, temperature: 0.0, expectedKeys: ['mini_glossary_md'] });
-            part = String(out?.mini_glossary_md || '');
-        }
+        //    if (TOOLS_ENABLED) {
+        //       const tool = buildTool('submit_glossary', 'mini_glossary_md', 'Return mini_glossary_md list');
+        //       out = await callTools(messages, tool, { maxTokens: 700, temperature: 0.0, expectedKeys: ['mini_glossary_md'] });
+        //       part = String(out?.mini_glossary_md || '');
+        //   }
 
         if (!part) {
             out = await callJSON(messages, {
-                maxTokens: 900,
+                maxTokens: 10000,
                 temperature: 0.0,
                 schemaName: 'ReduceGlossary',
                 schemaProps: { mini_glossary_md: { type: 'string' } },
@@ -624,11 +623,11 @@ ${pageChunks[c]}
 
             let out = null, part = '';
 
-            if (TOOLS_ENABLED) {
-                const tool = buildTool('submit_context', 'context_md', 'Return context_md list');
-                out = await callTools(messages, tool, { maxTokens: 700, temperature: 0.0, expectedKeys: ['context_md'] });
-                part = String(out?.context_md || '');
-            }
+            //  if (TOOLS_ENABLED) {
+            //      const tool = buildTool('submit_context', 'context_md', 'Return context_md list');
+            //       out = await callTools(messages, tool, { maxTokens: 700, temperature: 0.0, expectedKeys: ['context_md'] });
+            //       part = String(out?.context_md || '');
+            //    }
 
             if (!part) {
                 out = await callJSON(messages, {
