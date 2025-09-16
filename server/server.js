@@ -1632,16 +1632,24 @@ app.post('/api/generate-test-cases', async (req, res) => {
     if ((!Array.isArray(requirements) && typeof requirements !== 'string') || !modelStructure) {
         return res.status(400).json({ error: 'requirements и modelStructure обязательны' });
     }
-    let refinedReqs = requirements;
+    let refinedReqs;
     try {
         const { refinedArray } = await contextRefiner({
             requirements,
             text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken
         });
+        if (!refinedArray || refinedArray.length === 0) {
+            throw new Error('Context refiner вернул пустой массив требований.');
+        }
         refinedReqs = refinedArray;
+        console.log(`[generate-test-cases] OK: contextRefiner успешно обработал требования. Объем: ${refinedArray.join('\n').length} символов.`);
     } catch (e) {
-        console.warn('[generate-test-cases] contextRefiner warning:', e.message);
+        console.error('[generate-test-cases] CRITICAL: contextRefiner завершился с ошибкой:', e.message);
+        return res.status(500).json({
+            error: `Критическая ошибка на этапе подготовки требований (contextRefiner): ${e.message}`
+        });
     }
+
 
     // Глобальный список допустимых code (по всей модели) — нужен sanitize()
     const allowedCodes = Array.from(new Set(
@@ -1653,6 +1661,17 @@ app.post('/api/generate-test-cases', async (req, res) => {
             )
         )
     ));
+
+    // ====== УЛУЧШЕНИЕ: Функция-обертка для контроля таймаутов ======
+    async function withTimeout(promise, ms, operationName = 'AI call') {
+        const timeout = new Promise((_, reject) => {
+            const id = setTimeout(() => {
+                clearTimeout(id);
+                reject(new Error(`Операция "${operationName}" превысила таймаут в ${ms / 1000}с`));
+            }, ms);
+        });
+        return Promise.race([promise, timeout]);
+    }
 
     // ====== ВСПОМОГАТЕЛЬНЫЕ ======
 
@@ -1866,16 +1885,17 @@ app.post('/api/generate-test-cases', async (req, res) => {
     const BASE_SYSTEM_PROMPT = `
 Ты — скрупулёзный SDET (Software Development Engineer in Test), создающий атомарные и исчерпывающие тест-кейсы для импорта в Allure. На основе входной тест-модели (modelStructure) и требований сгенерируй JSON-массив тест-кейсов, НЕУКОСНИТЕЛЬНО следуя Style Guide ниже.
 
-# 1) Принцип "Один Пример из Требований -> Один Тест-Кейс" (ГЛАВНОЕ ПРАВИЛО!)
-Твоя основная задача — не просто следовать структуре modelStructure, а использовать её как каркас для генерации тестов на основе КОНКРЕТНЫХ ПРИМЕРОВ из текста требований.
+# 1) Принцип "Один Пример из Требований -> Один Тест-Кейс" (КРАТКО И СТРОГО)
+Ты создаёшь тест-кейсы исключительно на основе абсолютно явных и конкретных примеров из текста требований. Никаких домыслов, предположений или недосказанностей в шагах и expected результатах быть не должно.
 
 Алгоритм твоих действий:
 1.  Возьми один узел из \`modelStructure\` (например, \`Scenario: "Ввести недопустимое значение..."\`).
-2.  Просканируй ВЕСЬ текст требований и найди ВСЕ конкретные пользовательские примеры, которые соответствуют этому абстрактному узлу.
-3.  Для КАЖДОГО найденного примера создай ОДИН отдельный, атомарный тест-кейс.
-4.  ЗАПРЕЩЕНО объединять несколько разных примеров (например, с разными кредитными программами или разными наборами данных) в один тест-кейс.
-5.  При формировании полей \`title\`, \`steps\` и \`expected\` для каждого тест-кейса, используй КОНКРЕТНЫЕ ДАННЫЕ (названия программ, цифры, тексты ошибок) из того примера, на котором основан этот кейс.
-6.  Если для одного примера в требованиях описана сложная логика (например, "применится последняя подошедшая зависимость"), твой \`expected\` результат должен ТОЧНО отражать исход этой логики для данных этого примера, без выдумывания "приоритетов".
+2.  Тщательно просканируй ВЕСЬ текст требований и найди ТОЛЬКО те примеры, которые явно и текстуально соответствуют этому узлу.
+3.  Для каждого такого примера сгенерируй ровно один, атомарный тест-кейс.
+4.  Строго запрещено объединять разные примеры в один кейс или творить новые примеры.
+5.  Все поля \`title\`, \`steps\` и \`expected\` должны содержать лишь ДОСЛОВНЫЕ данные или тексты, встречающиеся в требованиях. Запрещено добавлять или интерпретировать дополнительную информацию.
+6.  Если для узла отсутствуют явные примеры в требованиях — не создавай тест-кейса вовсе.
+7.  При сложной логике описывай ожидаемый результат ровно так, как он изложен в соответствующем примере, ни больше, ни меньше.
 
 Пример работы алгоритма:
 - **Абстрактный узел:** \`Scenario: "Проверить срабатывание валидации при конфликте условий"\`
@@ -1971,12 +1991,10 @@ app.post('/api/generate-test-cases', async (req, res) => {
 # 4) Теги (ОБЯЗАТЕЛЬНО)
 В массиве "tags" используй:
 — Платформа интерфейса: D (desktop), A (adaptive), M (mobile), PWA (если уместно). Если платформа из контекста неочевидна — ставь "D".  
-— Бэкенд-проверки: добавь "S" (для Integration backend Tests и любых API-ориентированных проверок).  
-— Номер требования: добавь тег с идентификатором требования (например, "REQ-123") если он явно присутствует во входе; если нет — пропусти.  
+— Бэкенд-проверки: добавь "S" (для Integration backend Tests и любых API-ориентированных проверок).   
 Примеры наборов тегов:
 • FE E2E/Integration (десктоп): ["D"]  
 • BE Integration: ["S"] или ["D","S"] если тест затрагивает интерфейсно-зависимые артефакты  
-• С требованием: ["D","REQ-123"]
 
 # 5) Выходной формат: СТРОГО ТОЛЬКО JSON-массив
 Используй ровно один из трёх шаблонов ниже в зависимости от "layer". Никаких комментариев/markdown.
@@ -2186,24 +2204,46 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             config.openRouterAiKey,
             {
                 tools,
-                tool_choice: { type: "function", function: { name: "submit_cases" } },
+                tool_choice: 'auto',
                 temperature: 0.25,
                 top_p: 0.9,
                 extra: { transforms: 'middle-out' }
             }
         );
 
-        // tool-call путь
+        // УЛУЧШЕННЫЙ ПАРСЕР ДЛЯ GAPFILL
         const args = extractToolArgs(ai, "submit_cases");
-        if (args && Array.isArray(args.cases)) return args.cases;
+        if (args && Array.isArray(args.cases)) {
+            console.log(`[gapFill] OK: Получено ${args.cases.length} кейсов через tool_call.`);
+            return args.cases;
+        }
 
-        // фолбэк на «сырой» текст
+        console.warn(`[gapFill] WARN: tool_call не найден. Попытка парсинга из content.`);
         const content = ai.choices?.[0]?.message?.content || '';
-        const rawJsonCandidate = extractJsonArray(content);
-        if (!rawJsonCandidate) return [];
-        const jsonText = cleanupJsonText(rawJsonCandidate);
-        const parsed = JSON5.parse(jsonText);
-        return Array.isArray(parsed) ? parsed : [];
+        if (!content.trim()) {
+            console.error('[gapFill] CRITICAL: Ответ модели полностью пуст.');
+            return [];
+        }
+
+        try {
+            const rawJsonCandidate = extractJsonArray(content);
+            if (!rawJsonCandidate) {
+                console.error('[gapFill] CRITICAL: Не удалось извлечь JSON-массив из content.');
+                console.log('--- RAW AI RESPONSE (gapFill failed to parse) ---\n', content, '\n------------------------------------');
+                return [];
+            }
+            const jsonText = cleanupJsonText(rawJsonCandidate);
+            const parsed = JSON5.parse(jsonText);
+            const result = Array.isArray(parsed) ? parsed : [];
+            console.log(`[gapFill] OK: Получено ${result.length} кейсов через фолбэк-парсер.`);
+            return result;
+        } catch (parseError) {
+            console.error('[gapFill] CRITICAL: Ошибка JSON5.parse при фолбэке:', parseError.message);
+            console.log('--- RAW AI RESPONSE (gapFill JSON5 parse failed) ---\n', content, '\n-----------------------------------------');
+            return [];
+        }
+
+
     }
 
     // Догенерация только недостающего покрытия
@@ -2297,12 +2337,15 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
         // Не спамим API: free-модель часто с лимитом — гоняем последовательно
         const genLimit = pLimit(1);
 
-        // Генерация по кускам
+        // Генерация по кускам с таймаутами
         const parts = [];
+        const TIMEOUT_MS = 900000;
         for (const chunk of storyChunks) {
-            const chunkCases = await genLimit(() => genForChunk(chunk, refinedReqs, BASE_SYSTEM_PROMPT));
+            const promise = genLimit(() => genForChunk(chunk, refinedReqs, BASE_SYSTEM_PROMPT));
+            const chunkCases = await withTimeout(promise, TIMEOUT_MS, `genForChunk (story: ${chunk[0]?.stories[0]?.text})`);
             parts.push(chunkCases);
         }
+
         let allCases = parts.flat();
 
         // === sanitize → fixAgainstModel до аудита покрытия ===
@@ -2321,11 +2364,17 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
         // Аудит покрытия и догенерация недостающего
         const missing = auditCoverage(modelStructure, allCases);
         if (missing.missingE2E.length || missing.missingSc.length || missing.missingCd.length) {
-            let extra = await genLimit(() => gapFill(modelStructure, refinedReqs, missing, BASE_SYSTEM_PROMPT));
+            console.log(`[COVERAGE] Обнаружен недостаток покрытия. Запускаю догенерацию (gapFill)...`);
+            const promise = genLimit(() => gapFill(modelStructure, refinedReqs, missing, BASE_SYSTEM_PROMPT));
+            let extra = await withTimeout(promise, TIMEOUT_MS, 'gapFill');
             extra = sanitize(extra);
             extra = fixAgainstModel(extra, idx);
+            console.log(`[COVERAGE] Догенерировано ${extra.length} кейсов.`);
             allCases = allCases.concat(extra);
+        } else {
+            console.log('[COVERAGE] Покрытие полное, догенерация не требуется.');
         }
+
 
         return res.json({ cases: allCases });
 
@@ -2426,6 +2475,12 @@ app.post('/api/generate-test-model', async (req, res) => {
 
 ## 2. Ключевой принцип декомпозиции (САМОЕ ВАЖНОЕ!)
 - **Сначала Синтез, потом Анализ.** Прочитай ВСЕ требования. Твоя первая задача — определить 1-3 **высокоуровневых пользовательских потока (Story)**, которые приносят конечную ценность.
+## 2.1 Строгий запрет на домыслы и выдумки (Новый пункт)
+- Если в требованиях **нет явного и однозначного описания** пользовательского сценария, действия или реакции — **не создавай** соответствующий элемент модели.
+- Ни при каких обстоятельствах **не добавляй** гипотезы, догадки, предполагаемые сценарии или реакции, которых нет в требованиях.
+- Лучше пропустить неопределённые или недостаточно описанные части, чем создавать искусственные данные.
+- Модель должна отражать ТОЛЬКО то, что есть в требованиях, без предположений и дописок.
+
 
 ## 3. Структура дерева (строго соблюдать)
 - **Feature (Фича):** Большой независимый блок продукта.
@@ -2443,6 +2498,11 @@ app.post('/api/generate-test-model', async (req, res) => {
 - **Не вставляй детали технической реализации.**
 - Твоя задача — распознать КОНКРЕТНЫЕ ПРИМЕРЫ в требованиях, но в итоговой модели заменить их на **АБСТРАКТНЫЕ ОПИСАНИЯ ДЕЙСТВИЙ И РЕАКЦИЙ.**
 - Сосредоточься на связке **"действие пользователя (Scenario) -> видимая реакция системы (Code)"**. Модель должна быть независима от конкретной технологии.
+
+## 3.3. При недостатке информации — минимализм
+- Если информации в требованиях недостаточно для создания подробного сценария, создай максимально общий и абстрактный элемент.
+- Не расширяй модель за счёт непроверенных деталей.
+- Предпочти короче и точнее, чем длиннее и с выдумками.
 
 - **Примеры абстракции данных:**
   - НЕПРАВИЛЬНО: "Выбрать программу '27 LADA FREE'"

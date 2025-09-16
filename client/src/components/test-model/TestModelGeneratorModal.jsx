@@ -8,6 +8,7 @@ import { ReactFlow, MiniMap, Controls, Background, useNodesState, useEdgesState,
 import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
 import config from '../../config.json';
+import JSZip from 'jszip';
 
 // --- Component-specific styles ---
 export const StyleInjector = () => {
@@ -523,14 +524,304 @@ const TreeNode = ({ node, index, path, handlers }) => {
 };
 
 
-export default function TestModelGeneratorModal({ isOpen, onClose, initialCases, onGenerate, requirements }) {
+export default function TestModelGeneratorModal({ isOpen, onClose, initialCases, onGenerate, requirements, jiraProject,
+    jiraPat }) {
     const [treeData, setTreeData] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isGeneratingModel, setIsGeneratingModel] = useState(false);
     const [isGeneratingCases, setIsGeneratingCases] = useState(false);
+    const [generatedModel, setGeneratedModel] = useState(null);
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [isGeneratingXmind, setIsGeneratingXmind] = useState(false);
 
-    // --- State and logic for resizable panels ---
-    const [editorWidth, setEditorWidth] = useState(800); // Initial width
+    const handleGenerateXmind = async () => {
+        setIsGeneratingXmind(true);
+
+        const STYLE_IDS = {
+            e2e: 'b-e2e',
+            integration: 'b-int',
+            unit: 'b-unit',
+        };
+
+        const SHEET_BOUNDARY_STYLES = [
+            {
+                id: 'b-e2e', class: 'org.xmind.ui.boundary',
+                properties: { 'svg:stroke': '#22c55e', 'svg:fill': '#dcfce7' }
+            },
+            {
+                id: 'b-int', class: 'org.xmind.ui.boundary',
+                properties: { 'svg:stroke': '#38bdf8', 'svg:fill': '#e0f2fe' }
+            },
+            {
+                id: 'b-unit', class: 'org.xmind.ui.boundary',
+                properties: { 'svg:stroke': '#a78bfa', 'svg:fill': '#ede9fe' }
+            },
+        ];
+
+        const BOUNDARY_STYLE = {
+            e2e: { 'svg:fill': '#DCFCE7', 'svg:stroke': '#22C55E' }, // зелёный
+            integration: { 'svg:fill': '#E0F2FE', 'svg:stroke': '#38BDF8' }, // голубой
+            unit: { 'svg:fill': '#EDE9FE', 'svg:stroke': '#A78BFA' }, // фиолетовый
+        };
+
+        const TYPE_MARKERS = {
+            feature: "tag-blue",
+            story: "tag-orange",
+            scenario: "tag-purple",
+            code: "tag-yellow",
+        };
+
+        const BOUNDARY_STYLES = {
+            e2e: { lineColor: "#22c55e", fillColor: "#dcfce7" },          // зелёный
+            integration: { lineColor: "#38bdf8", fillColor: "#e0f2fe" },  // голубой
+            unit: { lineColor: "#a78bfa", fillColor: "#ede9fe" },         // фиолетовый
+        };
+
+        const withTypeMeta = (topic, type) => ({
+            ...topic,
+            labels: [...(topic.labels || []), type.toUpperCase()],
+            markers: [...(topic.markers || []), { markerId: TYPE_MARKERS[type] }],
+        });
+
+        const generateIdLocal = () => Math.random().toString(36).substr(2, 9);
+
+        try {
+            const featureTopics = treeData.map((featureData) => {
+                const featureName = featureData.text || 'Безымянная функция';
+
+                const storyTopics = (featureData.stories || []).map((storyData) => {
+                    const storyName = storyData.text || 'Безымянная история';
+
+                    const directStoryCases = (storyData.cases || []).map((caseItem) => {
+                        const markers = [];
+                        if ((caseItem.layer || "").toLowerCase().includes("frontend")) markers.push({ markerId: "flag-green" });
+                        if ((caseItem.layer || "").toLowerCase().includes("backend")) markers.push({ markerId: "flag-purple" });
+                        const layer = caseItem.layer || "";
+                        let testType = null;
+                        if (layer === "E2E Tests") testType = "e2e";
+                        else if (layer.startsWith("Integration")) testType = "integration";
+                        else if (layer.startsWith("Unit")) testType = "unit";
+                        return {
+                            id: caseItem.id || generateIdLocal(),
+                            class: "topic",
+                            title: caseItem.title || 'Безымянный кейс',
+                            testType,
+                            markers: markers.length ? markers : undefined,
+                        };
+                    });
+
+                    const scenarioTopics = (storyData.scenarios || []).map((scenarioData) => {
+                        const scenarioName = scenarioData.text || 'Безымянный сценарий';
+
+                        const scenarioChildren = (scenarioData.cases || []).map((caseItem) => {
+                            const markers = [];
+                            if ((caseItem.layer || "").toLowerCase().includes("frontend")) markers.push({ markerId: "flag-green" });
+                            if ((caseItem.layer || "").toLowerCase().includes("backend")) markers.push({ markerId: "flag-purple" });
+                            const layer = caseItem.layer || "";
+                            let testType = null;
+                            if (layer === "E2E Tests") testType = "e2e";
+                            else if (layer.startsWith("Integration")) testType = "integration";
+                            else if (layer.startsWith("Unit")) testType = "unit";
+                            return {
+                                id: caseItem.id || generateIdLocal(),
+                                class: "topic",
+                                title: caseItem.title || 'Безымянный кейс',
+                                testType,
+                                markers: markers.length ? markers : undefined,
+                            };
+                        });
+
+                        const codeTopics = (scenarioData.codes || []).map((codeData) => {
+                            const codeName = codeData.text || 'Безымянный код';
+
+                            const unitChildren = (codeData.cases || []).map((caseItem) => {
+                                const markers = [];
+                                if ((caseItem.layer || "").toLowerCase().includes("frontend")) markers.push({ markerId: "flag-green" });
+                                if ((caseItem.layer || "").toLowerCase().includes("backend")) markers.push({ markerId: "flag-purple" });
+                                return {
+                                    id: caseItem.id || generateIdLocal(),
+                                    class: "topic",
+                                    title: caseItem.title || 'Безымянный кейс',
+                                    testType: "unit",
+                                    markers: markers.length ? markers : undefined,
+                                };
+                            });
+
+                            const hasFE = (codeData.cases || []).some((c) => (c.layer || "").toLowerCase().includes("frontend"));
+                            const hasBE = (codeData.cases || []).some((c) => (c.layer || "").toLowerCase().includes("backend"));
+                            const codeMarkers = [];
+                            if (hasFE) codeMarkers.push({ markerId: "flag-green" });
+                            if (hasBE) codeMarkers.push({ markerId: "flag-purple" });
+
+                            const unitIdxs = unitChildren.map((_, idx) => idx);
+                            const boundaries = unitIdxs.length
+                                ? [{
+                                    id: generateIdLocal(),
+                                    range: `(${unitIdxs[0]},${unitIdxs[unitIdxs.length - 1]})`,
+                                    title: "Unit тесты",
+                                    styleId: 'b-unit'
+                                }]
+                                : undefined;
+
+                            const codeTopic = {
+                                id: generateIdLocal(),
+                                class: "topic",
+                                title: codeName,
+                                branch: "folded",
+                                children: { attached: unitChildren },
+                                boundaries,
+                                markers: codeMarkers.length ? codeMarkers : undefined,
+                            };
+
+                            return withTypeMeta(codeTopic, "code");
+                        });
+
+                        const childrenArray = [...scenarioChildren, ...codeTopics];
+
+                        const intIdxs = [];
+                        const e2eIdxs = [];
+                        childrenArray.forEach((it, idx) => {
+                            if (it.testType === "integration") intIdxs.push(idx);
+                            if (it.testType === "e2e") e2eIdxs.push(idx);
+                        });
+
+                        const boundaries = [];
+                        if (intIdxs.length)
+                            boundaries.push({
+                                id: generateIdLocal(),
+                                range: `(${intIdxs[0]},${intIdxs[intIdxs.length - 1]})`,
+                                title: "Интеграционные тесты",
+                                styleId: 'b-int'
+                            });
+                        if (e2eIdxs.length)
+                            boundaries.push({
+                                id: generateIdLocal(),
+                                range: `(${e2eIdxs[0]},${e2eIdxs[e2eIdxs.length - 1]})`,
+                                title: "E2E тесты",
+                                style: BOUNDARY_STYLE.e2e,
+                            });
+
+                        const scenarioTopic = {
+                            id: generateIdLocal(),
+                            class: "topic",
+                            title: scenarioName,
+                            branch: "folded",
+                            markers: [{ markerId: "people-blue" }],
+                            children: { attached: childrenArray },
+                            boundaries: boundaries.length ? boundaries : undefined,
+                        };
+
+                        return withTypeMeta(scenarioTopic, "scenario");
+                    });
+
+                    const casesAndScenarios = [...directStoryCases, ...scenarioTopics];
+
+                    const intAll = [];
+                    const e2eAll = [];
+                    casesAndScenarios.forEach((item, idx) => {
+                        if (item.testType === "integration") intAll.push(idx);
+                        if (item.testType === "e2e") e2eAll.push(idx);
+                    });
+
+                    const storyBoundaries = [];
+                    if (intAll.length)
+                        storyBoundaries.push({
+                            id: generateIdLocal(),
+                            range: `(${intAll[0]},${intAll[intAll.length - 1]})`,
+                            title: "Интеграционные тесты",
+                            styleId: 'b-int'
+                        });
+                    if (e2eAll.length)
+                        storyBoundaries.push({
+                            id: generateIdLocal(),
+                            range: `(${e2eAll[0]},${e2eAll[e2eAll.length - 1]})`,
+                            title: "E2E тесты",
+                            style: BOUNDARY_STYLE.e2e,
+                        });
+
+                    const storyTopic = {
+                        id: generateIdLocal(),
+                        class: "topic",
+                        title: storyName,
+                        branch: "folded",
+                        children: { attached: casesAndScenarios },
+                        boundaries: storyBoundaries.length ? storyBoundaries : undefined,
+                    };
+
+                    return withTypeMeta(storyTopic, "story");
+                });
+
+                const featureTopic = {
+                    id: generateIdLocal(),
+                    class: "topic",
+                    title: featureName,
+                    branch: "folded",
+                    children: { attached: storyTopics },
+                };
+
+                return withTypeMeta(featureTopic, "feature");
+            });
+
+            const contentJson = [
+                {
+                    id: generateIdLocal(),
+                    class: "sheet",
+                    title: "Тест-модель",
+                    rootTopic: {
+                        id: generateIdLocal(),
+                        class: "topic",
+                        title: jiraProject || 'Проект',
+                        structureClass: "org.xmind.ui.timeline.horizontal",
+                        children: { attached: featureTopics },
+                    },
+                    theme: {
+                        map: { id: "423cea10-5cf2-4b9c-a86a-10cba3fa1981", properties: { "svg:fill": "#ffffff" } },
+                        centralTopic: { id: "c8f9a13b-cef1-4f3b-96aa-09472b8358f0", properties: { "svg:fill": "#3949AB" } },
+                        mainTopic: { id: "50792793-7789-468b-9722-4e2ec235f632", properties: { "svg:fill": "#EEEEEE" } },
+                        subTopic: { id: "a36e6db3-7a1f-4996-8f4b-f6bcffceeb5f", properties: { "svg:fill": "#EEEEEE" } },
+                    },
+                    styles: SHEET_BOUNDARY_STYLES,
+                },
+            ];
+
+            const metadataJson = {
+                dataStructureVersion: "2",
+                creator: { name: "TestModelGenerator", version: "1.0.0" },
+                layoutEngineVersion: "3",
+            };
+
+            const manifestJson = {
+                "file-entries": { "content.json": {}, "metadata.json": {} },
+            };
+
+            const zip = new JSZip();
+            zip.file("content.json", JSON.stringify(contentJson, null, 2));
+            zip.file("metadata.json", JSON.stringify(metadataJson, null, 2));
+            zip.file("manifest.json", JSON.stringify(manifestJson, null, 2));
+
+            const blob = await zip.generateAsync({
+                type: "blob",
+                mimeType: "application/vnd.xmind.xmind",
+            });
+
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `${jiraProject || 'test-model'}-${Date.now()}.xmind`;
+            document.body.appendChild(a);
+            a.click();
+            URL.revokeObjectURL(url);
+            a.remove();
+        } catch (err) {
+            console.error("Ошибка при генерации XMind файла:", err);
+            alert("Не удалось сгенерировать XMind файл: " + err.message);
+        } finally {
+            setIsGeneratingXmind(false);
+        }
+    };
+
+
+    const [editorWidth, setEditorWidth] = useState(800);
     const [isResizing, setIsResizing] = useState(false);
     const editorPaneRef = useRef(null);
 
@@ -549,6 +840,10 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
             onClose();
         }
     };
+
+
+
+
 
     const handleMouseMove = useCallback((e) => {
         if (isResizing && editorPaneRef.current) {
@@ -691,6 +986,7 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
     // --- новый handleGenerateModel ---
     const handleGenerateModel = async () => {
         setIsGeneratingModel(true);
+        setGeneratedModel(null);
         try {
 
             // 2) Тянем всё, что уже лежит в IndexedDB (SolutionPage это туда кладёт)
@@ -740,20 +1036,21 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
                 inputMode: inputMode || undefined,
             };
 
+
             const { data } = await axios.post(
                 `${config.serverUrl}/generate-test-model`,
                 payload
             );
 
-            // 5) Рендерим полученную модель
             const newTree = buildTreeWithIds(data);
             setTreeData(newTree);
+
+            setGeneratedModel(data);
+
         } catch (error) {
             console.error('Ошибка при генерации тестовой модели:', error);
-            window.alert(
-                'Не удалось сгенерировать тестовую модель: ' +
-                (error.response?.data?.error || error.message)
-            );
+            alert('Не удалось сгенерировать модель: ' + (error.response?.data?.error || error.message));
+            setGeneratedModel(null);
         } finally {
             setIsGeneratingModel(false);
         }
@@ -885,7 +1182,8 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
 
     const handleSubmitForCases = async (e) => {
         e.preventDefault();
-        if (isGeneratingCases) return;
+        e.stopPropagation();
+        if (isGeneratingCases || isGeneratingModel || isGeneratingXmind) return;
         setIsGeneratingCases(true);
         try {
             if (typeof onGenerate === 'function') {
@@ -893,9 +1191,12 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
             } else {
                 console.error("onGenerate prop is not a function!");
             }
+        } catch (error) {
+            console.error("Ошибка во время генерации тест-кейсов:", error);
+            window.alert('Ошибка при генерации тест-кейсов: ' + (error.message || 'Неизвестная ошибка'));
+        } finally {
+            setIsGeneratingCases(false);
         }
-        catch (error) { console.error("Ошибка во время генерации тест-кейсов:", error); }
-        finally { setIsGeneratingCases(false); }
     };
 
     // Show a simple loading state until initial data is processed
@@ -907,13 +1208,21 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
         );
     }
 
-    const isBusy = isGeneratingModel || isGeneratingCases;
-    const loaderText = isGeneratingModel ? "Генерация тестовой модели..." : `При больших требованиях генерация может быть минут 10, сходи покури или попей чай`;
+    // Обновленная логика для определения состояния "занят"
+    const isBusy = isGeneratingModel || isGeneratingCases || isGeneratingXmind;
+
+    // Исправленный текст лоадера
+    const getLoaderText = () => {
+        if (isGeneratingModel) return "Генерация тестовой модели...";
+        if (isGeneratingCases) return "При больших требованиях генерация может быть минут 10, сходи покури или попей чай";
+        if (isGeneratingXmind) return "Генерация Xmind карты...";
+        return "Загрузка...";
+    };
 
     return (
         <Modal isOpen={isOpen} onRequestClose={isBusy ? () => { } : handleCloseWithConfirm} overlayClassName="modal-overlay" className="modal-content">
             <StyleInjector />
-            {isBusy && <LoaderOverlay text={loaderText} />}
+            {isBusy && <LoaderOverlay text={getLoaderText()} />}
 
             <div className="modal-header">
                 <h2>Редактор тестовой модели</h2>
@@ -925,6 +1234,14 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
                         disabled={isBusy}
                     >
                         Сгенерировать модель по требованиям
+                    </button>
+                    <button
+                        type="button"
+                        className="button-base button-secondary"
+                        onClick={handleGenerateXmind}
+                        disabled={isBusy}
+                    >
+                        Сгенерировать Xmind
                     </button>
                 </div>
                 <button className="close-btn" onClick={handleCloseWithConfirm} disabled={isBusy}>×</button>
@@ -950,9 +1267,15 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
                                 </button>
                             </div>
                             <div className="modal-footer">
-                                <button type="button" className="button-base button-secondary" onClick={handleCloseWithConfirm} disabled={isBusy}>Отмена</button>
-                                <button type="submit" className="button-base button-primary" disabled={isBusy || treeData.length === 0}>
-                                    Сгенерировать тест-кейсы
+                                <button type="button" className="button-base button-secondary" onClick={handleCloseWithConfirm} disabled={isBusy}>
+                                    Отмена
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="button-base button-primary"
+                                    disabled={isBusy || treeData.length === 0}
+                                >
+                                    Далее к тесткейсам
                                 </button>
                             </div>
                         </form>

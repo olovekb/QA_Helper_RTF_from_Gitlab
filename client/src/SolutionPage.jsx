@@ -1450,6 +1450,8 @@ export default function SolutionPage({ projects = [] }) {
         onGenerate={handleGenerateModel}
         initialCases={EMPTY_INITIAL_CASES}
         requirements={prepareRequirements()}
+        jiraProject={jiraProject}
+        jiraPat={jiraPat}
       />
 
       <TestModelReviewModal
