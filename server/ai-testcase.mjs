@@ -183,8 +183,8 @@ ${formattedStepsForPrompt || 'не указаны'}
         };
 
         const body = JSON.stringify({
-            model: "mistralai/mistral-small-3.2-24b-instruct:free",
-            max_tokens: 2000,
+            model: "meta-llama/llama-4-maverick:free",
+            max_tokens: 8192,
             temperature: 0.25,
             messages: [{ role: "user", content: prompt }]
         });

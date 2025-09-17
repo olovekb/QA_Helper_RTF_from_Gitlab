@@ -14,7 +14,7 @@ const SYSTEM_ENFORCER =
 const API_TOKEN = config.openRouterAiKey;
 
 const URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'mistralai/mistral-small-3.2-24b-instruct:free';
+const MODEL = 'meta-llama/llama-4-maverick:free';
 
 /**
  * Анализирует требование с учётом статического анализа и LLM.
@@ -73,7 +73,7 @@ export async function analyzeRequirementWithAI(
 ${cleanedReq}
 ---------------------------------------
 
-**Дополнительный контекст**:
+**Секции, на которые ссылается исходное требование (используй ТОЛЬКО для прояснения ссылок; не выводи сюда новые требования)**:
 ${filteredContext || '—'}
 
 **Проект**: ${project}
@@ -153,10 +153,11 @@ ${miniGlossary || '—'}
     'Content-Type': 'application/json'
   };
 
+  let currentMaxTokens = 24000; // стартуем с ограничением и будем понижать при 400
   const makeBody = () =>
     JSON.stringify({
       model: MODEL,
-      max_tokens: 3500,
+      max_tokens: currentMaxTokens,
       temperature: 0.25,
       messages: [
         { role: 'system', content: SYSTEM_ENFORCER },
@@ -226,8 +227,42 @@ ${miniGlossary || '—'}
         throw new Error(`${res.status} ${res.statusText}: ${errMsg}`.trim());
       }
 
-      const content = data.choices?.[0]?.message?.content?.trim();
+      let content = data.choices?.[0]?.message?.content?.trim();
       if (!content) throw new Error('Ответ от модели пустой');
+
+      // Нормализация вывода для моделей, склонных вставлять пустые или "```markdown" блоки
+      content = content.replace(/```\s*markdown\s*/g, '```');
+      content = content.replace(/```\s*\n\s*```/g, ''); // удаляем пустые блоки ```\n```
+
+      // Если вся выдача в одном общем fenced-блоке — режем по секциям "### ..."
+      const startsFence = /^\s*```/.test(content);
+      const endsFence = /```\s*$/.test(content);
+      if (startsFence && endsFence) {
+        const inner = content.replace(/^\s*```\s*/, '').replace(/\s*```\s*$/, '').trim();
+        const parts = inner.split(/\n(?=###\s)/).map(s => s.trim()).filter(Boolean);
+        if (parts.length > 1) {
+          content = parts.map(p => '```\n' + p + '\n```').join('\n\n');
+        }
+      }
+
+      // Если вообще нет fenced-блоков, но есть заголовки — обернём каждую секцию
+      if (!/```/.test(content) && /(^|\n)###\s/.test(content)) {
+        const parts = content.split(/\n(?=###\s)/).map(s => s.trim()).filter(Boolean);
+        if (parts.length) {
+          content = parts.map(p => '```\n' + p + '\n```').join('\n\n');
+        }
+      }
+
+      // Если в тексте уже есть несколько fenced-блоков — отфильтруем шумовые
+      const multiBlocks = content.match(/```[\s\S]*?```/g);
+      if (multiBlocks && multiBlocks.length > 1) {
+        const filtered = multiBlocks
+          .map(b => ({ raw: b, inner: b.replace(/^```\s*/,'').replace(/\s*```$/,'').trim() }))
+          .filter(x => x.inner && /^###\s/.test(x.inner));
+        if (filtered.length) {
+          content = filtered.map(x => '```\n' + x.inner + '\n```').join('\n\n');
+        }
+      }
 
       // Cохраняем для отладки
       try {
@@ -240,9 +275,18 @@ ${miniGlossary || '—'}
     } catch (err) {
       // если это серверная 5xx — попробуем повторить
       const is5xx = /\b5\d{2}\b/.test(err.message) || /ECONNRESET|ETIMEDOUT/i.test(err.message);
+      // 400 Bad Request: попробуем уменьшить ответ и повторить
+      const is400 = /\b400\b/.test(err.message);
       if (attempt < maxRetries && is5xx) {
         const delay = 1000 * 2 ** (attempt - 1);
         console.warn(`[analyze] попытка ${attempt} не удалась (${err.message}), retry через ${delay}ms...`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      } else if (attempt < maxRetries && is400) {
+        // понижаем max_tokens и даём короткую паузу
+        currentMaxTokens = Math.max(1800, Math.floor(currentMaxTokens * 0.6));
+        const delay = 1200;
+        console.warn(`[analyze] 400 Bad Request. Понижаю max_tokens до ${currentMaxTokens}. Retry через ${delay}ms...`);
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }

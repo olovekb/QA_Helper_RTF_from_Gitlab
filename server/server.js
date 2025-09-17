@@ -199,6 +199,40 @@ function normalizeModelStructure(model) {
     return Array.isArray(model) ? walk(model, 1) : walk([model], 1);
 }
 
+// Выделение релевантных секций из markdown страницы по ключам из цитаты
+function extractRelevantSections(markdown, mentionText, { maxSections = 6, maxChars = 16000 } = {}) {
+    const md = String(markdown || '');
+    const mention = String(mentionText || '').toLowerCase();
+    const tokens = new Set(
+        mention
+            .replace(/[^a-zA-Zа-яА-Я0-9\s_-]+/g, ' ')
+            .split(/\s+/)
+            .filter(w => w && w.length > 2)
+            .map(w => w.toLowerCase())
+    );
+    // Разбиваем по секциям заголовков второго уровня и ниже
+    const sections = md.split(/\n(?=##+\s)/).map(s => s.trim()).filter(Boolean);
+    const scoreSection = (s) => {
+        const text = s.toLowerCase();
+        let score = 0;
+        tokens.forEach(t => { if (text.includes(t)) score += 1; });
+        // бонус за точные фразы из кавычек в цитате
+        const quoted = Array.from(mention.matchAll(/"([^"]{3,})"/g)).map(m => m[1].toLowerCase());
+        quoted.forEach(q => { if (q && text.includes(q)) score += 3; });
+        return score;
+    };
+    const ranked = sections
+        .map(s => ({ s, score: scoreSection(s) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, maxSections)
+        .map(x => x.s);
+    let out = ranked.join('\n\n---\n\n');
+    if (out.length > maxChars) out = out.slice(0, maxChars);
+    // если ранжирование пустое (нет совпадений) — вернём первые существенные 1-2 секции
+    if (!out.trim()) out = sections.slice(0, Math.min(2, sections.length)).join('\n\n---\n\n');
+    return out || md.slice(0, Math.min(maxChars, md.length));
+}
+
 
 async function fetchJiraMeta(pat, projectKey) {
     const { data } = await axios.post(
@@ -357,6 +391,12 @@ function cleanupJsonText(s) {
     // убрать markdown-комменты // и строки-«пули» в начале строки
     t = t.replace(/^\s*\/\/.*$/gm, '');
     t = t.replace(/^\s*-\s+.*$/gm, '');
+
+    // вырезать мусор до первой '[' и после последней ']'
+    const first = t.indexOf('[');
+    if (first > 0) t = t.slice(first);
+    const last = t.lastIndexOf(']');
+    if (last >= 0) t = t.slice(0, last + 1);
 
     return t.trim();
 }
@@ -598,6 +638,48 @@ app.post('/api/analyze/solution', async (req, res) => {
             const { markdown, attachments } = await fetchConfluencePage(bearerToken, pageId);
             requirementText = markdown;
             collectedAttachments = attachments || [];
+            // AUTO-CONTEXT: извлечь ссылки вида ...pageId=123456 из основной статьи и подтянуть их как дополнительный контекст (без рекурсии)
+            try {
+                const linkedIds = new Set(
+                    Array.from(String(markdown || '').matchAll(/pageId=(\d{4,})/g)).map(m => m[1])
+                );
+                // не включаем саму страницу
+                linkedIds.delete(String(pageId));
+                if (linkedIds.size) {
+                    // подготовим список markdown‑блоков для contextPages
+                    const autoCtx = [];
+                    const autoIds = new Set();
+                    for (const lid of linkedIds) {
+                        try {
+                            const { markdown: md } = await fetchConfluencePage(bearerToken, lid, { inlineTextAttachments: true });
+                            if (autoIds.has(String(lid))) continue;
+                            // найдём строку(и) в основной статье, где эта ссылка упомянута, чтобы сохранить семантику отсылки
+                            const lines = String(markdown || '').split(/\n/);
+                            const refIdx = lines.findIndex(l => l.includes(`pageId=${lid}`));
+                            let mention = '';
+                            if (refIdx !== -1) {
+                                const start = Math.max(0, refIdx - 2);
+                                const end = Math.min(lines.length, refIdx + 3);
+                                mention = lines.slice(start, end).join('\n').trim();
+                            }
+                            autoCtx.push([
+                                `### Контекст по ссылке из основной статьи (pageId=${lid})`,
+                                mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${lid})`,
+                                '',
+                                md
+                            ].join('\n'));
+                            autoIds.add(String(lid));
+                        } catch (e) {
+                            autoCtx.push(`### Контекст: ссылка из основной статьи (pageId=${lid})\n\n(Не удалось загрузить: ${e.message})`);
+                        }
+                    }
+                    // временно положим в специальное поле, далее сольём с user contextPages ниже
+                    req._autoExtractedContextPages = autoCtx;
+                    req._autoExtractedContextIds = Array.from(autoIds);
+                }
+            } catch (e) {
+                console.warn('Auto-context extraction failed:', e.message);
+            }
         }
 
         // 2) Глоссарий
@@ -624,7 +706,10 @@ app.post('/api/analyze/solution', async (req, res) => {
                 return res.status(400).json({ success: false, error: 'Для загрузки доп. контекста из Confluence требуется bearerToken' });
             }
 
-            for (const cid of ctxIds) {
+            const skipIds = new Set((req._autoExtractedContextIds || []).map(String));
+            for (const raw of ctxIds) {
+                const cid = String(raw);
+                if (skipIds.has(cid)) continue;
                 try {
                     const { markdown } = await fetchConfluencePage(bearerToken, cid, { inlineTextAttachments: true });
 
@@ -637,14 +722,20 @@ app.post('/api/analyze/solution', async (req, res) => {
         }
 
         // 4) Анализ (с префильтром)
+        // Подсказка для AI: поясняем, что contextPages получены из ссылок исходного требования
+        const extraHint = (Array.isArray(req._autoExtractedContextPages) && req._autoExtractedContextPages.length)
+            ? 'Контекстные страницы ниже получены по ссылкам из исходного требования. Используй из них только факты, непосредственно разъясняющие ссылки в тексте требования (без домыслов и расширений).'
+            : '';
+
         const aiResponse = await analyzeRequirementWithAI(
             requirementText,
-            contextText,
+            // более глубокий контекст: склеим user context + релевантные страницы
+            [contextText, (req._autoExtractedContextPages || []).join('\n\n')].filter(Boolean).join('\n\n'),
             project,
             glossaryText,
             {
                 prefilter: true,
-                contextHint: contextInstruction || '—',
+                contextHint: [contextInstruction || '—', extraHint].filter(Boolean).join(' '),
                 contextPages
             }
         );
@@ -1317,7 +1408,7 @@ function extractToolArgs(aiResponse, preferredFnName) {
 async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
     const {
         // Основная free‑модель и массив fallback‑моделей
-        model = 'mistralai/mistral-small-3.2-24b-instruct:free',
+        model = 'meta-llama/llama-4-maverick:free',
         models,
         tools,
         tool_choice,
@@ -1325,7 +1416,7 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
         temperature = 0.25,
         top_p = 0.9,
         extra = {},
-        max_tokens = 3500,
+        max_tokens = 8192,
         maxAttempts = 8,          // больше попыток: учитываем очереди у провайдера
         minWaitMs = 1500,         // минимальный бэкофф
         maxWaitMs = 120000,       // верхняя граница ожидания между ретраями
@@ -1655,11 +1746,50 @@ app.post('/api/generate-test-cases', async (req, res) => {
     if ((!Array.isArray(requirements) && typeof requirements !== 'string') || !modelStructure) {
         return res.status(400).json({ error: 'requirements и modelStructure обязательны' });
     }
+    // === Соберём автоконтекст по ссылкам основной статьи (если есть pageId) ===
     let refinedReqs;
+    let baseRequirement = '';
+    let autoPages = [];
+    if (pageId) {
+        try {
+            if (!bearerToken) throw new Error('bearerToken is required for Confluence');
+            const { markdown } = await fetchConfluencePage(bearerToken, pageId, { inlineTextAttachments: true });
+            baseRequirement = markdown || '';
+            const ids = new Set(Array.from(String(markdown || '').matchAll(/pageId=(\d{4,})/g)).map(m => m[1]));
+            ids.delete(String(pageId));
+            for (const lid of ids) {
+                try {
+                    const { markdown: md } = await fetchConfluencePage(bearerToken, lid, { inlineTextAttachments: true });
+                    const lines = String(markdown || '').split(/\n/);
+                    const refIdx = lines.findIndex(l => l.includes(`pageId=${lid}`));
+                    let mention = '';
+                    if (refIdx !== -1) {
+                        const start = Math.max(0, refIdx - 2);
+                        const end = Math.min(lines.length, refIdx + 3);
+                        mention = lines.slice(start, end).join('\n').trim();
+                    }
+                    const relevant = extractRelevantSections(md, mention, { maxSections: 8, maxChars: 22000 });
+                    autoPages.push([
+                        `### Контекст по ссылке из основной статьи (pageId=${lid})`,
+                        mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${lid})`,
+                        '',
+                        relevant
+                    ].join('\n'));
+                } catch {}
+            }
+        } catch (e) {
+            console.warn('[generate-test-cases] auto-context fetch failed:', e.message);
+        }
+    }
     try {
         const { refinedArray } = await contextRefiner({
             requirements,
-            text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken
+            text: baseRequirement || text,
+            glossary,
+            context,
+            contextInstruction,
+            // передадим подготовленные релевантные страницы как contextPages
+            contextPages: autoPages
         });
         if (!refinedArray || refinedArray.length === 0) {
             throw new Error('Context refiner вернул пустой массив требований.');
@@ -2207,6 +2337,9 @@ ${JSON.stringify(modelChunk, null, 2)}
 Требования:
 ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
+Контекст из ссылок исходного требования (если есть):
+${Array.isArray(req._autoExtractedContextPages) && req._autoExtractedContextPages.length ? req._autoExtractedContextPages.map((p, i) => `\n---\n# Контекст ${i + 1}\n${p}`).join('\n') : '—'}
+
 ДОПУСТИМЫЕ ЗНАЧЕНИЯ ДЛЯ "code" (если используешь):
 ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 
@@ -2230,6 +2363,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                 tool_choice: 'auto',
                 temperature: 0.25,
                 top_p: 0.9,
+                max_tokens: 8192,
                 extra: { transforms: 'middle-out' }
             }
         );
@@ -2338,6 +2472,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                 tool_choice: { type: "function", function: { name: "submit_cases" } },
                 temperature: 0.25,
                 top_p: 0.9,
+                max_tokens: 8192,
                 extra: { transforms: 'middle-out' }
             }
         );
@@ -2474,18 +2609,61 @@ app.post('/api/generate-test-model', async (req, res) => {
         return res.status(400).json({ error: 'Нужно передать requirements (строка/массив), либо text, либо pageId' });
     }
 
-    // Приводим к строке требований, предварительно прогнав через contextRefiner
+    // 0) Если pageId передан — подтягиваем основную страницу и прямые ссылки (как в /analyze/solution)
+    let autoPages = [];
+    let baseRequirement = '';
+    if (pageId) {
+        try {
+            if (!bearerToken) throw new Error('bearerToken is required for Confluence');
+            const { markdown } = await fetchConfluencePage(bearerToken, pageId, { inlineTextAttachments: true });
+            baseRequirement = markdown || '';
+            const ids = new Set(Array.from(String(markdown || '').matchAll(/pageId=(\d{4,})/g)).map(m => m[1]));
+            ids.delete(String(pageId));
+            for (const lid of ids) {
+                try {
+                    const { markdown: md } = await fetchConfluencePage(bearerToken, lid, { inlineTextAttachments: true });
+                    // Вставим цитату упоминания из основной статьи, чтобы сохранить связь
+                    const lines = String(markdown || '').split(/\n/);
+                    const refIdx = lines.findIndex(l => l.includes(`pageId=${lid}`));
+                    let mention = '';
+                    if (refIdx !== -1) {
+                        const start = Math.max(0, refIdx - 2);
+                        const end = Math.min(lines.length, refIdx + 3);
+                        mention = lines.slice(start, end).join('\n').trim();
+                    }
+                    const relevant = extractRelevantSections(md, mention, { maxSections: 8, maxChars: 22000 });
+                    autoPages.push([
+                        `### Контекст по ссылке из основной статьи (pageId=${lid})`,
+                        mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${lid})`,
+                        '',
+                        relevant
+                    ].join('\n'));
+                } catch {}
+            }
+        } catch (e) {
+            console.warn('[generate-test-model] auto-context fetch failed:', e.message);
+        }
+    }
+
+    // Приводим к строке требований, предварительно прогнав через contextRefiner (с авто-контекстом)
     let reqStringForModel = '';
     try {
         const { refinedText, refinedArray } = await contextRefiner({
             requirements: Array.isArray(requirements) ? requirements : (requirements ? [requirements] : undefined),
-            text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken
+            text: baseRequirement || text,
+            glossary,
+            context,
+            contextInstruction,
+            // передаём собранные страницы как "contextPages"
+            contextPageIds: undefined,
+            glossaryPageId: undefined,
+            bearerToken: undefined,
+            contextPages: autoPages
         });
-        // Если был массив — лучше собрать одну строку для модели
         reqStringForModel = refinedText || (refinedArray?.join('\n\n') ?? '');
     } catch (e) {
         console.warn('[generate-test-model] contextRefiner warning:', e.message);
-        reqStringForModel = typeof requirements === 'string' ? requirements : (Array.isArray(requirements) ? requirements.join('\n\n') : (text || ''));
+        reqStringForModel = baseRequirement || (typeof requirements === 'string' ? requirements : (Array.isArray(requirements) ? requirements.join('\n\n') : (text || '')));
     }
 
     console.log('Требования для тест модели')
@@ -2582,8 +2760,9 @@ ${reqStringForModel}
             {
                 tools,
                 tool_choice: { type: "function", function: { name: "submit_test_model" } },
-                temperature: 0.3,
+                temperature: 0.25,
                 top_p: 0.9,
+                max_tokens: 8192,
                 extra: { transforms: 'middle-out' }
             }
         );

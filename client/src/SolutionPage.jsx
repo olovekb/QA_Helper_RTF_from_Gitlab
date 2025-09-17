@@ -1093,9 +1093,9 @@ export default function SolutionPage({ projects = [] }) {
       const actual = getField('**Фактический результат**:');
       const expected = getField('**Ожидаемый результат**:');
 
-      const topic = getField('**Тема**:').split(' в части «')[0] || '';
-      const part = getField('**Тема**:').split(' в части «')[1]?.replace('»', '') || '';
-      const summary = `${topic} в части "${part}"`;
+      const topic = getField('**Тема**:');
+      const part = getField('**Тема**:');
+      const summary = `${topic}`;
 
       return {
         id: uuidv4(),

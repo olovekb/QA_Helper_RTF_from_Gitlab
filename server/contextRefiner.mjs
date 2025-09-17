@@ -14,7 +14,7 @@ import config from './config.json' assert { type: 'json' };
 
 // === Конфиг модели / API ===
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = process.env.REFINER_MODEL || 'mistralai/mistral-small-3.2-24b-instruct:free';
+const MODEL = process.env.REFINER_MODEL || 'meta-llama/llama-4-maverick:free';
 
 const API_TOKEN = config.openRouterAiKey;
 
@@ -26,11 +26,11 @@ const SYSTEM_JSON_ONLY =
     'ВСЕ значения — JSON-строки, экранируй внутри: \\" , \\\\ , \\n. ' +
     'Ответ ДОЛЖЕН начинаться с { и заканчиваться }.';
 
-const CLIP_REQ_IN = 100000;
-const CLIP_GLS_IN = 120000;
-const CLIP_CTX_IN = 240000;
-const LIMIT_GLS_OUT = 16000;
-const LIMIT_CTX_OUT = 24000;
+const CLIP_REQ_IN = 120000;
+const CLIP_GLS_IN = 160000;
+const CLIP_CTX_IN = 300000;
+const LIMIT_GLS_OUT = 24000;   // увеличить выход глоссария
+const LIMIT_CTX_OUT = 36000;   // увеличить выход контекста
 
 // === Чанкование ===
 const CHUNK_SIZE_GLOSSARY = 64000;
@@ -314,7 +314,7 @@ function extractToolArgsFromData(data, toolName, expectedKeys) {
     return null;
 }
 
-async function callTools(messages, tool, { maxTokens = 1200, temperature = 0.0, expectedKeys = [] } = {}) {
+async function callTools(messages, tool, { maxTokens = 1800, temperature = 0.0, expectedKeys = [] } = {}) {
     if (!TOOLS_ENABLED) return null;
 
     const headers = { Authorization: `Bearer ${API_TOKEN}`, 'Content-Type': 'application/json' };
@@ -378,7 +378,7 @@ async function callTools(messages, tool, { maxTokens = 1200, temperature = 0.0, 
 
 async function callJSON(
     messages,
-    { maxTokens = 1800, temperature = 0.0, schemaName, schemaProps, expectedKeys = [] } = {}
+    { maxTokens = 2500, temperature = 0.0, schemaName, schemaProps, expectedKeys = [] } = {}
 ) {
     const headers = { Authorization: `Bearer ${API_TOKEN}`, 'Content-Type': 'application/json' };
 
@@ -425,7 +425,7 @@ async function callJSON(
             const content = data?.choices?.[0]?.message?.content?.trim() || '';
             return safeParseContent(content, data, expectedKeys);
         } catch (e) {
-            await sleep(BASE_RETRY_MS * attempt);
+            await sleep(BASE_RETRY_MS * attempt + 500); // небольшая доп. пауза для снижения 429
         }
     }
     return null;
@@ -444,7 +444,7 @@ function safeParseContent(content, data, expectedKeys = []) {
 }
 
 // Простой «текстовый» вызов (fallback)
-async function callText(messages, { maxTokens = 700, temperature = 0.0 } = {}) {
+async function callText(messages, { maxTokens = 1200, temperature = 0.0 } = {}) {
     const headers = { Authorization: `Bearer ${API_TOKEN}`, 'Content-Type': 'application/json' };
     const req = { model: MODEL, max_tokens: maxTokens, temperature, messages };
 

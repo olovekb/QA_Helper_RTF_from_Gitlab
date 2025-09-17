@@ -342,7 +342,7 @@ ${expected || '<пусто>'}
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-            model: 'mistralai/mistral-small-3.2-24b-instruct:free',
+            model: 'meta-llama/llama-4-maverick:free',
             messages: [{ role: 'user', content: prompt }]
         })
     });
