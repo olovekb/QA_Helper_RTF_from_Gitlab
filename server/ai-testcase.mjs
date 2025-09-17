@@ -183,8 +183,8 @@ ${formattedStepsForPrompt || 'не указаны'}
         };
 
         const body = JSON.stringify({
-            model: "meta-llama/llama-4-maverick:free",
-            max_tokens: 8192,
+            model: "deepseek/deepseek-chat-v3.1:free",
+            max_tokens: 16000,
             temperature: 0.25,
             messages: [{ role: "user", content: prompt }]
         });

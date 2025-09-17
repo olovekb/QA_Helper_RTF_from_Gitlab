@@ -6,6 +6,8 @@ import config from './config.json' assert { type: 'json' };
 // Жёсткая инструкция к финальному ответу: только нужные Markdown-блоки
 const SYSTEM_ENFORCER =
   'Ты — старший эксперт по системному анализу. ' +
+  'Технологический стек проекта: фронтенд — Angular (TypeScript), бэкенд — .NET/C#. ' +
+  'Если поведение относится к UI — трактуй его для Angular; если к серверу/API — трактуй для .NET. ' +
   'Верни ТОЛЬКО набор Markdown-блоков строго заданного формата (только в ```), ' +
   'без каких-либо пояснений вне блоков. ' +
   'Если нет ошибок — верни пустую строку.';
@@ -14,7 +16,7 @@ const SYSTEM_ENFORCER =
 const API_TOKEN = config.openRouterAiKey;
 
 const URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'meta-llama/llama-4-maverick:free';
+const MODEL = 'deepseek/deepseek-chat-v3.1:free';
 
 /**
  * Анализирует требование с учётом статического анализа и LLM.

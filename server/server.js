@@ -196,7 +196,60 @@ function normalizeModelStructure(model) {
         }
         return out;
     });
-    return Array.isArray(model) ? walk(model, 1) : walk([model], 1);
+
+    // Merge nodes with identical text on the same level (Feature→Story→Scenario→Code)
+    const dedupeByText = (features) => {
+        const dedupedFeatures = (features || []).map(feature => {
+            const stories = feature.stories || [];
+            const storyMap = new Map();
+            for (const st of stories) {
+                const key = String(st.text || '').trim();
+                if (!storyMap.has(key)) {
+                    storyMap.set(key, { ...st, scenarios: [...(st.scenarios || [])] });
+                } else {
+                    const slot = storyMap.get(key);
+                    // merge scenarios
+                    slot.scenarios = [...(slot.scenarios || []), ...(st.scenarios || [])];
+                }
+            }
+
+            // dedupe scenarios inside each story by text
+            const mergedStories = [...storyMap.values()].map(st => {
+                const scenMap = new Map();
+                for (const sc of (st.scenarios || [])) {
+                    const k = String(sc.text || '').trim();
+                    if (!scenMap.has(k)) {
+                        scenMap.set(k, { ...sc, codes: [...(sc.codes || [])] });
+                    } else {
+                        const slot = scenMap.get(k);
+                        slot.codes = [...(slot.codes || []), ...(sc.codes || [])];
+                    }
+                }
+
+                // dedupe codes by text
+                const mergedScenarios = [...scenMap.values()].map(sc => {
+                    const codeMap = new Map();
+                    for (const cd of (sc.codes || [])) {
+                        const ck = String(cd.text || '').trim();
+                        if (!codeMap.has(ck)) {
+                            codeMap.set(ck, { ...cd });
+                        }
+                        // if duplicate code with same text appears, drop it (no extra merge fields expected)
+                    }
+                    return { ...sc, codes: [...codeMap.values()] };
+                });
+
+                return { ...st, scenarios: mergedScenarios };
+            });
+
+            return { ...feature, stories: mergedStories };
+        });
+
+        return dedupedFeatures;
+    };
+
+    const normalized = Array.isArray(model) ? walk(model, 1) : walk([model], 1);
+    return dedupeByText(normalized);
 }
 
 // Выделение релевантных секций из markdown страницы по ключам из цитаты
@@ -233,6 +286,71 @@ function extractRelevantSections(markdown, mentionText, { maxSections = 6, maxCh
     return out || md.slice(0, Math.min(maxChars, md.length));
 }
 
+
+// Извлекаем явные описания HTTP-эндпоинтов из требований.
+// Принимаем только случаи, где указан метод (GET|POST|PUT|PATCH|DELETE) и путь, например:
+//  - GET "/souz/statement?accId={id}..."
+//  - GET-запрос "/rest/stateful/..."
+// Возвращаем Set нормализованных сигнатур в виде "GET /path?query" (в нижнем регистре для пути)
+function extractApiEndpointsFromText(text) {
+    const out = new Set();
+    if (!text) return out;
+    const src = String(text);
+    const re = /(GET|POST|PUT|PATCH|DELETE)\s*(?:-|–)?\s*(?:запрос|request)?\s*["'`\s]*((?:\/[A-Za-z0-9._\-~%]+)(?:\/[A-Za-z0-9._\-~%]+)*(?:\?[A-Za-z0-9._\-~%=&{}:,;]*)?)/ig;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+        const method = m[1].toUpperCase();
+        let path = (m[2] || '').trim();
+        // убрать завершающие кавычки/точки/скобки
+        path = path.replace(/["'`)>\]\s]+$/g, '');
+        // нормализуем // и лишние пробелы
+        path = path.replace(/\s+/g, ' ');
+        if (method && path.startsWith('/')) {
+            out.add(`${method} ${path.toLowerCase()}`);
+        }
+    }
+    return out;
+}
+
+function textMentionsEndpoint(text) {
+    if (!text) return false;
+    const s = String(text);
+    return /(GET|POST|PUT|PATCH|DELETE)\s+\S*\//i.test(s) || /\/[A-Za-z0-9._\-~%]+\//.test(s);
+}
+
+function matchesAllowedEndpoint(text, allowedSet) {
+    if (!text || !allowedSet || allowedSet.size === 0) return false;
+    const s = String(text);
+    // Попробуем вытащить метод+путь из текста и сравнить с известными
+    const re = /(GET|POST|PUT|PATCH|DELETE)\s*(?:-|–)?\s*(?:запрос|request)?\s*["'`\s]*((?:\/[A-Za-z0-9._\-~%]+)(?:\/[A-Za-z0-9._\-~%]+)*(?:\?[A-Za-z0-9._\-~%=&{}:,;]*)?)/ig;
+    let m;
+    while ((m = re.exec(s)) !== null) {
+        const method = m[1].toUpperCase();
+        let path = (m[2] || '').trim().replace(/["'`)>\]\s]+$/g, '').toLowerCase();
+        if (allowedSet.has(`${method} ${path}`)) return true;
+    }
+    return false;
+}
+
+// Убираем code-узлы, которые описывают эндпоинты, отсутствующие в требованиях
+function pruneCodesByAllowedEndpoints(model, allowedSet) {
+    const walk = (features) => (features || []).map(f => ({
+        ...f,
+        stories: (f.stories || []).map(st => ({
+            ...st,
+            scenarios: (st.scenarios || []).map(sc => ({
+                ...sc,
+                codes: (sc.codes || []).filter(cd => {
+                    const t = cd?.text || '';
+                    if (!textMentionsEndpoint(t)) return true; // обычные коды не трогаем
+                    // если явно описан метод+путь, оставляем только когда он найден в требованиях
+                    return matchesAllowedEndpoint(t, allowedSet);
+                })
+            }))
+        }))
+    }));
+    return walk(model);
+}
 
 async function fetchJiraMeta(pat, projectKey) {
     const { data } = await axios.post(
@@ -1408,7 +1526,7 @@ function extractToolArgs(aiResponse, preferredFnName) {
 async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
     const {
         // Основная free‑модель и массив fallback‑моделей
-        model = 'meta-llama/llama-4-maverick:free',
+        model = 'deepseek/deepseek-chat-v3.1:free',
         models,
         tools,
         tool_choice,
@@ -1439,7 +1557,7 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
     // Очередь моделей: основная + фолбэк
     const modelQueue = Array.isArray(models) && models.length
         ? models
-        : [model, 'deepseek/deepseek-chat-v3.1:free'];
+        : [model, 'qwen/qwen3-235b-a22b:free'];
     let modelIdx = 0;
 
     while (attempt < maxAttempts) {
@@ -1775,7 +1893,7 @@ app.post('/api/generate-test-cases', async (req, res) => {
                         '',
                         relevant
                     ].join('\n'));
-                } catch {}
+                } catch { }
             }
         } catch (e) {
             console.warn('[generate-test-cases] auto-context fetch failed:', e.message);
@@ -2037,6 +2155,8 @@ app.post('/api/generate-test-cases', async (req, res) => {
     // ====== ПРОМПТЫ ======
     const BASE_SYSTEM_PROMPT = `
 Ты — скрупулёзный SDET (Software Development Engineer in Test), создающий атомарные и исчерпывающие тест-кейсы для импорта в Allure. На основе входной тест-модели (modelStructure) и требований сгенерируй JSON-массив тест-кейсов, НЕУКОСНИТЕЛЬНО следуя Style Guide ниже.
+
+Технологический стек проекта: фронтенд — Angular (TypeScript), бэкенд — .NET/C#. Если требования явно описывают поведение клиента, трактуй его для Angular; если описывают серверное поведение/API — трактуй для .NET. Никогда не додумывай детали вне текста.
 
 # 1) Принцип "Один Пример из Требований -> Один Тест-Кейс" (КРАТКО И СТРОГО)
 Ты создаёшь тест-кейсы исключительно на основе абсолютно явных и конкретных примеров из текста требований. Никаких домыслов, предположений или недосказанностей в шагах и expected результатах быть не должно.
@@ -2329,6 +2449,19 @@ app.post('/api/generate-test-cases', async (req, res) => {
         const allowedScenarios = collectAllowedScenarios(modelChunk);
         const { scenarios: scCnt, codes: cdCnt } = countChunkNodes(modelChunk);
 
+        // Обрежем "Контекст из ссылок" до безопасного размера
+        const linkCtxRaw = Array.isArray(req._autoExtractedContextPages) && req._autoExtractedContextPages.length
+            ? req._autoExtractedContextPages.join('\n\n---\n\n')
+            : '';
+        const sanitizeLinkCtx = (s) => String(s || '')
+            .replace(/```[\s\S]*?```/g, '')            // убрать большие код-блоки
+            .replace(/^#\s.*$/gm, '')                  // убрать H1
+            .replace(/^##\s.*$/gm, '###')              // H2 → H3 (компактнее)
+            .replace(/\n{3,}/g, '\n\n');
+        let linkCtx = sanitizeLinkCtx(linkCtxRaw);
+        const MAX_LINK_CTX = 12000; // ~12k символов на Story
+        if (linkCtx.length > MAX_LINK_CTX) linkCtx = linkCtx.slice(0, MAX_LINK_CTX);
+
         const userPrompt = `
 Сгенерируй JSON-массив тест-кейсов на русском языке для ЭТОГО куска модели (одна Story).
 Модель (кусок):
@@ -2337,15 +2470,15 @@ ${JSON.stringify(modelChunk, null, 2)}
 Требования:
 ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
-Контекст из ссылок исходного требования (если есть):
-${Array.isArray(req._autoExtractedContextPages) && req._autoExtractedContextPages.length ? req._autoExtractedContextPages.map((p, i) => `\n---\n# Контекст ${i + 1}\n${p}`).join('\n') : '—'}
+Контекст из ссылок исходного требования (используй только для прояснения ссылок; не придумывай новое):
+${linkCtx || '—'}
 
 ДОПУСТИМЫЕ ЗНАЧЕНИЯ ДЛЯ "code" (если используешь):
 ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 
 ⚠️ Минимум для ЭТОГО куска:
-— E2E: ≥ 1 на Story (не более 2),
-— Integration: ≥ ${Math.max(0, scCnt * 3)} (по 3 на каждый Scenario),
+— E2E: ≥ 1 на Story (не более 3),
+— Integration: ≥ ${Math.max(0, scCnt * 3)} (по 3-5 на каждый Scenario),
 — Unit: ≥ ${Math.max(0, cdCnt * 2)} (по 2 на каждый Code из списка выше).
 Ответ — ТОЛЬКО чистый JSON-массив без Markdown.
 `.trim();
@@ -2360,17 +2493,23 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             config.openRouterAiKey,
             {
                 tools,
-                tool_choice: 'auto',
-                temperature: 0.25,
-                top_p: 0.9,
+                tool_choice: { type: 'function', function: { name: 'submit_cases' } },
+                models: [
+                    'deepseek/deepseek-chat-v3.1:free',
+                    'qwen/qwen3-235b-a22b:free',
+                    'meta-llama/llama-4-maverick:free',
+                    'mistralai/mistral-small-3.2-24b-instruct:free'
+                ],
+                temperature: 0.2,
+                top_p: 0.85,
                 max_tokens: 8192,
                 extra: { transforms: 'middle-out' }
             }
         );
 
         // УЛУЧШЕННЫЙ ПАРСЕР ДЛЯ GAPFILL
-        const args = extractToolArgs(ai, "submit_cases");
-        if (args && Array.isArray(args.cases)) {
+        let args = extractToolArgs(ai, "submit_cases");
+        if (args && Array.isArray(args.cases) && args.cases.length) {
             console.log(`[gapFill] OK: Получено ${args.cases.length} кейсов через tool_call.`);
             return args.cases;
         }
@@ -2389,11 +2528,44 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                 console.log('--- RAW AI RESPONSE (gapFill failed to parse) ---\n', content, '\n------------------------------------');
                 return [];
             }
-            const jsonText = cleanupJsonText(rawJsonCandidate);
-            const parsed = JSON5.parse(jsonText);
-            const result = Array.isArray(parsed) ? parsed : [];
-            console.log(`[gapFill] OK: Получено ${result.length} кейсов через фолбэк-парсер.`);
-            return result;
+            try {
+                const jsonText = cleanupJsonText(rawJsonCandidate);
+                const parsed = JSON5.parse(jsonText);
+                let result = Array.isArray(parsed) ? parsed : [];
+                if (!result.length) {
+                    // одна попытка перегенерации с более строгими настройками
+                    try {
+                        const retry = await callWithBackoff(
+                            OPENROUTER_URL,
+                            [
+                                { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
+                                { role: 'user', content: userPrompt }
+                            ],
+                            config.openRouterAiKey,
+                            {
+                                tools,
+                                tool_choice: { type: "function", function: { name: "submit_cases" } },
+                                models: [
+                                    'meta-llama/llama-3.1-8b-instruct:free',
+                                    'mistralai/mistral-small-3.2-24b-instruct:free'
+                                ],
+                                temperature: 0.2,
+                                top_p: 0.85,
+                                max_tokens: 8192
+                            }
+                        );
+                        const a2 = extractToolArgs(retry, 'submit_cases');
+                        if (a2 && Array.isArray(a2.cases) && a2.cases.length) return a2.cases;
+                    } catch { }
+                }
+                console.log(`[gapFill] OK: Получено ${result.length} кейсов через фолбэк-парсер.`);
+                return result;
+            } catch (e1) {
+                console.warn('[gapFill] JSON parse failed. Fallback. Error:', e1.message);
+                const t = cleanupJsonText(rawJsonCandidate);
+                const parsed = JSON5.parse(t);
+                return Array.isArray(parsed) ? parsed : [];
+            }
         } catch (parseError) {
             console.error('[gapFill] CRITICAL: Ошибка JSON5.parse при фолбэке:', parseError.message);
             console.log('--- RAW AI RESPONSE (gapFill JSON5 parse failed) ---\n', content, '\n-----------------------------------------');
@@ -2470,6 +2642,11 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             {
                 tools,
                 tool_choice: { type: "function", function: { name: "submit_cases" } },
+                models: [
+                    'qwen/qwen3-coder:free',
+                    'meta-llama/llama-3.1-8b-instruct:free',
+                    'mistralai/mistral-small-3.2-24b-instruct:free'
+                ],
                 temperature: 0.25,
                 top_p: 0.9,
                 max_tokens: 8192,
@@ -2483,9 +2660,23 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
         const content = ai.choices?.[0]?.message?.content || '';
         const rawJsonCandidate = extractJsonArray(content);
         if (!rawJsonCandidate) return [];
-        const jsonText = cleanupJsonText(rawJsonCandidate);
-        const parsed = JSON5.parse(jsonText);
-        return Array.isArray(parsed) ? parsed : [];
+        try {
+            const jsonText = cleanupJsonText(rawJsonCandidate);
+            const parsed = JSON5.parse(jsonText);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+            console.warn('[gapFill] JSON parse failed (strict). Falling back. Error:', e.message);
+            try {
+                // fallback: strip everything until first '[' and after last ']'
+                const t = cleanupJsonText(rawJsonCandidate);
+                const parsed = JSON5.parse(t);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (e2) {
+                console.error('[gapFill] Fallback parse failed:', e2.message);
+                console.log('--- RAW AI RESPONSE (gapFill ultimate fail) ---\n', content, '\n-----------------------------------------');
+                return [];
+            }
+        }
     }
 
     try {
@@ -2638,7 +2829,7 @@ app.post('/api/generate-test-model', async (req, res) => {
                         '',
                         relevant
                     ].join('\n'));
-                } catch {}
+                } catch { }
             }
         } catch (e) {
             console.warn('[generate-test-model] auto-context fetch failed:', e.message);
@@ -2673,6 +2864,8 @@ app.post('/api/generate-test-model', async (req, res) => {
 
 ## 1. Цель
 Создать иерархическую тестовую модель (Feature → Story → Scenario → Code) на основе предоставленных требований.
+
+Технологический стек проекта: фронтенд — Angular (TypeScript), бэкенд — .NET/C#. Если требование явно про UI — интерпретируй как Angular; если про API/сервер — как .NET. Ничего не выдумывай сверх текста.
 
 ## 2. Ключевой принцип декомпозиции (САМОЕ ВАЖНОЕ!)
 - **Сначала Синтез, потом Анализ.** Прочитай ВСЕ требования. Твоя первая задача — определить 1-3 **высокоуровневых пользовательских потока (Story)**, которые приносят конечную ценность.
@@ -2744,6 +2937,8 @@ ${reqStringForModel}
 
 ## 6. Задание
 Основываясь на **принципах декомпозиции (п.2), детализации (п.3.1) и абстракции (п.3.2)**, проанализируй требования и сгенерируй тестовую модель в формате JSON. Ответ — **только** чистый JSON. Обязательно тестовая модель только на русском языке.
+
+СТРОГОЕ ПРАВИЛО ДЛЯ HTTP-ЭНДПОИНТОВ: узлы \`Code\`, описывающие HTTP‑запросы (GET|POST|PUT|PATCH|DELETE "/..."), добавляй ТОЛЬКО если метод и путь явно указаны в тексте требований. Если в требованиях нет однозначного упоминания такого запроса — не добавляй его и не придумывай.
 `.trim();
 
 
@@ -2760,6 +2955,12 @@ ${reqStringForModel}
             {
                 tools,
                 tool_choice: { type: "function", function: { name: "submit_test_model" } },
+                models: [
+                    'deepseek/deepseek-chat-v3.1:free',
+                    'qwen/qwen3-235b-a22b:free',
+                    'meta-llama/llama-4-maverick:free',
+                    'mistralai/mistral-small-3.2-24b-instruct:free'
+                ],
                 temperature: 0.25,
                 top_p: 0.9,
                 max_tokens: 8192,
@@ -2791,6 +2992,7 @@ ${reqStringForModel}
         }
 
         const finalModel = normalizeModelStructure(model);
+        // Упростили: доверяем модели, правило прописано в промпте. Возвращаем как есть.
         return res.status(200).json(finalModel);
     } catch (err) {
         console.error('ГЛОБАЛЬНАЯ ОШИБКА в /api/generate-test-model:', err);

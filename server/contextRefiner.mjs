@@ -14,7 +14,7 @@ import config from './config.json' assert { type: 'json' };
 
 // === Конфиг модели / API ===
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = process.env.REFINER_MODEL || 'meta-llama/llama-4-maverick:free';
+const MODEL = process.env.REFINER_MODEL || 'deepseek/deepseek-chat-v3.1:free';
 
 const API_TOKEN = config.openRouterAiKey;
 

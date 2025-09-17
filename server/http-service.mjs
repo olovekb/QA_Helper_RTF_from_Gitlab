@@ -342,7 +342,7 @@ ${expected || '<пусто>'}
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-            model: 'meta-llama/llama-4-maverick:free',
+            model: 'deepseek/deepseek-chat-v3.1:free',
             messages: [{ role: 'user', content: prompt }]
         })
     });
