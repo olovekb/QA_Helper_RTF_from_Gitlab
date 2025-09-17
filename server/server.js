@@ -1316,13 +1316,16 @@ function extractToolArgs(aiResponse, preferredFnName) {
 //
 async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
     const {
-        model = 'qwen/qwen3-235b-a22b:free',
+        // Основная free‑модель и массив fallback‑моделей
+        model = 'mistralai/mistral-small-3.2-24b-instruct:free',
+        models,
         tools,
         tool_choice,
         response_format,
-        temperature = 0.4,
-        top_p = 0.95,
+        temperature = 0.25,
+        top_p = 0.9,
         extra = {},
+        max_tokens = 3500,
         maxAttempts = 8,          // больше попыток: учитываем очереди у провайдера
         minWaitMs = 1500,         // минимальный бэкофф
         maxWaitMs = 120000,       // верхняя граница ожидания между ретраями
@@ -1342,14 +1345,21 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
 
     let attempt = 0;
 
+    // Очередь моделей: основная + фолбэк
+    const modelQueue = Array.isArray(models) && models.length
+        ? models
+        : [model, 'deepseek/deepseek-chat-v3.1:free'];
+    let modelIdx = 0;
+
     while (attempt < maxAttempts) {
         attempt++;
 
         const payload = {
-            model,
+            model: modelQueue[modelIdx] || modelQueue[0],
             messages,
             temperature,
             top_p,
+            max_tokens,
             ...extra
         };
         if (tools) payload.tools = tools;
@@ -1376,6 +1386,19 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
             } catch {
                 // JSON5 импортирован у вас выше
                 return JSON5.parse(text);
+            }
+        }
+
+        // ==== 404/400: модель недоступна → переключаемся на фолбэк ====
+        if (resp.status === 404 || resp.status === 400) {
+            if (modelIdx < modelQueue.length - 1) {
+                modelIdx++;
+                if (logRateLimit) {
+                    console.warn(`[callWithBackoff] HTTP ${resp.status}. Switching model to ${modelQueue[modelIdx]}`);
+                }
+                // не сжигаем попытку
+                attempt--;
+                continue;
             }
         }
 

@@ -14,7 +14,7 @@ import config from './config.json' assert { type: 'json' };
 
 // === Конфиг модели / API ===
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = process.env.REFINER_MODEL || 'qwen/qwen3-235b-a22b:free';
+const MODEL = process.env.REFINER_MODEL || 'mistralai/mistral-small-3.2-24b-instruct:free';
 
 const API_TOKEN = config.openRouterAiKey;
 

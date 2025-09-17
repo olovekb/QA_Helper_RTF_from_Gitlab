@@ -14,7 +14,7 @@ const SYSTEM_ENFORCER =
 const API_TOKEN = config.openRouterAiKey;
 
 const URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'qwen/qwen3-235b-a22b:free';
+const MODEL = 'mistralai/mistral-small-3.2-24b-instruct:free';
 
 /**
  * Анализирует требование с учётом статического анализа и LLM.
@@ -156,8 +156,8 @@ ${miniGlossary || '—'}
   const makeBody = () =>
     JSON.stringify({
       model: MODEL,
-      max_tokens: 24000,
-      temperature: 0.1,
+      max_tokens: 3500,
+      temperature: 0.25,
       messages: [
         { role: 'system', content: SYSTEM_ENFORCER },
         { role: 'user', content: prompt }

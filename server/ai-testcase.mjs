@@ -183,7 +183,9 @@ ${formattedStepsForPrompt || 'не указаны'}
         };
 
         const body = JSON.stringify({
-            model: "qwen/qwen3-235b-a22b:free",
+            model: "mistralai/mistral-small-3.2-24b-instruct:free",
+            max_tokens: 2000,
+            temperature: 0.25,
             messages: [{ role: "user", content: prompt }]
         });
 
