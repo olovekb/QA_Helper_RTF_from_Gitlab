@@ -2495,9 +2495,10 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                 tools,
                 tool_choice: { type: 'function', function: { name: 'submit_cases' } },
                 models: [
+                    'meta-llama/llama-4-maverick:free',
                     'deepseek/deepseek-chat-v3.1:free',
                     'qwen/qwen3-235b-a22b:free',
-                    'meta-llama/llama-4-maverick:free',
+                    'openai/gpt-oss-20b:free',
                     'mistralai/mistral-small-3.2-24b-instruct:free'
                 ],
                 temperature: 0.2,
