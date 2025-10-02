@@ -11,7 +11,7 @@ services:
   tia-mapping-service:
     depends_on:
       - postgresql
-    image: git.abanking.ru:4567/vpoliakov/allure-test-inspector/tia-mapping-service:usb-d-0-0-0-usb-7513
+    image: git.abanking.ru:4567/vpoliakov/allure-test-inspector/tia-mapping-service:main
     restart: always
     env_file:
       - .env
