@@ -1,7 +1,7 @@
 import axios from 'axios';
 import config from '../config.json' assert { type: 'json' };
 import { getJwtToken } from '../http-service.mjs';
-import { customProjectField } from "./customProjectField.js";
+import {customProjectField, projectTestCaseLayers} from "./customProjectField.js";
 
 // Конфигурация
 const BASE_URL = config.baseUrl;
@@ -103,14 +103,28 @@ async function logRequestAndResponse(promise, method, url, data) {
     }
 }
 
+export async function getTestLayerListRequest() {
+    const url = `/testlayer/suggest`;
+    const params = { size: 20 };
+
+    const response = await logRequestAndResponse(apiClient.get(url, { params }), 'get', url, params);
+
+    return response.data;
+}
+
+export async function changeTestCaseLayerRequest(testCaseId, layerId) {
+    const url = `/testcase/${testCaseId}`;
+    const body = { testLayerId: layerId };
+    const response = await logRequestAndResponse(apiClient.patch(url, body), 'patch', url, body);
+    return response.data;
+}
+
 // Функция для получения кастомных полей по проекту
 async function getProjectCustomFieldIdRequest(projectCustomFieldName, projectId) {
     try {
         const url = '/cfschema';
         const params = { projectId: projectId };
         const response = await logRequestAndResponse(apiClient.get(url, { params }), 'get', url, params);
-
-        // достаем список кастомных полей проекта
         const customFields = response.data.content;
 
         // Получаем модель кастомного поля из массива полей по названию названию кастомного поля проекта
@@ -215,7 +229,201 @@ async function addCustomFieldsToTestCase(testCaseId, customFields) {
     }
 }
 
+/**
+ * Экспорт XMIND в Allure для Ноукода
+ * @param parsedJson - распарсенный json
+ * @param projectId - projectId
+ * @returns {Promise<void>}
+ */
+export async function exportStructureAllureNocode(parsedJson, projectId) {
+    try {
+        console.log('ЗАШЛИ В ЭКСПОРТ')
+        // Получаем список слоев один раз для маппинга названий в ID
+        const layerListResp = await getTestLayerListRequest();
+        const E2E_LAYER_ID = getLayerIdByName(layerListResp, projectTestCaseLayers.e2eTests);
+        const INTEGRATION_FRONT_LAYER_ID = getLayerIdByName(layerListResp, projectTestCaseLayers.integrationFrontendTests);
 
+        const featureFieldId = await getProjectCustomFieldIdRequest(customProjectField.feature, projectId);
+        const storyFieldId = await getProjectCustomFieldIdRequest(customProjectField.story, projectId);
+        const scenarioFieldId = await getProjectCustomFieldIdRequest(customProjectField.scenario, projectId);
+        const blockFieldId = await getProjectCustomFieldIdRequest(customProjectField.block, projectId);
+        const subBlockFieldId = await getProjectCustomFieldIdRequest(customProjectField.subBlock, projectId);
+        const codeFieldId = await getProjectCustomFieldIdRequest(customProjectField.code, projectId);
+
+        if (!featureFieldId || !storyFieldId || !scenarioFieldId) {
+            console.error('Не удалось получить ID кастомных полей!');
+            return;
+        }
+
+         // parsedJson — это массив blocks
+        for (const blockObj of parsedJson) {
+            const blockValue = blockObj.block || 'Не указано';
+            const subBlockValue = blockObj.subBlock || 'Не указано';
+            const featuresArray = blockObj.features || [];
+
+            for (const featureObj of featuresArray) {
+                const feature = featureObj.feature || 'Не указано';
+                for (const storyObj of featureObj.stories) {
+                    const story = storyObj.story || 'Не указано';
+
+                    // E2E кейсы на уровне story
+                    if (Array.isArray(storyObj.e2eCases) && storyObj.e2eCases.length > 0) {
+                        for (const e2e of storyObj.e2eCases) {
+                            const e2eFields = [
+                                { id: featureFieldId, value: feature },
+                                { id: storyFieldId, value: story },
+                            ];
+
+                            if (blockFieldId) e2eFields.push({ id: blockFieldId, value: blockValue });
+                            if (subBlockFieldId) e2eFields.push({ id: subBlockFieldId, value: subBlockValue });
+
+                            const e2eId = await createTestCase({
+                                name: e2e.name,
+                                steps: e2e.steps || []
+                            }, projectId);
+
+                            if (e2eId) {
+                                await addCustomFieldsToTestCase(e2eId, e2eFields);
+
+                                if (E2E_LAYER_ID !== undefined) {
+                                    await changeTestCaseLayerRequest(e2eId, E2E_LAYER_ID);
+                                }
+                            }
+                        }
+                    }
+
+                    // Обработка сценариев
+                    for (const scenarioObj of storyObj.scenarios) {
+                        const scenario = scenarioObj.scenario;
+                        const customFields = [
+                            { id: featureFieldId, value: feature },
+                            { id: storyFieldId, value: story },
+                            { id: scenarioFieldId, value: scenario }
+                        ];
+
+                        if (blockFieldId) customFields.push({ id: blockFieldId, value: blockValue });
+                        if (subBlockFieldId) customFields.push({ id: subBlockFieldId, value: subBlockValue });
+
+                        if (scenarioObj.isE2E) {
+                            const testCaseId = await createTestCase({
+                                name: scenario,
+                                steps: scenarioObj.steps || []
+                            }, projectId);
+
+                            if (!testCaseId) {
+                                console.error(`Ошибка создания тест-кейса для сценария "${scenario}"`);
+                                continue;
+                            }
+
+                            const effectiveCustomFields = scenarioObj.isE2E
+                                ? customFields.filter(field => field.id !== scenarioFieldId)
+                                : customFields;
+
+                            await addCustomFieldsToTestCase(testCaseId, effectiveCustomFields);
+
+                            if (E2E_LAYER_ID !== undefined) {
+                                await changeTestCaseLayerRequest(testCaseId, E2E_LAYER_ID);
+                            }
+
+                            console.log(`Создан тест-кейс "${scenario}" с шагами: ${JSON.stringify(scenarioObj.steps)}`);
+                        } else if (scenarioObj.isIntegration) {
+                            if (Array.isArray(scenarioObj.integrationCases) && scenarioObj.integrationCases.length > 0) {
+                                for (const ic of scenarioObj.integrationCases) {
+                                    const integrationTestCaseId = await createTestCase({
+                                        name: ic.name,
+                                        steps: ic.steps || []
+                                    }, projectId);
+
+                                    if (!integrationTestCaseId) {
+                                        console.error(`Ошибка создания интеграционного тест-кейса "${ic.name}" для сценария "${scenario}"`);
+                                        continue;
+                                    }
+
+                                    await addCustomFieldsToTestCase(integrationTestCaseId, customFields);
+
+                                    if (INTEGRATION_FRONT_LAYER_ID !== undefined) {
+                                        await changeTestCaseLayerRequest(integrationTestCaseId, INTEGRATION_FRONT_LAYER_ID);
+                                    }
+
+                                    console.log(`Создан интеграционный тест-кейс "${ic.name}" c шагами: ${JSON.stringify(ic.steps)}`);
+                                }
+                            }
+
+                            if (scenarioObj.codeList && scenarioObj.codeList.length > 0) {
+                                for (const code of scenarioObj.codeList) {
+                                    const codeCustomFields = [...customFields];
+
+                                    if (codeFieldId) {
+                                        codeCustomFields.push({ id: codeFieldId, value: code.code });
+                                    }
+
+                                    const codeTestCaseId = await createTestCase({
+                                        name: code.code,
+                                        steps: []
+                                    }, projectId);
+
+                                    if (!codeTestCaseId) {
+                                        console.error(`Ошибка создания тест-кейса для code "${code.code}" в сценарии "${scenario}"`);
+                                        continue;
+                                    }
+
+                                    await addCustomFieldsToTestCase(codeTestCaseId, codeCustomFields);
+
+                                    if (INTEGRATION_FRONT_LAYER_ID !== undefined) {
+                                        await changeTestCaseLayerRequest(codeTestCaseId, INTEGRATION_FRONT_LAYER_ID);
+                                    }
+
+                                    console.log(`Создан тест-кейс уровня code "${code.code}" внутри сценария "${scenario}"`);
+                                }
+                            }
+                        } else {
+                            if (scenarioObj.codeList.length > 0) {
+                                for (const code of scenarioObj.codeList) {
+                                    const codeCustomFields = [...customFields];
+                                    if (codeFieldId) {
+                                        codeCustomFields.push({ id: codeFieldId, value: code.code });
+                                    }
+                                    const testCaseId = await createTestCase({
+                                        name: code.code,
+                                        steps: []
+                                    }, projectId);
+                                    if (!testCaseId) {
+                                        console.error(`Ошибка создания тест-кейса для code "${code.code}"`);
+                                        continue;
+                                    }
+                                    await addCustomFieldsToTestCase(testCaseId, codeCustomFields);
+                                    console.log(`Создан тест-кейс для code "${code.code}"`);
+                                }
+                            } else {
+                                const testCaseId = await createTestCase({
+                                    name: scenario,
+                                    steps: []
+                                }, projectId);
+                                if (!testCaseId) {
+                                    console.error(`Ошибка создания тест-кейса для сценария "${scenario}"`);
+                                    continue;
+                                }
+                                await addCustomFieldsToTestCase(testCaseId, customFields);
+                                console.log(`Создан тест-кейс "${scenario}" без шагов`);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        console.log('Все тест-кейсы успешно созданы и кастомные поля добавлены!');
+    } catch (error) {
+        console.error(`Ошибка выполнения: ${error.message}`);
+    }
+}
+
+
+/**
+ * Экспорт XMIND в Allure для обычных проектов для обратной совместимости
+ * @param parsedJson
+ * @param projectId
+ * @returns {Promise<void>}
+ */
 export async function exportStructureAllure(parsedJson, projectId) {
     try {
         const featureFieldId = await getProjectCustomFieldIdRequest(customProjectField.feature, projectId);
@@ -265,6 +473,7 @@ export async function exportStructureAllure(parsedJson, projectId) {
                              * если есть scenarioObj.code, то выполняем запрос createTestCase({name: code}, id);
                              * иначе createTestCase({name: scenario}, id);
                              * @type {*|undefined}
+
                              */
                             const testCaseId = await createTestCase({ name: code }, projectId);
 
@@ -299,6 +508,15 @@ export async function exportStructureAllure(parsedJson, projectId) {
     } catch (error) {
         console.error(`Ошибка выполнения: ${error.message}`);
     }
+}
+
+
+function getLayerIdByName(layerListResp, name) {
+    const layers = (layerListResp && layerListResp.content)
+        ? layerListResp.content
+        : [];
+
+    return layers.find(l => l.name === name)?.id;
 }
 
 

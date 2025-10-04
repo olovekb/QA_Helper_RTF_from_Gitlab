@@ -2,6 +2,8 @@
 # Как запустить проект?
 - npm i --legacy-peer-deps в корне репозитория
 - npm i --legacy-peer-deps в проекте client
+- в файле server/config.json в поле "url" установить "http://localhost:5000"
+- в файле client/config.json в поле serverUrl установить "http://localhost:5000/api",
 - в корне выполнить скрипт "npm run run" для запуска сервера
 - в client запустить скрипт "npm start" для запуска клиента
 

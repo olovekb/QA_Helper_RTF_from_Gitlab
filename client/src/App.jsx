@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import './style.css';
 import config from './config.json';
-import { parseXmindFile } from './parce.xmind.mjs';
+import { parseXmindFile } from './parce-xmind/parce.xmind.mjs';
 import { useNavigate } from 'react-router-dom';
 import { marked } from 'marked'; // Импорт библиотеки marked
 
@@ -160,7 +160,7 @@ const App = ({ projects }) => {
     }
     setExportMessage('Обработка файла и экспорт данных...');
     try {
-      const allureData = await parseXmindFile(xmindFile);
+      const allureData = await parseXmindFile(xmindFile, projectId);
       const response = await axios.post(`${config.serverUrl}/export`, {
         allureData,
         projectId,

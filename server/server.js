@@ -40,7 +40,7 @@ import pLimit from 'p-limit';
 import { formatTestCase } from './format-testcase.mjs';
 import { formatTestCaseAsJson } from './generate-json.mjs';
 import { staticAnalysis } from './static-analysis.mjs';
-import { exportStructureAllure } from './xmind-parce/export-structure-allure.mjs';
+import {exportStructureAllure, exportStructureAllureNocode} from './xmind-parce/export-structure-allure.mjs';
 import { analyzeTestCaseWithAI } from './ai-testcase.mjs';
 import { fetchConfluencePage } from './confluenceFetcher.mjs';
 import { analyzeRequirementWithAI } from './analyzeRequirementWithAI.mjs';
@@ -619,7 +619,14 @@ app.post('/api/export', async (req, res) => {
     }
 
     try {
-        await exportStructureAllure(allureData, projectId); // Передаем JSON в функцию
+        // Если проект - "Nocode 2.0", то делаем экспорт по новой структуре
+        if (projectId === '307') {
+            console.log('Экспортируем по новой структуре для НОУКОДА')
+            await exportStructureAllureNocode(allureData, projectId);
+        } else {
+            console.log('Экспортируем НЕ для НОУКОДА')
+            await exportStructureAllure(allureData, projectId);
+        }
 
         res.status(200).send('Экспорт успешно завершён.');
     } catch (error) {
