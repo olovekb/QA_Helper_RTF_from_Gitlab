@@ -1,7 +1,7 @@
 // analyzeRequirementWithAI.mjs
-import fetch from 'node-fetch';
 import fs from 'fs';
 import { prepareContextWithAI } from './contextRefiner.mjs';
+import { callWithBackoff } from './server.js';
 import config from './config.json' assert { type: 'json' };
 // Жёсткая инструкция к финальному ответу: только нужные Markdown-блоки
 const SYSTEM_ENFORCER =
@@ -149,151 +149,73 @@ ${miniGlossary || '—'}
   console.log('[analyze] Финальный промпт:\n', prompt);
 
 
-  // ---------- 2) Вызов LLM с ретраями ----------
-  const headers = {
-    Authorization: `Bearer ${API_TOKEN}`,
-    'Content-Type': 'application/json'
-  };
-
-  let currentMaxTokens = 24000; // стартуем с ограничением и будем понижать при 400
-  const makeBody = () =>
-    JSON.stringify({
-      model: MODEL,
-      max_tokens: currentMaxTokens,
-      temperature: 0.25,
-      messages: [
+  // ---------- 2) Вызов LLM с фоллбэком ----------
+  try {
+    const data = await callWithBackoff(
+      URL,
+      [
         { role: 'system', content: SYSTEM_ENFORCER },
         { role: 'user', content: prompt }
-      ]
-    });
-
-  const maxRetries = 3;
-  let rateRetries = 0;
-
-  const RATE_LIMIT_MAX_RETRIES = Number(process.env.RATE_LIMIT_MAX_RETRIES || 7);
-  const RETRY_AFTER_DEFAULT_MS = Number(process.env.RETRY_AFTER_DEFAULT_MS || 20000);
-
-  const getRetryAfterMs = (res) => {
-    try {
-      const h = res?.headers?.get?.('retry-after');
-      if (!h) return RETRY_AFTER_DEFAULT_MS;
-      const secs = Number(h);
-      if (!Number.isNaN(secs) && secs > 0) return secs * 1000;
-      const when = Date.parse(h);
-      if (!Number.isNaN(when)) {
-        const diff = when - Date.now();
-        return diff > 0 ? diff : RETRY_AFTER_DEFAULT_MS;
+      ],
+      API_TOKEN,
+      {
+        models: config.fallbackModels || ['deepseek/deepseek-chat-v3.1:free'],
+        temperature: 0.25,
+        max_tokens: 24000,
+        reduceTokensOn400: true // большой запрос: понижаем токены при 400
       }
-      return RETRY_AFTER_DEFAULT_MS;
-    } catch {
-      return RETRY_AFTER_DEFAULT_MS;
+    );
+
+    let content = data.choices?.[0]?.message?.content?.trim();
+    if (!content) {
+      console.error('[analyze] Пустой ответ. Полный data:', JSON.stringify(data, null, 2));
+      throw new Error('Ответ от модели пустой');
     }
-  };
 
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const res = await fetch(URL, { method: 'POST', headers, body: makeBody() });
+    // Нормализация вывода для моделей, склонных вставлять пустые или "```markdown" блоки
+    content = content.replace(/```\s*markdown\s*/g, '```');
+    content = content.replace(/```\s*\n\s*```/g, ''); // удаляем пустые блоки ```\n```
 
-      // Прямой 429 от сервера
-      if (res.status === 429) {
-        const waitMs = getRetryAfterMs(res);
-        console.warn(`[analyze] 429 rate-limited, wait ${waitMs}ms (retry ${rateRetries + 1}/${RATE_LIMIT_MAX_RETRIES})`);
-        await new Promise(r => setTimeout(r, waitMs));
-        rateRetries++;
-        if (rateRetries > RATE_LIMIT_MAX_RETRIES) {
-          throw new Error('Rate limit exceeded repeatedly (HTTP 429)');
-        }
-        attempt--; // не сжигаем попытку
-        continue;
+    // Если вся выдача в одном общем fenced-блоке — режем по секциям "### ..."
+    const startsFence = /^\s*```/.test(content);
+    const endsFence = /```\s*$/.test(content);
+    if (startsFence && endsFence) {
+      const inner = content.replace(/^\s*```\s*/, '').replace(/\s*```\s*$/, '').trim();
+      const parts = inner.split(/\n(?=###\s)/).map(s => s.trim()).filter(Boolean);
+      if (parts.length > 1) {
+        content = parts.map(p => '```\n' + p + '\n```').join('\n\n');
       }
-
-      const data = await res.json().catch(() => ({}));
-
-      // 429 может прийти в теле при 200 OK
-      const bodyCode = data?.error?.code || data?.error?.status;
-      const bodyMsg = data?.error?.message || '';
-      if (res.status === 429 || bodyCode === 429 || /rate.?limit/i.test(String(bodyMsg))) {
-        const waitMs = getRetryAfterMs(res);
-        console.warn(`[analyze] 429(body) rate-limited, wait ${waitMs}ms (retry ${rateRetries + 1}/${RATE_LIMIT_MAX_RETRIES})`);
-        await new Promise(r => setTimeout(r, waitMs));
-        rateRetries++;
-        if (rateRetries > RATE_LIMIT_MAX_RETRIES) {
-          throw new Error('Rate limit exceeded repeatedly (429 via body)');
-        }
-        attempt--; // не сжигаем попытку
-        continue;
-      }
-
-      if (!res.ok || data?.error) {
-        const errMsg = data?.error?.message || JSON.stringify(data?.error || {});
-        throw new Error(`${res.status} ${res.statusText}: ${errMsg}`.trim());
-      }
-
-      let content = data.choices?.[0]?.message?.content?.trim();
-      if (!content) throw new Error('Ответ от модели пустой');
-
-      // Нормализация вывода для моделей, склонных вставлять пустые или "```markdown" блоки
-      content = content.replace(/```\s*markdown\s*/g, '```');
-      content = content.replace(/```\s*\n\s*```/g, ''); // удаляем пустые блоки ```\n```
-
-      // Если вся выдача в одном общем fenced-блоке — режем по секциям "### ..."
-      const startsFence = /^\s*```/.test(content);
-      const endsFence = /```\s*$/.test(content);
-      if (startsFence && endsFence) {
-        const inner = content.replace(/^\s*```\s*/, '').replace(/\s*```\s*$/, '').trim();
-        const parts = inner.split(/\n(?=###\s)/).map(s => s.trim()).filter(Boolean);
-        if (parts.length > 1) {
-          content = parts.map(p => '```\n' + p + '\n```').join('\n\n');
-        }
-      }
-
-      // Если вообще нет fenced-блоков, но есть заголовки — обернём каждую секцию
-      if (!/```/.test(content) && /(^|\n)###\s/.test(content)) {
-        const parts = content.split(/\n(?=###\s)/).map(s => s.trim()).filter(Boolean);
-        if (parts.length) {
-          content = parts.map(p => '```\n' + p + '\n```').join('\n\n');
-        }
-      }
-
-      // Если в тексте уже есть несколько fenced-блоков — отфильтруем шумовые
-      const multiBlocks = content.match(/```[\s\S]*?```/g);
-      if (multiBlocks && multiBlocks.length > 1) {
-        const filtered = multiBlocks
-          .map(b => ({ raw: b, inner: b.replace(/^```\s*/,'').replace(/\s*```$/,'').trim() }))
-          .filter(x => x.inner && /^###\s/.test(x.inner));
-        if (filtered.length) {
-          content = filtered.map(x => '```\n' + x.inner + '\n```').join('\n\n');
-        }
-      }
-
-      // Cохраняем для отладки
-      try {
-        fs.writeFileSync('requirement-analysis.txt', content, 'utf8');
-      } catch (e) {
-        console.warn('Не удалось записать requirement-analysis.txt:', e.message);
-      }
-
-      return content;
-    } catch (err) {
-      // если это серверная 5xx — попробуем повторить
-      const is5xx = /\b5\d{2}\b/.test(err.message) || /ECONNRESET|ETIMEDOUT/i.test(err.message);
-      // 400 Bad Request: попробуем уменьшить ответ и повторить
-      const is400 = /\b400\b/.test(err.message);
-      if (attempt < maxRetries && is5xx) {
-        const delay = 1000 * 2 ** (attempt - 1);
-        console.warn(`[analyze] попытка ${attempt} не удалась (${err.message}), retry через ${delay}ms...`);
-        await new Promise((r) => setTimeout(r, delay));
-        continue;
-      } else if (attempt < maxRetries && is400) {
-        // понижаем max_tokens и даём короткую паузу
-        currentMaxTokens = Math.max(1800, Math.floor(currentMaxTokens * 0.6));
-        const delay = 1200;
-        console.warn(`[analyze] 400 Bad Request. Понижаю max_tokens до ${currentMaxTokens}. Retry через ${delay}ms...`);
-        await new Promise((r) => setTimeout(r, delay));
-        continue;
-      }
-      console.error('Ошибка анализа требования:', err.message);
-      throw err;
     }
+
+    // Если вообще нет fenced-блоков, но есть заголовки — обернём каждую секцию
+    if (!/```/.test(content) && /(^|\n)###\s/.test(content)) {
+      const parts = content.split(/\n(?=###\s)/).map(s => s.trim()).filter(Boolean);
+      if (parts.length) {
+        content = parts.map(p => '```\n' + p + '\n```').join('\n\n');
+      }
+    }
+
+    // Если в тексте уже есть несколько fenced-блоков — отфильтруем шумовые
+    const multiBlocks = content.match(/```[\s\S]*?```/g);
+    if (multiBlocks && multiBlocks.length > 1) {
+      const filtered = multiBlocks
+        .map(b => ({ raw: b, inner: b.replace(/^```\s*/,'').replace(/\s*```$/,'').trim() }))
+        .filter(x => x.inner && /^###\s/.test(x.inner));
+      if (filtered.length) {
+        content = filtered.map(x => '```\n' + x.inner + '\n```').join('\n\n');
+      }
+    }
+
+    // Сохраняем для отладки
+    try {
+      fs.writeFileSync('requirement-analysis.txt', content, 'utf8');
+    } catch (e) {
+      console.warn('Не удалось записать requirement-analysis.txt:', e.message);
+    }
+
+    return content;
+  } catch (err) {
+    console.error('[analyze] Ошибка анализа требования:', err.message);
+    throw err;
   }
 }

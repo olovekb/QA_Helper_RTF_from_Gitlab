@@ -64,7 +64,7 @@ const upload = multer({
 
 
 const corsOptions = {
-    origin: 'https://test-inspector.abanking.ru',
+    origin: '*',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
@@ -1530,7 +1530,7 @@ function extractToolArgs(aiResponse, preferredFnName) {
 // Универсальная функция для повторных попыток при 5xx,
 // принимающая либо строку prompt, либо массив сообщений {role, content}
 //
-async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
+export async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
     const {
         // Основная free‑модель и массив fallback‑моделей
         model = 'deepseek/deepseek-chat-v3.1:free',
@@ -1545,7 +1545,8 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
         maxAttempts = 8,          // больше попыток: учитываем очереди у провайдера
         minWaitMs = 1500,         // минимальный бэкофф
         maxWaitMs = 120000,       // верхняя граница ожидания между ретраями
-        logRateLimit = true       // логировать лимит-хедеры для диагностики
+        logRateLimit = true,      // логировать лимит-хедеры для диагностики
+        reduceTokensOn400 = false // понижать max_tokens при 400 Bad Request (для больших запросов)
     } = opts;
 
     const messages = Array.isArray(promptOrMessages)
@@ -1560,6 +1561,7 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
     };
 
     let attempt = 0;
+    let currentMaxTokens = max_tokens; // для динамического понижения при 400
 
     // Очередь моделей: основная + фолбэк
     const modelQueue = Array.isArray(models) && models.length
@@ -1575,12 +1577,16 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
             messages,
             temperature,
             top_p,
-            max_tokens,
+            max_tokens: currentMaxTokens,
             ...extra
         };
         if (tools) payload.tools = tools;
         if (tool_choice) payload.tool_choice = tool_choice;
         if (response_format) payload.response_format = response_format;
+
+        if (logRateLimit && attempt === 1 && modelIdx === 0) {
+            console.log(`[callWithBackoff] Запрос к модели: ${payload.model}`);
+        }
 
         const resp = await fetch(url, {
             method: 'POST',
@@ -1591,35 +1597,78 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
             body: JSON.stringify(payload)
         });
 
-        // Успешно — парсим и выходим
+        // Успешно — парсим и проверяем
         if (resp.ok) {
             const text = await resp.text();
             if (!text || !/[{\[]/.test(text)) {
                 throw new Error(`Empty or invalid JSON response from AI: "${text}"`);
             }
+            let data;
             try {
-                return JSON.parse(text);
+                data = JSON.parse(text);
             } catch {
-                // JSON5 импортирован у вас выше
-                return JSON5.parse(text);
+                
+                data = JSON5.parse(text);
+            }
+            
+            // Проверяем ошибки в теле ответа (429 может прийти в теле при 200 OK)
+            if (data?.error) {
+                const bodyCode = data.error.code || data.error.status;
+                const bodyMsg = data.error.message || '';
+                
+                // Ошибочные коды: 4xx и 5xx
+                if (bodyCode >= 400) {
+                    if (logRateLimit) {
+                        console.warn(`[callWithBackoff] Ошибка в теле (HTTP ${resp.status}): код ${bodyCode} - ${bodyMsg}`);
+                    }
+                    resp.status = bodyCode; // подменяем для обработки ниже
+                } 
+                // Код есть, но успешный (2xx, 3xx) - возвращаем с предупреждением
+                else if (bodyCode) {
+                    if (logRateLimit) {
+                        console.warn(`[callWithBackoff] Предупреждение в теле: код ${bodyCode} - ${bodyMsg}`);
+                    }
+                    return data;
+                } 
+                // Нет кода - непонятная ошибка
+                else {
+                    if (logRateLimit) {
+                        console.warn(`[callWithBackoff] Ошибка без кода в теле:`, data.error);
+                    }
+                    throw new Error(`API error без кода: ${bodyMsg || JSON.stringify(data.error)}`);
+                }
+            } else {
+                return data;
             }
         }
 
-        // ==== 404/400: модель недоступна → переключаемся на фолбэк ====
-        if (resp.status === 404 || resp.status === 400) {
+        // ==== 429/404/400: попробовать понизить токены или переключить модель ====
+        if (resp.status === 429 || resp.status === 404 || resp.status === 400) {
+            // Для 400: сначала пробуем понизить токены (если включено)
+            if (resp.status === 400 && reduceTokensOn400 && currentMaxTokens > 1800) {
+                currentMaxTokens = Math.max(1800, Math.floor(currentMaxTokens * 0.6));
+                if (logRateLimit) {
+                    console.warn(`[callWithBackoff] 400 Bad Request. Понижаю max_tokens до ${currentMaxTokens}`);
+                }
+                attempt--; // не сжигаем попытку
+                continue;
+            }
+            
+            // Пробуем переключиться на следующую модель
             if (modelIdx < modelQueue.length - 1) {
                 modelIdx++;
                 if (logRateLimit) {
-                    console.warn(`[callWithBackoff] HTTP ${resp.status}. Switching model to ${modelQueue[modelIdx]}`);
+                    console.warn(`[callWithBackoff] HTTP ${resp.status}. Переключаюсь на модель: ${modelQueue[modelIdx]}`);
                 }
-                // не сжигаем попытку
-                attempt--;
+                attempt--; // не сжигаем попытку
                 continue;
             }
         }
 
-        // ==== 429: подождать и повторить внутри функции ====
+        // ==== 429: ожидание если все модели заняты ====
         if (resp.status === 429) {
+            
+            // Ожидание, если все модели закончились
             // Собираем все подсказки по времени ожидания
             const h = (name) => resp.headers.get(name);
             const ra = parseFloat(h('retry-after') || '0'); // секунды
@@ -1649,7 +1698,7 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
             if (!waitMs || waitMs < 1000) waitMs = backoff(attempt);
 
             if (logRateLimit) {
-                console.warn('[callWithBackoff] 429 rate limit. Waiting ms:', waitMs, {
+                console.warn('[callWithBackoff] 429 rate limit (все модели заняты). Waiting ms:', waitMs, {
                     retryAfter: h('retry-after'),
                     xRateReset: h('x-ratelimit-reset'),
                     xRateResetReq: h('x-ratelimit-reset-requests'),
@@ -1659,6 +1708,7 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
             }
 
             await new Promise(r => setTimeout(r, Math.min(waitMs, maxWaitMs)));
+            modelIdx = 0; // сбрасываем на первую модель после ожидания
             // и пробуем снова
             continue;
         }

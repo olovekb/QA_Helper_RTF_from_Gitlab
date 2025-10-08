@@ -1,6 +1,7 @@
 import fetch from 'node-fetch';
 import axios from 'axios'
 import { spinningLoader } from './spinning-loader.mjs';
+import { callWithBackoff } from './server.js';
 import config from './config.json' assert { type: 'json' };
 
 // TODO: Нужно рефачить - переиспользовать из tia-mapping-service\utils\allureAuth.js
@@ -335,18 +336,16 @@ ${expected || '<пусто>'}
 \`\`\`
 `;
 
-    const res = await fetch(OPENROUTER_URL, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${OPENROUTER_KEY}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            model: 'deepseek/deepseek-chat-v3.1:free',
-            messages: [{ role: 'user', content: prompt }]
-        })
-    });
-    const json = await res.json();
+    const json = await callWithBackoff(
+        OPENROUTER_URL,
+        [{ role: 'user', content: prompt }],
+        OPENROUTER_KEY,
+        {
+            models: config.fallbackModels || ['deepseek/deepseek-chat-v3.1:free'],
+            temperature: 0.25,
+            max_tokens: 4096
+        }
+    );
     const content = json.choices?.[0]?.message?.content || '';
 
     // Вытаскиваем первый JSON-объект из текста
