@@ -9,5 +9,10 @@
     "serverUrl":  "https://test-inspector.abanking.ru/api",
     "defaultJiraIntegrationId":  67,
     "openRouterAiKey":  "__REDACTED__",
-    "openAiToken":  "__REDACTED__"
+    "openAiToken":  "__REDACTED__",
+    "fallbackModels":  [
+                           "deepseek/deepseek-chat-v3.1:free",
+                           "qwen/qwen3-235b-a22b:free",
+                           "meta-llama/llama-4-maverick:free"
+                       ]
 }
