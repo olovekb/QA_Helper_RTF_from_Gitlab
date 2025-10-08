@@ -64,7 +64,7 @@ const upload = multer({
 
 
 const corsOptions = {
-    origin: '*',
+    origin: 'https://test-inspector.abanking.ru',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
