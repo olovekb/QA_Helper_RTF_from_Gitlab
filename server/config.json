@@ -11,8 +11,8 @@
     "openRouterAiKey":  "__REDACTED__",
     "openAiToken":  "__REDACTED__",
     "fallbackModels":  [
-                           "deepseek/deepseek-chat-v3.1:free",
                            "qwen/qwen3-235b-a22b:free",
+                           "deepseek/deepseek-chat-v3.1:free",
                            "meta-llama/llama-4-maverick:free"
                        ]
 }
