@@ -35,7 +35,8 @@ export async function analyzeRequirementWithAI(
   context = '—',
   project = '—',
   glossary = '—',
-  opts = {}
+  opts = {},
+  apiKey = null
 ) {
   const {
     prefilter = true,
@@ -157,7 +158,7 @@ ${miniGlossary || '—'}
         { role: 'system', content: SYSTEM_ENFORCER },
         { role: 'user', content: prompt }
       ],
-      API_TOKEN,
+      apiKey || API_TOKEN, // используем пользовательский ключ или дефолтный
       {
         models: config.fallbackModels || ['deepseek/deepseek-chat-v3.1:free'],
         temperature: 0.25,

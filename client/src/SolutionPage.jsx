@@ -419,6 +419,7 @@ export default function SolutionPage({ projects = [] }) {
   const [tasks, setTasks] = usePersistentState('solutionTasks', []);
   const [jiraProject, setJiraProject] = usePersistentState('jiraProject', '');
   const [jiraPat, setJiraPat] = usePersistentState('jiraPat', '');
+  const [openRouterKey, setOpenRouterKey] = usePersistentState('openRouterKey', '');
   const [epicOption, setEpicOption] = usePersistentState('solutionEpic', null);
   const [assigneeOption, setAssigneeOption] = usePersistentState('solutionAssignee', null);
   const [targetStatus, setTargetStatus] = usePersistentState('targetStatus', null);
@@ -1057,7 +1058,8 @@ export default function SolutionPage({ projects = [] }) {
     const payload = buildRequirementsPayload({ includeRequirements: false });
 
     try {
-      const resp = await axios.post(`${config.serverUrl}/analyze/solution`, payload);
+      const headers = openRouterKey ? { 'X-OpenRouter-Key': openRouterKey } : {};
+      const resp = await axios.post(`${config.serverUrl}/analyze/solution`, payload, { headers });
       if (!resp.data.success) {
         setAnalysisResult({ error: resp.data.error });
       } else {
@@ -1278,6 +1280,18 @@ export default function SolutionPage({ projects = [] }) {
           <div className="field">
             <label>Jira PAT (Personal Access Token)</label>
             <input type="password" value={jiraPat} onChange={e => setJiraPat(e.target.value)} placeholder="Ваш токен доступа Jira" />
+          </div>
+          <div className="field">
+            <label>
+              OpenRouter API Key 
+              <span style={{ cursor: 'help', marginLeft: '5px' }} title="Оставьте пустым для использования API-ключа по умолчанию">ⓘ</span>
+            </label>
+            <input 
+              type="password" 
+              value={openRouterKey} 
+              onChange={e => setOpenRouterKey(e.target.value.trim())} 
+              placeholder="sk-or-v1-..." 
+            />
           </div>
           <div className="field">
             <label>Проект Allure</label>

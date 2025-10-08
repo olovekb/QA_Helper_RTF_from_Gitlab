@@ -66,7 +66,7 @@ const upload = multer({
 const corsOptions = {
     origin: 'https://test-inspector.abanking.ru',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-OpenRouter-Key'],
     credentials: true,
 };
 
@@ -638,6 +638,9 @@ app.post('/api/export', async (req, res) => {
 
 app.post('/api/ai-recommendation', async (req, res) => {
     try {
+        // Получаем OpenRouter API Key из header (с фоллбэком на config)
+        const apiKey = req.headers['x-openrouter-key']?.trim() || config.openRouterAiKey;
+
         let testCase = req.body;
 
         if (!testCase.id) {
@@ -700,7 +703,7 @@ app.post('/api/ai-recommendation', async (req, res) => {
         }
 
         // Вызываем функцию анализа тест-кейса с использованием ИИ
-        const recommendation = await analyzeTestCaseWithAI(testCase);
+        const recommendation = await analyzeTestCaseWithAI(testCase, apiKey);
         res.json({ recommendation });
     } catch (error) {
         console.error('Ошибка в /ai-recommendation:', error.message);
@@ -747,6 +750,9 @@ app.post('/api/analyze/solution', async (req, res) => {
             contextPageIds,
             contextInstruction
         } = req.body;
+
+        // Получаем OpenRouter API Key из header (с фоллбэком на config)
+        const apiKey = req.headers['x-openrouter-key']?.trim() || config.openRouterAiKey;
 
         if (!text && !pageId) {
             return res.status(400).json({ success: false, error: 'Параметр text или pageId обязателен.' });
@@ -862,7 +868,8 @@ app.post('/api/analyze/solution', async (req, res) => {
                 prefilter: true,
                 contextHint: [contextInstruction || '—', extraHint].filter(Boolean).join(' '),
                 contextPages
-            }
+            },
+            apiKey // передаём пользовательский API ключ
         );
 
         const result = {
@@ -1168,8 +1175,12 @@ app.post('/api/bug/ai-review', async (req, res) => {
     if (!task || typeof task !== 'object') {
         return res.status(400).json({ error: 'Нужен объект task' });
     }
+    
+    // Получаем OpenRouter API Key из header (с фоллбэком на config)
+    const apiKey = req.headers['x-openrouter-key']?.trim() || config.openRouterAiKey;
+    
     try {
-        const feedback = await analyzeBugWithAI(task);
+        const feedback = await analyzeBugWithAI(task, apiKey);
         return res.json(feedback);
     } catch (err) {
         console.error('AI-review error:', err);

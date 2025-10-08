@@ -520,8 +520,14 @@ export default function CodeErrorPage({ projects }) {
     const [tasks, setTasks] = usePersistentState('codeErrorTasks', []);
     const [jiraProject, setJiraProject] = usePersistentState('jiraProject', '');
     const [jiraPat, setJiraPat] = usePersistentState('jiraPat', '');
+    const [openRouterKey, setOpenRouterKey] = useState(() => localStorage.getItem('openRouterKey') || '');
     const [epicOption, setEpicOption] = usePersistentState('codeErrorEpic', null);
     const [assigneeOption, setAssigneeOption] = usePersistentState('codeErrorAssignee', null);
+    
+    // Сохраняем API ключ в localStorage при изменении
+    useEffect(() => {
+        localStorage.setItem('openRouterKey', openRouterKey);
+    }, [openRouterKey]);
     const [versionOption, setVersionOption] = usePersistentState('codeErrorVersion', null);
     const [targetStatus, setTargetStatus] = usePersistentState('targetStatus', null);
     const [allureProject, setAllureProject] = usePersistentState('allureProject', '');
@@ -844,7 +850,8 @@ export default function CodeErrorPage({ projects }) {
         const t = tasks[idx];
         setAiLoading(l => ({ ...l, [idx]: true }));
         try {
-            const { data } = await axios.post(`${config.serverUrl}/bug/ai-review`, { task: t });
+            const headers = openRouterKey ? { 'X-OpenRouter-Key': openRouterKey } : {};
+            const { data } = await axios.post(`${config.serverUrl}/bug/ai-review`, { task: t }, { headers });
             setTasks(ts => ts.map((c, i) => i === idx ? {
                 ...c,
                 aiSummary: data.summaryFeedback, aiDescription: data.descriptionFeedback,
@@ -1146,6 +1153,18 @@ ${t.expected}
                         <label>Jira PAT (Personal Access Token)</label>
                         <input type="password" value={jiraPat} onChange={e => setJiraPat(e.target.value)} placeholder="Ваш токен доступа Jira" />
                     </div>
+                    <div className="field">
+                        <label>
+                            OpenRouter API Key 
+                            <span style={{ cursor: 'help', marginLeft: '5px' }} title="Оставьте пустым для использования API-ключа по умолчанию">ⓘ</span>
+                        </label>
+                        <input 
+                            type="password" 
+                            value={openRouterKey} 
+                            onChange={e => setOpenRouterKey(e.target.value.trim())} 
+                            placeholder="sk-or-..." 
+                        />
+                    </div>
                     {/* FIXED: Added field wrapper and label */}
                     <div className="field">
                         <label>Проект Allure</label>
@@ -1299,11 +1318,6 @@ ${t.expected}
                             task={t}
                             onUpdate={handleUpdate}
                             onDelete={handleDelete}
-                            key={i}
-                            index={i}
-                            //   task={t}
-                            //   onUpdate={handleUpdate}
-                            //   onDelete={handleDelete}
                             fieldOptions={fieldOptions}
                             loadDefectOptions={loadDefectOptions}
                             allureProject={allureProject}

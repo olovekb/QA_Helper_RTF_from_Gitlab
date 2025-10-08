@@ -73,7 +73,7 @@ function formatStepsFromString(rawSteps) {
 }
 
 // --- ИЗМЕНЕНО: Основная функция анализа ---
-export async function analyzeTestCaseWithAI(testCase) {
+export async function analyzeTestCaseWithAI(testCase, apiKey = null) {
     try {
         const testName = testCase.name ? testCase.name : "Неизвестно";
 
@@ -179,7 +179,7 @@ ${formattedStepsForPrompt || 'не указаны'}
         const data = await callWithBackoff(
             URL,
             [{ role: "user", content: prompt }],
-            API_TOKEN,
+            apiKey || API_TOKEN, // используем пользовательский ключ или дефолтный
             {
                 models: config.fallbackModels || ['deepseek/deepseek-chat-v3.1:free'],
                 max_tokens: 16000,

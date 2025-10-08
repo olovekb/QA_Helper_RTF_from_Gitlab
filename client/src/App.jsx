@@ -10,6 +10,7 @@ import { marked } from 'marked'; // Импорт библиотеки marked
 const App = ({ projects }) => {
   const [projectId, setProjectId] = useState(config.projectId);
   const [jiraIssue, setJiraIssue] = useState(config.jiraIssue);
+  const [openRouterKey, setOpenRouterKey] = useState(() => localStorage.getItem('openRouterKey') || '');
   const [loading, setLoading] = useState(false);
   const [htmlReport, setHtmlReport] = useState('');
   const [fixStatus, setFixStatus] = useState(false);
@@ -20,6 +21,11 @@ const App = ({ projects }) => {
 
   const navigate = useNavigate();
   const reportContainerRef = useRef(null);
+
+  // Сохраняем API ключ в localStorage при изменении
+  useEffect(() => {
+    localStorage.setItem('openRouterKey', openRouterKey);
+  }, [openRouterKey]);
 
   // Функция для преобразования Markdown-текста в HTML
   const parseMarkdown = (markdownText) => {
@@ -70,7 +76,8 @@ const App = ({ projects }) => {
       const recParagraph = container.querySelector(`#ai-rec-text-${testId}`);
 
       try {
-        const response = await axios.post(`${config.serverUrl}/ai-recommendation`, payload);
+        const headers = openRouterKey ? { 'X-OpenRouter-Key': openRouterKey } : {};
+        const response = await axios.post(`${config.serverUrl}/ai-recommendation`, payload, { headers });
         const recommendation = response.data.recommendation || 'Нет рекомендаций';
 
         if (recParagraph) {
@@ -238,6 +245,18 @@ const App = ({ projects }) => {
               <label>
                 Номер задачи из Jira:
                 <input type="text" value={jiraIssue} onChange={(e) => setJiraIssue(e.target.value)} />
+              </label>
+            </div>
+            <div>
+              <label>
+                OpenRouter API Key 
+                <span style={{ cursor: 'help', marginLeft: '5px' }} title="Оставьте пустым для использования API-ключа по умолчанию">ⓘ</span>:
+                <input 
+                  type="password" 
+                  value={openRouterKey} 
+                  onChange={(e) => setOpenRouterKey(e.target.value.trim())} 
+                  placeholder="sk-or-..." 
+                />
               </label>
             </div>
             <button type="submit" disabled={loading}>
