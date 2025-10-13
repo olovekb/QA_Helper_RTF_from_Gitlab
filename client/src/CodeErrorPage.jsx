@@ -520,14 +520,9 @@ export default function CodeErrorPage({ projects }) {
     const [tasks, setTasks] = usePersistentState('codeErrorTasks', []);
     const [jiraProject, setJiraProject] = usePersistentState('jiraProject', '');
     const [jiraPat, setJiraPat] = usePersistentState('jiraPat', '');
-    const [openRouterKey, setOpenRouterKey] = useState(() => localStorage.getItem('openRouterKey') || '');
+    const [openRouterKey, setOpenRouterKey] = usePersistentState('openRouterKey', '');
     const [epicOption, setEpicOption] = usePersistentState('codeErrorEpic', null);
     const [assigneeOption, setAssigneeOption] = usePersistentState('codeErrorAssignee', null);
-    
-    // Сохраняем API ключ в localStorage при изменении
-    useEffect(() => {
-        localStorage.setItem('openRouterKey', openRouterKey);
-    }, [openRouterKey]);
     const [versionOption, setVersionOption] = usePersistentState('codeErrorVersion', null);
     const [targetStatus, setTargetStatus] = usePersistentState('targetStatus', null);
     const [allureProject, setAllureProject] = usePersistentState('allureProject', '');

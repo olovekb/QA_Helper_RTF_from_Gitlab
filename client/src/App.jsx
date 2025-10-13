@@ -6,11 +6,39 @@ import config from './config.json';
 import { parseXmindFile } from './parce-xmind/parce.xmind.mjs';
 import { useNavigate } from 'react-router-dom';
 import { marked } from 'marked'; // Импорт библиотеки marked
+import { get as idbGet, set as idbSet } from 'idb-keyval';
+
+function usePersistentState(key, defaultValue) {
+  const [state, setState] = useState(defaultValue);
+  const isFirstMount = useRef(true);
+
+  useEffect(() => {
+    idbGet(key)
+      .then(stored => {
+        if (stored !== undefined) {
+          setState(stored);
+        } else {
+          idbSet(key, defaultValue).catch(console.warn);
+        }
+      })
+      .catch(console.warn);
+  }, [key]);
+
+  useEffect(() => {
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      return;
+    }
+    idbSet(key, state).catch(console.warn);
+  }, [key, state]);
+
+  return [state, setState];
+}
 
 const App = ({ projects }) => {
   const [projectId, setProjectId] = useState(config.projectId);
   const [jiraIssue, setJiraIssue] = useState(config.jiraIssue);
-  const [openRouterKey, setOpenRouterKey] = useState(() => localStorage.getItem('openRouterKey') || '');
+  const [openRouterKey, setOpenRouterKey] = usePersistentState('openRouterKey', '');
   const [loading, setLoading] = useState(false);
   const [htmlReport, setHtmlReport] = useState('');
   const [fixStatus, setFixStatus] = useState(false);
@@ -21,11 +49,6 @@ const App = ({ projects }) => {
 
   const navigate = useNavigate();
   const reportContainerRef = useRef(null);
-
-  // Сохраняем API ключ в localStorage при изменении
-  useEffect(() => {
-    localStorage.setItem('openRouterKey', openRouterKey);
-  }, [openRouterKey]);
 
   // Функция для преобразования Markdown-текста в HTML
   const parseMarkdown = (markdownText) => {
