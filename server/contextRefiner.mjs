@@ -14,7 +14,7 @@ import config from './config.json' assert { type: 'json' };
 
 // === Конфиг модели / API ===
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = process.env.REFINER_MODEL || 'deepseek/deepseek-chat-v3.1:free';
+const MODEL = process.env.REFINER_MODEL || 'meta-llama/llama-4-maverick:free';
 
 const API_TOKEN = config.openRouterAiKey;
 
@@ -314,10 +314,10 @@ function extractToolArgsFromData(data, toolName, expectedKeys) {
     return null;
 }
 
-async function callTools(messages, tool, { maxTokens = 1800, temperature = 0.0, expectedKeys = [] } = {}) {
+async function callTools(messages, tool, { maxTokens = 1800, temperature = 0.0, expectedKeys = [], apiToken = API_TOKEN } = {}) {
     if (!TOOLS_ENABLED) return null;
 
-    const headers = { Authorization: `Bearer ${API_TOKEN}`, 'Content-Type': 'application/json' };
+    const headers = { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' };
     const req = {
         model: MODEL,
         max_tokens: maxTokens,
@@ -378,9 +378,9 @@ async function callTools(messages, tool, { maxTokens = 1800, temperature = 0.0, 
 
 async function callJSON(
     messages,
-    { maxTokens = 2500, temperature = 0.0, schemaName, schemaProps, expectedKeys = [] } = {}
+    { maxTokens = 2500, temperature = 0.0, schemaName, schemaProps, expectedKeys = [], apiToken = API_TOKEN } = {}
 ) {
-    const headers = { Authorization: `Bearer ${API_TOKEN}`, 'Content-Type': 'application/json' };
+    const headers = { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' };
 
     const makeReq = (useSchema) => {
         const base = { model: MODEL, max_tokens: maxTokens, temperature, messages };
@@ -444,8 +444,8 @@ function safeParseContent(content, data, expectedKeys = []) {
 }
 
 // Простой «текстовый» вызов (fallback)
-async function callText(messages, { maxTokens = 1200, temperature = 0.0 } = {}) {
-    const headers = { Authorization: `Bearer ${API_TOKEN}`, 'Content-Type': 'application/json' };
+async function callText(messages, { maxTokens = 1200, temperature = 0.0, apiToken = API_TOKEN } = {}) {
+    const headers = { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' };
     const req = { model: MODEL, max_tokens: maxTokens, temperature, messages };
 
     let rateRetries = 0;
@@ -485,7 +485,7 @@ async function callText(messages, { maxTokens = 1200, temperature = 0.0 } = {}) 
 
 // === ЭТАП 2. Ужать глоссарий (чанками) =======================================
 
-async function reduceGlossary(originalRequirements, glossaryRaw, maxItems, limitChars = LIMIT_GLS_OUT) {
+async function reduceGlossary(originalRequirements, glossaryRaw, maxItems, limitChars = LIMIT_GLS_OUT, apiToken = API_TOKEN) {
     const glossary = hardClip(glossaryRaw || '', CLIP_GLS_IN);
     console.log(`[refiner] Stage#2 glossary in.len=${glossary.length}`);
     if (!glossary.trim()) return '';
@@ -538,7 +538,8 @@ ${chunks[i]}
                 temperature: 0.0,
                 schemaName: 'ReduceGlossary',
                 schemaProps: { mini_glossary_md: { type: 'string' } },
-                expectedKeys: ['mini_glossary_md']
+                expectedKeys: ['mini_glossary_md'],
+                apiToken
             });
             part = String(out?.mini_glossary_md || '');
         }
@@ -556,7 +557,7 @@ ${chunks[i]}
 
 // === ЭТАП 3. Ужать доп. контекст =============================================
 
-async function reduceContext(originalRequirements, contextRaw, hintText, maxItems, limitChars = LIMIT_CTX_OUT) {
+async function reduceContext(originalRequirements, contextRaw, hintText, maxItems, limitChars = LIMIT_CTX_OUT, apiToken = API_TOKEN) {
     const raw = hardClip(contextRaw || '', CLIP_CTX_IN);
     console.log(`[refiner] Stage#3 context in.len=${raw.length}`);
     if (!raw.trim()) return '';
@@ -635,7 +636,8 @@ ${pageChunks[c]}
                     temperature: 0.0,
                     schemaName: 'ReduceContext',
                     schemaProps: { context_md: { type: 'string' } },
-                    expectedKeys: ['context_md']
+                    expectedKeys: ['context_md'],
+                    apiToken
                 });
                 part = String(out?.context_md || '');
             }
@@ -668,7 +670,7 @@ ${pageChunks[c]}
                         { role: 'system', content: 'Отвечай ТОЛЬКО списком Markdown, по одному пункту на строку.' },
                         { role: 'user', content: user2 }
                     ],
-                    { maxTokens: 600, temperature: 0.0 }
+                    { maxTokens: 600, temperature: 0.0, apiToken }
                 );
             }
 
@@ -711,18 +713,23 @@ ${pageChunks[c]}
 export async function prepareContextWithAI(p) {
     const maxGlossary = Number.isFinite(p.maxGlossary) ? p.maxGlossary : 25;
     const maxContext = Number.isFinite(p.maxContext) ? p.maxContext : 30;
+    const apiToken = p.apiToken || API_TOKEN;
 
+    // Маскируем ключ для логирования
+    const maskedKey = apiToken ? `${apiToken.slice(0, 10)}...${apiToken.slice(-4)}` : 'NONE';
+    
     console.log('[refiner] === ORCHESTRATION START ===');
     console.log(`[refiner] inputs: req.len=${(p.requirements || '').length} gloss.len=${(p.glossary || '').length} ctx.len=${(p.context || '').length}`);
     console.log(`[refiner] limits: maxGlossary=${maxGlossary} maxContext=${maxContext}`);
     console.log(`[refiner] model=${MODEL} toolsEnabled=${TOOLS_ENABLED} envToolsDisabled=${ENV_TOOLS_DISABLED}`);
+    console.log(`[refiner] using API key: ${maskedKey}`);
 
     try {
         // 1) Требования не меняем: возвращаем как есть
         const requirements_md = String(p.requirements || '');
 
         // 2) Глоссарий — выжимка
-        const mini_glossary_md = await reduceGlossary(requirements_md, p.glossary || '', maxGlossary);
+        const mini_glossary_md = await reduceGlossary(requirements_md, p.glossary || '', maxGlossary, LIMIT_GLS_OUT, apiToken);
 
         // 3) Контекст — выжимка
         const ctxHint =
@@ -735,7 +742,8 @@ export async function prepareContextWithAI(p) {
             joinContextPages(p) || '',
             ctxHint,
             maxContext,
-            LIMIT_CTX_OUT
+            LIMIT_CTX_OUT,
+            apiToken
         );
 
         console.log('[refiner] === ORCHESTRATION DONE ===');
