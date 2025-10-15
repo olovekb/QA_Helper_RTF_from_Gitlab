@@ -1,6 +1,7 @@
 // analyzeRequirementWithAI.mjs
 import fs from 'fs';
 import { prepareContextWithAI } from './contextRefiner.mjs';
+import { callWithCloudRuFallback } from './cloudruClient.mjs';
 import { callWithBackoff } from './server.js';
 import config from './config.json' assert { type: 'json' };
 // Жёсткая инструкция к финальному ответу: только нужные Markdown-блоки
@@ -12,11 +13,9 @@ const SYSTEM_ENFORCER =
   'без каких-либо пояснений вне блоков. ' +
   'Если нет ошибок — верни пустую строку.';
 
-// Вынес настройки OpenRouter в константы
-const API_TOKEN = config.openRouterAiKey;
-
-const URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'deepseek/deepseek-chat-v3.1:free';
+// Настройки API
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_API_KEY = config.openRouterAiKey;
 
 /**
  * Анализирует требование с учётом статического анализа и LLM.
@@ -59,7 +58,7 @@ export async function analyzeRequirementWithAI(
         contextPages,
         maxGlossary: 40,
         maxContext: 50,
-        apiToken: apiKey || API_TOKEN  // Передаём пользовательский ключ!
+        apiToken: apiKey || OPENROUTER_API_KEY  // Передаём пользовательский ключ!
       });
       if (refined?.requirements_md?.trim()) cleanedReq = refined.requirements_md;
       if (refined?.mini_glossary_md?.trim()) miniGlossary = refined.mini_glossary_md;
@@ -151,27 +150,62 @@ ${miniGlossary || '—'}
   console.log('[analyze] Финальный промпт:\n', prompt);
 
 
-  // ---------- 2) Вызов LLM с фоллбэком ----------
+  // ---------- 2) Вызов LLM с Cloud.ru приоритетом и OpenRouter fallback ----------
   try {
-    const data = await callWithBackoff(
-      URL,
+    const data = await callWithCloudRuFallback(
+      OPENROUTER_URL,
       [
         { role: 'system', content: SYSTEM_ENFORCER },
         { role: 'user', content: prompt }
       ],
-      apiKey || API_TOKEN, // используем пользовательский ключ или дефолтный
-      {
-        models: config.fallbackModels || ['deepseek/deepseek-chat-v3.1:free'],
-        temperature: 0.25,
-        max_tokens: 24000,
-        reduceTokensOn400: true // большой запрос: понижаем токены при 400
-      }
+      apiKey || OPENROUTER_API_KEY,
+            {
+              models: config.cloudruModels,
+              temperature: 0.25,
+              max_tokens: 24000,  // Снижено с 24000 до 8000 для ускорения
+              logRateLimit: true
+            }
     );
 
     let content = data.choices?.[0]?.message?.content?.trim();
-    if (!content) {
-      console.error('[analyze] Пустой ответ. Полный data:', JSON.stringify(data, null, 2));
-      throw new Error('Ответ от модели пустой');
+    console.log(`[analyze] AI response length: ${content?.length || 0} chars`);
+    console.log(`[analyze] AI response preview: "${content?.slice(0, 200) || 'no content'}..."`);
+    
+    if (!content || content === '```' || content === '```\n```') {
+      console.warn('[analyze] Empty or invalid AI response, falling back to OpenRouter');
+      
+      // Fallback на OpenRouter при пустом ответе от Cloud.ru
+      try {
+        console.log('[analyze] Attempting OpenRouter fallback...');
+        const fallbackData = await callWithBackoff(
+          OPENROUTER_URL,
+          [
+            { role: 'system', content: SYSTEM_ENFORCER },
+            { role: 'user', content: prompt }
+          ],
+          OPENROUTER_API_KEY,
+                {
+                  models: config.fallbackModels,
+                  temperature: 0.25,
+                  max_tokens: 24000,  // Снижено с 24000 до 8000 для ускорения
+                  logRateLimit: true
+                }
+        );
+        
+        const fallbackContent = fallbackData.choices?.[0]?.message?.content?.trim() || '';
+        console.log(`[analyze] OpenRouter fallback response length: ${fallbackContent.length} chars`);
+        
+        if (fallbackContent && fallbackContent !== '```' && fallbackContent !== '```\n```') {
+          console.log('[analyze] OpenRouter fallback successful');
+          content = fallbackContent;
+        } else {
+          console.error('[analyze] OpenRouter fallback also returned empty response. Full data:', JSON.stringify(fallbackData, null, 2));
+          throw new Error('Все AI провайдеры вернули пустой ответ');
+        }
+      } catch (fallbackError) {
+        console.warn('[analyze] OpenRouter fallback failed:', fallbackError.message);
+        throw new Error('Ответ от модели пустой и fallback не удался');
+      }
     }
 
     // Нормализация вывода для моделей, склонных вставлять пустые или "```markdown" блоки
