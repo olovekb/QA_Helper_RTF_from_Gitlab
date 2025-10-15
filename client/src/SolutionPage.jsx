@@ -1351,53 +1351,54 @@ export default function SolutionPage({ projects = [] }) {
 
 
         )}
-        {/* --- Новые поля для глоссария и контекста из Confluence --- */}
-        <div className="confluence-inputs">
-          <input
-            type="text"
-            placeholder="Глоссарий: Confluence Page ID или URL (необязательно)"
-            value={glossaryPageId}
-            onChange={e => setGlossaryPageId(e.target.value)}
-          />
-          <div className="ctx-select">
-            <CreatableSelect
-              classNamePrefix="select"
-              isMulti
-              placeholder="Доп. контекст: добавьте Page ID/URL и нажмите Enter"
-              value={(contextPageIds || []).map(v => ({ value: v, label: v }))}
-              onChange={(opts) => {
-                const vals = (opts || []).map(o => o.value);
-                setContextPageIds(vals);
-                // дополнительная синхронизация "на всякий":
-                setContextPageIdsInput(vals.length ? vals.join(' ') : '');
-              }}
+        {/* --- Поля глоссария и доп. контекста показываем только для 'text' и 'pdf' --- */}
+        {(inputMode === 'text' || inputMode === 'pdf') && (
+          <div className="confluence-inputs">
+            <input
+              type="text"
+              placeholder="Глоссарий: Confluence Page ID или URL (необязательно)"
+              value={glossaryPageId}
+              onChange={e => setGlossaryPageId(e.target.value)}
+            />
+            <div className="ctx-select">
+              <CreatableSelect
+                classNamePrefix="select"
+                isMulti
+                placeholder="Доп. контекст: добавьте Page ID/URL и нажмите Enter"
+                value={(contextPageIds || []).map(v => ({ value: v, label: v }))}
+                onChange={(opts) => {
+                  const vals = (opts || []).map(o => o.value);
+                  setContextPageIds(vals);
+                  // дополнительная синхронизация "на всякий":
+                  setContextPageIdsInput(vals.length ? vals.join(' ') : '');
+                }}
+                onCreateOption={(inputValue) => setContextPageIds([...(contextPageIds || []), inputValue])}
+                formatCreateLabel={(inputValue) => `Добавить: ${inputValue}`}
+                menuPortalTarget={document.body}
+                menuPosition="fixed"
+                styles={{
+                  container: (base) => ({ ...base, width: '100%' }),
+                  control: (base) => ({ ...base, minHeight: 44 }),
+                  valueContainer: (base) => ({
+                    ...base,
+                    flexWrap: 'nowrap',     // чтобы чипы не ломались в столбик
+                    overflowX: 'auto',      // горизонтальный скролл, если много ID
+                  }),
+                  multiValue: (base) => ({ ...base, marginRight: 8 }),
+                  menuPortal: (base) => ({ ...base, zIndex: 9999 }),
+                }}
+              />
+            </div>
 
-              onCreateOption={(inputValue) => setContextPageIds([...(contextPageIds || []), inputValue])}
-              formatCreateLabel={(inputValue) => `Добавить: ${inputValue}`}
-              menuPortalTarget={document.body}
-              menuPosition="fixed"
-              styles={{
-                container: (base) => ({ ...base, width: '100%' }),
-                control: (base) => ({ ...base, minHeight: 44 }),
-                valueContainer: (base) => ({
-                  ...base,
-                  flexWrap: 'nowrap',     // чтобы чипы не ломались в столбик
-                  overflowX: 'auto',      // горизонтальный скролл, если много ID
-                }),
-                multiValue: (base) => ({ ...base, marginRight: 8 }),
-                menuPortal: (base) => ({ ...base, zIndex: 9999 }),
-              }}
+            <textarea
+              className="context-input"
+              placeholder="Инструкция к доп. контексту: что именно брать из ссылок (напр.: 'используй только разделы «Термины» и «Ограничения»')"
+              value={contextInstruction}
+              onChange={e => setContextInstruction(e.target.value)}
+              rows={2}
             />
           </div>
-
-          <textarea
-            className="context-input"
-            placeholder="Инструкция к доп. контексту: что именно брать из ссылок (напр.: 'используй только разделы «Термины» и «Ограничения»')"
-            value={contextInstruction}
-            onChange={e => setContextInstruction(e.target.value)}
-            rows={2}
-          />
-        </div>
+        )}
 
         <button className="analyze-button" onClick={handleAnalyzeSolution} disabled={!canAnalyze}>
           {loading ? 'Анализируется...' : '🚀 Запустить AI-анализ'}

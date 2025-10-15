@@ -1,5 +1,6 @@
 // contextRefiner.mjs
 import fetch from 'node-fetch';
+import { callCloudRuAPI } from './cloudruClient.mjs';
 import config from './config.json' assert { type: 'json' };
 
 /**
@@ -17,6 +18,7 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const MODEL = process.env.REFINER_MODEL || 'meta-llama/llama-4-maverick:free';
 
 const API_TOKEN = config.openRouterAiKey;
+const CLOUDRU_API_KEY = config.cloudruApiKey;
 
 // Жёсткая директива: только валидный JSON, без размышлений и Markdown
 const SYSTEM_JSON_ONLY =
@@ -33,8 +35,8 @@ const LIMIT_GLS_OUT = 24000;   // увеличить выход глоссари
 const LIMIT_CTX_OUT = 36000;   // увеличить выход контекста
 
 // === Чанкование ===
-const CHUNK_SIZE_GLOSSARY = 64000;
-const CHUNK_SIZE_CONTEXT = 64000;
+const CHUNK_SIZE_GLOSSARY = 128000;  // Увеличено в 2 раза
+const CHUNK_SIZE_CONTEXT = 128000;   // Увеличено в 2 раза
 
 // === Retry / Rate-limit ===
 const MAX_ATTEMPTS_TOTAL = 6;
@@ -45,6 +47,79 @@ const MAX_RATE_LIMIT_RETRIES = 5;
 // === Управление tool-calls ===
 const ENV_TOOLS_DISABLED = /^(1|true|yes)$/i.test(String(process.env.REFINER_DISABLE_TOOLS || ''));
 let TOOLS_ENABLED = !ENV_TOOLS_DISABLED; // по умолчанию включены
+
+// === Параллельная обработка ===
+const MAX_CONCURRENT_REQUESTS = 3; // Ограничение одновременных запросов
+const requestSemaphore = {
+    running: 0,
+    queue: [],
+    
+    async acquire() {
+        return new Promise((resolve) => {
+            if (this.running < MAX_CONCURRENT_REQUESTS) {
+                this.running++;
+                resolve();
+            } else {
+                this.queue.push(resolve);
+            }
+        });
+    },
+    
+    release() {
+        this.running--;
+        if (this.queue.length > 0) {
+            const next = this.queue.shift();
+            this.running++;
+            next();
+        }
+    }
+};
+
+// === Гибридный API вызов (Cloud.ru + OpenRouter fallback) ===
+async function callHybridAPI(messages, opts = {}) {
+    const {
+        maxTokens = 2500,
+        temperature = 0.0,
+        schemaName,
+        schemaProps,
+        expectedKeys = []
+    } = opts;
+
+    // Сначала пробуем Cloud.ru
+    try {
+        console.log(`[refiner] Trying Cloud.ru API`);
+        
+        const response_format = schemaName && schemaProps ? {
+            type: 'json_schema',
+            json_schema: {
+                name: schemaName,
+                schema: { 
+                    type: 'object', 
+                    properties: schemaProps, 
+                    required: Object.keys(schemaProps), 
+                    additionalProperties: false 
+                },
+                strict: true
+            }
+        } : null;
+
+        const result = await callCloudRuAPI(messages, {
+            model: config.cloudruModels[0], // Используем первую модель из списка
+            temperature,
+            max_tokens: maxTokens,
+            response_format
+        });
+
+        console.log(`[refiner] Cloud.ru success`);
+        return safeParseContent(result.choices?.[0]?.message?.content || '', result, expectedKeys);
+
+    } catch (error) {
+        console.warn(`[refiner] Cloud.ru failed: ${error.message}, falling back to OpenRouter`);
+        
+        // Fallback на OpenRouter
+        return await callJSON(messages, { maxTokens, temperature, schemaName, schemaProps, expectedKeys });
+    }
+}
 
 // --- Утилиты ------------------------------------------------------------------
 
@@ -533,13 +608,15 @@ ${chunks[i]}
         //   }
 
         if (!part) {
-            out = await callJSON(messages, {
+            // Используем Cloud.ru с fallback на OpenRouter
+            const result = await callHybridAPI(messages, {
                 maxTokens: 10000,
                 temperature: 0.0,
                 schemaName: 'ReduceGlossary',
                 schemaProps: { mini_glossary_md: { type: 'string' } },
                 expectedKeys: ['mini_glossary_md']
             });
+            out = result;
             part = String(out?.mini_glossary_md || '');
         }
 
@@ -574,23 +651,25 @@ async function reduceContext(originalRequirements, contextRaw, hintText, maxItem
     const pages = splitContextIntoPages(raw);
     const pageChunksList = pages.map(pg => splitBySize(pg, CHUNK_SIZE_CONTEXT));
     const perPageCap = Math.max(1, Math.ceil(maxItems / Math.max(1, pages.length)));
-    const acc = [];
 
     console.log(`[refiner] Stage#3 allowedUrls.size=${allowedUrls.size} forbiddenUrls.size=${forbiddenUrls.size}`);
 
-    for (let p = 0; p < pages.length && acc.length < maxItems; p++) {
-        const pageChunks = pageChunksList[p];
-        let producedForPage = 0;
+    async function processPage(p) {
+        await requestSemaphore.acquire();
+        try {
+            const pageChunks = pageChunksList[p];
+            let producedForPage = 0;
+            const pageAcc = [];
 
-        for (let c = 0; c < pageChunks.length && acc.length < maxItems; c++) {
-            const remainForPage = Math.min(perPageCap - producedForPage, maxItems - acc.length);
-            if (remainForPage <= 0) break;
+            for (let c = 0; c < pageChunks.length && producedForPage < perPageCap; c++) {
+                const remainForPage = perPageCap - producedForPage;
+                if (remainForPage <= 0) break;
 
-            const whitelistNote = allowedUrls.size
-                ? `Если ты указываешь источник, используй URL ТОЛЬКО из этого списка:\n${[...allowedUrls].slice(0, 50).map(u => `- ${u}`).join('\n')}`
-                : `Если в фрагменте нет URL — не добавляй "(источник: ...)".`;
+                const whitelistNote = allowedUrls.size
+                    ? `Если ты указываешь источник, используй URL ТОЛЬКО из этого списка:\n${[...allowedUrls].slice(0, 50).map(u => `- ${u}`).join('\n')}`
+                    : `Если в фрагменте нет URL — не добавляй "(источник: ...)".`;
 
-            const user = `
+                const user = `
 СТРОГИЙ РЕЖИМ ИЗВЛЕЧЕНИЯ.
 Используй блок "Требования" ниже ТОЛЬКО как ОРИЕНТИР, чтобы понять, какие факты из "Контекст фрагмент" релевантны.
 Ничего из Требований НЕ БРАТЬ в факты. Факты извлекать ТОЛЬКО из "Контекст фрагмент".
@@ -615,34 +694,28 @@ ${pageChunks[c]}
 { "context_md": "- [краткий факт 1]\\n- [краткий факт 2]" }
 `.trim();
 
+                const messages = [
+                    { role: 'system', content: SYSTEM_JSON_ONLY },
+                    { role: 'user', content: user }
+                ];
 
-            const messages = [
-                { role: 'system', content: SYSTEM_JSON_ONLY },
-                { role: 'user', content: user }
-            ];
+                let out = null, part = '';
 
-            let out = null, part = '';
+                if (!part) {
+                    const result = await callHybridAPI(messages, {
+                        maxTokens: 900,
+                        temperature: 0.0,
+                        schemaName: 'ReduceContext',
+                        schemaProps: { context_md: { type: 'string' } },
+                        expectedKeys: ['context_md']
+                    });
+                    out = result;
+                    part = String(out?.context_md || '');
+                }
 
-            //  if (TOOLS_ENABLED) {
-            //      const tool = buildTool('submit_context', 'context_md', 'Return context_md list');
-            //       out = await callTools(messages, tool, { maxTokens: 700, temperature: 0.0, expectedKeys: ['context_md'] });
-            //       part = String(out?.context_md || '');
-            //    }
-
-            if (!part) {
-                out = await callJSON(messages, {
-                    maxTokens: 900,
-                    temperature: 0.0,
-                    schemaName: 'ReduceContext',
-                    schemaProps: { context_md: { type: 'string' } },
-                    expectedKeys: ['context_md']
-                });
-                part = String(out?.context_md || '');
-            }
-
-            if (!part) {
-                console.warn(`[refiner] Stage#3 page=${p + 1} chunk=${c + 1}: fallback to text-mode`);
-                const user2 = `
+                if (!part) {
+                    console.warn(`[refiner] Stage#3 page=${p + 1} chunk=${c + 1}: fallback to text-mode`);
+                    const user2 = `
 Верни ТОЛЬКО список Markdown-пунктов (до ${remainForPage}). Источники — ТОЛЬКО из списка ниже.
 ${whitelistNote}
 
@@ -662,32 +735,44 @@ ${pageChunks[c]}
 ---------------------------------------
 `.trim();
 
+                    part = await callText(
+                        [
+                            { role: 'system', content: 'Отвечай ТОЛЬКО списком Markdown, по одному пункту на строку.' },
+                            { role: 'user', content: user2 }
+                        ],
+                        { maxTokens: 600, temperature: 0.0 }
+                    );
+                }
 
-                part = await callText(
-                    [
-                        { role: 'system', content: 'Отвечай ТОЛЬКО списком Markdown, по одному пункту на строку.' },
-                        { role: 'user', content: user2 }
-                    ],
-                    { maxTokens: 600, temperature: 0.0 }
-                );
+                let items = mdToItems(part);
+                const chunk = pageChunks[c];
+                const RATIO_MIN = 0.18;
+                let filtered = items.filter(line => contentRatio(line, chunk) >= RATIO_MIN);
+                if (!filtered.length && items.length) filtered = [items[0]];
+                items = filtered;
+
+                items = filterContextItemsByAllowedSources(items, allowedUrls, forbiddenUrls);
+
+                const limited = items.slice(0, remainForPage);
+                pageAcc.push(...limited);
+                producedForPage += limited.length;
+                console.log(`[refiner] Stage#3 page=${p + 1} chunk=${c + 1} items=${items.length} pageAcc=${pageAcc.length}/${perPageCap}`);
             }
 
-            let items = mdToItems(part);
-            // Пост-фильтр: пункты должны реально быть основаны на текущем чанке
-            const chunk = pageChunks[c];
-            const RATIO_MIN = 0.18; // было 0.25
-            let filtered = items.filter(line => contentRatio(line, chunk) >= RATIO_MIN);
-            // если всё отфильтровали, но модель что-то вернула — возьмём хотя бы первый пункт
-            if (!filtered.length && items.length) filtered = [items[0]];
-            items = filtered;
-
-            items = filterContextItemsByAllowedSources(items, allowedUrls, forbiddenUrls);
-
-            const limited = items.slice(0, remainForPage);
-            acc.push(...limited);
-            producedForPage += limited.length;
-            console.log(`[refiner] Stage#3 page=${p + 1} chunk=${c + 1} items=${items.length} acc=${acc.length}/${maxItems}`);
+            return pageAcc;
+        } finally {
+            requestSemaphore.release();
         }
+    }
+
+    const pagePromises = pages.map((_, p) => processPage(p));
+    const pageResults = await Promise.all(pagePromises);
+
+    const acc = [];
+    for (let p = 0; p < pageResults.length && acc.length < maxItems; p++) {
+        const remain = maxItems - acc.length;
+        const take = pageResults[p].slice(0, Math.min(perPageCap, remain));
+        acc.push(...take);
     }
 
     const dedup = dedupLines(acc, maxItems);
@@ -710,7 +795,7 @@ ${pageChunks[c]}
  */
 export async function prepareContextWithAI(p) {
     const maxGlossary = Number.isFinite(p.maxGlossary) ? p.maxGlossary : 25;
-    const maxContext = Number.isFinite(p.maxContext) ? p.maxContext : 30;
+    const maxContext = Number.isFinite(p.maxContext) ? p.maxContext : 16;
 
     console.log('[refiner] === ORCHESTRATION START ===');
     console.log(`[refiner] inputs: req.len=${(p.requirements || '').length} gloss.len=${(p.glossary || '').length} ctx.len=${(p.context || '').length}`);

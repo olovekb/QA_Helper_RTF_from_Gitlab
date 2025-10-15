@@ -1,6 +1,143 @@
 import express from 'express';
 import cors from 'cors';
 import JSON5 from 'json5';
+
+/**
+ * Обработка больших запросов для OpenRouter через разделение на чанки
+ * @param {Array} messages - Исходные сообщения
+ * @param {Object} opts - Опции
+ * @returns {Promise<Object>} - Объединенный результат
+ */
+async function processLargeOpenRouterRequest(messages, opts) {
+    const { model, models, temperature, max_tokens, response_format } = opts;
+    
+    // Находим самое большое сообщение (обычно user content)
+    let largestMessage = null;
+    let largestIndex = -1;
+    let maxSize = 0;
+    
+    messages.forEach((msg, index) => {
+        const size = JSON.stringify(msg.content).length;
+        if (size > maxSize) {
+            maxSize = size;
+            largestMessage = msg;
+            largestIndex = index;
+        }
+    });
+    
+    if (!largestMessage || largestIndex === -1) {
+        throw new Error('Could not find largest message to split');
+    }
+    
+    console.log(`[callWithBackoff] Splitting message ${largestIndex} (${maxSize} chars) into chunks...`);
+    
+    // Разбиваем большое сообщение на чанки
+    const content = largestMessage.content;
+    const chunkSize = 80000; // Размер чанка в символах (примерно 20,000 токенов)
+    const chunks = [];
+    
+    for (let i = 0; i < content.length; i += chunkSize) {
+        chunks.push(content.slice(i, i + chunkSize));
+    }
+    
+    console.log(`[callWithBackoff] Created ${chunks.length} chunks`);
+    
+    // Обрабатываем каждый чанк
+    const results = [];
+    for (let i = 0; i < chunks.length; i++) {
+        console.log(`[callWithBackoff] Processing chunk ${i + 1}/${chunks.length}...`);
+        
+        // Создаем копию сообщений с текущим чанком
+        const chunkMessages = [...messages];
+        chunkMessages[largestIndex] = {
+            ...largestMessage,
+            content: chunks[i]
+        };
+        
+        // Добавляем инструкцию для чанка
+        if (chunks.length > 1) {
+            chunkMessages[largestIndex].content = `ЧАСТЬ ${i + 1} ИЗ ${chunks.length}:\n\n${chunks[i]}`;
+        }
+        
+        try {
+            // Используем прямую отправку без проверки размера
+            const chunkResult = await makeDirectOpenRouterCall(chunkMessages, {
+                model,
+                models,
+                temperature,
+                max_tokens: Math.min(max_tokens, 4000), // Ограничиваем размер ответа
+                response_format
+            });
+            
+            results.push(chunkResult.choices?.[0]?.message?.content || '');
+            console.log(`[callWithBackoff] Chunk ${i + 1} processed successfully`);
+            
+        } catch (error) {
+            console.error(`[callWithBackoff] Chunk ${i + 1} failed:`, error.message);
+            results.push(''); // Добавляем пустую строку для неудачного чанка
+        }
+    }
+    
+    // Объединяем результаты
+    const combinedContent = results.filter(r => r.trim()).join('\n\n');
+    
+    console.log(`[callWithBackoff] Combined ${results.length} chunks into final result (${combinedContent.length} chars)`);
+    
+    // Возвращаем результат в формате, ожидаемом вызывающим кодом
+    return {
+        choices: [{
+            message: {
+                content: combinedContent
+            }
+        }],
+        usage: {
+            prompt_tokens: Math.ceil(JSON.stringify(messages).length / 4),
+            completion_tokens: Math.ceil(combinedContent.length / 4),
+            total_tokens: Math.ceil((JSON.stringify(messages).length + combinedContent.length) / 4)
+        },
+        model: model
+    };
+}
+
+/**
+ * Прямой вызов OpenRouter API без проверки размера
+ * @param {Array} messages - Сообщения
+ * @param {Object} opts - Опции
+ * @returns {Promise<Object>} - Результат API
+ */
+async function makeDirectOpenRouterCall(messages, opts) {
+    const { model, models, temperature, max_tokens, response_format } = opts;
+    
+    const modelQueue = Array.isArray(models) && models.length
+        ? models
+        : [model, 'qwen/qwen3-235b-a22b:free'];
+    
+    const payload = {
+        model: modelQueue[0],
+        messages,
+        temperature,
+        max_tokens,
+        ...(response_format && { response_format })
+    };
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${config.openRouterAiKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://test-inspector.abanking.ru',
+            'X-Title': 'Allure Test Inspector'
+        },
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`OpenRouter API error ${response.status}: ${errorText}`);
+    }
+
+    return await response.json();
+}
 import {
     getAllureDefectById,
     getSharedStepsList,
@@ -56,7 +193,7 @@ const DEFAULT_JIRA_INTEGRATION_ID = config.defaultJiraIntegrationId;
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const app = express();
-const PORT = 5000;
+const PORT = 5001;
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 50 * 1024 * 1024, files: 20 }
@@ -64,7 +201,7 @@ const upload = multer({
 
 
 const corsOptions = {
-    origin: 'https://test-inspector.abanking.ru',
+    origin: 'http://localhost:3000',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
@@ -1552,6 +1689,18 @@ export async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) 
     const messages = Array.isArray(promptOrMessages)
         ? promptOrMessages
         : [{ role: 'user', content: promptOrMessages }];
+
+    // Проверка размера запроса для OpenRouter
+    const requestSize = JSON.stringify(messages).length;
+    const estimatedTokens = Math.ceil(requestSize / 4);
+    const MAX_TOKENS_OPENROUTER = 100000; // Лимит для OpenRouter (примерно)
+    
+    console.log(`[callWithBackoff] Request size: ${requestSize} chars, estimated tokens: ${estimatedTokens}`);
+    
+    if (estimatedTokens > MAX_TOKENS_OPENROUTER) {
+        console.log(`[callWithBackoff] Request too large (${estimatedTokens} tokens > ${MAX_TOKENS_OPENROUTER}), splitting into chunks...`);
+        return await processLargeOpenRouterRequest(messages, opts);
+    }
 
     // экспоненциальный бэкофф с небольшим джиттером
     const backoff = (attemptIdx) => {

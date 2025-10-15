@@ -8,8 +8,13 @@
     "huggingfaceToken":  "__REDACTED__",
     "serverUrl":  "https://test-inspector.abanking.ru/api",
     "defaultJiraIntegrationId":  67,
+    "cloudruApiKey":  "__REDACTED__",
     "openRouterAiKey":  "__REDACTED__",
     "openAiToken":  "__REDACTED__",
+    "cloudruModels":  [
+                          "Qwen/Qwen3-235B-A22B-Instruct-2507",
+                          "zai-org/GLM-4.6"
+                      ],
     "fallbackModels":  [
                            "qwen/qwen3-235b-a22b:free",
                            "deepseek/deepseek-chat-v3.1:free",
