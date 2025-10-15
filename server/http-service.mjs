@@ -290,7 +290,7 @@ export async function linkIssueToAllureDefect(defectId, integrationId, issueName
 }
 
 
-export async function analyzeBugWithAI(task) {
+export async function analyzeBugWithAI(task, apiKey = null) {
     const { summary, description, steps, actual, expected } = task;
     const prompt = `
 Ты — эксперт по написанию баг-репортов. Проверь следующие поля по нашему чек-листу:
@@ -339,7 +339,7 @@ ${expected || '<пусто>'}
     const json = await callWithBackoff(
         OPENROUTER_URL,
         [{ role: 'user', content: prompt }],
-        OPENROUTER_KEY,
+        apiKey || OPENROUTER_KEY, // используем пользовательский ключ или дефолтный
         {
             models: config.fallbackModels || ['deepseek/deepseek-chat-v3.1:free'],
             temperature: 0.25,

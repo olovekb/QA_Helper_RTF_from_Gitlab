@@ -8,7 +8,7 @@ import JSON5 from 'json5';
  * @param {Object} opts - Опции
  * @returns {Promise<Object>} - Объединенный результат
  */
-async function processLargeOpenRouterRequest(messages, opts) {
+async function processLargeOpenRouterRequest(messages, opts, apiKey) {
     const { model, models, temperature, max_tokens, response_format } = opts;
     
     // Находим самое большое сообщение (обычно user content)
@@ -61,7 +61,7 @@ async function processLargeOpenRouterRequest(messages, opts) {
         
         try {
             // Используем прямую отправку без проверки размера
-            const chunkResult = await makeDirectOpenRouterCall(chunkMessages, {
+            const chunkResult = await makeDirectOpenRouterCall(chunkMessages, apiKey, {
                 model,
                 models,
                 temperature,
@@ -105,7 +105,7 @@ async function processLargeOpenRouterRequest(messages, opts) {
  * @param {Object} opts - Опции
  * @returns {Promise<Object>} - Результат API
  */
-async function makeDirectOpenRouterCall(messages, opts) {
+async function makeDirectOpenRouterCall(messages, apiKey, opts) {
     const { model, models, temperature, max_tokens, response_format } = opts;
     
     const modelQueue = Array.isArray(models) && models.length
@@ -123,7 +123,7 @@ async function makeDirectOpenRouterCall(messages, opts) {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
-            'Authorization': `Bearer ${config.openRouterAiKey}`,
+            'Authorization': `Bearer ${apiKey || config.openRouterAiKey}`,
             'Content-Type': 'application/json',
             'HTTP-Referer': 'https://test-inspector.abanking.ru',
             'X-Title': 'Allure Test Inspector'
@@ -203,7 +203,7 @@ const upload = multer({
 const corsOptions = {
     origin: 'https://test-inspector.abanking.ru',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-OpenRouter-Key'],
     credentials: true,
 };
 
@@ -775,6 +775,9 @@ app.post('/api/export', async (req, res) => {
 
 app.post('/api/ai-recommendation', async (req, res) => {
     try {
+        // Получаем OpenRouter API Key из header (с фоллбэком на config)
+        const apiKey = req.headers['x-openrouter-key']?.trim() || config.openRouterAiKey;
+
         let testCase = req.body;
 
         if (!testCase.id) {
@@ -837,7 +840,7 @@ app.post('/api/ai-recommendation', async (req, res) => {
         }
 
         // Вызываем функцию анализа тест-кейса с использованием ИИ
-        const recommendation = await analyzeTestCaseWithAI(testCase);
+        const recommendation = await analyzeTestCaseWithAI(testCase, apiKey);
         res.json({ recommendation });
     } catch (error) {
         console.error('Ошибка в /ai-recommendation:', error.message);
@@ -884,6 +887,9 @@ app.post('/api/analyze/solution', async (req, res) => {
             contextPageIds,
             contextInstruction
         } = req.body;
+
+        // Получаем OpenRouter API Key из header (с фоллбэком на config)
+        const apiKey = req.headers['x-openrouter-key']?.trim() || config.openRouterAiKey;
 
         if (!text && !pageId) {
             return res.status(400).json({ success: false, error: 'Параметр text или pageId обязателен.' });
@@ -999,7 +1005,8 @@ app.post('/api/analyze/solution', async (req, res) => {
                 prefilter: true,
                 contextHint: [contextInstruction || '—', extraHint].filter(Boolean).join(' '),
                 contextPages
-            }
+            },
+            apiKey // передаём пользовательский API ключ
         );
 
         const result = {
@@ -1305,8 +1312,12 @@ app.post('/api/bug/ai-review', async (req, res) => {
     if (!task || typeof task !== 'object') {
         return res.status(400).json({ error: 'Нужен объект task' });
     }
+    
+    // Получаем OpenRouter API Key из header (с фоллбэком на config)
+    const apiKey = req.headers['x-openrouter-key']?.trim() || config.openRouterAiKey;
+    
     try {
-        const feedback = await analyzeBugWithAI(task);
+        const feedback = await analyzeBugWithAI(task, apiKey);
         return res.json(feedback);
     } catch (err) {
         console.error('AI-review error:', err);
@@ -1699,7 +1710,7 @@ export async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) 
     
     if (estimatedTokens > MAX_TOKENS_OPENROUTER) {
         console.log(`[callWithBackoff] Request too large (${estimatedTokens} tokens > ${MAX_TOKENS_OPENROUTER}), splitting into chunks...`);
-        return await processLargeOpenRouterRequest(messages, opts);
+        return await processLargeOpenRouterRequest(messages, opts, apiKey);
     }
 
     // экспоненциальный бэкофф с небольшим джиттером

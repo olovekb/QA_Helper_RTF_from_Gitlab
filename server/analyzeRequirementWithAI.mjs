@@ -34,7 +34,8 @@ export async function analyzeRequirementWithAI(
   context = '—',
   project = '—',
   glossary = '—',
-  opts = {}
+  opts = {},
+  apiKey = null
 ) {
   const {
     prefilter = true,
@@ -56,7 +57,8 @@ export async function analyzeRequirementWithAI(
         contextHint,
         contextPages,
         maxGlossary: 40,
-        maxContext: 50
+        maxContext: 50,
+        apiToken: apiKey || OPENROUTER_API_KEY  // Передаём пользовательский ключ!
       });
       if (refined?.requirements_md?.trim()) cleanedReq = refined.requirements_md;
       if (refined?.mini_glossary_md?.trim()) miniGlossary = refined.mini_glossary_md;
@@ -156,7 +158,7 @@ ${miniGlossary || '—'}
         { role: 'system', content: SYSTEM_ENFORCER },
         { role: 'user', content: prompt }
       ],
-      OPENROUTER_API_KEY,
+      apiKey || OPENROUTER_API_KEY,
             {
               models: config.cloudruModels,
               temperature: 0.25,
