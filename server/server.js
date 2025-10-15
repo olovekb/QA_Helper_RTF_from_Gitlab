@@ -193,7 +193,7 @@ const DEFAULT_JIRA_INTEGRATION_ID = config.defaultJiraIntegrationId;
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const app = express();
-const PORT = 5001;
+const PORT = 5000;
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 50 * 1024 * 1024, files: 20 }
@@ -201,7 +201,7 @@ const upload = multer({
 
 
 const corsOptions = {
-    origin: 'http://localhost:3000',
+    origin: 'https://test-inspector.abanking.ru',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
