@@ -298,23 +298,92 @@ function dedupLines(lines, limit) {
     return out;
 }
 
+/**
+ * Разбивает контекст на страницы для последующей обработки LLM
+ * 
+ * Логика разбиения (в порядке приоритета):
+ * 1. Явные разделители (--- page ---): используются, если есть;
+ * 2. Confluence Page ID: разные статьи обрабатываются отдельно;
+ * 3. Группировка по главным заголовкам (#): все подзаголовки ## и ### под одним # объединяются в одну страницу;
+ * 4. Объединение небольших страниц (меньше 3kb): накапливаются в буфере до достижения MIN_PAGE_SIZE
+ * 
+ * @param ctx исходный контекст
+ */
 function splitContextIntoPages(ctx) {
     const s = String(ctx || '').trim();
     if (!s) return [];
 
     // 1) Явный разделитель страниц
     const byExplicit = s.split(/\n+---+\s*(?:page|страница)?\s*---+\n+/i);
-    if (byExplicit.length > 1) return byExplicit.map(x => x.trim()).filter(Boolean);
+    if (byExplicit.length > 1) {
+        return byExplicit.map(x => x.trim()).filter(Boolean);
+    }
 
     // 2) Начало новой статьи по маркеру Confluence Page ID
     const byPid = s.split(/\n+(?=Confluence\s*Page\s*ID\s*:\s*\d+)/i);
-    if (byPid.length > 1) return byPid.map(x => x.trim()).filter(Boolean);
+    if (byPid.length > 1) {
+        return byPid.map(x => x.trim()).filter(Boolean);
+    }
 
-    // 3) Заголовки как границы страниц
-    const byHead = s.split(/\n(?=###[^\n]*|##[^\n]*)/);
-    if (byHead.length > 1) return byHead.map(x => x.trim()).filter(Boolean);
+    // 3) Группировка по главным заголовкам # (объединение вложенных ## и ### в одну страницу)
+    const lines = s.split('\n');
+    const groups = [];
+    let currentGroup = [];
 
-    return [s];
+    for (const line of lines) {
+        // Новый главный заголовок # == начало новой группы
+        if (/^#\s+[^\n]+/.test(line) && !/^##/.test(line)) {
+            if (currentGroup.length > 0) {
+                groups.push(currentGroup.join('\n').trim());
+                currentGroup = [];
+            }
+            currentGroup.push(line);
+        } else {
+            currentGroup.push(line);
+        }
+    }
+
+    // Сохранение последней группы
+    if (currentGroup.length > 0) {
+        groups.push(currentGroup.join('\n').trim());
+    }
+
+    // При отсутствии групп возвращает весь текст как одну страницу
+    if (groups.length === 0) return [s];
+
+    // 4) Объединение маленьких страниц (меньше 3kb) с соседними
+    const MIN_PAGE_SIZE = 3000;
+    const merged = [];
+    let buffer = '';
+
+    for (const group of groups) {
+        const trimmedGroup = group.trim();
+        if (!trimmedGroup) continue;
+        
+        // Попытка добавить группу к буферу
+        const potentialBuffer = buffer ? buffer + '\n\n' + trimmedGroup : trimmedGroup;
+        
+        // Добавление, если после добавления объем буфера не превышает лимит
+        if (potentialBuffer.length <= CHUNK_SIZE_CONTEXT) {
+            buffer = potentialBuffer;
+            // Сохранение, если объем буфера превышает лимит
+            if (buffer.length >= MIN_PAGE_SIZE) {
+                merged.push(buffer);
+                buffer = '';
+            }
+        } else {
+            // Сохранение текущего буфера и создание нового
+            if (buffer) {
+                merged.push(buffer);
+            }
+            buffer = trimmedGroup;
+        }
+    }
+
+    // Сохранение остатка буфера
+    if (buffer) merged.push(buffer);
+
+    return merged.filter(Boolean);
 }
 
 
@@ -639,6 +708,9 @@ async function reduceContext(originalRequirements, contextRaw, hintText, maxItem
     console.log(`[refiner] Stage#3 context in.len=${raw.length}`);
     if (!raw.trim()) return '';
 
+    // Дебаг-режим: включение через process.env.DEBUG_CONTEXT_PAGES=1 или config.debugContextPages=true
+    const debugMode = process.env.DEBUG_CONTEXT_PAGES === '1' || config.debugContextPages === true;
+
     // Требования: только как ориентир (не источник фактов)
     const reqForModel = sanitizeRequirementsForContext(
         hardClip(originalRequirements || '', CLIP_REQ_IN)
@@ -650,6 +722,27 @@ async function reduceContext(originalRequirements, contextRaw, hintText, maxItem
     if (fmMatch && fmMatch[1]) forbiddenUrls.add(fmMatch[1]);
 
     const pages = splitContextIntoPages(raw);
+
+    // Дебаг-режим: сохранение промежуточных результатов
+    if (debugMode) {
+        const fs = await import('fs');
+        const debugDir = './debug-context';
+        if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true });
+        
+        // Сохранение исходного контекста
+        fs.writeFileSync(`${debugDir}/01-raw-context.md`, raw);
+        
+        // Сохранение каждой страницы отдельно
+        pages.forEach((page, i) => {
+            const sizeKB = Math.round(page.length / 1000);
+            fs.writeFileSync(`${debugDir}/02-page-${String(i + 1).padStart(2, '0')}-${sizeKB}kb.md`, page);
+        });
+        
+        console.log(`[refiner] DEBUG: Saved ${pages.length} pages to ${debugDir}/`);
+    }
+
+    console.log(`[refiner] Stage#3 pages: ${pages.length}, sizes: [${pages.map(p => Math.round(p.length / 1000) + 'KB').join(', ')}]`);
+
     const pageChunksList = pages.map(pg => splitBySize(pg, CHUNK_SIZE_CONTEXT));
     const perPageCap = Math.max(1, Math.ceil(maxItems / Math.max(1, pages.length)));
 
@@ -779,6 +872,14 @@ ${pageChunks[c]}
 
     const dedup = dedupLines(acc, maxItems);
     const md = dedup.join('\n').slice(0, limitChars);
+
+    // Дебаг-режим: сохранение итогового результата
+    if (debugMode) {
+        const fs = await import('fs');
+        fs.writeFileSync('./debug-context/03-final-context.md', md);
+        console.log(`[refiner] DEBUG: Контекст сохранен (${md.length} символов, ${dedup.length} пунктов)`);
+    }
+
     console.log(`[refiner] Stage#3 context out.len=${md.length} items=${dedup.length}`);
     return md;
 }
