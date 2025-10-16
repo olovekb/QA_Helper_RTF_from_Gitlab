@@ -506,7 +506,8 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
         response_format = null,
         tools = null,
         tool_choice = null,
-        logRateLimit = true
+        logRateLimit = true,
+        cloudFirstTimeoutMs = 120000
     } = opts;
 
     console.log(`\n🔄 HYBRID API CALL START`);
@@ -518,7 +519,8 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
     console.log(`📝 Messages count: ${Array.isArray(messages) ? messages.length : 0}`);
     console.log(`${'='*80}\n`);
 
-    // Try Cloud.ru models first
+    // Try Cloud.ru models first with overall timeout budget
+    const deadline = Date.now() + cloudFirstTimeoutMs;
     for (let i = 0; i < models.length; i++) {
         const model = models[i];
         try {
@@ -556,6 +558,10 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
                 error.message.includes('cloudru-empty')
             ) {
                 console.log(`🔄 [hybrid] Rate limit/server error - trying next Cloud.ru model`);
+                if (Date.now() > deadline) {
+                    console.log(`⏳ [hybrid] Cloud-first timeout budget exceeded (${cloudFirstTimeoutMs}ms). Falling back to OpenRouter.`);
+                    break;
+                }
                 continue;
             }
             
