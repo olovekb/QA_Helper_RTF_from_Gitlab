@@ -2662,8 +2662,8 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             {
                 tools,
                 tool_choice: { type: 'function', function: { name: 'submit_cases' } },
-                temperature: 0.2,
-                top_p: 0.85,
+                temperature: 0,
+                top_p: 1,
                 max_tokens: 8192,
                 extra: { transforms: 'middle-out' }
             }
@@ -2707,8 +2707,8 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                             {
                                 tools,
                                 tool_choice: { type: "function", function: { name: "submit_cases" } },
-                                temperature: 0.2,
-                                top_p: 0.85,
+                                temperature: 0,
+                                top_p: 1,
                                 max_tokens: 8192
                             }
                         );
@@ -2800,8 +2800,8 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             {
                 tools,
                 tool_choice: { type: "function", function: { name: "submit_cases" } },
-                temperature: 0.25,
-                top_p: 0.9,
+                temperature: 0,
+                top_p: 1,
                 max_tokens: 8192,
                 extra: { transforms: 'middle-out' }
             }
