@@ -512,10 +512,10 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
     console.log(`\n🔄 HYBRID API CALL START`);
     console.log(`${'='*80}`);
     console.log(`🎯 Strategy: Cloud.ru first, then OpenRouter fallback`);
-    console.log(`📋 Cloud.ru models to try: ${models.join(', ')}`);
-    console.log(`🌡️  Temperature: ${temperature}`);
-    console.log(`🔢 Max tokens: ${max_tokens}`);
-    console.log(`📝 Messages count: ${messages.length}`);
+    console.log(`📋 Cloud.ru models to try: ${Array.isArray(models) ? models.join(', ') : '—'}`);
+    console.log(`🌡️  Temperature: ${typeof temperature === 'number' ? temperature : '—'}`);
+    console.log(`🔢 Max tokens: ${typeof max_tokens === 'number' ? max_tokens : '—'}`);
+    console.log(`📝 Messages count: ${Array.isArray(messages) ? messages.length : 0}`);
     console.log(`${'='*80}\n`);
 
     // Try Cloud.ru models first
@@ -534,6 +534,14 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
             });
 
             console.log(`\n✅ [hybrid] Cloud.ru SUCCESS with model: ${model}`);
+            // Sanity check: if tool_call args are broken or content is empty, do fallback
+            const rawMsg = result?.choices?.[0]?.message || {};
+            const hasTool = Array.isArray(rawMsg.tool_calls) && rawMsg.tool_calls.length > 0;
+            const contentStr = String(rawMsg.content || '').trim();
+            if (!hasTool && !contentStr) {
+                console.log(`⚠️  [hybrid] Cloud.ru returned empty content and no tool_call → using OpenRouter fallback`);
+                throw new Error('cloudru-empty');
+            }
             console.log(`🎉 Returning Cloud.ru result, skipping OpenRouter fallback`);
             return result;
 
@@ -542,7 +550,11 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
             console.log(`📝 Error: ${error.message}`);
             
             // If it's a rate limit or server error, try next model
-            if (error.message.includes('rate limit') || error.message.includes('server error')) {
+            if (
+                error.message.includes('rate limit') ||
+                error.message.includes('server error') ||
+                error.message.includes('cloudru-empty')
+            ) {
                 console.log(`🔄 [hybrid] Rate limit/server error - trying next Cloud.ru model`);
                 continue;
             }

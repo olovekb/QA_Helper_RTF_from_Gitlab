@@ -2664,7 +2664,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                 tool_choice: { type: 'function', function: { name: 'submit_cases' } },
                 temperature: 0,
                 top_p: 1,
-                max_tokens: 8192,
+                max_tokens: 25000,
                 extra: { transforms: 'middle-out' }
             }
         );
@@ -2705,11 +2705,11 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                             ],
                             config.openRouterAiKey,
                             {
-                                tools,
-                                tool_choice: { type: "function", function: { name: "submit_cases" } },
+                                // повтор без tools: просим текстовый JSON вместо tool_call
+                                // tools отключены, чтобы получить content
                                 temperature: 0,
                                 top_p: 1,
-                                max_tokens: 8192
+                                max_tokens: 16000
                             }
                         );
                         const a2 = extractToolArgs(retry, 'submit_cases');
