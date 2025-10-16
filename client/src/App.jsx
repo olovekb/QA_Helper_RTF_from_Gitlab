@@ -3,13 +3,42 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import './style.css';
 import config from './config.json';
-import { parseXmindFile } from './parce.xmind.mjs';
+import { parseXmindFile } from './parce-xmind/parce.xmind.mjs';
 import { useNavigate } from 'react-router-dom';
 import { marked } from 'marked'; // Импорт библиотеки marked
+import { get as idbGet, set as idbSet } from 'idb-keyval';
+
+function usePersistentState(key, defaultValue) {
+  const [state, setState] = useState(defaultValue);
+  const isFirstMount = useRef(true);
+
+  useEffect(() => {
+    idbGet(key)
+      .then(stored => {
+        if (stored !== undefined) {
+          setState(stored);
+        } else {
+          idbSet(key, defaultValue).catch(console.warn);
+        }
+      })
+      .catch(console.warn);
+  }, [key]);
+
+  useEffect(() => {
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      return;
+    }
+    idbSet(key, state).catch(console.warn);
+  }, [key, state]);
+
+  return [state, setState];
+}
 
 const App = ({ projects }) => {
   const [projectId, setProjectId] = useState(config.projectId);
   const [jiraIssue, setJiraIssue] = useState(config.jiraIssue);
+  const [openRouterKey, setOpenRouterKey] = usePersistentState('openRouterKey', '');
   const [loading, setLoading] = useState(false);
   const [htmlReport, setHtmlReport] = useState('');
   const [fixStatus, setFixStatus] = useState(false);
@@ -70,7 +99,8 @@ const App = ({ projects }) => {
       const recParagraph = container.querySelector(`#ai-rec-text-${testId}`);
 
       try {
-        const response = await axios.post(`${config.serverUrl}/ai-recommendation`, payload);
+        const headers = openRouterKey ? { 'X-OpenRouter-Key': openRouterKey } : {};
+        const response = await axios.post(`${config.serverUrl}/ai-recommendation`, payload, { headers });
         const recommendation = response.data.recommendation || 'Нет рекомендаций';
 
         if (recParagraph) {
@@ -160,7 +190,7 @@ const App = ({ projects }) => {
     }
     setExportMessage('Обработка файла и экспорт данных...');
     try {
-      const allureData = await parseXmindFile(xmindFile);
+      const allureData = await parseXmindFile(xmindFile, projectId);
       const response = await axios.post(`${config.serverUrl}/export`, {
         allureData,
         projectId,
@@ -238,6 +268,18 @@ const App = ({ projects }) => {
               <label>
                 Номер задачи из Jira:
                 <input type="text" value={jiraIssue} onChange={(e) => setJiraIssue(e.target.value)} />
+              </label>
+            </div>
+            <div>
+              <label>
+                OpenRouter API Key 
+                <span style={{ cursor: 'help', marginLeft: '5px' }} title="Оставьте пустым для использования API-ключа по умолчанию">ⓘ</span>:
+                <input 
+                  type="password" 
+                  value={openRouterKey} 
+                  onChange={(e) => setOpenRouterKey(e.target.value.trim())} 
+                  placeholder="sk-or-..." 
+                />
               </label>
             </div>
             <button type="submit" disabled={loading}>

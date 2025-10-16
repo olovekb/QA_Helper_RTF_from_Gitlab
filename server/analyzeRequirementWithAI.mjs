@@ -1,7 +1,7 @@
 // analyzeRequirementWithAI.mjs
-import fetch from 'node-fetch';
 import fs from 'fs';
 import { prepareContextWithAI } from './contextRefiner.mjs';
+import { callWithCloudRuFallback } from './cloudruClient.mjs';
 import config from './config.json' assert { type: 'json' };
 // Жёсткая инструкция к финальному ответу: только нужные Markdown-блоки
 const SYSTEM_ENFORCER =
@@ -12,11 +12,9 @@ const SYSTEM_ENFORCER =
   'без каких-либо пояснений вне блоков. ' +
   'Если нет ошибок — верни пустую строку.';
 
-// Вынес настройки OpenRouter в константы
-const API_TOKEN = config.openRouterAiKey;
-
-const URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'deepseek/deepseek-chat-v3.1:free';
+// Настройки API
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_API_KEY = config.openRouterAiKey;
 
 /**
  * Анализирует требование с учётом статического анализа и LLM.
@@ -35,7 +33,8 @@ export async function analyzeRequirementWithAI(
   context = '—',
   project = '—',
   glossary = '—',
-  opts = {}
+  opts = {},
+  apiKey = null
 ) {
   const {
     prefilter = true,
@@ -57,7 +56,8 @@ export async function analyzeRequirementWithAI(
         contextHint,
         contextPages,
         maxGlossary: 40,
-        maxContext: 50
+        maxContext: 50,
+        apiToken: apiKey || OPENROUTER_API_KEY  // Передаём пользовательский ключ!
       });
       if (refined?.requirements_md?.trim()) cleanedReq = refined.requirements_md;
       if (refined?.mini_glossary_md?.trim()) miniGlossary = refined.mini_glossary_md;
@@ -149,151 +149,107 @@ ${miniGlossary || '—'}
   console.log('[analyze] Финальный промпт:\n', prompt);
 
 
-  // ---------- 2) Вызов LLM с ретраями ----------
-  const headers = {
-    Authorization: `Bearer ${API_TOKEN}`,
-    'Content-Type': 'application/json'
-  };
-
-  let currentMaxTokens = 24000; // стартуем с ограничением и будем понижать при 400
-  const makeBody = () =>
-    JSON.stringify({
-      model: MODEL,
-      max_tokens: currentMaxTokens,
-      temperature: 0.25,
-      messages: [
+  // ---------- 2) Вызов LLM с Cloud.ru приоритетом и OpenRouter fallback ----------
+  try {
+    const data = await callWithCloudRuFallback(
+      OPENROUTER_URL,
+      [
         { role: 'system', content: SYSTEM_ENFORCER },
         { role: 'user', content: prompt }
-      ]
-    });
+      ],
+      apiKey || OPENROUTER_API_KEY,
+            {
+              models: config.cloudruModels,
+              temperature: 0.25,
+              max_tokens: 24000,  // Снижено с 24000 до 8000 для ускорения
+              logRateLimit: true
+            }
+    );
 
-  const maxRetries = 3;
-  let rateRetries = 0;
-
-  const RATE_LIMIT_MAX_RETRIES = Number(process.env.RATE_LIMIT_MAX_RETRIES || 7);
-  const RETRY_AFTER_DEFAULT_MS = Number(process.env.RETRY_AFTER_DEFAULT_MS || 20000);
-
-  const getRetryAfterMs = (res) => {
-    try {
-      const h = res?.headers?.get?.('retry-after');
-      if (!h) return RETRY_AFTER_DEFAULT_MS;
-      const secs = Number(h);
-      if (!Number.isNaN(secs) && secs > 0) return secs * 1000;
-      const when = Date.parse(h);
-      if (!Number.isNaN(when)) {
-        const diff = when - Date.now();
-        return diff > 0 ? diff : RETRY_AFTER_DEFAULT_MS;
-      }
-      return RETRY_AFTER_DEFAULT_MS;
-    } catch {
-      return RETRY_AFTER_DEFAULT_MS;
-    }
-  };
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const res = await fetch(URL, { method: 'POST', headers, body: makeBody() });
-
-      // Прямой 429 от сервера
-      if (res.status === 429) {
-        const waitMs = getRetryAfterMs(res);
-        console.warn(`[analyze] 429 rate-limited, wait ${waitMs}ms (retry ${rateRetries + 1}/${RATE_LIMIT_MAX_RETRIES})`);
-        await new Promise(r => setTimeout(r, waitMs));
-        rateRetries++;
-        if (rateRetries > RATE_LIMIT_MAX_RETRIES) {
-          throw new Error('Rate limit exceeded repeatedly (HTTP 429)');
-        }
-        attempt--; // не сжигаем попытку
-        continue;
-      }
-
-      const data = await res.json().catch(() => ({}));
-
-      // 429 может прийти в теле при 200 OK
-      const bodyCode = data?.error?.code || data?.error?.status;
-      const bodyMsg = data?.error?.message || '';
-      if (res.status === 429 || bodyCode === 429 || /rate.?limit/i.test(String(bodyMsg))) {
-        const waitMs = getRetryAfterMs(res);
-        console.warn(`[analyze] 429(body) rate-limited, wait ${waitMs}ms (retry ${rateRetries + 1}/${RATE_LIMIT_MAX_RETRIES})`);
-        await new Promise(r => setTimeout(r, waitMs));
-        rateRetries++;
-        if (rateRetries > RATE_LIMIT_MAX_RETRIES) {
-          throw new Error('Rate limit exceeded repeatedly (429 via body)');
-        }
-        attempt--; // не сжигаем попытку
-        continue;
-      }
-
-      if (!res.ok || data?.error) {
-        const errMsg = data?.error?.message || JSON.stringify(data?.error || {});
-        throw new Error(`${res.status} ${res.statusText}: ${errMsg}`.trim());
-      }
-
-      let content = data.choices?.[0]?.message?.content?.trim();
-      if (!content) throw new Error('Ответ от модели пустой');
-
-      // Нормализация вывода для моделей, склонных вставлять пустые или "```markdown" блоки
-      content = content.replace(/```\s*markdown\s*/g, '```');
-      content = content.replace(/```\s*\n\s*```/g, ''); // удаляем пустые блоки ```\n```
-
-      // Если вся выдача в одном общем fenced-блоке — режем по секциям "### ..."
-      const startsFence = /^\s*```/.test(content);
-      const endsFence = /```\s*$/.test(content);
-      if (startsFence && endsFence) {
-        const inner = content.replace(/^\s*```\s*/, '').replace(/\s*```\s*$/, '').trim();
-        const parts = inner.split(/\n(?=###\s)/).map(s => s.trim()).filter(Boolean);
-        if (parts.length > 1) {
-          content = parts.map(p => '```\n' + p + '\n```').join('\n\n');
-        }
-      }
-
-      // Если вообще нет fenced-блоков, но есть заголовки — обернём каждую секцию
-      if (!/```/.test(content) && /(^|\n)###\s/.test(content)) {
-        const parts = content.split(/\n(?=###\s)/).map(s => s.trim()).filter(Boolean);
-        if (parts.length) {
-          content = parts.map(p => '```\n' + p + '\n```').join('\n\n');
-        }
-      }
-
-      // Если в тексте уже есть несколько fenced-блоков — отфильтруем шумовые
-      const multiBlocks = content.match(/```[\s\S]*?```/g);
-      if (multiBlocks && multiBlocks.length > 1) {
-        const filtered = multiBlocks
-          .map(b => ({ raw: b, inner: b.replace(/^```\s*/,'').replace(/\s*```$/,'').trim() }))
-          .filter(x => x.inner && /^###\s/.test(x.inner));
-        if (filtered.length) {
-          content = filtered.map(x => '```\n' + x.inner + '\n```').join('\n\n');
-        }
-      }
-
-      // Cохраняем для отладки
+    let content = data.choices?.[0]?.message?.content?.trim();
+    console.log(`[analyze] AI response length: ${content?.length || 0} chars`);
+    console.log(`[analyze] AI response preview: "${content?.slice(0, 200) || 'no content'}..."`);
+    
+    if (!content || content === '```' || content === '```\n```') {
+      console.warn('[analyze] Empty or invalid AI response, falling back to OpenRouter');
+      
+      // Fallback на OpenRouter при пустом ответе от Cloud.ru
       try {
-        fs.writeFileSync('requirement-analysis.txt', content, 'utf8');
-      } catch (e) {
-        console.warn('Не удалось записать requirement-analysis.txt:', e.message);
+        console.log('[analyze] Attempting OpenRouter fallback...');
+        const fallbackData = await callWithCloudRuFallback(
+          OPENROUTER_URL,
+          [
+            { role: 'system', content: SYSTEM_ENFORCER },
+            { role: 'user', content: prompt }
+          ],
+          OPENROUTER_API_KEY,
+                {
+                  temperature: 0.25,
+                  max_tokens: 24000,  // Снижено с 24000 до 8000 для ускорения
+                  logRateLimit: true
+                }
+        );
+        
+        const fallbackContent = fallbackData.choices?.[0]?.message?.content?.trim() || '';
+        console.log(`[analyze] OpenRouter fallback response length: ${fallbackContent.length} chars`);
+        
+        if (fallbackContent && fallbackContent !== '```' && fallbackContent !== '```\n```') {
+          console.log('[analyze] OpenRouter fallback successful');
+          content = fallbackContent;
+        } else {
+          console.error('[analyze] OpenRouter fallback also returned empty response. Full data:', JSON.stringify(fallbackData, null, 2));
+          throw new Error('Все AI провайдеры вернули пустой ответ');
+        }
+      } catch (fallbackError) {
+        console.warn('[analyze] OpenRouter fallback failed:', fallbackError.message);
+        throw new Error('Ответ от модели пустой и fallback не удался');
       }
-
-      return content;
-    } catch (err) {
-      // если это серверная 5xx — попробуем повторить
-      const is5xx = /\b5\d{2}\b/.test(err.message) || /ECONNRESET|ETIMEDOUT/i.test(err.message);
-      // 400 Bad Request: попробуем уменьшить ответ и повторить
-      const is400 = /\b400\b/.test(err.message);
-      if (attempt < maxRetries && is5xx) {
-        const delay = 1000 * 2 ** (attempt - 1);
-        console.warn(`[analyze] попытка ${attempt} не удалась (${err.message}), retry через ${delay}ms...`);
-        await new Promise((r) => setTimeout(r, delay));
-        continue;
-      } else if (attempt < maxRetries && is400) {
-        // понижаем max_tokens и даём короткую паузу
-        currentMaxTokens = Math.max(1800, Math.floor(currentMaxTokens * 0.6));
-        const delay = 1200;
-        console.warn(`[analyze] 400 Bad Request. Понижаю max_tokens до ${currentMaxTokens}. Retry через ${delay}ms...`);
-        await new Promise((r) => setTimeout(r, delay));
-        continue;
-      }
-      console.error('Ошибка анализа требования:', err.message);
-      throw err;
     }
+
+    // Нормализация вывода для моделей, склонных вставлять пустые или "```markdown" блоки
+    content = content.replace(/```\s*markdown\s*/g, '```');
+    content = content.replace(/```\s*\n\s*```/g, ''); // удаляем пустые блоки ```\n```
+
+    // Если вся выдача в одном общем fenced-блоке — режем по секциям "### ..."
+    const startsFence = /^\s*```/.test(content);
+    const endsFence = /```\s*$/.test(content);
+    if (startsFence && endsFence) {
+      const inner = content.replace(/^\s*```\s*/, '').replace(/\s*```\s*$/, '').trim();
+      const parts = inner.split(/\n(?=###\s)/).map(s => s.trim()).filter(Boolean);
+      if (parts.length > 1) {
+        content = parts.map(p => '```\n' + p + '\n```').join('\n\n');
+      }
+    }
+
+    // Если вообще нет fenced-блоков, но есть заголовки — обернём каждую секцию
+    if (!/```/.test(content) && /(^|\n)###\s/.test(content)) {
+      const parts = content.split(/\n(?=###\s)/).map(s => s.trim()).filter(Boolean);
+      if (parts.length) {
+        content = parts.map(p => '```\n' + p + '\n```').join('\n\n');
+      }
+    }
+
+    // Если в тексте уже есть несколько fenced-блоков — отфильтруем шумовые
+    const multiBlocks = content.match(/```[\s\S]*?```/g);
+    if (multiBlocks && multiBlocks.length > 1) {
+      const filtered = multiBlocks
+        .map(b => ({ raw: b, inner: b.replace(/^```\s*/,'').replace(/\s*```$/,'').trim() }))
+        .filter(x => x.inner && /^###\s/.test(x.inner));
+      if (filtered.length) {
+        content = filtered.map(x => '```\n' + x.inner + '\n```').join('\n\n');
+      }
+    }
+
+    // Сохраняем для отладки
+    try {
+      fs.writeFileSync('requirement-analysis.txt', content, 'utf8');
+    } catch (e) {
+      console.warn('Не удалось записать requirement-analysis.txt:', e.message);
+    }
+
+    return content;
+  } catch (err) {
+    console.error('[analyze] Ошибка анализа требования:', err.message);
+    throw err;
   }
 }

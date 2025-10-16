@@ -1,6 +1,143 @@
 import express from 'express';
 import cors from 'cors';
 import JSON5 from 'json5';
+
+/**
+ * Обработка больших запросов для OpenRouter через разделение на чанки
+ * @param {Array} messages - Исходные сообщения
+ * @param {Object} opts - Опции
+ * @returns {Promise<Object>} - Объединенный результат
+ */
+async function processLargeOpenRouterRequest(messages, opts, apiKey) {
+    const { model, models, temperature, max_tokens, response_format } = opts;
+    
+    // Находим самое большое сообщение (обычно user content)
+    let largestMessage = null;
+    let largestIndex = -1;
+    let maxSize = 0;
+    
+    messages.forEach((msg, index) => {
+        const size = JSON.stringify(msg.content).length;
+        if (size > maxSize) {
+            maxSize = size;
+            largestMessage = msg;
+            largestIndex = index;
+        }
+    });
+    
+    if (!largestMessage || largestIndex === -1) {
+        throw new Error('Could not find largest message to split');
+    }
+    
+    console.log(`[callWithBackoff] Splitting message ${largestIndex} (${maxSize} chars) into chunks...`);
+    
+    // Разбиваем большое сообщение на чанки
+    const content = largestMessage.content;
+    const chunkSize = 80000; // Размер чанка в символах (примерно 20,000 токенов)
+    const chunks = [];
+    
+    for (let i = 0; i < content.length; i += chunkSize) {
+        chunks.push(content.slice(i, i + chunkSize));
+    }
+    
+    console.log(`[callWithBackoff] Created ${chunks.length} chunks`);
+    
+    // Обрабатываем каждый чанк
+    const results = [];
+    for (let i = 0; i < chunks.length; i++) {
+        console.log(`[callWithBackoff] Processing chunk ${i + 1}/${chunks.length}...`);
+        
+        // Создаем копию сообщений с текущим чанком
+        const chunkMessages = [...messages];
+        chunkMessages[largestIndex] = {
+            ...largestMessage,
+            content: chunks[i]
+        };
+        
+        // Добавляем инструкцию для чанка
+        if (chunks.length > 1) {
+            chunkMessages[largestIndex].content = `ЧАСТЬ ${i + 1} ИЗ ${chunks.length}:\n\n${chunks[i]}`;
+        }
+        
+        try {
+            // Используем прямую отправку без проверки размера
+            const chunkResult = await makeDirectOpenRouterCall(chunkMessages, apiKey, {
+                model,
+                models,
+                temperature,
+                max_tokens: Math.min(max_tokens, 4000), // Ограничиваем размер ответа
+                response_format
+            });
+            
+            results.push(chunkResult.choices?.[0]?.message?.content || '');
+            console.log(`[callWithBackoff] Chunk ${i + 1} processed successfully`);
+            
+        } catch (error) {
+            console.error(`[callWithBackoff] Chunk ${i + 1} failed:`, error.message);
+            results.push(''); // Добавляем пустую строку для неудачного чанка
+        }
+    }
+    
+    // Объединяем результаты
+    const combinedContent = results.filter(r => r.trim()).join('\n\n');
+    
+    console.log(`[callWithBackoff] Combined ${results.length} chunks into final result (${combinedContent.length} chars)`);
+    
+    // Возвращаем результат в формате, ожидаемом вызывающим кодом
+    return {
+        choices: [{
+            message: {
+                content: combinedContent
+            }
+        }],
+        usage: {
+            prompt_tokens: Math.ceil(JSON.stringify(messages).length / 4),
+            completion_tokens: Math.ceil(combinedContent.length / 4),
+            total_tokens: Math.ceil((JSON.stringify(messages).length + combinedContent.length) / 4)
+        },
+        model: model
+    };
+}
+
+/**
+ * Прямой вызов OpenRouter API без проверки размера
+ * @param {Array} messages - Сообщения
+ * @param {Object} opts - Опции
+ * @returns {Promise<Object>} - Результат API
+ */
+async function makeDirectOpenRouterCall(messages, apiKey, opts) {
+    const { model, models, temperature, max_tokens, response_format } = opts;
+    
+    const modelQueue = Array.isArray(models) && models.length
+        ? models
+        : [model, 'qwen/qwen3-235b-a22b:free'];
+    
+    const payload = {
+        model: modelQueue[0],
+        messages,
+        temperature,
+        max_tokens,
+        ...(response_format && { response_format })
+    };
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey || config.openRouterAiKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://test-inspector.abanking.ru',
+            'X-Title': 'Allure Test Inspector'
+        },
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`OpenRouter API error ${response.status}: ${errorText}`);
+    }
+
+    return await response.json();
+}
 import {
     getAllureDefectById,
     getSharedStepsList,
@@ -40,7 +177,7 @@ import pLimit from 'p-limit';
 import { formatTestCase } from './format-testcase.mjs';
 import { formatTestCaseAsJson } from './generate-json.mjs';
 import { staticAnalysis } from './static-analysis.mjs';
-import { exportStructureAllure } from './xmind-parce/export-structure-allure.mjs';
+import {exportStructureAllure, exportStructureAllureNocode} from './xmind-parce/export-structure-allure.mjs';
 import { analyzeTestCaseWithAI } from './ai-testcase.mjs';
 import { fetchConfluencePage } from './confluenceFetcher.mjs';
 import { analyzeRequirementWithAI } from './analyzeRequirementWithAI.mjs';
@@ -51,6 +188,7 @@ import config from './config.json' assert { type: 'json'};
 import http from 'http';
 import https from 'https';
 import { prepareContextWithAI } from './contextRefiner.mjs';
+import { callWithCloudRuFallback } from './cloudruClient.mjs';
 
 const DEFAULT_JIRA_INTEGRATION_ID = config.defaultJiraIntegrationId;
 
@@ -66,7 +204,7 @@ const upload = multer({
 const corsOptions = {
     origin: 'https://test-inspector.abanking.ru',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-OpenRouter-Key'],
     credentials: true,
 };
 
@@ -619,7 +757,14 @@ app.post('/api/export', async (req, res) => {
     }
 
     try {
-        await exportStructureAllure(allureData, projectId); // Передаем JSON в функцию
+        // Если проект - "Nocode 2.0", то делаем экспорт по новой структуре
+        if (projectId === '307') {
+            console.log('Экспортируем по новой структуре для НОУКОДА')
+            await exportStructureAllureNocode(allureData, projectId);
+        } else {
+            console.log('Экспортируем НЕ для НОУКОДА')
+            await exportStructureAllure(allureData, projectId);
+        }
 
         res.status(200).send('Экспорт успешно завершён.');
     } catch (error) {
@@ -631,6 +776,9 @@ app.post('/api/export', async (req, res) => {
 
 app.post('/api/ai-recommendation', async (req, res) => {
     try {
+        // Получаем OpenRouter API Key из header (с фоллбэком на config)
+        const apiKey = req.headers['x-openrouter-key']?.trim() || config.openRouterAiKey;
+
         let testCase = req.body;
 
         if (!testCase.id) {
@@ -693,7 +841,7 @@ app.post('/api/ai-recommendation', async (req, res) => {
         }
 
         // Вызываем функцию анализа тест-кейса с использованием ИИ
-        const recommendation = await analyzeTestCaseWithAI(testCase);
+        const recommendation = await analyzeTestCaseWithAI(testCase, apiKey);
         res.json({ recommendation });
     } catch (error) {
         console.error('Ошибка в /ai-recommendation:', error.message);
@@ -740,6 +888,9 @@ app.post('/api/analyze/solution', async (req, res) => {
             contextPageIds,
             contextInstruction
         } = req.body;
+
+        // Получаем OpenRouter API Key из header (с фоллбэком на config)
+        const apiKey = req.headers['x-openrouter-key']?.trim() || config.openRouterAiKey;
 
         if (!text && !pageId) {
             return res.status(400).json({ success: false, error: 'Параметр text или pageId обязателен.' });
@@ -855,7 +1006,8 @@ app.post('/api/analyze/solution', async (req, res) => {
                 prefilter: true,
                 contextHint: [contextInstruction || '—', extraHint].filter(Boolean).join(' '),
                 contextPages
-            }
+            },
+            apiKey // передаём пользовательский API ключ
         );
 
         const result = {
@@ -1161,8 +1313,12 @@ app.post('/api/bug/ai-review', async (req, res) => {
     if (!task || typeof task !== 'object') {
         return res.status(400).json({ error: 'Нужен объект task' });
     }
+    
+    // Получаем OpenRouter API Key из header (с фоллбэком на config)
+    const apiKey = req.headers['x-openrouter-key']?.trim() || config.openRouterAiKey;
+    
     try {
-        const feedback = await analyzeBugWithAI(task);
+        const feedback = await analyzeBugWithAI(task, apiKey);
         return res.json(feedback);
     } catch (err) {
         console.error('AI-review error:', err);
@@ -1450,7 +1606,7 @@ ENV: ${env}
 
         // 5) Вызов модели с tool-calling
         const tools = [buildFillJiraFieldsTool({ sevOptions, platOptions, sympOptions })];
-        const ai = await callWithBackoff(
+        const ai = await callWithCloudRuFallback(
             OPENROUTER_URL,
             [
                 { role: 'system', content: 'Ты возвращаешь строго структурированный ответ через function call.' },
@@ -1523,7 +1679,7 @@ function extractToolArgs(aiResponse, preferredFnName) {
 // Универсальная функция для повторных попыток при 5xx,
 // принимающая либо строку prompt, либо массив сообщений {role, content}
 //
-async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
+export async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
     const {
         // Основная free‑модель и массив fallback‑моделей
         model = 'deepseek/deepseek-chat-v3.1:free',
@@ -1538,12 +1694,25 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
         maxAttempts = 8,          // больше попыток: учитываем очереди у провайдера
         minWaitMs = 1500,         // минимальный бэкофф
         maxWaitMs = 120000,       // верхняя граница ожидания между ретраями
-        logRateLimit = true       // логировать лимит-хедеры для диагностики
+        logRateLimit = true,      // логировать лимит-хедеры для диагностики
+        reduceTokensOn400 = false // понижать max_tokens при 400 Bad Request (для больших запросов)
     } = opts;
 
     const messages = Array.isArray(promptOrMessages)
         ? promptOrMessages
         : [{ role: 'user', content: promptOrMessages }];
+
+    // Проверка размера запроса для OpenRouter
+    const requestSize = JSON.stringify(messages).length;
+    const estimatedTokens = Math.ceil(requestSize / 4);
+    const MAX_TOKENS_OPENROUTER = 100000; // Лимит для OpenRouter (примерно)
+    
+    console.log(`[callWithBackoff] Request size: ${requestSize} chars, estimated tokens: ${estimatedTokens}`);
+    
+    if (estimatedTokens > MAX_TOKENS_OPENROUTER) {
+        console.log(`[callWithBackoff] Request too large (${estimatedTokens} tokens > ${MAX_TOKENS_OPENROUTER}), splitting into chunks...`);
+        return await processLargeOpenRouterRequest(messages, opts, apiKey);
+    }
 
     // экспоненциальный бэкофф с небольшим джиттером
     const backoff = (attemptIdx) => {
@@ -1553,6 +1722,7 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
     };
 
     let attempt = 0;
+    let currentMaxTokens = max_tokens; // для динамического понижения при 400
 
     // Очередь моделей: основная + фолбэк
     const modelQueue = Array.isArray(models) && models.length
@@ -1568,12 +1738,16 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
             messages,
             temperature,
             top_p,
-            max_tokens,
+            max_tokens: currentMaxTokens,
             ...extra
         };
         if (tools) payload.tools = tools;
         if (tool_choice) payload.tool_choice = tool_choice;
         if (response_format) payload.response_format = response_format;
+
+        if (logRateLimit && attempt === 1 && modelIdx === 0) {
+            console.log(`[callWithBackoff] Запрос к модели: ${payload.model}`);
+        }
 
         const resp = await fetch(url, {
             method: 'POST',
@@ -1584,35 +1758,78 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
             body: JSON.stringify(payload)
         });
 
-        // Успешно — парсим и выходим
+        // Успешно — парсим и проверяем
         if (resp.ok) {
             const text = await resp.text();
             if (!text || !/[{\[]/.test(text)) {
                 throw new Error(`Empty or invalid JSON response from AI: "${text}"`);
             }
+            let data;
             try {
-                return JSON.parse(text);
+                data = JSON.parse(text);
             } catch {
-                // JSON5 импортирован у вас выше
-                return JSON5.parse(text);
+                
+                data = JSON5.parse(text);
+            }
+            
+            // Проверяем ошибки в теле ответа (429 может прийти в теле при 200 OK)
+            if (data?.error) {
+                const bodyCode = data.error.code || data.error.status;
+                const bodyMsg = data.error.message || '';
+                
+                // Ошибочные коды: 4xx и 5xx
+                if (bodyCode >= 400) {
+                    if (logRateLimit) {
+                        console.warn(`[callWithBackoff] Ошибка в теле (HTTP ${resp.status}): код ${bodyCode} - ${bodyMsg}`);
+                    }
+                    resp.status = bodyCode; // подменяем для обработки ниже
+                } 
+                // Код есть, но успешный (2xx, 3xx) - возвращаем с предупреждением
+                else if (bodyCode) {
+                    if (logRateLimit) {
+                        console.warn(`[callWithBackoff] Предупреждение в теле: код ${bodyCode} - ${bodyMsg}`);
+                    }
+                    return data;
+                } 
+                // Нет кода - непонятная ошибка
+                else {
+                    if (logRateLimit) {
+                        console.warn(`[callWithBackoff] Ошибка без кода в теле:`, data.error);
+                    }
+                    throw new Error(`API error без кода: ${bodyMsg || JSON.stringify(data.error)}`);
+                }
+            } else {
+                return data;
             }
         }
 
-        // ==== 404/400: модель недоступна → переключаемся на фолбэк ====
-        if (resp.status === 404 || resp.status === 400) {
+        // ==== 429/404/400: попробовать понизить токены или переключить модель ====
+        if (resp.status === 429 || resp.status === 404 || resp.status === 400) {
+            // Для 400: сначала пробуем понизить токены (если включено)
+            if (resp.status === 400 && reduceTokensOn400 && currentMaxTokens > 1800) {
+                currentMaxTokens = Math.max(1800, Math.floor(currentMaxTokens * 0.6));
+                if (logRateLimit) {
+                    console.warn(`[callWithBackoff] 400 Bad Request. Понижаю max_tokens до ${currentMaxTokens}`);
+                }
+                attempt--; // не сжигаем попытку
+                continue;
+            }
+            
+            // Пробуем переключиться на следующую модель
             if (modelIdx < modelQueue.length - 1) {
                 modelIdx++;
                 if (logRateLimit) {
-                    console.warn(`[callWithBackoff] HTTP ${resp.status}. Switching model to ${modelQueue[modelIdx]}`);
+                    console.warn(`[callWithBackoff] HTTP ${resp.status}. Переключаюсь на модель: ${modelQueue[modelIdx]}`);
                 }
-                // не сжигаем попытку
-                attempt--;
+                attempt--; // не сжигаем попытку
                 continue;
             }
         }
 
-        // ==== 429: подождать и повторить внутри функции ====
+        // ==== 429: ожидание если все модели заняты ====
         if (resp.status === 429) {
+            
+            // Ожидание, если все модели закончились
             // Собираем все подсказки по времени ожидания
             const h = (name) => resp.headers.get(name);
             const ra = parseFloat(h('retry-after') || '0'); // секунды
@@ -1642,7 +1859,7 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
             if (!waitMs || waitMs < 1000) waitMs = backoff(attempt);
 
             if (logRateLimit) {
-                console.warn('[callWithBackoff] 429 rate limit. Waiting ms:', waitMs, {
+                console.warn('[callWithBackoff] 429 rate limit (все модели заняты). Waiting ms:', waitMs, {
                     retryAfter: h('retry-after'),
                     xRateReset: h('x-ratelimit-reset'),
                     xRateResetReq: h('x-ratelimit-reset-requests'),
@@ -1652,6 +1869,7 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
             }
 
             await new Promise(r => setTimeout(r, Math.min(waitMs, maxWaitMs)));
+            modelIdx = 0; // сбрасываем на первую модель после ожидания
             // и пробуем снова
             continue;
         }
@@ -1673,74 +1891,6 @@ async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
 
     throw new Error('OpenRouter: превышено число попыток (после 429/5xx)');
 }
-
-
-
-function buildSubmitCasesTool(allowedCodes = []) {
-    return {
-        type: "function",
-        function: {
-            name: "submit_cases",
-            description: "Верни итоговые тест-кейсы строго в массиве cases",
-            parameters: {
-                type: "object",
-                properties: {
-                    cases: {
-                        type: "array",
-                        items: {
-                            type: "object",
-                            properties: {
-                                feature: { type: "string" },
-                                story: { type: "string" },
-                                scenario: { type: "string" },
-                                // ВАЖНО: code только из модели. Поле опционально.
-                                ...(allowedCodes.length
-                                    ? { code: { type: "string", enum: allowedCodes } }
-                                    : { code: { type: "string" } }),
-                                title: { type: "string" },
-                                precondition: { type: "string" },
-                                steps: { type: "array", items: { type: "string" } },
-                                expected: { type: "string" },
-                                tags: { type: "array", items: { type: "string" } },
-                                layer: {
-                                    type: "string", enum: [
-                                        "E2E Tests",
-                                        "Integration frontend Tests", "Integration backend Tests",
-                                        "Unit frontend Tests", "Unit backend Tests"
-                                    ]
-                                },
-                                priority: { type: "string", enum: ["Critical", "High", "Medium", "Low"] },
-                                version: { type: "string" },
-                                links: {
-                                    type: "array",
-                                    items: {
-                                        type: "object",
-                                        properties: {
-                                            text: { type: "string" },
-                                            url: { type: "string" },
-                                            type: { type: "string" }
-                                        }
-                                    }
-                                },
-                                jiraIssueOption: {
-                                    type: "object",
-                                    properties: {
-                                        value: { type: "string" },
-                                        integrationId: { type: "string" }
-                                    }
-                                }
-                            },
-                            required: ["title", "layer"]
-                        }
-                    }
-                },
-                required: ["cases"],
-                additionalProperties: false
-            }
-        }
-    };
-}
-
 
 function buildSubmitModelTool() {
     return {
@@ -2484,7 +2634,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 `.trim();
 
         const tools = [buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios)];
-        const ai = await callWithBackoff(
+        const ai = await callWithCloudRuFallback(
             OPENROUTER_URL,
             [
                 { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
@@ -2494,13 +2644,6 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             {
                 tools,
                 tool_choice: { type: 'function', function: { name: 'submit_cases' } },
-                models: [
-                    'meta-llama/llama-4-maverick:free',
-                    'deepseek/deepseek-chat-v3.1:free',
-                    'qwen/qwen3-235b-a22b:free',
-                    'openai/gpt-oss-20b:free',
-                    'mistralai/mistral-small-3.2-24b-instruct:free'
-                ],
                 temperature: 0.2,
                 top_p: 0.85,
                 max_tokens: 8192,
@@ -2536,7 +2679,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                 if (!result.length) {
                     // одна попытка перегенерации с более строгими настройками
                     try {
-                        const retry = await callWithBackoff(
+                        const retry = await callWithCloudRuFallback(
                             OPENROUTER_URL,
                             [
                                 { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
@@ -2546,10 +2689,6 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                             {
                                 tools,
                                 tool_choice: { type: "function", function: { name: "submit_cases" } },
-                                models: [
-                                    'meta-llama/llama-3.1-8b-instruct:free',
-                                    'mistralai/mistral-small-3.2-24b-instruct:free'
-                                ],
                                 temperature: 0.2,
                                 top_p: 0.85,
                                 max_tokens: 8192
@@ -2633,7 +2772,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 `.trim();
 
         const tools = [buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios)];
-        const ai = await callWithBackoff(
+        const ai = await callWithCloudRuFallback(
             OPENROUTER_URL,
             [
                 { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
@@ -2643,11 +2782,6 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             {
                 tools,
                 tool_choice: { type: "function", function: { name: "submit_cases" } },
-                models: [
-                    'qwen/qwen3-coder:free',
-                    'meta-llama/llama-3.1-8b-instruct:free',
-                    'mistralai/mistral-small-3.2-24b-instruct:free'
-                ],
                 temperature: 0.25,
                 top_p: 0.9,
                 max_tokens: 8192,
@@ -2946,7 +3080,7 @@ ${reqStringForModel}
 
     try {
         const tools = [buildSubmitModelTool()];
-        const ai = await callWithBackoff(
+        const ai = await callWithCloudRuFallback(
             OPENROUTER_URL,
             [
                 { role: 'system', content: SYSTEM_PROMPT },
@@ -2956,12 +3090,6 @@ ${reqStringForModel}
             {
                 tools,
                 tool_choice: { type: "function", function: { name: "submit_test_model" } },
-                models: [
-                    'deepseek/deepseek-chat-v3.1:free',
-                    'qwen/qwen3-235b-a22b:free',
-                    'meta-llama/llama-4-maverick:free',
-                    'mistralai/mistral-small-3.2-24b-instruct:free'
-                ],
                 temperature: 0.25,
                 top_p: 0.9,
                 max_tokens: 8192,

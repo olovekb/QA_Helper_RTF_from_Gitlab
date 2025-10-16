@@ -1,6 +1,7 @@
 import fetch from 'node-fetch';
 import axios from 'axios'
 import { spinningLoader } from './spinning-loader.mjs';
+import { callWithCloudRuFallback } from './cloudruClient.mjs';
 import config from './config.json' assert { type: 'json' };
 
 // TODO: Нужно рефачить - переиспользовать из tia-mapping-service\utils\allureAuth.js
@@ -289,7 +290,7 @@ export async function linkIssueToAllureDefect(defectId, integrationId, issueName
 }
 
 
-export async function analyzeBugWithAI(task) {
+export async function analyzeBugWithAI(task, apiKey = null) {
     const { summary, description, steps, actual, expected } = task;
     const prompt = `
 Ты — эксперт по написанию баг-репортов. Проверь следующие поля по нашему чек-листу:
@@ -335,18 +336,15 @@ ${expected || '<пусто>'}
 \`\`\`
 `;
 
-    const res = await fetch(OPENROUTER_URL, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${OPENROUTER_KEY}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            model: 'deepseek/deepseek-chat-v3.1:free',
-            messages: [{ role: 'user', content: prompt }]
-        })
-    });
-    const json = await res.json();
+    const json = await callWithCloudRuFallback(
+        OPENROUTER_URL,
+        [{ role: 'user', content: prompt }],
+        apiKey || OPENROUTER_KEY, // используем пользовательский ключ или дефолтный
+        {
+            temperature: 0.25,
+            max_tokens: 4096
+        }
+    );
     const content = json.choices?.[0]?.message?.content || '';
 
     // Вытаскиваем первый JSON-объект из текста

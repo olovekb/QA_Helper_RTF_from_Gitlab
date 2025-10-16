@@ -1,7 +1,7 @@
 {
   "name": "allure-static-analysis-of-test-cases",
   "version": "1.0.0",
-  "description": "Статический анализатор тест-кейсов из Allure (ТестОпс)",
+  "description": "QA-helper",
   "main": "index.js",
   "scripts": {
     "run": "node server/server"

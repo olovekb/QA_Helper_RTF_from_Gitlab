@@ -1,5 +1,5 @@
-import fetch from 'node-fetch';
 import fs from 'fs';
+import { callWithCloudRuFallback } from './cloudruClient.mjs';
 import config from './config.json' assert { type: 'json' };
 
 
@@ -73,7 +73,7 @@ function formatStepsFromString(rawSteps) {
 }
 
 // --- ИЗМЕНЕНО: Основная функция анализа ---
-export async function analyzeTestCaseWithAI(testCase) {
+export async function analyzeTestCaseWithAI(testCase, apiKey = null) {
     try {
         const testName = testCase.name ? testCase.name : "Неизвестно";
 
@@ -175,26 +175,17 @@ ${formattedStepsForPrompt || 'не указаны'}
         }
 
         const URL = 'https://openrouter.ai/api/v1/chat/completions';
-        const headers = {
-            "Authorization": `Bearer ${API_TOKEN}`,
-            "HTTP-Referer": config.siteUrl || "http://localhost",
-            "X-Title": config.siteName || "TestCase Analyzer",
-            "Content-Type": "application/json"
-        };
 
-        const body = JSON.stringify({
-            model: "deepseek/deepseek-chat-v3.1:free",
-            max_tokens: 16000,
-            temperature: 0.25,
-            messages: [{ role: "user", content: prompt }]
-        });
-
-        const response = await fetch(URL, { method: "POST", headers, body });
-        const data = await response.json();
-
-        if (data.error) {
-            throw new Error(`Ошибка API: ${data.error.message || JSON.stringify(data.error)}`);
-        }
+        const data = await callWithCloudRuFallback(
+            URL,
+            [{ role: "user", content: prompt }],
+            apiKey || API_TOKEN, // используем пользовательский ключ или дефолтный
+            {
+                max_tokens: 16000,
+                temperature: 0.25,
+                reduceTokensOn400: true // большой запрос: понижаем токены при 400-м статус-коде
+            }
+        );
 
         let responseText = "";
         if (data.choices && data.choices.length > 0 && data.choices[0].message && data.choices[0].message.content) {

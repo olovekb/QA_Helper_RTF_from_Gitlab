@@ -1,5 +1,6 @@
 // contextRefiner.mjs
 import fetch from 'node-fetch';
+import { callCloudRuAPI } from './cloudruClient.mjs';
 import config from './config.json' assert { type: 'json' };
 
 /**
@@ -14,9 +15,10 @@ import config from './config.json' assert { type: 'json' };
 
 // === Конфиг модели / API ===
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = process.env.REFINER_MODEL || 'deepseek/deepseek-chat-v3.1:free';
+const MODEL = process.env.REFINER_MODEL || 'meta-llama/llama-4-maverick:free';
 
 const API_TOKEN = config.openRouterAiKey;
+const CLOUDRU_API_KEY = config.cloudruApiKey;
 
 // Жёсткая директива: только валидный JSON, без размышлений и Markdown
 const SYSTEM_JSON_ONLY =
@@ -33,8 +35,8 @@ const LIMIT_GLS_OUT = 24000;   // увеличить выход глоссари
 const LIMIT_CTX_OUT = 36000;   // увеличить выход контекста
 
 // === Чанкование ===
-const CHUNK_SIZE_GLOSSARY = 64000;
-const CHUNK_SIZE_CONTEXT = 64000;
+const CHUNK_SIZE_GLOSSARY = 128000;  // Увеличено в 2 раза
+const CHUNK_SIZE_CONTEXT = 128000;   // Увеличено в 2 раза
 
 // === Retry / Rate-limit ===
 const MAX_ATTEMPTS_TOTAL = 6;
@@ -45,6 +47,79 @@ const MAX_RATE_LIMIT_RETRIES = 5;
 // === Управление tool-calls ===
 const ENV_TOOLS_DISABLED = /^(1|true|yes)$/i.test(String(process.env.REFINER_DISABLE_TOOLS || ''));
 let TOOLS_ENABLED = !ENV_TOOLS_DISABLED; // по умолчанию включены
+
+// === Параллельная обработка ===
+const MAX_CONCURRENT_REQUESTS = 3; // Ограничение одновременных запросов
+const requestSemaphore = {
+    running: 0,
+    queue: [],
+
+    async acquire() {
+        return new Promise((resolve) => {
+            if (this.running < MAX_CONCURRENT_REQUESTS) {
+                this.running++;
+                resolve();
+            } else {
+                this.queue.push(resolve);
+            }
+        });
+    },
+
+    release() {
+        this.running--;
+        if (this.queue.length > 0) {
+            const next = this.queue.shift();
+            this.running++;
+            next();
+        }
+    }
+};
+
+// === Гибридный API вызов (Cloud.ru + OpenRouter fallback) ===
+async function callHybridAPI(messages, opts = {}) {
+    const {
+        maxTokens = 2500,
+        temperature = 0.0,
+        schemaName,
+        schemaProps,
+        expectedKeys = []
+    } = opts;
+
+    // Сначала пробуем Cloud.ru
+    try {
+        console.log(`[refiner] Trying Cloud.ru API`);
+
+        const response_format = schemaName && schemaProps ? {
+            type: 'json_schema',
+            json_schema: {
+                name: schemaName,
+                schema: {
+                    type: 'object',
+                    properties: schemaProps,
+                    required: Object.keys(schemaProps),
+                    additionalProperties: false
+                },
+                strict: true
+            }
+        } : null;
+
+        const result = await callCloudRuAPI(messages, {
+            model: config.cloudruModels[0], // Используем первую модель из списка
+            temperature,
+            max_tokens: maxTokens,
+            response_format
+        });
+
+        console.log(`[refiner] Cloud.ru success`);
+        return safeParseContent(result.choices?.[0]?.message?.content || '', result, expectedKeys);
+
+    } catch (error) {
+        console.warn(`[refiner] Cloud.ru failed: ${error.message}, falling back to OpenRouter`);
+
+        // Fallback на OpenRouter
+        return await callJSON(messages, { maxTokens, temperature, schemaName, schemaProps, expectedKeys });
+    }
+}
 
 // --- Утилиты ------------------------------------------------------------------
 
@@ -223,23 +298,92 @@ function dedupLines(lines, limit) {
     return out;
 }
 
+/**
+ * Разбивает контекст на страницы для последующей обработки LLM
+ * 
+ * Логика разбиения (в порядке приоритета):
+ * 1. Явные разделители (--- page ---): используются, если есть;
+ * 2. Confluence Page ID: разные статьи обрабатываются отдельно;
+ * 3. Группировка по главным заголовкам (#): все подзаголовки ## и ### под одним # объединяются в одну страницу;
+ * 4. Объединение небольших страниц (меньше 3kb): накапливаются в буфере до достижения MIN_PAGE_SIZE
+ * 
+ * @param ctx исходный контекст
+ */
 function splitContextIntoPages(ctx) {
     const s = String(ctx || '').trim();
     if (!s) return [];
 
     // 1) Явный разделитель страниц
     const byExplicit = s.split(/\n+---+\s*(?:page|страница)?\s*---+\n+/i);
-    if (byExplicit.length > 1) return byExplicit.map(x => x.trim()).filter(Boolean);
+    if (byExplicit.length > 1) {
+        return byExplicit.map(x => x.trim()).filter(Boolean);
+    }
 
     // 2) Начало новой статьи по маркеру Confluence Page ID
     const byPid = s.split(/\n+(?=Confluence\s*Page\s*ID\s*:\s*\d+)/i);
-    if (byPid.length > 1) return byPid.map(x => x.trim()).filter(Boolean);
+    if (byPid.length > 1) {
+        return byPid.map(x => x.trim()).filter(Boolean);
+    }
 
-    // 3) Заголовки как границы страниц
-    const byHead = s.split(/\n(?=###[^\n]*|##[^\n]*)/);
-    if (byHead.length > 1) return byHead.map(x => x.trim()).filter(Boolean);
+    // 3) Группировка по главным заголовкам # (объединение вложенных ## и ### в одну страницу)
+    const lines = s.split('\n');
+    const groups = [];
+    let currentGroup = [];
 
-    return [s];
+    for (const line of lines) {
+        // Новый главный заголовок # == начало новой группы
+        if (/^#\s+[^\n]+/.test(line) && !/^##/.test(line)) {
+            if (currentGroup.length > 0) {
+                groups.push(currentGroup.join('\n').trim());
+                currentGroup = [];
+            }
+            currentGroup.push(line);
+        } else {
+            currentGroup.push(line);
+        }
+    }
+
+    // Сохранение последней группы
+    if (currentGroup.length > 0) {
+        groups.push(currentGroup.join('\n').trim());
+    }
+
+    // При отсутствии групп возвращает весь текст как одну страницу
+    if (groups.length === 0) return [s];
+
+    // 4) Объединение маленьких страниц (меньше 3kb) с соседними
+    const MIN_PAGE_SIZE = 3000;
+    const merged = [];
+    let buffer = '';
+
+    for (const group of groups) {
+        const trimmedGroup = group.trim();
+        if (!trimmedGroup) continue;
+        
+        // Попытка добавить группу к буферу
+        const potentialBuffer = buffer ? buffer + '\n\n' + trimmedGroup : trimmedGroup;
+        
+        // Добавление, если после добавления объем буфера не превышает лимит
+        if (potentialBuffer.length <= CHUNK_SIZE_CONTEXT) {
+            buffer = potentialBuffer;
+            // Сохранение, если объем буфера превышает лимит
+            if (buffer.length >= MIN_PAGE_SIZE) {
+                merged.push(buffer);
+                buffer = '';
+            }
+        } else {
+            // Сохранение текущего буфера и создание нового
+            if (buffer) {
+                merged.push(buffer);
+            }
+            buffer = trimmedGroup;
+        }
+    }
+
+    // Сохранение остатка буфера
+    if (buffer) merged.push(buffer);
+
+    return merged.filter(Boolean);
 }
 
 
@@ -314,10 +458,10 @@ function extractToolArgsFromData(data, toolName, expectedKeys) {
     return null;
 }
 
-async function callTools(messages, tool, { maxTokens = 1800, temperature = 0.0, expectedKeys = [] } = {}) {
+async function callTools(messages, tool, { maxTokens = 1800, temperature = 0.0, expectedKeys = [], apiToken = API_TOKEN } = {}) {
     if (!TOOLS_ENABLED) return null;
 
-    const headers = { Authorization: `Bearer ${API_TOKEN}`, 'Content-Type': 'application/json' };
+    const headers = { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' };
     const req = {
         model: MODEL,
         max_tokens: maxTokens,
@@ -378,9 +522,9 @@ async function callTools(messages, tool, { maxTokens = 1800, temperature = 0.0, 
 
 async function callJSON(
     messages,
-    { maxTokens = 2500, temperature = 0.0, schemaName, schemaProps, expectedKeys = [] } = {}
+    { maxTokens = 2500, temperature = 0.0, schemaName, schemaProps, expectedKeys = [], apiToken = API_TOKEN } = {}
 ) {
-    const headers = { Authorization: `Bearer ${API_TOKEN}`, 'Content-Type': 'application/json' };
+    const headers = { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' };
 
     const makeReq = (useSchema) => {
         const base = { model: MODEL, max_tokens: maxTokens, temperature, messages };
@@ -444,8 +588,8 @@ function safeParseContent(content, data, expectedKeys = []) {
 }
 
 // Простой «текстовый» вызов (fallback)
-async function callText(messages, { maxTokens = 1200, temperature = 0.0 } = {}) {
-    const headers = { Authorization: `Bearer ${API_TOKEN}`, 'Content-Type': 'application/json' };
+async function callText(messages, { maxTokens = 1200, temperature = 0.0, apiToken = API_TOKEN } = {}) {
+    const headers = { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' };
     const req = { model: MODEL, max_tokens: maxTokens, temperature, messages };
 
     let rateRetries = 0;
@@ -485,7 +629,7 @@ async function callText(messages, { maxTokens = 1200, temperature = 0.0 } = {}) 
 
 // === ЭТАП 2. Ужать глоссарий (чанками) =======================================
 
-async function reduceGlossary(originalRequirements, glossaryRaw, maxItems, limitChars = LIMIT_GLS_OUT) {
+async function reduceGlossary(originalRequirements, glossaryRaw, maxItems, limitChars = LIMIT_GLS_OUT, apiToken = API_TOKEN) {
     const glossary = hardClip(glossaryRaw || '', CLIP_GLS_IN);
     console.log(`[refiner] Stage#2 glossary in.len=${glossary.length}`);
     if (!glossary.trim()) return '';
@@ -533,13 +677,16 @@ ${chunks[i]}
         //   }
 
         if (!part) {
-            out = await callJSON(messages, {
+            // Используем Cloud.ru с fallback на OpenRouter
+            const result = await callHybridAPI(messages, {
                 maxTokens: 10000,
                 temperature: 0.0,
                 schemaName: 'ReduceGlossary',
                 schemaProps: { mini_glossary_md: { type: 'string' } },
-                expectedKeys: ['mini_glossary_md']
+                expectedKeys: ['mini_glossary_md'],
+                apiToken
             });
+            out = result;
             part = String(out?.mini_glossary_md || '');
         }
 
@@ -556,10 +703,13 @@ ${chunks[i]}
 
 // === ЭТАП 3. Ужать доп. контекст =============================================
 
-async function reduceContext(originalRequirements, contextRaw, hintText, maxItems, limitChars = LIMIT_CTX_OUT) {
+async function reduceContext(originalRequirements, contextRaw, hintText, maxItems, limitChars = LIMIT_CTX_OUT, apiToken = API_TOKEN) {
     const raw = hardClip(contextRaw || '', CLIP_CTX_IN);
     console.log(`[refiner] Stage#3 context in.len=${raw.length}`);
     if (!raw.trim()) return '';
+
+    // Дебаг-режим: включение через process.env.DEBUG_CONTEXT_PAGES=1 или config.debugContextPages=true
+    const debugMode = process.env.DEBUG_CONTEXT_PAGES === '1' || config.debugContextPages === true;
 
     // Требования: только как ориентир (не источник фактов)
     const reqForModel = sanitizeRequirementsForContext(
@@ -572,25 +722,48 @@ async function reduceContext(originalRequirements, contextRaw, hintText, maxItem
     if (fmMatch && fmMatch[1]) forbiddenUrls.add(fmMatch[1]);
 
     const pages = splitContextIntoPages(raw);
+
+    // Дебаг-режим: сохранение промежуточных результатов
+    if (debugMode) {
+        const fs = await import('fs');
+        const debugDir = './debug-context';
+        if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true });
+        
+        // Сохранение исходного контекста
+        fs.writeFileSync(`${debugDir}/01-raw-context.md`, raw);
+        
+        // Сохранение каждой страницы отдельно
+        pages.forEach((page, i) => {
+            const sizeKB = Math.round(page.length / 1000);
+            fs.writeFileSync(`${debugDir}/02-page-${String(i + 1).padStart(2, '0')}-${sizeKB}kb.md`, page);
+        });
+        
+        console.log(`[refiner] DEBUG: Saved ${pages.length} pages to ${debugDir}/`);
+    }
+
+    console.log(`[refiner] Stage#3 pages: ${pages.length}, sizes: [${pages.map(p => Math.round(p.length / 1000) + 'KB').join(', ')}]`);
+
     const pageChunksList = pages.map(pg => splitBySize(pg, CHUNK_SIZE_CONTEXT));
     const perPageCap = Math.max(1, Math.ceil(maxItems / Math.max(1, pages.length)));
-    const acc = [];
 
     console.log(`[refiner] Stage#3 allowedUrls.size=${allowedUrls.size} forbiddenUrls.size=${forbiddenUrls.size}`);
 
-    for (let p = 0; p < pages.length && acc.length < maxItems; p++) {
-        const pageChunks = pageChunksList[p];
-        let producedForPage = 0;
+    async function processPage(p) {
+        await requestSemaphore.acquire();
+        try {
+            const pageChunks = pageChunksList[p];
+            let producedForPage = 0;
+            const pageAcc = [];
 
-        for (let c = 0; c < pageChunks.length && acc.length < maxItems; c++) {
-            const remainForPage = Math.min(perPageCap - producedForPage, maxItems - acc.length);
-            if (remainForPage <= 0) break;
+            for (let c = 0; c < pageChunks.length && producedForPage < perPageCap; c++) {
+                const remainForPage = perPageCap - producedForPage;
+                if (remainForPage <= 0) break;
 
-            const whitelistNote = allowedUrls.size
-                ? `Если ты указываешь источник, используй URL ТОЛЬКО из этого списка:\n${[...allowedUrls].slice(0, 50).map(u => `- ${u}`).join('\n')}`
-                : `Если в фрагменте нет URL — не добавляй "(источник: ...)".`;
+                const whitelistNote = allowedUrls.size
+                    ? `Если ты указываешь источник, используй URL ТОЛЬКО из этого списка:\n${[...allowedUrls].slice(0, 50).map(u => `- ${u}`).join('\n')}`
+                    : `Если в фрагменте нет URL — не добавляй "(источник: ...)".`;
 
-            const user = `
+                const user = `
 СТРОГИЙ РЕЖИМ ИЗВЛЕЧЕНИЯ.
 Используй блок "Требования" ниже ТОЛЬКО как ОРИЕНТИР, чтобы понять, какие факты из "Контекст фрагмент" релевантны.
 Ничего из Требований НЕ БРАТЬ в факты. Факты извлекать ТОЛЬКО из "Контекст фрагмент".
@@ -615,34 +788,29 @@ ${pageChunks[c]}
 { "context_md": "- [краткий факт 1]\\n- [краткий факт 2]" }
 `.trim();
 
+                const messages = [
+                    { role: 'system', content: SYSTEM_JSON_ONLY },
+                    { role: 'user', content: user }
+                ];
 
-            const messages = [
-                { role: 'system', content: SYSTEM_JSON_ONLY },
-                { role: 'user', content: user }
-            ];
+                let out = null, part = '';
 
-            let out = null, part = '';
+                if (!part) {
+                    const result = await callHybridAPI(messages, {
+                        maxTokens: 900,
+                        temperature: 0.0,
+                        schemaName: 'ReduceContext',
+                        schemaProps: { context_md: { type: 'string' } },
+                        expectedKeys: ['context_md'],
+                        apiToken
+                    });
+                    out = result;
+                    part = String(out?.context_md || '');
+                }
 
-            //  if (TOOLS_ENABLED) {
-            //      const tool = buildTool('submit_context', 'context_md', 'Return context_md list');
-            //       out = await callTools(messages, tool, { maxTokens: 700, temperature: 0.0, expectedKeys: ['context_md'] });
-            //       part = String(out?.context_md || '');
-            //    }
-
-            if (!part) {
-                out = await callJSON(messages, {
-                    maxTokens: 900,
-                    temperature: 0.0,
-                    schemaName: 'ReduceContext',
-                    schemaProps: { context_md: { type: 'string' } },
-                    expectedKeys: ['context_md']
-                });
-                part = String(out?.context_md || '');
-            }
-
-            if (!part) {
-                console.warn(`[refiner] Stage#3 page=${p + 1} chunk=${c + 1}: fallback to text-mode`);
-                const user2 = `
+                if (!part) {
+                    console.warn(`[refiner] Stage#3 page=${p + 1} chunk=${c + 1}: fallback to text-mode`);
+                    const user2 = `
 Верни ТОЛЬКО список Markdown-пунктов (до ${remainForPage}). Источники — ТОЛЬКО из списка ниже.
 ${whitelistNote}
 
@@ -662,36 +830,56 @@ ${pageChunks[c]}
 ---------------------------------------
 `.trim();
 
+                    part = await callText(
+                        [
+                            { role: 'system', content: 'Отвечай ТОЛЬКО списком Markdown, по одному пункту на строку.' },
+                            { role: 'user', content: user2 }
+                        ],
+                        { maxTokens: 600, temperature: 0.0, apiToken }
+                    );
+                }
 
-                part = await callText(
-                    [
-                        { role: 'system', content: 'Отвечай ТОЛЬКО списком Markdown, по одному пункту на строку.' },
-                        { role: 'user', content: user2 }
-                    ],
-                    { maxTokens: 600, temperature: 0.0 }
-                );
+                let items = mdToItems(part);
+                const chunk = pageChunks[c];
+                const RATIO_MIN = 0.18;
+                let filtered = items.filter(line => contentRatio(line, chunk) >= RATIO_MIN);
+                if (!filtered.length && items.length) filtered = [items[0]];
+                items = filtered;
+
+                items = filterContextItemsByAllowedSources(items, allowedUrls, forbiddenUrls);
+
+                const limited = items.slice(0, remainForPage);
+                pageAcc.push(...limited);
+                producedForPage += limited.length;
+                console.log(`[refiner] Stage#3 page=${p + 1} chunk=${c + 1} items=${items.length} pageAcc=${pageAcc.length}/${perPageCap}`);
             }
 
-            let items = mdToItems(part);
-            // Пост-фильтр: пункты должны реально быть основаны на текущем чанке
-            const chunk = pageChunks[c];
-            const RATIO_MIN = 0.18; // было 0.25
-            let filtered = items.filter(line => contentRatio(line, chunk) >= RATIO_MIN);
-            // если всё отфильтровали, но модель что-то вернула — возьмём хотя бы первый пункт
-            if (!filtered.length && items.length) filtered = [items[0]];
-            items = filtered;
-
-            items = filterContextItemsByAllowedSources(items, allowedUrls, forbiddenUrls);
-
-            const limited = items.slice(0, remainForPage);
-            acc.push(...limited);
-            producedForPage += limited.length;
-            console.log(`[refiner] Stage#3 page=${p + 1} chunk=${c + 1} items=${items.length} acc=${acc.length}/${maxItems}`);
+            return pageAcc;
+        } finally {
+            requestSemaphore.release();
         }
+    }
+
+    const pagePromises = pages.map((_, p) => processPage(p));
+    const pageResults = await Promise.all(pagePromises);
+
+    const acc = [];
+    for (let p = 0; p < pageResults.length && acc.length < maxItems; p++) {
+        const remain = maxItems - acc.length;
+        const take = pageResults[p].slice(0, Math.min(perPageCap, remain));
+        acc.push(...take);
     }
 
     const dedup = dedupLines(acc, maxItems);
     const md = dedup.join('\n').slice(0, limitChars);
+
+    // Дебаг-режим: сохранение итогового результата
+    if (debugMode) {
+        const fs = await import('fs');
+        fs.writeFileSync('./debug-context/03-final-context.md', md);
+        console.log(`[refiner] DEBUG: Контекст сохранен (${md.length} символов, ${dedup.length} пунктов)`);
+    }
+
     console.log(`[refiner] Stage#3 context out.len=${md.length} items=${dedup.length}`);
     return md;
 }
@@ -710,19 +898,23 @@ ${pageChunks[c]}
  */
 export async function prepareContextWithAI(p) {
     const maxGlossary = Number.isFinite(p.maxGlossary) ? p.maxGlossary : 25;
-    const maxContext = Number.isFinite(p.maxContext) ? p.maxContext : 30;
+    const maxContext = Number.isFinite(p.maxContext) ? p.maxContext : 16;
+    const apiToken = p.apiToken || API_TOKEN;
 
+    // Маскируем ключ для логирования
+    const maskedKey = apiToken ? `${apiToken.slice(0, 10)}...${apiToken.slice(-4)}` : 'NONE';
     console.log('[refiner] === ORCHESTRATION START ===');
     console.log(`[refiner] inputs: req.len=${(p.requirements || '').length} gloss.len=${(p.glossary || '').length} ctx.len=${(p.context || '').length}`);
     console.log(`[refiner] limits: maxGlossary=${maxGlossary} maxContext=${maxContext}`);
     console.log(`[refiner] model=${MODEL} toolsEnabled=${TOOLS_ENABLED} envToolsDisabled=${ENV_TOOLS_DISABLED}`);
+    console.log(`[refiner] using API key: ${maskedKey}`);
 
     try {
         // 1) Требования не меняем: возвращаем как есть
         const requirements_md = String(p.requirements || '');
 
         // 2) Глоссарий — выжимка
-        const mini_glossary_md = await reduceGlossary(requirements_md, p.glossary || '', maxGlossary);
+        const mini_glossary_md = await reduceGlossary(requirements_md, p.glossary || '', maxGlossary, LIMIT_GLS_OUT, apiToken);
 
         // 3) Контекст — выжимка
         const ctxHint =
@@ -735,7 +927,8 @@ export async function prepareContextWithAI(p) {
             joinContextPages(p) || '',
             ctxHint,
             maxContext,
-            LIMIT_CTX_OUT
+            LIMIT_CTX_OUT,
+            apiToken
         );
 
         console.log('[refiner] === ORCHESTRATION DONE ===');
