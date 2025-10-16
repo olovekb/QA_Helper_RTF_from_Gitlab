@@ -2792,7 +2792,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 `.trim();
 
         const tools = [buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios)];
-        const ai = await callWithCloudRuFallback(
+        const ai = await callWithBackoff(
             OPENROUTER_URL,
             [
                 { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
@@ -2802,9 +2802,10 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             {
                 tools,
                 tool_choice: { type: "function", function: { name: "submit_cases" } },
+                models: (config.fallbackModels || []),
                 temperature: 0,
                 top_p: 1,
-                max_tokens: 8192,
+                max_tokens: 16000,
                 extra: { transforms: 'middle-out' }
             }
         );
