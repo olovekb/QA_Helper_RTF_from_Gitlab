@@ -1664,11 +1664,29 @@ function extractToolArgs(aiResponse, preferredFnName) {
             ? calls.find(c => c.function?.name === preferredFnName) || calls[0]
             : calls[0];
         const args = call.function?.arguments || '{}';
-        try { return JSON.parse(args); } catch { return JSON5.parse(args); }
+        try {
+            return JSON.parse(args);
+        } catch (e1) {
+            try {
+                return JSON5.parse(args);
+            } catch (e2) {
+                console.warn('[extractToolArgs] Failed to parse tool_call arguments. Falling back to content parser:', e2.message);
+                return null;
+            }
+        }
     }
     if (msg.function_call?.arguments) {
         const raw = msg.function_call.arguments;
-        try { return JSON.parse(raw); } catch { return JSON5.parse(raw); }
+        try {
+            return JSON.parse(raw);
+        } catch (e1) {
+            try {
+                return JSON5.parse(raw);
+            } catch (e2) {
+                console.warn('[extractToolArgs] Failed to parse function_call.arguments. Falling back to content parser:', e2.message);
+                return null;
+            }
+        }
     }
     return null;
 }
@@ -2823,7 +2841,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 
         // Генерация по кускам с таймаутами
         const parts = [];
-        const TIMEOUT_MS = 900000;
+        const TIMEOUT_MS = 1500000; // 25 минут для надёжности на больших чанк‑запросах
         for (const chunk of storyChunks) {
             const promise = genLimit(() => genForChunk(chunk, refinedReqs, BASE_SYSTEM_PROMPT));
             const chunkCases = await withTimeout(promise, TIMEOUT_MS, `genForChunk (story: ${chunk[0]?.stories[0]?.text})`);
