@@ -2652,7 +2652,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 `.trim();
 
         const tools = [buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios)];
-        const ai = await callWithCloudRuFallback(
+        const ai = await callWithBackoff(
             OPENROUTER_URL,
             [
                 { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
@@ -2662,9 +2662,10 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             {
                 tools,
                 tool_choice: { type: 'function', function: { name: 'submit_cases' } },
+                models: (config.fallbackModels || []),
                 temperature: 0,
                 top_p: 1,
-                max_tokens: 25000,
+                max_tokens: 16000,
                 extra: { transforms: 'middle-out' }
             }
         );
@@ -2697,7 +2698,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                 if (!result.length) {
                     // одна попытка перегенерации с более строгими настройками
                     try {
-                        const retry = await callWithCloudRuFallback(
+                        const retry = await callWithBackoff(
                             OPENROUTER_URL,
                             [
                                 { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
@@ -2707,6 +2708,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                             {
                                 // повтор без tools: просим текстовый JSON вместо tool_call
                                 // tools отключены, чтобы получить content
+                                models: (config.fallbackModels || []),
                                 temperature: 0,
                                 top_p: 1,
                                 max_tokens: 16000

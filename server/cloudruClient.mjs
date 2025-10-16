@@ -219,7 +219,8 @@ export async function callCloudRuAPI(messages, opts = {}) {
         max_tokens = 24000,
         response_format = null,
         tools = null,
-        tool_choice = null
+        tool_choice = null,
+        fastFailOnNetwork = false
     } = opts;
 
     // === ПРОВЕРКА API КЛЮЧА ===
@@ -472,6 +473,12 @@ export async function callCloudRuAPI(messages, opts = {}) {
             
             // Targeted retry for transient network errors
             if (isTransientNetworkError(error)) {
+                if (fastFailOnNetwork) {
+                    console.log(`⛔ [cloudru] Fast-fail on transient network error → bubble up to switch model/provider`);
+                    const err = new Error(`network-fast-fail: ${error.message}`);
+                    err.code = 'NETWORK_FAST_FAIL';
+                    throw err;
+                }
                 const waitMs = 500 * attempt; // short backoff for network glitches
                 console.log(`⏳ [cloudru] Transient network error detected, waiting ${waitMs}ms before retry...`);
                 await sleep(waitMs);
@@ -532,7 +539,8 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
                 max_tokens,
                 response_format,
                 tools,
-                tool_choice
+                tool_choice,
+                fastFailOnNetwork: true
             });
 
             console.log(`\n✅ [hybrid] Cloud.ru SUCCESS with model: ${model}`);
@@ -551,11 +559,12 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
             console.log(`\n❌ [hybrid] Cloud.ru model ${model} FAILED`);
             console.log(`📝 Error: ${error.message}`);
             
-            // If it's a rate limit or server error, try next model
+            // If it's a rate limit/server/network fast-fail, try next model/provider
             if (
                 error.message.includes('rate limit') ||
                 error.message.includes('server error') ||
-                error.message.includes('cloudru-empty')
+                error.message.includes('cloudru-empty') ||
+                error.code === 'NETWORK_FAST_FAIL'
             ) {
                 console.log(`🔄 [hybrid] Rate limit/server error - trying next Cloud.ru model`);
                 if (Date.now() > deadline) {
