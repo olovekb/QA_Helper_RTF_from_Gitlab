@@ -2,7 +2,6 @@
 import fs from 'fs';
 import { prepareContextWithAI } from './contextRefiner.mjs';
 import { callWithCloudRuFallback } from './cloudruClient.mjs';
-import { callWithBackoff } from './server.js';
 import config from './config.json' assert { type: 'json' };
 // Жёсткая инструкция к финальному ответу: только нужные Markdown-блоки
 const SYSTEM_ENFORCER =
@@ -177,7 +176,7 @@ ${miniGlossary || '—'}
       // Fallback на OpenRouter при пустом ответе от Cloud.ru
       try {
         console.log('[analyze] Attempting OpenRouter fallback...');
-        const fallbackData = await callWithBackoff(
+        const fallbackData = await callWithCloudRuFallback(
           OPENROUTER_URL,
           [
             { role: 'system', content: SYSTEM_ENFORCER },
@@ -185,7 +184,6 @@ ${miniGlossary || '—'}
           ],
           OPENROUTER_API_KEY,
                 {
-                  models: config.fallbackModels,
                   temperature: 0.25,
                   max_tokens: 24000,  // Снижено с 24000 до 8000 для ускорения
                   logRateLimit: true

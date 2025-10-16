@@ -1,7 +1,7 @@
 import fetch from 'node-fetch';
 import axios from 'axios'
 import { spinningLoader } from './spinning-loader.mjs';
-import { callWithBackoff } from './server.js';
+import { callWithCloudRuFallback } from './cloudruClient.mjs';
 import config from './config.json' assert { type: 'json' };
 
 // TODO: Нужно рефачить - переиспользовать из tia-mapping-service\utils\allureAuth.js
@@ -336,12 +336,11 @@ ${expected || '<пусто>'}
 \`\`\`
 `;
 
-    const json = await callWithBackoff(
+    const json = await callWithCloudRuFallback(
         OPENROUTER_URL,
         [{ role: 'user', content: prompt }],
         apiKey || OPENROUTER_KEY, // используем пользовательский ключ или дефолтный
         {
-            models: config.fallbackModels || ['deepseek/deepseek-chat-v3.1:free'],
             temperature: 0.25,
             max_tokens: 4096
         }

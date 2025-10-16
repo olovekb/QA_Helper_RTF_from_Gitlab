@@ -188,6 +188,7 @@ import config from './config.json' assert { type: 'json'};
 import http from 'http';
 import https from 'https';
 import { prepareContextWithAI } from './contextRefiner.mjs';
+import { callWithCloudRuFallback } from './cloudruClient.mjs';
 
 const DEFAULT_JIRA_INTEGRATION_ID = config.defaultJiraIntegrationId;
 
@@ -1605,7 +1606,7 @@ ENV: ${env}
 
         // 5) Вызов модели с tool-calling
         const tools = [buildFillJiraFieldsTool({ sevOptions, platOptions, sympOptions })];
-        const ai = await callWithBackoff(
+        const ai = await callWithCloudRuFallback(
             OPENROUTER_URL,
             [
                 { role: 'system', content: 'Ты возвращаешь строго структурированный ответ через function call.' },
@@ -1890,74 +1891,6 @@ export async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) 
 
     throw new Error('OpenRouter: превышено число попыток (после 429/5xx)');
 }
-
-
-
-function buildSubmitCasesTool(allowedCodes = []) {
-    return {
-        type: "function",
-        function: {
-            name: "submit_cases",
-            description: "Верни итоговые тест-кейсы строго в массиве cases",
-            parameters: {
-                type: "object",
-                properties: {
-                    cases: {
-                        type: "array",
-                        items: {
-                            type: "object",
-                            properties: {
-                                feature: { type: "string" },
-                                story: { type: "string" },
-                                scenario: { type: "string" },
-                                // ВАЖНО: code только из модели. Поле опционально.
-                                ...(allowedCodes.length
-                                    ? { code: { type: "string", enum: allowedCodes } }
-                                    : { code: { type: "string" } }),
-                                title: { type: "string" },
-                                precondition: { type: "string" },
-                                steps: { type: "array", items: { type: "string" } },
-                                expected: { type: "string" },
-                                tags: { type: "array", items: { type: "string" } },
-                                layer: {
-                                    type: "string", enum: [
-                                        "E2E Tests",
-                                        "Integration frontend Tests", "Integration backend Tests",
-                                        "Unit frontend Tests", "Unit backend Tests"
-                                    ]
-                                },
-                                priority: { type: "string", enum: ["Critical", "High", "Medium", "Low"] },
-                                version: { type: "string" },
-                                links: {
-                                    type: "array",
-                                    items: {
-                                        type: "object",
-                                        properties: {
-                                            text: { type: "string" },
-                                            url: { type: "string" },
-                                            type: { type: "string" }
-                                        }
-                                    }
-                                },
-                                jiraIssueOption: {
-                                    type: "object",
-                                    properties: {
-                                        value: { type: "string" },
-                                        integrationId: { type: "string" }
-                                    }
-                                }
-                            },
-                            required: ["title", "layer"]
-                        }
-                    }
-                },
-                required: ["cases"],
-                additionalProperties: false
-            }
-        }
-    };
-}
-
 
 function buildSubmitModelTool() {
     return {
@@ -2701,7 +2634,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 `.trim();
 
         const tools = [buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios)];
-        const ai = await callWithBackoff(
+        const ai = await callWithCloudRuFallback(
             OPENROUTER_URL,
             [
                 { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
@@ -2711,13 +2644,6 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             {
                 tools,
                 tool_choice: { type: 'function', function: { name: 'submit_cases' } },
-                models: [
-                    'meta-llama/llama-4-maverick:free',
-                    'deepseek/deepseek-chat-v3.1:free',
-                    'qwen/qwen3-235b-a22b:free',
-                    'openai/gpt-oss-20b:free',
-                    'mistralai/mistral-small-3.2-24b-instruct:free'
-                ],
                 temperature: 0.2,
                 top_p: 0.85,
                 max_tokens: 8192,
@@ -2753,7 +2679,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                 if (!result.length) {
                     // одна попытка перегенерации с более строгими настройками
                     try {
-                        const retry = await callWithBackoff(
+                        const retry = await callWithCloudRuFallback(
                             OPENROUTER_URL,
                             [
                                 { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
@@ -2763,10 +2689,6 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                             {
                                 tools,
                                 tool_choice: { type: "function", function: { name: "submit_cases" } },
-                                models: [
-                                    'meta-llama/llama-3.1-8b-instruct:free',
-                                    'mistralai/mistral-small-3.2-24b-instruct:free'
-                                ],
                                 temperature: 0.2,
                                 top_p: 0.85,
                                 max_tokens: 8192
@@ -2850,7 +2772,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 `.trim();
 
         const tools = [buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios)];
-        const ai = await callWithBackoff(
+        const ai = await callWithCloudRuFallback(
             OPENROUTER_URL,
             [
                 { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
@@ -2860,11 +2782,6 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             {
                 tools,
                 tool_choice: { type: "function", function: { name: "submit_cases" } },
-                models: [
-                    'qwen/qwen3-coder:free',
-                    'meta-llama/llama-3.1-8b-instruct:free',
-                    'mistralai/mistral-small-3.2-24b-instruct:free'
-                ],
                 temperature: 0.25,
                 top_p: 0.9,
                 max_tokens: 8192,
@@ -3163,7 +3080,7 @@ ${reqStringForModel}
 
     try {
         const tools = [buildSubmitModelTool()];
-        const ai = await callWithBackoff(
+        const ai = await callWithCloudRuFallback(
             OPENROUTER_URL,
             [
                 { role: 'system', content: SYSTEM_PROMPT },
@@ -3173,12 +3090,6 @@ ${reqStringForModel}
             {
                 tools,
                 tool_choice: { type: "function", function: { name: "submit_test_model" } },
-                models: [
-                    'deepseek/deepseek-chat-v3.1:free',
-                    'qwen/qwen3-235b-a22b:free',
-                    'meta-llama/llama-4-maverick:free',
-                    'mistralai/mistral-small-3.2-24b-instruct:free'
-                ],
                 temperature: 0.25,
                 top_p: 0.9,
                 max_tokens: 8192,

@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { callWithBackoff } from './server.js';
+import { callWithCloudRuFallback } from './cloudruClient.mjs';
 import config from './config.json' assert { type: 'json' };
 
 
@@ -176,12 +176,11 @@ ${formattedStepsForPrompt || 'не указаны'}
 
         const URL = 'https://openrouter.ai/api/v1/chat/completions';
 
-        const data = await callWithBackoff(
+        const data = await callWithCloudRuFallback(
             URL,
             [{ role: "user", content: prompt }],
             apiKey || API_TOKEN, // используем пользовательский ключ или дефолтный
             {
-                models: config.fallbackModels || ['deepseek/deepseek-chat-v3.1:free'],
                 max_tokens: 16000,
                 temperature: 0.25,
                 reduceTokensOn400: true // большой запрос: понижаем токены при 400-м статус-коде
