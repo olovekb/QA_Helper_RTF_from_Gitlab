@@ -47,6 +47,15 @@ app.post('/api/upload/json', uploadMiddleware, handleJsonUpload);
 
 app.post('/api/errors', logServerError);
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).json({ 
+        status: 'healthy', 
+        timestamp: new Date().toISOString(),
+        service: 'tia-mapping-service'
+    });
+});
+
 /**
  * Получение структуры проекта из Allure без пропуска узлов
  * @route GET /api/structure
@@ -105,10 +114,26 @@ app.get('*', (req, res) => {
     });
 });
 
+// Функция для применения миграций
+async function runMigrations() {
+    try {
+        logInfo('Применение миграций базы данных...');
+        const knex = await import('./db/connection.js');
+        await knex.default.migrate.latest();
+        logInfo('Миграции успешно применены');
+    } catch (error) {
+        logError('Ошибка при применении миграций:', error.message);
+        // Не останавливаем сервер, продолжаем работу
+    }
+}
+
 // Запуск сервера на указанном порту
-app.listen(config.port, () => {
+app.listen(config.port, async () => {
     logInfo(`TIA Mapping Service запущен на http://localhost:${config.port}`);
     logInfo(`Allure base url ${process.env.ALLURE_BASE_URL}`) // Логирование env 
     logInfo(`Allure token ${process.env.ALLURE_TOKEN}`) // Логирование env
     logInfo(`Allure DB host ${process.env.DB_HOST}`) // Логирование env
+    
+    // Применяем миграции при запуске
+    await runMigrations();
 });

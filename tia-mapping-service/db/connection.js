@@ -1,4 +1,5 @@
 import knex from 'knex'; // Импорт Knex для работы с PostgreSQL
+import config from '../config/index.js'; // Импорт конфигурации
 
 /**
  * Создание подключения к базе данных через Knex
@@ -6,10 +7,19 @@ import knex from 'knex'; // Импорт Knex для работы с PostgreSQL
  */
 const dbConnection = knex({
   client: 'pg', // Используем PostgreSQL
-  connection: process.env.DATABASE_URL, // Подключение через переменную окружения из .env
+  connection: process.env.DATABASE_URL || {
+    host: config.dbHost,
+    port: config.dbPort,
+    user: config.dbUser,
+    password: config.dbPassword,
+    database: config.dbName
+  },
   pool: {
     min: 2, // Минимальное количество подключений в пуле
     max: 10 // Максимальное количество подключений
+  },
+  migrations: {
+    directory: './db/migrations'
   }
 });
 

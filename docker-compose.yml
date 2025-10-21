@@ -39,6 +39,8 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=5001
+      - DB_HOST=postgresql
+      - DB_PORT=5432
     ports:
       - 5001:5001
     networks:
@@ -47,8 +49,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 40s
+      retries: 5
+      start_period: 60s
     logging:
       driver: "json-file"
       options:
@@ -63,15 +65,15 @@ services:
     networks:
       - allure-test-net
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER:-tia_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+      POSTGRES_DB: ${DB_NAME:-tia_mapping_db}
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     volumes:
       - ./pgdata:/var/lib/postgresql/data
       - ./init-scripts:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-tia_user} -d ${DB_NAME:-tia_mapping_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
