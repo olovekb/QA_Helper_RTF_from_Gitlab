@@ -15,7 +15,37 @@ import { marked } from 'marked';
 import 'github-markdown-css/github-markdown-dark.css';
 import TestModelGeneratorModal from './components/test-model/TestModelGeneratorModal';
 import TestModelReviewModal from './components/test-model/TestModelReviewModal';
+import GlobalGenerationWindow from './components/GlobalGenerationWindow';
 import * as pdfjsLib from 'pdfjs-dist/build/pdf';
+
+// CSS для анимаций прогресс-бара
+const progressBarStyles = `
+  @keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  @keyframes slideInRight {
+    from {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+`;
+
+// Инжектим стили в head
+if (typeof document !== 'undefined') {
+  const styleSheet = document.createElement('style');
+  styleSheet.textContent = progressBarStyles;
+  document.head.appendChild(styleSheet);
+}
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
@@ -454,6 +484,12 @@ export default function SolutionPage({ projects = [] }) {
   const [isGenModalOpen, setGenModalOpen] = useState(false);
   const [isReviewModalOpen, setReviewModalOpen] = useState(false);
   const [generatedCases, setGeneratedCases] = useState([]);
+  
+  // Логирование изменений generatedCases
+  useEffect(() => {
+    console.log('SolutionPage: generatedCases state changed:', generatedCases);
+    console.log('SolutionPage: generatedCases length:', generatedCases?.length);
+  }, [generatedCases]);
   const [pdfExtracting, setPdfExtracting] = useState(false);
   const [glossaryPageId, setGlossaryPageId] = usePersistentState('glossaryPageId', '');
   const [contextPageIdsInput, setContextPageIdsInput] = usePersistentState('contextPageIdsInput', '');
@@ -477,7 +513,6 @@ export default function SolutionPage({ projects = [] }) {
     }
   }, [tasks, setTasks]);
   useEffect(() => {
-
     idbSet('__initialized__', true)
       .catch(console.warn);
   }, []);
@@ -739,10 +774,281 @@ export default function SolutionPage({ projects = [] }) {
 
 
 
+  const [generationTaskId, setGenerationTaskId] = usePersistentState('generationTaskId', null);
+  const [generationProgress, setGenerationProgress] = usePersistentState('generationProgress', 0);
+  const [generationStatus, setGenerationStatus] = usePersistentState('generationStatus', null);
+  const [isGenerationMinimized, setIsGenerationMinimized] = usePersistentState('isGenerationMinimized', false);
+
+  // Состояния для генерации тестовой модели
+  const [modelGenerationTaskId, setModelGenerationTaskId] = usePersistentState('modelGenerationTaskId', null);
+  const [modelGenerationProgress, setModelGenerationProgress] = usePersistentState('modelGenerationProgress', 0);
+  const [modelGenerationStatus, setModelGenerationStatus] = usePersistentState('modelGenerationStatus', null);
+  const [modelIsMinimized, setModelIsMinimized] = usePersistentState('modelIsMinimized', false);
+  const [generatedModel, setGeneratedModel] = usePersistentState('generatedModel', null);
+
+  // Автоматически возобновляем проверку статуса при загрузке страницы
+  useEffect(() => {
+    if (generationTaskId && generationStatus === 'processing') {
+      checkGenerationStatus(generationTaskId);
+    }
+  }, [generationTaskId, generationStatus]);
+
+  // Автоматически возобновляем проверку статуса генерации тестовой модели
+  useEffect(() => {
+    if (modelGenerationTaskId && modelGenerationStatus === 'processing') {
+      checkModelGenerationStatus(modelGenerationTaskId);
+    }
+  }, [modelGenerationTaskId, modelGenerationStatus]);
+
+  // Уведомляем GlobalBackgroundProgress об изменениях состояния
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('updateTestCaseGeneration', {
+      detail: {
+        status: generationStatus,
+        progress: generationProgress,
+        taskId: generationTaskId,
+        isMinimized: isGenerationMinimized
+      }
+    }));
+  }, [generationStatus, generationProgress, generationTaskId, isGenerationMinimized]);
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('updateTestModelGeneration', {
+      detail: {
+        status: modelGenerationStatus,
+        progress: modelGenerationProgress,
+        taskId: modelGenerationTaskId,
+        isMinimized: modelIsMinimized
+      }
+    }));
+  }, [modelGenerationStatus, modelGenerationProgress, modelGenerationTaskId, modelIsMinimized]);
+
+  // Загружаем сохраненные тест-кейсы при инициализации
+  useEffect(() => {
+    const loadSavedTestCases = () => {
+      try {
+        const savedCases = localStorage.getItem('generatedTestCases');
+        console.log('SolutionPage: loading saved test cases:', savedCases);
+        if (savedCases) {
+          const parsedCases = JSON.parse(savedCases);
+          console.log('SolutionPage: parsed saved test cases:', parsedCases);
+          console.log('SolutionPage: parsed test cases length:', parsedCases?.length);
+          setGeneratedCases(parsedCases);
+          setGenerationStatus('completed'); // Устанавливаем статус как завершенный
+        }
+      } catch (error) {
+        console.warn('Ошибка загрузки сохраненных тест-кейсов:', error);
+        localStorage.removeItem('generatedTestCases');
+      }
+    };
+
+    loadSavedTestCases();
+  }, []);
+
+  // Проверяем, нужно ли открыть модальное окно генерации
+  useEffect(() => {
+    const shouldOpenModal = localStorage.getItem('openGenerationModal');
+    if (shouldOpenModal === 'true') {
+      // Очищаем флаг
+      localStorage.removeItem('openGenerationModal');
+      // Открываем модальное окно генерации тестовой модели
+      // Это будет обработано в GlobalGenerationWindow
+      window.dispatchEvent(new CustomEvent('openGenerationModal'));
+    }
+  }, []);
+
+  const checkGenerationStatus = async (taskId) => {
+    try {
+      const { data } = await axios.get(`${config.serverUrl}/generate-test-cases-status/${taskId}`);
+      setGenerationProgress(data.progress);
+      setGenerationStatus(data.status);
+      
+      if (data.status === 'completed') {
+        console.log('SolutionPage: received test cases from server:', data.result.testCases);
+        console.log('SolutionPage: test cases length:', data.result.testCases?.length);
+        console.log('SolutionPage: first test case:', data.result.testCases?.[0]);
+        setGeneratedCases(data.result.testCases);
+        // Сохраняем результат в localStorage
+        localStorage.setItem('generatedTestCases', JSON.stringify(data.result.testCases));
+        setReviewModalOpen(true);
+        setGenerationTaskId(null);
+        setGenerationProgress(100);
+        setGenerationStatus('completed'); // Не сбрасываем статус, а устанавливаем 'completed'
+        setIsGenerationMinimized(false); // Показать модальное окно при завершении
+        
+        // Очищаем временные данные генерации
+        await idbSet('generationTaskId', null);
+        await idbSet('generationProgress', 0);
+        await idbSet('generationStatus', null);
+        await idbSet('isGenerationMinimized', false);
+        
+        // Показать уведомление о завершении
+        if (window.Notification && Notification.permission === 'granted') {
+          new Notification('Генерация завершена', {
+            body: 'Тест-кейсы успешно сгенерированы',
+            icon: '/favicon.ico'
+          });
+        }
+      } else if (data.status === 'failed') {
+        alert('Ошибка генерации тест-кейсов: ' + (data.error_message || 'Неизвестная ошибка'));
+        setGenerationTaskId(null);
+        setGenerationProgress(0);
+        setGenerationStatus(null);
+      } else if (data.status === 'processing') {
+        // Продолжаем опрашивать статус каждые 2 секунды
+        setTimeout(() => {
+          if (generationTaskId === taskId) {
+            checkGenerationStatus(taskId);
+          }
+        }, 2000);
+      }
+    } catch (err) {
+      console.error('Ошибка проверки статуса:', err);
+      // Простая обработка ошибок - останавливаем опрос при любой ошибке
+      alert('Ошибка проверки статуса генерации: ' + (err.response?.data?.error || err.message));
+      setGenerationTaskId(null);
+      setGenerationProgress(0);
+      setGenerationStatus(null);
+    }
+  };
+
+  // Функция для отмены генерации
+  const cancelGeneration = useCallback(async (taskId, type) => {
+    try {
+      const response = await fetch(`/api/cancel-generation/${taskId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        console.log(`${type} отменена`);
+        // Сбрасываем состояние
+        if (type === 'test_cases') {
+          setGenerationTaskId(null);
+          setGenerationProgress(0);
+          setGenerationStatus(null);
+          setIsGenerationMinimized(false);
+        } else if (type === 'test_model') {
+          setModelGenerationTaskId(null);
+          setModelGenerationProgress(0);
+          setModelGenerationStatus(null);
+          setModelIsMinimized(false);
+        }
+      } else {
+        console.error('Ошибка отмены генерации');
+      }
+    } catch (error) {
+      console.error('Ошибка отмены генерации:', error);
+    }
+  }, []);
+
+  // Добавляем функцию отмены в window для глобального доступа
+  useEffect(() => {
+    window.cancelGeneration = cancelGeneration;
+    return () => {
+      delete window.cancelGeneration;
+    };
+  }, [cancelGeneration]);
+
+  // Проверка статуса генерации тестовой модели
+  const checkModelGenerationStatus = async (taskId) => {
+    try {
+      const { data } = await axios.get(`${config.serverUrl}/generate-test-model-status/${taskId}`);
+      setModelGenerationProgress(data.progress);
+      setModelGenerationStatus(data.status);
+      
+      if (data.status === 'completed') {
+        setModelGenerationTaskId(null);
+        setModelGenerationProgress(100);
+        setModelGenerationStatus('completed');
+        setModelIsMinimized(false);
+        
+        // Сохраняем результат в IndexedDB и состояние
+        if (data.result && data.result.testModel) {
+          await idbSet('generatedTestModel', data.result.testModel);
+          setGeneratedModel(data.result.testModel);
+          console.log('Тестовая модель сохранена в IndexedDB и состояние');
+        }
+        
+        // Очищаем временные данные генерации
+        await idbSet('modelGenerationTaskId', null);
+        await idbSet('modelGenerationProgress', 0);
+        await idbSet('modelGenerationStatus', null);
+        await idbSet('modelIsMinimized', false);
+        
+        // Показать уведомление о завершении
+        if (window.Notification && Notification.permission === 'granted') {
+          new Notification('Генерация тестовой модели завершена', {
+            body: 'Тестовая модель успешно сгенерирована',
+            icon: '/favicon.ico'
+          });
+        }
+      } else if (data.status === 'failed') {
+        alert('Ошибка генерации тестовой модели: ' + (data.error_message || 'Неизвестная ошибка'));
+        setModelGenerationTaskId(null);
+        setModelGenerationProgress(0);
+        setModelGenerationStatus(null);
+      } else if (data.status === 'processing') {
+        // Продолжаем опрашивать статус каждые 2 секунды
+        setTimeout(() => {
+          if (modelGenerationTaskId === taskId) {
+            checkModelGenerationStatus(taskId);
+          }
+        }, 2000);
+      }
+    } catch (err) {
+      console.error('Ошибка проверки статуса генерации тестовой модели:', err);
+      // Простая обработка ошибок - останавливаем опрос при любой ошибке
+      alert('Ошибка проверки статуса генерации тестовой модели: ' + (err.response?.data?.error || err.message));
+      setModelGenerationTaskId(null);
+      setModelGenerationProgress(0);
+      setModelGenerationStatus(null);
+    }
+  };
+
   const handleGenerateModel = async (modelStructure) => {
+    console.log('SolutionPage: получена структура тестовой модели для генерации тест-кейсов:', modelStructure);
+    console.log('SolutionPage: количество features в структуре:', modelStructure?.length);
+    
     const payloadBase = buildRequirementsPayload({ includeRequirements: true });
 
+    // Запрашиваем разрешение на уведомления
+    if (window.Notification && Notification.permission === 'default') {
+      await Notification.requestPermission();
+    }
+
     try {
+      // Сначала пробуем асинхронный API
+      try {
+        const payload = { ...payloadBase, modelStructure };
+        console.log('SolutionPage: отправляем payload с modelStructure:', payload);
+        
+        const { data } = await axios.post(
+          `${config.serverUrl}/generate-test-cases-async`,
+          payload, {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+        );
+        
+        // Очищаем предыдущие результаты при новой генерации
+        setGeneratedCases([]);
+        localStorage.removeItem('generatedTestCases');
+        
+        setGenerationTaskId(data.taskId);
+        setGenerationProgress(0);
+        setGenerationStatus('processing');
+        checkGenerationStatus(data.taskId);
+        return;
+      } catch (asyncErr) {
+        console.warn('Async API failed, falling back to sync:', asyncErr);
+        // Fallback к синхронному API
+      }
+
+      // Fallback к старому синхронному API
       const { data } = await axios.post(
         `${config.serverUrl}/generate-test-cases`,
         { ...payloadBase, modelStructure }, {
@@ -752,7 +1058,6 @@ export default function SolutionPage({ projects = [] }) {
       }
       );
       setGeneratedCases(data.cases);
-      setGenModalOpen(false);
       setReviewModalOpen(true);
     } catch (err) {
       console.error('generate-test-cases error:', err);
@@ -766,6 +1071,49 @@ export default function SolutionPage({ projects = [] }) {
     console.log('Отправляем в Allure:', finalCases);
     setReviewModalOpen(false);
   };
+
+  // Функция для очистки состояния тест-кейсов
+  const handleClearTestCases = useCallback(() => {
+    if (window.confirm('Вы уверены, что хотите удалить все сгенерированные тест-кейсы? Это действие нельзя отменить.')) {
+      setGeneratedCases([]);
+      setGenerationStatus(null);
+      setGenerationTaskId(null);
+      setGenerationProgress(0);
+      setIsGenerationMinimized(false);
+      
+      // Очищаем сохраненные данные
+      localStorage.removeItem('generatedTestCases');
+      
+      // Очищаем данные из IndexedDB
+      idbSet('generationTaskId', null).catch(console.warn);
+      idbSet('generationProgress', 0).catch(console.warn);
+      idbSet('generationStatus', null).catch(console.warn);
+      idbSet('isGenerationMinimized', false).catch(console.warn);
+      
+      console.log('Состояние тест-кейсов очищено');
+    }
+  }, []);
+
+  // Функция для очистки состояния тестовой модели
+  const handleClearTestModel = useCallback(() => {
+    if (window.confirm('Вы уверены, что хотите удалить сгенерированную тестовую модель? Это действие нельзя отменить.')) {
+      setGeneratedModel(null);
+      setModelGenerationStatus(null);
+      setModelGenerationTaskId(null);
+      setModelGenerationProgress(0);
+      setModelIsMinimized(false);
+      
+      // Очищаем данные из IndexedDB
+      idbSet('generatedTestModel', null).catch(console.warn);
+      idbSet('testModelTree', null).catch(console.warn);
+      idbSet('modelGenerationTaskId', null).catch(console.warn);
+      idbSet('modelGenerationProgress', 0).catch(console.warn);
+      idbSet('modelGenerationStatus', null).catch(console.warn);
+      idbSet('modelIsMinimized', false).catch(console.warn);
+      
+      console.log('Состояние тестовой модели очищено');
+    }
+  }, []);
 
   const loadMeta = useCallback(async () => {
     if (!debProject || !debPat) return;
@@ -1365,15 +1713,18 @@ export default function SolutionPage({ projects = [] }) {
 
 
         )}
-        {/* --- Поля глоссария и доп. контекста показываем только для 'text' и 'pdf' --- */}
+        {/* --- Глоссарий для всех режимов --- */}
+        <div className="confluence-inputs">
+          <input
+            type="text"
+            placeholder="Глоссарий: Confluence Page ID или URL (необязательно)"
+            value={glossaryPageId}
+            onChange={e => setGlossaryPageId(e.target.value)}
+          />
+        </div>
+        {/* --- Доп. контекст только для text и pdf --- */}
         {(inputMode === 'text' || inputMode === 'pdf') && (
           <div className="confluence-inputs">
-            <input
-              type="text"
-              placeholder="Глоссарий: Confluence Page ID или URL (необязательно)"
-              value={glossaryPageId}
-              onChange={e => setGlossaryPageId(e.target.value)}
-            />
             <div className="ctx-select">
               <CreatableSelect
                 classNamePrefix="select"
@@ -1454,30 +1805,58 @@ export default function SolutionPage({ projects = [] }) {
           ))}
         </div>
       )}
-      {/* --- Кнопка и две модалки для тест‑модели --- */}
-      <button onClick={() => setGenModalOpen(true)} className="btn btn-secondary" style={{ marginBottom: 16 }}>
-        🧱 Сгенерировать тест-кейсы
-      </button>
-
-      <TestModelGeneratorModal
-        isOpen={isGenModalOpen}
-        onClose={() => setGenModalOpen(false)}
-        onGenerate={handleGenerateModel}
-        initialCases={EMPTY_INITIAL_CASES}
-        requirements={prepareRequirements()}
+      
+      
+      {/* Глобальное окно генерации */}
+      <GlobalGenerationWindow 
+        projects={projects}
+        buildRequirementsPayload={buildRequirementsPayload}
+        prepareRequirements={prepareRequirements}
+        inputMode={inputMode}
+        solutionText={solutionText}
+        confluencePageId={confluencePageId}
+        bearerToken={bearerToken}
+        glossary={glossary}
+        glossaryPageId={glossaryPageId}
+        contextText={contextText}
+        contextPageIds={contextPageIds}
+        contextInstruction={contextInstruction}
+        tasks={tasks}
+        // Состояния генерации
+        generationTaskId={generationTaskId}
+        setGenerationTaskId={setGenerationTaskId}
+        generationProgress={generationProgress}
+        setGenerationProgress={setGenerationProgress}
+        generationStatus={generationStatus}
+        setGenerationStatus={setGenerationStatus}
+        isGenerationMinimized={isGenerationMinimized}
+        setIsGenerationMinimized={setIsGenerationMinimized}
+        generatedCases={generatedCases}
+        setGeneratedCases={setGeneratedCases}
+        checkGenerationStatus={checkGenerationStatus}
+        handleGenerateModel={handleGenerateModel}
+        // Состояния генерации тестовой модели
+        modelGenerationTaskId={modelGenerationTaskId}
+        setModelGenerationTaskId={setModelGenerationTaskId}
+        modelGenerationProgress={modelGenerationProgress}
+        setModelGenerationProgress={setModelGenerationProgress}
+        modelGenerationStatus={modelGenerationStatus}
+        setModelGenerationStatus={setModelGenerationStatus}
+        modelIsMinimized={modelIsMinimized}
+        setModelIsMinimized={setModelIsMinimized}
+        checkModelGenerationStatus={checkModelGenerationStatus}
+        generatedModel={generatedModel}
+        cancelGeneration={cancelGeneration}
         jiraProject={jiraProject}
+        allureProject={allureProject ? { id: allureProject } : null}
         jiraPat={jiraPat}
+        reviewModalOpen={isReviewModalOpen}
+        setReviewModalOpen={setReviewModalOpen}
+        onClearTestCases={handleClearTestCases}
+        onClearTestModel={handleClearTestModel}
       />
+      
 
-      <TestModelReviewModal
-        isOpen={isReviewModalOpen}
-        onClose={() => setReviewModalOpen(false)}
-        onConfirmSend={handleConfirmSend}
-        initialCases={generatedCases}
-        projectId={allureProject}
-        jiraProject={jiraProject}
-        jiraPat={jiraPat}
-      />
       {/* Основной список задач */}
       <div className="task-list">
         {tasks.map((t, i) => (
@@ -1652,6 +2031,7 @@ export default function SolutionPage({ projects = [] }) {
           ↑ Вверх
         </button>
       </div>
+
     </div>
   );
 }

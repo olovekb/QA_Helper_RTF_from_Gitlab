@@ -1,3 +1,5 @@
+import dotenv from 'dotenv'; // Загрузка переменных окружения из .env файла
+dotenv.config(); // Загружаем переменные окружения
 import express from 'express'; // Импорт фреймворка Express для создания веб-сервера
 import cors from 'cors'; // Импорт middleware для обработки кросс-доменных запросов
 import path, { dirname } from 'path'; // Импорт path и dirname для работы с путями файлов

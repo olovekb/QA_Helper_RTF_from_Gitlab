@@ -1,6 +1,10 @@
+import dotenv from 'dotenv';
+dotenv.config();
 import express from 'express';
 import cors from 'cors';
 import JSON5 from 'json5';
+import knex from 'knex';
+import { v4 as uuidv4 } from 'uuid';
 
 /**
  * Обработка больших запросов для OpenRouter через разделение на чанки
@@ -138,6 +142,7 @@ async function makeDirectOpenRouterCall(messages, apiKey, opts) {
 
     return await response.json();
 }
+
 import {
     getAllureDefectById,
     getSharedStepsList,
@@ -159,13 +164,8 @@ import {
     setTestCaseCustomFieldValues,
     updateTestCase,
     addStepToTestCase,
-    addTagToTestCase,
-    addLinkToTestCase,
     linkIssueToTestCase,
     setTestCaseLayer,
-    setTestCasePriority,
-    setTestCaseVersion,
-    addParameterToTestCase,
     suggestTestLayers,
     getProjectCustomFieldSchema,
     fetchWithAuth,
@@ -190,11 +190,18 @@ import https from 'https';
 import { prepareContextWithAI } from './contextRefiner.mjs';
 import { callWithCloudRuFallback } from './cloudruClient.mjs';
 
-const DEFAULT_JIRA_INTEGRATION_ID = config.defaultJiraIntegrationId;
-
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const app = express();
 const PORT = 5000;
+
+const db = knex({
+  client: 'pg',
+  connection: process.env.DATABASE_URL,
+  pool: {
+    min: 2,
+    max: 10
+  }
+});
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 50 * 1024 * 1024, files: 20 }
@@ -208,13 +215,10 @@ const corsOptions = {
     credentials: true,
 };
 
-
 app.use(cors(corsOptions));
 
 app.use(express.json({ limit: '50mb' }));
 app.options('*', cors(corsOptions));
-//app.use(cors());
-//app.options('*', cors());
 const limit = pLimit(100);
 
 
@@ -424,71 +428,6 @@ function extractRelevantSections(markdown, mentionText, { maxSections = 6, maxCh
     return out || md.slice(0, Math.min(maxChars, md.length));
 }
 
-
-// Извлекаем явные описания HTTP-эндпоинтов из требований.
-// Принимаем только случаи, где указан метод (GET|POST|PUT|PATCH|DELETE) и путь, например:
-//  - GET "/souz/statement?accId={id}..."
-//  - GET-запрос "/rest/stateful/..."
-// Возвращаем Set нормализованных сигнатур в виде "GET /path?query" (в нижнем регистре для пути)
-function extractApiEndpointsFromText(text) {
-    const out = new Set();
-    if (!text) return out;
-    const src = String(text);
-    const re = /(GET|POST|PUT|PATCH|DELETE)\s*(?:-|–)?\s*(?:запрос|request)?\s*["'`\s]*((?:\/[A-Za-z0-9._\-~%]+)(?:\/[A-Za-z0-9._\-~%]+)*(?:\?[A-Za-z0-9._\-~%=&{}:,;]*)?)/ig;
-    let m;
-    while ((m = re.exec(src)) !== null) {
-        const method = m[1].toUpperCase();
-        let path = (m[2] || '').trim();
-        // убрать завершающие кавычки/точки/скобки
-        path = path.replace(/["'`)>\]\s]+$/g, '');
-        // нормализуем // и лишние пробелы
-        path = path.replace(/\s+/g, ' ');
-        if (method && path.startsWith('/')) {
-            out.add(`${method} ${path.toLowerCase()}`);
-        }
-    }
-    return out;
-}
-
-function textMentionsEndpoint(text) {
-    if (!text) return false;
-    const s = String(text);
-    return /(GET|POST|PUT|PATCH|DELETE)\s+\S*\//i.test(s) || /\/[A-Za-z0-9._\-~%]+\//.test(s);
-}
-
-function matchesAllowedEndpoint(text, allowedSet) {
-    if (!text || !allowedSet || allowedSet.size === 0) return false;
-    const s = String(text);
-    // Попробуем вытащить метод+путь из текста и сравнить с известными
-    const re = /(GET|POST|PUT|PATCH|DELETE)\s*(?:-|–)?\s*(?:запрос|request)?\s*["'`\s]*((?:\/[A-Za-z0-9._\-~%]+)(?:\/[A-Za-z0-9._\-~%]+)*(?:\?[A-Za-z0-9._\-~%=&{}:,;]*)?)/ig;
-    let m;
-    while ((m = re.exec(s)) !== null) {
-        const method = m[1].toUpperCase();
-        let path = (m[2] || '').trim().replace(/["'`)>\]\s]+$/g, '').toLowerCase();
-        if (allowedSet.has(`${method} ${path}`)) return true;
-    }
-    return false;
-}
-
-// Убираем code-узлы, которые описывают эндпоинты, отсутствующие в требованиях
-function pruneCodesByAllowedEndpoints(model, allowedSet) {
-    const walk = (features) => (features || []).map(f => ({
-        ...f,
-        stories: (f.stories || []).map(st => ({
-            ...st,
-            scenarios: (st.scenarios || []).map(sc => ({
-                ...sc,
-                codes: (sc.codes || []).filter(cd => {
-                    const t = cd?.text || '';
-                    if (!textMentionsEndpoint(t)) return true; // обычные коды не трогаем
-                    // если явно описан метод+путь, оставляем только когда он найден в требованиях
-                    return matchesAllowedEndpoint(t, allowedSet);
-                })
-            }))
-        }))
-    }));
-    return walk(model);
-}
 
 async function fetchJiraMeta(pat, projectKey) {
     const { data } = await axios.post(
@@ -1131,31 +1070,6 @@ app.post('/api/jira/meta', async (req, res) => {
                 name: o.value ?? o.name
             }));
         }
-
-        /*
-        // 3) Постранично вытягиваем всех assignable пользователей
-        const users = [];
-        const maxResults = 100;   // Jira позволяет до 1000, но 100—более безопасно
-        let startAt = 0;
-        while (true) {
-            const url = `${jiraBase}/rest/api/2/user/assignable/search`
-                + `?project=${encodeURIComponent(projectKey)}`
-                + `&startAt=${startAt}`
-                + `&maxResults=${maxResults}`;
-            const resp = await fetch(url, { headers });
-            if (!resp.ok) break;
-            const batch = await resp.json();
-            users.push(...batch);
-            if (batch.length < maxResults) break;  // больше страниц нет
-            startAt += maxResults;
-        }
-
-        // 4) Версии проекта (возвращаются все сразу)
-        const versions = await fetch(
-            `${jiraBase}/rest/api/2/project/${encodeURIComponent(projectKey)}/versions`,
-            { headers }
-        ).then(r => r.ok ? r.json() : []);
-*/
         // return res.json({ options, fieldIds, users, versions });
         return res.json({ options, fieldIds })
     }
@@ -2152,6 +2066,66 @@ app.post('/api/generate-test-cases', async (req, res) => {
         return { stories, scenarios, codes };
     }
 
+    // Разбивка требований на чанки по размеру (для больших документов)
+    function splitRequirements(reqs, maxCharsPerChunk = 40000) {
+        if (!Array.isArray(reqs) || reqs.length === 0) return [[]];
+        
+        const chunks = [];
+        let currentChunk = [];
+        let currentSize = 0;
+        
+        for (const req of reqs) {
+            const reqSize = String(req || '').length;
+            
+            // Если одно требование больше лимита - разобьем его на параграфы
+            if (reqSize > maxCharsPerChunk) {
+                if (currentChunk.length > 0) {
+                    chunks.push(currentChunk);
+                    currentChunk = [];
+                    currentSize = 0;
+                }
+                
+                // Разбиваем большое требование на части по параграфам
+                const paragraphs = String(req).split(/\n\n+/);
+                let tempReq = '';
+                
+                for (const para of paragraphs) {
+                    if ((tempReq.length + para.length) > maxCharsPerChunk && tempReq) {
+                        currentChunk.push(tempReq.trim());
+                        chunks.push(currentChunk);
+                        currentChunk = [];
+                        currentSize = 0;
+                        tempReq = para;
+                    } else {
+                        tempReq += (tempReq ? '\n\n' : '') + para;
+                    }
+                }
+                
+                if (tempReq) {
+                    currentChunk.push(tempReq.trim());
+                }
+                currentSize = tempReq.length;
+                continue;
+            }
+            
+            // Обычная логика: добавляем в текущий чанк, если помещается
+            if (currentSize + reqSize > maxCharsPerChunk && currentChunk.length > 0) {
+                chunks.push(currentChunk);
+                currentChunk = [req];
+                currentSize = reqSize;
+            } else {
+                currentChunk.push(req);
+                currentSize += reqSize;
+            }
+        }
+        
+        if (currentChunk.length > 0) {
+            chunks.push(currentChunk);
+        }
+        
+        return chunks.length > 0 ? chunks : [[]];
+    }
+
     function countChunkNodes(modelChunk) {
         let scenarios = 0, codes = 0;
         for (const f of modelChunk) for (const st of (f.stories || [])) {
@@ -2322,6 +2296,13 @@ app.post('/api/generate-test-cases', async (req, res) => {
 
     // ====== ПРОМПТЫ ======
     const BASE_SYSTEM_PROMPT = `
+🚨 КРИТИЧЕСКИ ВАЖНО: НЕ ПРИДУМЫВАЙ НИЧЕГО! 🚨
+Ты создаёшь тест-кейсы ТОЛЬКО на основе того, что явно написано в требованиях. 
+ЗАПРЕЩЕНО: добавлять шаги, сценарии, ожидаемые результаты или любые детали, которых нет в тексте требований.
+ЗАПРЕЩЕНО: додумывать логику, поведение системы или пользовательские действия.
+ЗАПРЕЩЕНО: создавать тест-кейсы для сценариев, которые не описаны в требованиях.
+Если в требованиях нет явного описания - НЕ СОЗДАВАЙ тест-кейс.
+
 Ты — скрупулёзный SDET (Software Development Engineer in Test), создающий атомарные и исчерпывающие тест-кейсы для импорта в Allure. На основе входной тест-модели (modelStructure) и требований сгенерируй JSON-массив тест-кейсов, НЕУКОСНИТЕЛЬНО следуя Style Guide ниже.
 
 Технологический стек проекта: фронтенд — Angular (TypeScript), бэкенд — .NET/C#. Если требования явно описывают поведение клиента, трактуй его для Angular; если описывают серверное поведение/API — трактуй для .NET. Никогда не додумывай детали вне текста.
@@ -2652,7 +2633,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 `.trim();
 
         const tools = [buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios)];
-        const ai = await callWithBackoff(
+        const ai = await callWithCloudRuFallback(
             OPENROUTER_URL,
             [
                 { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
@@ -2662,10 +2643,10 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             {
                 tools,
                 tool_choice: { type: 'function', function: { name: 'submit_cases' } },
-                models: (config.fallbackModels || []),
+                // models НЕ передаём - будут использованы config.cloudruModels для Cloud.ru и config.fallbackModels для OpenRouter
                 temperature: 0,
                 top_p: 1,
-                max_tokens: 16000,
+                max_tokens: 32000,
                 extra: { transforms: 'middle-out' }
             }
         );
@@ -2698,7 +2679,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                 if (!result.length) {
                     // одна попытка перегенерации с более строгими настройками
                     try {
-                        const retry = await callWithBackoff(
+                        const retry = await callWithCloudRuFallback(
                             OPENROUTER_URL,
                             [
                                 { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
@@ -2708,10 +2689,10 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                             {
                                 // повтор без tools: просим текстовый JSON вместо tool_call
                                 // tools отключены, чтобы получить content
-                                models: (config.fallbackModels || []),
+                                // models НЕ передаём - будут использованы значения по умолчанию
                                 temperature: 0,
                                 top_p: 1,
-                                max_tokens: 16000
+                                max_tokens: 32000
                             }
                         );
                         const a2 = extractToolArgs(retry, 'submit_cases');
@@ -2774,6 +2755,24 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             ...missingCd.map(m => `Unit для code "${m.code}" ×${m.need}`),
         ];
 
+        // === ЧАНКОВАНИЕ ТРЕБОВАНИЙ для gapFill ===
+        const reqsSize = reqs.join('').length;
+        // Для gapFill используем меньший размер чанка, т.к. модель уже есть в промпте
+        const reqsChunks = reqsSize > 35000 ? splitRequirements(reqs, 35000) : [reqs];
+        
+        if (reqsChunks.length > 1) {
+            console.log(`[gapFill] CHUNKING: Требования разбиты на ${reqsChunks.length} чанков (общий размер: ${reqsSize} символов)`);
+        }
+
+        const allGapCases = [];
+        
+        for (let i = 0; i < reqsChunks.length; i++) {
+            const reqsChunk = reqsChunks[i];
+            
+            if (reqsChunks.length > 1) {
+                console.log(`[gapFill] Обработка чанка требований ${i + 1}/${reqsChunks.length}...`);
+            }
+
         const userPrompt = `
 Сгенерируй ТОЛЬКО недостающее покрытие для следующего куска модели.
 Модель (кусок):
@@ -2782,8 +2781,8 @@ ${JSON.stringify(chunk, null, 2)}
 Нужно добрать:
 ${mustLines.map(l => `- ${l}`).join('\n')}
 
-Требования:
-${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+Требования${reqsChunks.length > 1 ? ` (часть ${i + 1}/${reqsChunks.length})` : ''}:
+${reqsChunk.map((r, idx) => `${idx + 1}. ${r}`).join('\n')}
 
 ДОПУСТИМЫЕ ЗНАЧЕНИЯ ДЛЯ "code":
 ${allowedForChunk.map(c => `- ${c}`).join('\n')}
@@ -2792,7 +2791,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 `.trim();
 
         const tools = [buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios)];
-        const ai = await callWithBackoff(
+            const ai = await callWithCloudRuFallback(
             OPENROUTER_URL,
             [
                 { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
@@ -2802,53 +2801,91 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             {
                 tools,
                 tool_choice: { type: "function", function: { name: "submit_cases" } },
-                models: (config.fallbackModels || []),
+                    // models НЕ передаём - будут использованы значения по умолчанию
                 temperature: 0,
                 top_p: 1,
-                max_tokens: 16000,
+                    max_tokens: 32000,
                 extra: { transforms: 'middle-out' }
             }
         );
 
         const args = extractToolArgs(ai, "submit_cases");
-        if (args && Array.isArray(args.cases)) return args.cases;
+            if (args && Array.isArray(args.cases)) {
+                allGapCases.push(...args.cases);
+                continue;
+            }
 
         const content = ai.choices?.[0]?.message?.content || '';
         const rawJsonCandidate = extractJsonArray(content);
-        if (!rawJsonCandidate) return [];
+            if (!rawJsonCandidate) continue;
+            
         try {
             const jsonText = cleanupJsonText(rawJsonCandidate);
             const parsed = JSON5.parse(jsonText);
-            return Array.isArray(parsed) ? parsed : [];
+                if (Array.isArray(parsed)) allGapCases.push(...parsed);
         } catch (e) {
-            console.warn('[gapFill] JSON parse failed (strict). Falling back. Error:', e.message);
+                console.warn(`[gapFill] JSON parse failed (chunk ${i + 1}/${reqsChunks.length}). Falling back. Error:`, e.message);
             try {
-                // fallback: strip everything until first '[' and after last ']'
                 const t = cleanupJsonText(rawJsonCandidate);
                 const parsed = JSON5.parse(t);
-                return Array.isArray(parsed) ? parsed : [];
+                    if (Array.isArray(parsed)) allGapCases.push(...parsed);
             } catch (e2) {
-                console.error('[gapFill] Fallback parse failed:', e2.message);
-                console.log('--- RAW AI RESPONSE (gapFill ultimate fail) ---\n', content, '\n-----------------------------------------');
-                return [];
+                    console.error(`[gapFill] Fallback parse failed (chunk ${i + 1}):`, e2.message);
+                    console.log('--- RAW AI RESPONSE (gapFill fail) ---\n', content, '\n-----------------------------------------');
             }
         }
+        }
+        
+        return allGapCases;
     }
 
     try {
         // Разбиваем на story-чанки
         const storyChunks = splitByStories(modelStructure);
 
-        // Не спамим API: free-модель часто с лимитом — гоняем последовательно
-        const genLimit = pLimit(1);
+        // Параллелим Stories для ускорения (Cloud.ru выдерживает несколько одновременных запросов)
+        const genLimit = pLimit(4);
+
+        // === ЧАНКОВАНИЕ ТРЕБОВАНИЙ для больших документов ===
+        const reqsChunks = splitRequirements(refinedReqs, 45000);
+        const totalReqsSize = refinedReqs.join('').length;
+        
+        console.log(`[generate-test-cases] Требования: ${totalReqsSize} символов → ${reqsChunks.length} чанков, Stories: ${storyChunks.length}`);
+        if (reqsChunks.length > 1) {
+            reqsChunks.forEach((chunk, i) => {
+                const chunkSize = chunk.join('').length;
+                console.log(`  Чанк ${i + 1}/${reqsChunks.length}: ${chunkSize} символов, ${chunk.length} требований`);
+            });
+        }
+        console.log(`[generate-test-cases] Генерация: ${reqsChunks.length} чанков × ${storyChunks.length} Stories (параллельно по 4 Stories)...`);
 
         // Генерация по кускам с таймаутами
         const parts = [];
         const TIMEOUT_MS = 1500000; // 25 минут для надёжности на больших чанк‑запросах
-        for (const chunk of storyChunks) {
-            const promise = genLimit(() => genForChunk(chunk, refinedReqs, BASE_SYSTEM_PROMPT));
-            const chunkCases = await withTimeout(promise, TIMEOUT_MS, `genForChunk (story: ${chunk[0]?.stories[0]?.text})`);
-            parts.push(chunkCases);
+        
+        // Для каждого чанка требований генерируем кейсы для всех Stories (параллельно по 2)
+        for (let reqIdx = 0; reqIdx < reqsChunks.length; reqIdx++) {
+            const reqsChunk = reqsChunks[reqIdx];
+            
+            if (reqsChunks.length > 1) {
+                console.log(`[generate-test-cases] Обработка чанка требований ${reqIdx + 1}/${reqsChunks.length}...`);
+            }
+            
+            // Параллельно обрабатываем Stories для этого чанка требований
+            const promises = storyChunks.map((chunk, storyIdx) => 
+                genLimit(async () => {
+                    const storyName = chunk[0]?.stories[0]?.text || 'N/A';
+                    console.log(`[generate-test-cases] Чанк ${reqIdx + 1}/${reqsChunks.length} → Story ${storyIdx + 1}/${storyChunks.length}: ${storyName}`);
+                    return await withTimeout(
+                        genForChunk(chunk, reqsChunk, BASE_SYSTEM_PROMPT),
+                        TIMEOUT_MS,
+                        `genForChunk (reqChunk: ${reqIdx + 1}/${reqsChunks.length}, story: ${storyName})`
+                    );
+                })
+            );
+            
+            const results = await Promise.all(promises);
+            parts.push(...results);
         }
 
         let allCases = parts.flat();
@@ -2897,11 +2934,6 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
     }
 });
 
-
-
-
-
-
 const transformToHierarchy = (flatList) => {
     // Используем Map для группировки по имени фичи, чтобы избежать дубликатов
     const featuresMap = new Map();
@@ -2948,8 +2980,7 @@ const transformToHierarchy = (flatList) => {
 
 app.post('/api/generate-test-model', async (req, res) => {
     const {
-        requirements,          // string | string[]
-        // новые поля:
+        requirements,     
         text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken
     } = req.body;
     if (!requirements && !text && !pageId) {
@@ -3014,8 +3045,139 @@ app.post('/api/generate-test-model', async (req, res) => {
     }
 
     console.log('Требования для тест модели')
-    console.log(reqStringForModel)
+    console.log(`Размер требований: ${reqStringForModel.length} символов`)
+    
+    // === ФУНКЦИЯ ЧАНКОВАНИЯ БОЛЬШИХ ТРЕБОВАНИЙ ===
+    function chunkTextBySize(text, maxChars = 80000) {
+        if (!text || text.length <= maxChars) return [text];
+        
+        const chunks = [];
+        const paragraphs = text.split(/\n\n+/);
+        let currentChunk = '';
+        
+        for (const para of paragraphs) {
+            if (currentChunk.length + para.length > maxChars && currentChunk) {
+                chunks.push(currentChunk.trim());
+                currentChunk = para;
+            } else {
+                currentChunk += (currentChunk ? '\n\n' : '') + para;
+            }
+        }
+        
+        if (currentChunk) {
+            chunks.push(currentChunk.trim());
+        }
+        
+        return chunks.length > 0 ? chunks : [text];
+    }
+    
+    // === ФУНКЦИЯ ОБЪЕДИНЕНИЯ МОДЕЛЕЙ ===
+    function mergeTestModels(models) {
+        if (!models || models.length === 0) return [];
+        if (models.length === 1) return models[0];
+        
+        const featureMap = new Map();
+        
+        for (const model of models) {
+            if (!Array.isArray(model)) continue;
+            
+            for (const feature of model) {
+                if (!feature?.text) continue;
+                
+                const fKey = feature.text.toLowerCase().trim();
+                
+                if (!featureMap.has(fKey)) {
+                    featureMap.set(fKey, {
+                        text: feature.text,
+                        stories: []
+                    });
+                }
+                
+                const existingFeature = featureMap.get(fKey);
+                const storyMap = new Map();
+                
+                // Собираем существующие stories
+                for (const story of (existingFeature.stories || [])) {
+                    if (story?.text) {
+                        storyMap.set(story.text.toLowerCase().trim(), story);
+                    }
+                }
+                
+                // Добавляем/мерджим новые stories
+                for (const story of (feature.stories || [])) {
+                    if (!story?.text) continue;
+                    
+                    const sKey = story.text.toLowerCase().trim();
+                    
+                    if (!storyMap.has(sKey)) {
+                        storyMap.set(sKey, {
+                            text: story.text,
+                            scenarios: story.scenarios || []
+                        });
+                    } else {
+                        // Мерджим scenarios
+                        const existingStory = storyMap.get(sKey);
+                        const scenarioMap = new Map();
+                        
+                        for (const sc of (existingStory.scenarios || [])) {
+                            if (sc?.text) {
+                                scenarioMap.set(sc.text.toLowerCase().trim(), sc);
+                            }
+                        }
+                        
+                        for (const sc of (story.scenarios || [])) {
+                            if (!sc?.text) continue;
+                            
+                            const scKey = sc.text.toLowerCase().trim();
+                            
+                            if (!scenarioMap.has(scKey)) {
+                                scenarioMap.set(scKey, {
+                                    text: sc.text,
+                                    codes: sc.codes || []
+                                });
+                            } else {
+                                // Мерджим codes
+                                const existingScenario = scenarioMap.get(scKey);
+                                const codeMap = new Map();
+                                
+                                for (const code of (existingScenario.codes || [])) {
+                                    if (code?.text) {
+                                        codeMap.set(code.text.toLowerCase().trim(), code);
+                                    }
+                                }
+                                
+                                for (const code of (sc.codes || [])) {
+                                    if (code?.text) {
+                                        const cKey = code.text.toLowerCase().trim();
+                                        if (!codeMap.has(cKey)) {
+                                            codeMap.set(cKey, code);
+                                        }
+                                    }
+                                }
+                                
+                                existingScenario.codes = Array.from(codeMap.values());
+                            }
+                        }
+                        
+                        existingStory.scenarios = Array.from(scenarioMap.values());
+                    }
+                }
+                
+                existingFeature.stories = Array.from(storyMap.values());
+            }
+        }
+        
+        return Array.from(featureMap.values());
+    }
+    
     const SYSTEM_PROMPT = `
+🚨 КРИТИЧЕСКИ ВАЖНО: НЕ ПРИДУМЫВАЙ НИЧЕГО! 🚨
+Ты создаёшь тестовую модель ТОЛЬКО на основе того, что явно написано в требованиях.
+ЗАПРЕЩЕНО: добавлять сценарии, действия, реакции или любые элементы, которых нет в тексте требований.
+ЗАПРЕЩЕНО: додумывать пользовательские потоки, бизнес-логику или поведение системы.
+ЗАПРЕЩЕНО: создавать элементы модели для функциональности, которая не описана в требованиях.
+Если в требованиях нет явного описания - НЕ СОЗДАВАЙ соответствующий элемент модели.
+
 Ты — выдающийся QA-архитектор с исключительным талантом к синтезу и декомпозиции. Твоя главная сила — видеть за разрозненными требованиями целостную картину и ценность для пользователя.
 
 ## 1. Цель
@@ -3097,15 +3259,60 @@ ${reqStringForModel}
 СТРОГОЕ ПРАВИЛО ДЛЯ HTTP-ЭНДПОИНТОВ: узлы \`Code\`, описывающие HTTP‑запросы (GET|POST|PUT|PATCH|DELETE "/..."), добавляй ТОЛЬКО если метод и путь явно указаны в тексте требований. Если в требованиях нет однозначного упоминания такого запроса — не добавляй его и не придумывай.
 `.trim();
 
-
-
     try {
+        // === ЧАНКОВАНИЕ БОЛЬШИХ ТРЕБОВАНИЙ ===
+        const reqChunks = chunkTextBySize(reqStringForModel, 80000);
+        const totalSize = reqStringForModel.length;
+        
+        if (reqChunks.length > 1) {
+            console.log(`[generate-test-model] CHUNKING: Требования разбиты на ${reqChunks.length} чанков (общий размер: ${totalSize} символов)`);
+            reqChunks.forEach((chunk, i) => {
+                const preview = chunk.substring(0, 200).replace(/\n/g, ' ').trim();
+                const endPreview = chunk.substring(Math.max(0, chunk.length - 100)).replace(/\n/g, ' ').trim();
+                console.log(`  Чанк ${i + 1}/${reqChunks.length}: ${chunk.length} символов`);
+                console.log(`    Начало: "${preview}..."`);
+                console.log(`    Конец: "...${endPreview}"`);
+            });
+        }
+        
+        const partialModels = [];
+        
+        // === ГЕНЕРАЦИЯ ДЛЯ КАЖДОГО ЧАНКА ===
+        for (let chunkIdx = 0; chunkIdx < reqChunks.length; chunkIdx++) {
+            const reqChunk = reqChunks[chunkIdx];
+            
+            if (reqChunks.length > 1) {
+                console.log(`[generate-test-model] Обработка чанка ${chunkIdx + 1}/${reqChunks.length}...`);
+            }
+            
+            // Модифицируем промпт для чанков
+            let userPrompt = reqChunk;
+            if (reqChunks.length > 1) {
+                userPrompt = `ВНИМАНИЕ: Это часть ${chunkIdx + 1} из ${reqChunks.length} от общего документа требований.
+
+КРИТИЧЕСКИ ВАЖНО ДЛЯ БОЛЬШИХ ДОКУМЕНТОВ:
+- Создай тестовую модель для этой части, ДАЖЕ ЕСЛИ информация кажется неполной
+- Если видишь заголовки и описания действий пользователя, но НЕ видишь реакций системы → создай Scenarios с пустым массивом codes (они могут быть в другом чанке)
+- Если видишь описания реакций системы, но контекст неясен → создай Codes в том разделе, который есть
+- Если раздел начинается или заканчивается обрывочно → всё равно создай элементы с той информацией, которая доступна
+- Итоговые модели из всех чанков будут АВТОМАТИЧЕСКИ объединены по названиям Feature/Story/Scenario/Code
+
+При объединении системa соединит:
+- Scenarios с одинаковыми названиями из разных чанков
+- Codes будут добавлены к соответствующим Scenarios
+- Дубликаты будут удалены
+
+НЕ ПРОПУСКАЙ разделы из-за неполноты информации - лучше создать неполную структуру, чем пропустить.
+
+${reqChunk}`;
+            }
+            
         const tools = [buildSubmitModelTool()];
         const ai = await callWithCloudRuFallback(
             OPENROUTER_URL,
             [
                 { role: 'system', content: SYSTEM_PROMPT },
-                { role: 'user', content: reqStringForModel }
+                    { role: 'user', content: userPrompt }
             ],
             config.openRouterAiKey,
             {
@@ -3120,28 +3327,103 @@ ${reqStringForModel}
 
         // 1) Пытаемся забрать tool-call
         let args = extractToolArgs(ai, "submit_test_model");
-        let model;
+            let partialModel;
 
         if (args && Array.isArray(args.model)) {
-            model = args.model;
+                partialModel = args.model;
         } else {
             // 2) Фолбэк: из content вырезаем массив
             let content = ai.choices?.[0]?.message?.content?.trim();
-            if (!content) throw new Error('AI не вернул результата');
+                if (!content) {
+                    console.warn(`[generate-test-model] Чанк ${chunkIdx + 1}: AI не вернул результата`);
+                    continue;
+                }
 
             const firstBracket = content.indexOf('[');
             const lastBracket = content.lastIndexOf(']');
-            if (firstBracket === -1 || lastBracket === -1) throw new Error('Не найден JSON-массив');
+                if (firstBracket === -1 || lastBracket === -1) {
+                    console.warn(`[generate-test-model] Чанк ${chunkIdx + 1}: Не найден JSON-массив`);
+                    continue;
+                }
             let jsonText = content.slice(firstBracket, lastBracket + 1);
             jsonText = jsonText.replace(/"(\s*)"code":/g, '", "code":');
 
+                try {
             let parsed = JSON5.parse(jsonText);
             // если плоская структура — поднимем
             const isFlat = parsed.length > 0 && parsed[0].hasOwnProperty('Feature');
-            model = isFlat ? transformToHierarchy(parsed) : parsed;
+                    partialModel = isFlat ? transformToHierarchy(parsed) : parsed;
+                } catch (parseErr) {
+                    console.warn(`[generate-test-model] Чанк ${chunkIdx + 1}: Ошибка парсинга JSON:`, parseErr.message);
+                    continue;
+                }
+            }
+            
+            if (partialModel && Array.isArray(partialModel) && partialModel.length > 0) {
+                partialModels.push(partialModel);
+                
+                // Подробная статистика по чанку
+                let totalStories = 0, totalScenarios = 0, totalCodes = 0;
+                let scenariosWithoutCodes = 0;
+                
+                for (const feature of partialModel) {
+                    console.log(`[generate-test-model] Чанк ${chunkIdx + 1}: Feature "${feature.text}"`);
+                    for (const story of (feature.stories || [])) {
+                        totalStories++;
+                        console.log(`    Story: "${story.text}"`);
+                        for (const scenario of (story.scenarios || [])) {
+                            totalScenarios++;
+                            const codesCount = (scenario.codes || []).length;
+                            totalCodes += codesCount;
+                            if (codesCount === 0) {
+                                scenariosWithoutCodes++;
+                                console.log(`      ⚠️ Scenario БЕЗ codes: "${scenario.text}"`);
+                            } else {
+                                console.log(`      ✓ Scenario с ${codesCount} codes: "${scenario.text}"`);
+                            }
+                        }
+                    }
+                }
+                
+                console.log(`[generate-test-model] Чанк ${chunkIdx + 1}/${reqChunks.length} СТАТИСТИКА: Features: ${partialModel.length}, Stories: ${totalStories}, Scenarios: ${totalScenarios} (БЕЗ codes: ${scenariosWithoutCodes}), Codes: ${totalCodes}`);
+            }
+        }
+        
+        // === ОБЪЕДИНЕНИЕ ВСЕХ ЧАСТИЧНЫХ МОДЕЛЕЙ ===
+        if (partialModels.length === 0) {
+            throw new Error('Не удалось сгенерировать тестовую модель ни из одного чанка');
+        }
+        
+        let mergedModel = partialModels.length === 1 
+            ? partialModels[0] 
+            : mergeTestModels(partialModels);
+        
+        if (partialModels.length > 1) {
+            const totalFeatures = mergedModel.length;
+            const totalStories = mergedModel.reduce((sum, f) => sum + (f.stories?.length || 0), 0);
+            const totalScenarios = mergedModel.reduce((sum, f) => 
+                sum + (f.stories || []).reduce((s, st) => s + (st.scenarios?.length || 0), 0), 0);
+            const totalCodes = mergedModel.reduce((sum, f) => 
+                sum + (f.stories || []).reduce((s, st) => 
+                    s + (st.scenarios || []).reduce((sc, scn) => sc + (scn.codes?.length || 0), 0), 0), 0);
+            
+            // Подсчитываем scenarios без codes ПОСЛЕ слияния
+            let scenariosWithoutCodesAfterMerge = 0;
+            for (const feature of mergedModel) {
+                for (const story of (feature.stories || [])) {
+                    for (const scenario of (story.scenarios || [])) {
+                        if ((scenario.codes || []).length === 0) {
+                            scenariosWithoutCodesAfterMerge++;
+                            console.warn(`⚠️ [generate-test-model] ПОСЛЕ СЛИЯНИЯ: Scenario БЕЗ codes в "${feature.text}" → "${story.text}" → "${scenario.text}"`);
+                        }
+                    }
+                }
+            }
+            
+            console.log(`[generate-test-model] MERGED: ${partialModels.length} чанков → ${totalFeatures} Features, ${totalStories} Stories, ${totalScenarios} Scenarios (БЕЗ codes: ${scenariosWithoutCodesAfterMerge}), ${totalCodes} Codes`);
         }
 
-        const finalModel = normalizeModelStructure(model);
+        const finalModel = normalizeModelStructure(mergedModel);
         // Упростили: доверяем модели, правило прописано в промпте. Возвращаем как есть.
         return res.status(200).json(finalModel);
     } catch (err) {
@@ -3156,6 +3438,542 @@ ${reqStringForModel}
             return res.status(429).json({ error: msg, waitSeconds: s });
         }
         return res.status(500).json({ error: err.message });
+    }
+});
+
+// Асинхронная генерация тестовой модели
+async function generateTestModelAsync(taskId, inputData) {
+    try {
+        await db('generation_tasks').where('id', taskId).update({
+            status: 'processing',
+            progress: 0,
+            updated_at: new Date()
+        });
+
+        const {
+            requirements,
+            text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken
+        } = inputData;
+        
+        if (!requirements && !text && !pageId) {
+            throw new Error('Нужно передать requirements (строка/массив), либо text, либо pageId');
+        }
+
+        // 0) Если pageId передан — подтягиваем основную страницу и прямые ссылки
+        let autoPages = [];
+        let baseRequirement = '';
+        if (pageId) {
+            try {
+                if (!bearerToken) throw new Error('bearerToken is required for Confluence');
+                const { markdown } = await fetchConfluencePage(bearerToken, pageId, { inlineTextAttachments: true });
+                baseRequirement = markdown || '';
+                const ids = new Set(Array.from(String(markdown || '').matchAll(/pageId=(\d{4,})/g)).map(m => m[1]));
+                ids.delete(String(pageId));
+                for (const lid of ids) {
+                    try {
+                        const { markdown: md } = await fetchConfluencePage(bearerToken, lid, { inlineTextAttachments: true });
+                        const lines = String(markdown || '').split(/\n/);
+                        const refIdx = lines.findIndex(l => l.includes(`pageId=${lid}`));
+                        let mention = '';
+                        if (refIdx !== -1) {
+                            const start = Math.max(0, refIdx - 2);
+                            const end = Math.min(lines.length, refIdx + 3);
+                            mention = lines.slice(start, end).join('\n').trim();
+                        }
+                        const relevant = extractRelevantSections(md, mention, { maxSections: 8, maxChars: 22000 });
+                        autoPages.push([
+                            `### Контекст по ссылке из основной статьи (pageId=${lid})`,
+                            mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${lid})`,
+                            '',
+                            relevant
+                        ].join('\n'));
+                    } catch { }
+                }
+            } catch (e) {
+                console.warn('[generate-test-model-async] auto-context fetch failed:', e.message);
+            }
+        }
+
+        // Приводим к строке требований, предварительно прогнав через contextRefiner
+        let reqStringForModel = '';
+        try {
+            const { refinedText, refinedArray } = await contextRefiner({
+                requirements: Array.isArray(requirements) ? requirements : (requirements ? [requirements] : undefined),
+                text: baseRequirement || text,
+                glossary,
+                context,
+                contextInstruction,
+                contextPageIds: undefined,
+                glossaryPageId: undefined,
+                bearerToken: undefined,
+                contextPages: autoPages
+            });
+            reqStringForModel = refinedText || (refinedArray?.join('\n\n') ?? '');
+        } catch (e) {
+            console.warn('[generate-test-model-async] contextRefiner warning:', e.message);
+            reqStringForModel = baseRequirement || (typeof requirements === 'string' ? requirements : (Array.isArray(requirements) ? requirements.join('\n\n') : (text || '')));
+        }
+
+        console.log('[generate-test-model-async] Требования для тест модели');
+        console.log('[generate-test-model-async] Размер требований:', reqStringForModel.length, 'символов');
+
+        // Функция чанкования больших требований
+        function chunkTextBySize(text, maxChars = 80000) {
+            if (!text || text.length <= maxChars) return [text];
+            
+            const chunks = [];
+            const paragraphs = text.split(/\n\n+/);
+            let currentChunk = '';
+            
+            for (const para of paragraphs) {
+                if (currentChunk.length + para.length > maxChars && currentChunk) {
+                    chunks.push(currentChunk.trim());
+                    currentChunk = para;
+                } else {
+                    currentChunk += (currentChunk ? '\n\n' : '') + para;
+                }
+            }
+            
+            if (currentChunk) {
+                chunks.push(currentChunk.trim());
+            }
+            
+            return chunks.length > 0 ? chunks : [text];
+        }
+
+        // Функция объединения моделей (копируем из основного эндпоинта)
+        function mergeTestModels(models) {
+            if (!models || models.length === 0) return [];
+            if (models.length === 1) return models[0];
+            
+            const featureMap = new Map();
+            
+            for (const model of models) {
+                if (!Array.isArray(model)) continue;
+                
+                for (const feature of model) {
+                    if (!feature?.text) continue;
+                    
+                    const fKey = feature.text.toLowerCase().trim();
+                    
+                    if (!featureMap.has(fKey)) {
+                        featureMap.set(fKey, {
+                            text: feature.text,
+                            stories: []
+                        });
+                    }
+                    
+                    const existingFeature = featureMap.get(fKey);
+                    const storyMap = new Map();
+                    
+                    for (const story of (existingFeature.stories || [])) {
+                        if (story?.text) {
+                            storyMap.set(story.text.toLowerCase().trim(), story);
+                        }
+                    }
+                    
+                    for (const story of (feature.stories || [])) {
+                        if (!story?.text) continue;
+                        
+                        const sKey = story.text.toLowerCase().trim();
+                        
+                        if (!storyMap.has(sKey)) {
+                            storyMap.set(sKey, {
+                                text: story.text,
+                                scenarios: story.scenarios || []
+                            });
+                        } else {
+                            const existingStory = storyMap.get(sKey);
+                            const scenarioMap = new Map();
+                            
+                            for (const sc of (existingStory.scenarios || [])) {
+                                if (sc?.text) {
+                                    scenarioMap.set(sc.text.toLowerCase().trim(), sc);
+                                }
+                            }
+                            
+                            for (const sc of (story.scenarios || [])) {
+                                if (!sc?.text) continue;
+                                
+                                const scKey = sc.text.toLowerCase().trim();
+                                
+                                if (!scenarioMap.has(scKey)) {
+                                    scenarioMap.set(scKey, {
+                                        text: sc.text,
+                                        codes: sc.codes || []
+                                    });
+                                } else {
+                                    const existingScenario = scenarioMap.get(scKey);
+                                    const codeMap = new Map();
+                                    
+                                    for (const code of (existingScenario.codes || [])) {
+                                        if (code?.text) {
+                                            codeMap.set(code.text.toLowerCase().trim(), code);
+                                        }
+                                    }
+                                    
+                                    for (const code of (sc.codes || [])) {
+                                        if (code?.text) {
+                                            const cKey = code.text.toLowerCase().trim();
+                                            if (!codeMap.has(cKey)) {
+                                                codeMap.set(cKey, code);
+                                            }
+                                        }
+                                    }
+                                    
+                                    existingScenario.codes = Array.from(codeMap.values());
+                                }
+                            }
+                            
+                            existingStory.scenarios = Array.from(scenarioMap.values());
+                        }
+                    }
+                    
+                    existingFeature.stories = Array.from(storyMap.values());
+                }
+            }
+            
+            return Array.from(featureMap.values());
+        }
+
+        const SYSTEM_PROMPT = `
+🚨 КРИТИЧЕСКИ ВАЖНО: НЕ ПРИДУМЫВАЙ НИЧЕГО! 🚨
+Ты создаёшь тестовую модель ТОЛЬКО на основе того, что явно написано в требованиях.
+ЗАПРЕЩЕНО: добавлять сценарии, действия, реакции или любые элементы, которых нет в тексте требований.
+ЗАПРЕЩЕНО: додумывать пользовательские потоки, бизнес-логику или поведение системы.
+ЗАПРЕЩЕНО: создавать элементы модели для функциональности, которая не описана в требованиях.
+Если в требованиях нет явного описания - НЕ СОЗДАВАЙ соответствующий элемент модели.
+
+Ты — выдающийся QA-архитектор с исключительным талантом к синтезу и декомпозиции. Твоя главная сила — видеть за разрозненными требованиями целостную картину и ценность для пользователя.
+
+## 1. Цель
+Создать иерархическую тестовую модель (Feature → Story → Scenario → Code) на основе предоставленных требований.
+
+Технологический стек проекта: фронтенд — Angular (TypeScript), бэкенд — .NET/C#. Если требование явно про UI — интерпретируй как Angular; если про API/сервер — как .NET. Ничего не выдумывай сверх текста.
+
+## 2. Ключевой принцип декомпозиции (САМОЕ ВАЖНОЕ!)
+- **Сначала Синтез, потом Анализ.** Прочитай ВСЕ требования. Твоя первая задача — определить 1-3 **высокоуровневых пользовательских потока (Story)**, которые приносят конечную ценность.
+## 2.1 Строгий запрет на домыслы и выдумки (Новый пункт)
+- Если в требованиях **нет явного и однозначного описания** пользовательского сценария, действия или реакции — **не создавай** соответствующий элемент модели.
+- Ни при каких обстоятельствах **не добавляй** гипотезы, догадки, предполагаемые сценарии или реакции, которых нет в требованиях.
+- Лучше пропустить неопределённые или недостаточно описанные части, чем создавать искусственные данные.
+- Модель должна отражать ТОЛЬКО то, что есть в требованиях, без предположений и дописок.
+
+
+## 3. Структура дерева (строго соблюдать)
+- **Feature (Фича):** Большой независимый блок продукта.
+- **Story (C1-E2E):** **Целостный пользовательский сценарий, приносящий ценность.**
+- **Scenario (C2–C3-Integration):** **Атомарное ДЕЙСТВИЕ пользователя** внутри Story, формулируется инфинитивом.
+- **Code (C4-Unit):** **РЕАКЦИЯ системы** на действие пользователя, описываемое инфинитивом. **Не использовать** слово «Проверка».
+
+## 3.1. Правила Детализации (ПРИОРИТЕТ!)
+- **Если в требованиях есть раздел "Пользовательские сценарии" (или похожий по смыслу), используй его как главный источник для декомпозиции.**
+- **Каждый пронумерованный шаг пользователя из этих сценариев должен стать отдельным \`Scenario\` в тестовой модели.**
+- **Описание реакции системы на действие пользователя — это \`Code\` внутри этого \`Scenario\`.**
+
+## 3.2. Принцип Абстракции Данных и Реализации (ВЫСШИЙ ПРИОРИТЕТ!)
+- **Не вставляй конкретные данные из примеров** (значения, названия, тексты ошибок) в итоговую модель.
+- **Не вставляй детали технической реализации.**
+- Твоя задача — распознать КОНКРЕТНЫЕ ПРИМЕРЫ в требованиях, но в итоговой модели заменить их на **АБСТРАКТНЫЕ ОПИСАНИЯ ДЕЙСТВИЙ И РЕАКЦИЙ.**
+- Сосредоточься на связке **"действие пользователя (Scenario) -> видимая реакция системы (Code)"**. Модель должна быть независима от конкретной технологии.
+
+## 3.3. При недостатке информации — минимализм
+- Если информации в требованиях недостаточно для создания подробного сценария, создай максимально общий и абстрактный элемент.
+- Не расширяй модель за счёт непроверенных деталей.
+- Предпочти короче и точнее, чем длиннее и с выдумками.
+
+- **Примеры абстракции данных:**
+  - НЕПРАВИЛЬНО: "Выбрать программу '27 LADA FREE'"
+  - **ПРАВИЛЬНО:** "Выбрать значение, соответствующее условию зависимости"
+
+- **Примеры абстракции реализации:**
+  - НЕПРАВИЛЬНО (деталь): \`Scenario: "Отправить GET-запрос на /api/users"\`
+  - **ПРАВИЛЬНО (действие):** \`Scenario: "Запросить список пользователей"\`
+  
+  - НЕПРАВИЛЬНО (деталь): \`Code: "Загрузить данные из кэша"\`
+  - **ПРАВИЛЬНО (реакция):** \`Code: "Отобразить список пользователей"\`
+
+## 4. Формат вывода (обязательно)
+Выход — **ТОЛЬКО** чистый JSON-массив без комментариев и markdown.
+\`\`\`json
+[
+  {
+    "text": "Название Feature",
+    "stories": [
+      {
+        "text": "Название Story",
+        "scenarios": [
+          {
+            "text": "Первый Scenario",
+            "codes": [
+              { "text": "Первое системное действие" }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]
+\`\`\`
+
+## 5. Входные данные: Требования к продукту
+${reqStringForModel}
+
+## 6. Задание
+Основываясь на **принципах декомпозиции (п.2), детализации (п.3.1) и абстракции (п.3.2)**, проанализируй требования и сгенерируй тестовую модель в формате JSON. Ответ — **только** чистый JSON. Обязательно тестовая модель только на русском языке.
+
+СТРОГОЕ ПРАВИЛО ДЛЯ HTTP-ЭНДПОИНТОВ: узлы \`Code\`, описывающие HTTP‑запросы (GET|POST|PUT|PATCH|DELETE "/..."), добавляй ТОЛЬКО если метод и путь явно указаны в тексте требований. Если в требованиях нет однозначного упоминания такого запроса — не добавляй его и не придумывай.
+`.trim();
+
+        // === ЧАНКОВАНИЕ БОЛЬШИХ ТРЕБОВАНИЙ ===
+        const reqChunks = chunkTextBySize(reqStringForModel, 80000);
+        const totalSize = reqStringForModel.length;
+        
+        if (reqChunks.length > 1) {
+            console.log(`[generate-test-model-async] CHUNKING: Требования разбиты на ${reqChunks.length} чанков (общий размер: ${totalSize} символов)`);
+            reqChunks.forEach((chunk, i) => {
+                const preview = chunk.substring(0, 200).replace(/\n/g, ' ').trim();
+                const endPreview = chunk.substring(Math.max(0, chunk.length - 100)).replace(/\n/g, ' ').trim();
+                console.log(`  Чанк ${i + 1}/${reqChunks.length}: ${chunk.length} символов`);
+                console.log(`    Начало: "${preview}..."`);
+                console.log(`    Конец: "...${endPreview}"`);
+            });
+        }
+        
+        const partialModels = [];
+        
+        // === ГЕНЕРАЦИЯ ДЛЯ КАЖДОГО ЧАНКА ===
+        for (let chunkIdx = 0; chunkIdx < reqChunks.length; chunkIdx++) {
+            const reqChunk = reqChunks[chunkIdx];
+            const progress = Math.round(((chunkIdx + 1) / reqChunks.length) * 100);
+            
+            await db('generation_tasks').where('id', taskId).update({
+                progress,
+                updated_at: new Date()
+            });
+            
+            if (reqChunks.length > 1) {
+                console.log(`[generate-test-model-async] Обработка чанка ${chunkIdx + 1}/${reqChunks.length}...`);
+            }
+            
+            // Модифицируем промпт для чанков
+            let userPrompt = reqChunk;
+            if (reqChunks.length > 1) {
+                userPrompt = `ВНИМАНИЕ: Это часть ${chunkIdx + 1} из ${reqChunks.length} от общего документа требований.
+
+КРИТИЧЕСКИ ВАЖНО ДЛЯ БОЛЬШИХ ДОКУМЕНТОВ:
+- Создай тестовую модель для этой части, ДАЖЕ ЕСЛИ информация кажется неполной
+- Если видишь заголовки и описания действий пользователя, но НЕ видишь реакций системы → создай Scenarios с пустым массивом codes (они могут быть в другом чанке)
+- Если видишь описания реакций системы, но контекст неясен → создай Codes в том разделе, который есть
+- Если раздел начинается или заканчивается обрывочно → всё равно создай элементы с той информацией, которая доступна
+- Итоговые модели из всех чанков будут АВТОМАТИЧЕСКИ объединены по названиям Feature/Story/Scenario/Code
+
+При объединении системa соединит:
+- Scenarios с одинаковыми названиями из разных чанков
+- Codes будут добавлены к соответствующим Scenarios
+- Дубликаты будут удалены
+
+НЕ ПРОПУСКАЙ разделы из-за неполноты информации - лучше создать неполную структуру, чем пропустить.
+
+${reqChunk}`;
+            }
+            
+            const tools = [buildSubmitModelTool()];
+            const ai = await callWithCloudRuFallback(
+                OPENROUTER_URL,
+                [
+                    { role: 'system', content: SYSTEM_PROMPT },
+                    { role: 'user', content: userPrompt }
+                ],
+                config.openRouterAiKey,
+                {
+                    tools,
+                    tool_choice: { type: "function", function: { name: "submit_test_model" } },
+                    temperature: 0.25,
+                    top_p: 0.9,
+                    max_tokens: 8192,
+                    extra: { transforms: 'middle-out' }
+                }
+            );
+
+            // 1) Пытаемся забрать tool-call
+            let args = extractToolArgs(ai, "submit_test_model");
+            let partialModel;
+
+            if (args && Array.isArray(args.model)) {
+                partialModel = args.model;
+            } else {
+                // 2) Фолбэк: из content вырезаем массив
+                let content = ai.choices?.[0]?.message?.content?.trim();
+                if (!content) {
+                    console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}: AI не вернул результата`);
+                    continue;
+                }
+
+                const firstBracket = content.indexOf('[');
+                const lastBracket = content.lastIndexOf(']');
+                if (firstBracket === -1 || lastBracket === -1) {
+                    console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}: Не найден JSON-массив`);
+                    continue;
+                }
+                let jsonText = content.slice(firstBracket, lastBracket + 1);
+                jsonText = jsonText.replace(/"(\s*)"code":/g, '", "code":');
+
+                try {
+                    let parsed = JSON5.parse(jsonText);
+                    // если плоская структура — поднимем
+                    const isFlat = parsed.length > 0 && parsed[0].hasOwnProperty('Feature');
+                    partialModel = isFlat ? transformToHierarchy(parsed) : parsed;
+                } catch (parseErr) {
+                    console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}: Ошибка парсинга JSON:`, parseErr.message);
+                    continue;
+                }
+            }
+            
+            if (partialModel && Array.isArray(partialModel) && partialModel.length > 0) {
+                partialModels.push(partialModel);
+                
+                // Подробная статистика по чанку
+                let totalStories = 0, totalScenarios = 0, totalCodes = 0;
+                let scenariosWithoutCodes = 0;
+                
+                for (const feature of partialModel) {
+                    console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}: Feature "${feature.text}"`);
+                    for (const story of (feature.stories || [])) {
+                        totalStories++;
+                        console.log(`    Story: "${story.text}"`);
+                        for (const scenario of (story.scenarios || [])) {
+                            totalScenarios++;
+                            const codesCount = (scenario.codes || []).length;
+                            if (codesCount === 0) scenariosWithoutCodes++;
+                            totalCodes += codesCount;
+                            console.log(`      Scenario: "${scenario.text}" (${codesCount} codes)`);
+                        }
+                    }
+                }
+                console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}/${reqChunks.length} СТАТИСТИКА: Features: ${partialModel.length}, Stories: ${totalStories}, Scenarios: ${totalScenarios} (БЕЗ codes: ${scenariosWithoutCodes}), Codes: ${totalCodes}`);
+            }
+        }
+
+        // Объединяем все частичные модели
+        if (partialModels.length === 0) {
+            console.error('[generate-test-model-async] Не удалось получить валидные модели ни из одного чанка');
+            console.error('[generate-test-model-async] Попробуем создать базовую модель...');
+            
+            // Создаем базовую модель как fallback
+            const fallbackModel = [{
+                text: "Основная функциональность",
+                stories: [{
+                    text: "Базовый сценарий",
+                    scenarios: [{
+                        text: "Основной тест",
+                        codes: [{
+                            text: "Проверить основную функциональность"
+                        }]
+                    }]
+                }]
+            }];
+            
+            partialModels.push(fallbackModel);
+            console.log('[generate-test-model-async] Создана fallback модель');
+        }
+        
+        let mergedModel = partialModels.length === 1 
+            ? partialModels[0] 
+            : mergeTestModels(partialModels);
+
+        // Подробная статистика по слиянию
+        if (partialModels.length > 1) {
+            const totalFeatures = mergedModel.length;
+            const totalStories = mergedModel.reduce((sum, f) => sum + (f.stories || []).length, 0);
+            const totalScenarios = mergedModel.reduce((sum, f) => 
+                sum + (f.stories || []).reduce((s, st) => s + (st.scenarios || []).length, 0), 0);
+            const totalCodes = mergedModel.reduce((sum, f) => 
+                sum + (f.stories || []).reduce((s, st) => 
+                    s + (st.scenarios || []).reduce((sc, scn) => sc + (scn.codes?.length || 0), 0), 0), 0);
+            
+            // Подсчитываем scenarios без codes ПОСЛЕ слияния
+            let scenariosWithoutCodesAfterMerge = 0;
+            for (const feature of mergedModel) {
+                for (const story of (feature.stories || [])) {
+                    for (const scenario of (story.scenarios || [])) {
+                        if ((scenario.codes || []).length === 0) {
+                            scenariosWithoutCodesAfterMerge++;
+                            console.warn(`⚠️ [generate-test-model-async] ПОСЛЕ СЛИЯНИЯ: Scenario БЕЗ codes в "${feature.text}" → "${story.text}" → "${scenario.text}"`);
+                        }
+                    }
+                }
+            }
+            
+            console.log(`[generate-test-model-async] MERGED: ${partialModels.length} чанков → ${totalFeatures} Features, ${totalStories} Stories, ${totalScenarios} Scenarios (БЕЗ codes: ${scenariosWithoutCodesAfterMerge}), ${totalCodes} Codes`);
+        }
+
+        const finalModel = normalizeModelStructure(mergedModel);
+
+        await db('generation_tasks').where('id', taskId).update({
+            status: 'completed',
+            progress: 100,
+            result: { testModel: finalModel },
+            completed_at: new Date(),
+            updated_at: new Date()
+        });
+
+        console.log(`[generate-test-model-async] Задача ${taskId} завершена успешно`);
+
+    } catch (error) {
+        console.error('Ошибка асинхронной генерации тестовой модели:', error);
+        await db('generation_tasks').where('id', taskId).update({
+            status: 'failed',
+            error_message: error.message,
+            updated_at: new Date()
+        });
+    }
+}
+
+app.post('/api/generate-test-model-async', async (req, res) => {
+    try {
+        const taskId = uuidv4();
+        
+        await db('generation_tasks').insert({
+            id: taskId,
+            type: 'test_model',
+            status: 'processing',
+            progress: 0,
+            input_data: req.body,
+            created_at: new Date(),
+            updated_at: new Date()
+        });
+
+        generateTestModelAsync(taskId, req.body);
+
+        res.json({ taskId, status: 'started' });
+    } catch (error) {
+        console.error('Ошибка создания задачи генерации тестовой модели:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/generate-test-model-status/:taskId', async (req, res) => {
+    try {
+        const task = await db('generation_tasks').where('id', req.params.taskId).first();
+        
+        if (!task) {
+            return res.status(404).json({ error: 'Task not found' });
+        }
+
+        res.json({
+            id: task.id,
+            status: task.status,
+            progress: task.progress,
+            result: task.result,
+            error_message: task.error_message,
+            created_at: task.created_at,
+            updated_at: task.updated_at,
+            completed_at: task.completed_at
+        });
+    } catch (error) {
+        console.error('Ошибка получения статуса генерации тестовой модели:', error);
+        res.status(500).json({ error: error.message });
     }
 });
 
@@ -3356,6 +4174,935 @@ app.post('/api/create-test-cases', async (req, res) => {
 
 
 
+
+async function generateTestCasesAsync(taskId, inputData) {
+    try {
+        await db('generation_tasks').where('id', taskId).update({
+            status: 'processing',
+            progress: 0,
+            updated_at: new Date()
+        });
+
+        // === Вспомогательные функции ===
+        function buildModelIndex(model) {
+            const scenarioSet = new Set();
+            const codeTo = new Map();              // "код шага" → { scenario, story, feature }
+            const scenarioToParent = new Map();    // "сценарий" → { story, feature }
+            const storyToFeature = new Map();
+
+            for (const f of (model || [])) {
+                for (const st of (f.stories || [])) {
+                    if (st?.text?.trim()) storyToFeature.set(st.text.trim(), f.text?.trim() || '');
+                    for (const sc of (st.scenarios || [])) {
+                        scenarioSet.add(sc.text);
+                        scenarioToParent.set(sc.text, { story: st.text, feature: f.text });
+                        for (const cd of (sc.codes || [])) {
+                            codeTo.set(cd.text, { scenario: sc.text, story: st.text, feature: f.text });
+                        }
+                    }
+                }
+            }
+            return { scenarioSet, codeTo, scenarioToParent, storyToFeature };
+        }
+
+        function fixAgainstModel(cases, idx) {
+            console.log(`[fixAgainstModel] Обрабатываем ${cases?.length || 0} кейсов`);
+            const out = [];
+            for (const tc of (cases || [])) {
+                const layer = String(tc.layer || '');
+                console.log(`[fixAgainstModel] Обрабатываем кейс:`, {
+                    title: tc.title,
+                    layer: tc.layer,
+                    hasSteps: !!tc.steps,
+                    stepsLength: tc.steps?.length,
+                    hasExpected: !!tc.expected,
+                    expectedLength: tc.expected?.length
+                });
+
+                // E2E: story обязателен, feature восстанавливаем по карте story->feature
+                if (layer === 'E2E Tests') {
+                    if (!tc.story || !idx.storyToFeature.has(tc.story)) continue; // неизвестная Story — выбрасываем
+                    const feat = idx.storyToFeature.get(tc.story);
+                    if (!tc.feature || tc.feature !== feat) tc.feature = feat;
+                }
+
+                // Unit: нужен корректный code → восстанавливаем scenario/story/feature по карте
+                if (layer.startsWith('Unit')) {
+                    if (!tc.code) continue;
+                    const m = idx.codeTo.get(tc.code);
+                    if (!m) continue; // неизвестный code — отбрасываем
+                    if (!tc.scenario) tc.scenario = m.scenario;
+                    if (!tc.story) tc.story = m.story;
+                    if (!tc.feature) tc.feature = m.feature;
+                }
+
+                // Integration: scenario обязателен и должен быть из модели
+                if (layer.startsWith('Integration')) {
+                    if (!tc.scenario || !idx.scenarioSet.has(tc.scenario)) continue;
+                    const p = idx.scenarioToParent.get(tc.scenario);
+                    if (p) {
+                        if (!tc.story) tc.story = p.story;
+                        if (!tc.feature) tc.feature = p.feature;
+                    }
+                }
+
+                out.push(tc);
+            }
+            return out;
+        }
+
+        const sanitize = (arr) => {
+            console.log(`[sanitize] Обрабатываем ${arr?.length || 0} кейсов`);
+            const ALLOWED_LAYERS = new Set([
+                "E2E Tests",
+                "Integration frontend Tests", "Integration backend Tests",
+                "Unit frontend Tests", "Unit backend Tests"
+            ]);
+            const trimText = (s, n = 1200) => String(s ?? '').trim().slice(0, n);
+            const allowedCodeSet = new Set(allowedCodes);
+            const take = (s, n) => {
+                const t = trimText(s, n);
+                return t ? t : undefined;
+            };
+            return (arr || [])
+                .filter(x => x && typeof x === 'object')
+                .map(x => {
+                    console.log(`[sanitize] Обрабатываем кейс:`, {
+                        title: x.title,
+                        layer: x.layer,
+                        hasSteps: !!x.steps,
+                        stepsLength: x.steps?.length,
+                        hasExpected: !!x.expected,
+                        expectedLength: x.expected?.length
+                    });
+                    const steps = Array.isArray(x.steps) ? x.steps.map(s => trimText(s, 600)).slice(0, 40) : [];
+                    const tags = Array.isArray(x.tags) ? Array.from(new Set(x.tags.map(t => String(t).trim()).filter(Boolean))) : [];
+                    const layer = ALLOWED_LAYERS.has(x.layer) ? x.layer : null;
+
+                    const codeRaw = trimText(x.code, 200);
+                    const code = allowedCodeSet.has(codeRaw) ? codeRaw : undefined;
+
+                    return {
+                        title: take(x.title, 200),
+                        description: take(x.description, 800),
+                        precondition: take(x.precondition, 800),
+                        steps,
+                        expected: take(x.expected || x.expectedResult, 800),
+                        tags,
+                        layer,
+                        feature: take(x.feature, 200),
+                        story: take(x.story, 200),
+                        scenario: take(x.scenario, 200),
+                        code,
+                        priority: take(x.priority, 50),
+                        version: take(x.version, 50),
+                        links: Array.isArray(x.links) ? x.links.slice(0, 10) : [],
+                        jiraIssue: take(x.jiraIssue, 100)
+                    };
+                })
+                .filter(x => x.title && x.layer);
+        };
+
+        const {
+            requirements,
+            modelStructure: rawModel,
+            text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken
+        } = inputData;
+
+        const modelStructure = normalizeModelStructure(rawModel);
+
+        if ((!Array.isArray(requirements) && typeof requirements !== 'string') || !modelStructure) {
+            throw new Error('requirements и modelStructure обязательны');
+        }
+
+        // === Соберём автоконтекст по ссылкам основной статьи (если есть pageId) ===
+        let refinedReqs;
+        let baseRequirement = '';
+        let autoPages = [];
+        if (pageId) {
+            try {
+                if (!bearerToken) throw new Error('bearerToken is required for Confluence');
+                const { markdown } = await fetchConfluencePage(bearerToken, pageId, { inlineTextAttachments: true });
+                baseRequirement = markdown || '';
+                const ids = new Set(Array.from(String(markdown || '').matchAll(/pageId=(\d{4,})/g)).map(m => m[1]));
+                ids.delete(String(pageId));
+                for (const lid of ids) {
+                    try {
+                        const { markdown: md } = await fetchConfluencePage(bearerToken, lid, { inlineTextAttachments: true });
+                        const lines = String(markdown || '').split(/\n/);
+                        const refIdx = lines.findIndex(l => l.includes(`pageId=${lid}`));
+                        let mention = '';
+                        if (refIdx !== -1) {
+                            const start = Math.max(0, refIdx - 2);
+                            const end = Math.min(lines.length, refIdx + 3);
+                            mention = lines.slice(start, end).join('\n').trim();
+                        }
+                        const relevant = extractRelevantSections(md, mention, { maxSections: 8, maxChars: 22000 });
+                        autoPages.push([
+                            `### Контекст по ссылке из основной статьи (pageId=${lid})`,
+                            mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${lid})`,
+                            '',
+                            relevant
+                        ].join('\n'));
+                    } catch { }
+                }
+            } catch (e) {
+                console.warn('[generate-test-cases-async] auto-context fetch failed:', e.message);
+            }
+        }
+        
+        try {
+            const { refinedArray } = await contextRefiner({
+                requirements,
+                text: baseRequirement || text,
+                glossary,
+                context,
+                contextInstruction,
+                contextPageIds: undefined,
+                glossaryPageId: undefined,
+                bearerToken: undefined,
+                contextPages: autoPages
+            });
+            refinedReqs = refinedArray;
+            console.log(`[generate-test-cases-async] OK: contextRefiner успешно обработал требования. Объем: ${refinedArray.join('\n').length} символов.`);
+        } catch (e) {
+            console.error('[generate-test-cases-async] CRITICAL: contextRefiner завершился с ошибкой:', e.message);
+            refinedReqs = Array.isArray(requirements) ? requirements : (requirements ? [requirements] : []);
+        }
+
+        // Глобальный список допустимых code (по всей модели) — нужен sanitize()
+        const allowedCodes = Array.from(new Set(
+            (modelStructure || []).flatMap(f =>
+                (f.stories || []).flatMap(st =>
+                    (st.scenarios || []).flatMap(sc =>
+                        (sc.codes || []).map(cd => (cd?.text || '').trim()).filter(Boolean)
+                    )
+                )
+            )
+        ));
+
+        // ====== УЛУЧШЕНИЕ: Функция-обертка для контроля таймаутов ======
+        async function withTimeout(promise, ms, operationName = 'AI call') {
+            const timeout = new Promise((_, reject) => {
+                const id = setTimeout(() => {
+                    clearTimeout(id);
+                    reject(new Error(`Операция "${operationName}" превысила таймаут в ${ms / 1000}с`));
+                }, ms);
+            });
+            return Promise.race([promise, timeout]);
+        }
+
+        // ====== ВСПОМОГАТЕЛЬНЫЕ ======
+        function splitByStories(model) {
+            const chunks = [];
+            for (const f of (model || [])) {
+                for (const st of (f.stories || [])) {
+                    chunks.push([{ text: f.text, stories: [st] }]);
+                }
+            }
+            return chunks;
+        }
+
+        function collectAllowedCodes(modelChunk) {
+            const set = new Set();
+            for (const f of modelChunk) for (const st of (f.stories || []))
+                for (const sc of (st.scenarios || [])) for (const cd of (sc.codes || []))
+                    if (cd?.text?.trim()) set.add(cd.text.trim());
+            return [...set];
+        }
+
+        function collectAllowedScenarios(modelChunk) {
+            const set = new Set();
+            for (const f of modelChunk) for (const st of (f.stories || []))
+                for (const sc of (st.scenarios || []))
+                    if (sc?.text?.trim()) set.add(sc.text.trim());
+            return [...set];
+        }
+
+        function countNodes(model) {
+            let stories = 0, scenarios = 0, codes = 0;
+            for (const f of (model || [])) for (const st of (f.stories || [])) {
+                stories++;
+                for (const sc of (st.scenarios || [])) {
+                    scenarios++;
+                    codes += (sc.codes || []).length;
+                }
+            }
+            return { stories, scenarios, codes };
+        }
+
+        // Разбивка требований на чанки по размеру (для больших документов)
+        function splitRequirements(reqs, maxCharsPerChunk = 40000) {
+            if (!Array.isArray(reqs) || reqs.length === 0) return [[]];
+            
+            const chunks = [];
+            let currentChunk = [];
+            let currentSize = 0;
+            
+            for (const req of reqs) {
+                const reqSize = String(req || '').length;
+                
+                // Если одно требование больше лимита - разобьем его на параграфы
+                if (reqSize > maxCharsPerChunk) {
+                    if (currentChunk.length > 0) {
+                        chunks.push(currentChunk);
+                        currentChunk = [];
+                        currentSize = 0;
+                    }
+                    
+                    // Разбиваем большое требование на части по параграфам
+                    const paragraphs = String(req).split(/\n\n+/);
+                    let tempReq = '';
+                    
+                    for (const para of paragraphs) {
+                        if ((tempReq.length + para.length) > maxCharsPerChunk && tempReq) {
+                            currentChunk.push(tempReq.trim());
+                            chunks.push(currentChunk);
+                            currentChunk = [];
+                            currentSize = 0;
+                            tempReq = para;
+                        } else {
+                            tempReq += (tempReq ? '\n\n' : '') + para;
+                        }
+                    }
+                    
+                    if (tempReq.trim()) {
+                        currentChunk.push(tempReq.trim());
+                        currentSize = tempReq.length;
+                    }
+                } else {
+                    // Обычное требование
+                    if ((currentSize + reqSize) > maxCharsPerChunk && currentChunk.length > 0) {
+                        chunks.push(currentChunk);
+                        currentChunk = [req];
+                        currentSize = reqSize;
+                    } else {
+                        currentChunk.push(req);
+                        currentSize += reqSize;
+                    }
+                }
+            }
+            
+            if (currentChunk.length > 0) {
+                chunks.push(currentChunk);
+            }
+            
+            return chunks.length > 0 ? chunks : [[]];
+        }
+
+        const BASE_SYSTEM_PROMPT = `
+🚨 КРИТИЧЕСКИ ВАЖНО: НЕ ПРИДУМЫВАЙ НИЧЕГО! 🚨
+Ты создаёшь тест-кейсы ТОЛЬКО на основе того, что явно написано в требованиях. 
+ЗАПРЕЩЕНО: добавлять шаги, сценарии, ожидаемые результаты или любые детали, которых нет в тексте требований.
+ЗАПРЕЩЕНО: додумывать логику, поведение системы или пользовательские действия.
+ЗАПРЕЩЕНО: создавать тест-кейсы для сценариев, которые не описаны в требованиях.
+Если в требованиях нет явного описания - НЕ СОЗДАВАЙ тест-кейс.
+
+Ты — скрупулёзный SDET (Software Development Engineer in Test), создающий атомарные и исчерпывающие тест-кейсы для импорта в Allure. На основе входной тест-модели (modelStructure) и требований сгенерируй JSON-массив тест-кейсов, НЕУКОСНИТЕЛЬНО следуя Style Guide ниже.
+
+КРИТИЧЕСКИ ВАЖНО: Каждый тест-кейс ОБЯЗАТЕЛЬНО должен содержать поле "expected" с описанием ожидаемого результата. Без этого поля тест-кейс неполный и не может быть использован.
+
+Технологический стек проекта: фронтенд — Angular (TypeScript), бэкенд — .NET/C#. Если требования явно описывают поведение клиента, трактуй его для Angular; если описывают серверное поведение/API — трактуй для .NET. Никогда не додумывай детали вне текста.
+
+# 1) Принцип "Один Пример из Требований -> Один Тест-Кейс" (КРАТКО И СТРОГО)
+Ты создаёшь тест-кейсы исключительно на основе абсолютно явных и конкретных примеров из текста требований. Никаких домыслов, предположений или недосказанностей в шагах и expected результатах быть не должно.
+
+Алгоритм твоих действий:
+1.  Возьми один узел из \`modelStructure\` (например, \`Scenario: "Ввести недопустимое значение..."\`).
+2.  Тщательно просканируй ВЕСЬ текст требований и найди ТОЛЬКО те примеры, которые явно и текстуально соответствуют этому узлу.
+3.  Для каждого такого примера сгенерируй ровно один, атомарный тест-кейс.
+4.  Строго запрещено объединять разные примеры в один кейс или творить новые примеры.
+5.  Все поля \`title\`, \`steps\` и \`expected\` должны содержать лишь ДОСЛОВНЫЕ данные или тексты, встречающиеся в требованиях. Запрещено добавлять или интерпретировать дополнительную информацию.
+6.  Если для узла отсутствуют явные примеры в требованиях — не создавай тест-кейса вовсе.
+7.  При сложной логике описывай ожидаемый результат ровно так, как он изложен в соответствующем примере, ни больше, ни меньше.
+
+Пример работы алгоритма:
+- **Абстрактный узел:** \`Scenario: "Проверить срабатывание валидации при конфликте условий"\`
+- **Требования содержат пример:** "Если настроены две зависимости с одинаковым условием для '27 LADA FREE', и в поле введено значение '10', то должна сработать последняя зависимость с текстом 'Срок кредита, не может быть <12 мес. и >84 мес.'"
+- **Твой результат (один тест-кейс):**
+  - \`title\`: "Проверка применения последней зависимости при конфликте условий для программы '27 LADA FREE'"
+  - \`steps\`: ["Выбрать значение '27 LADA FREE'", "Ввести значение '10'"]
+  - \`expected\`: "Система отображает текст ошибки 'Срок кредита, не может быть <12 мес. и >84 мес.'"
+
+# 2) Пирамида тестирования — нерушимые правила
+1) Сдвигай проверки вниз: детальные проверки (валидации, границы, форматы) — в Integration/Unit, а не в E2E.
+2) E2E (C1) — только сквозные бизнес-сценарии:
+   • Чёрный ящик, имитация реального пользователя.
+   • ВСЕГДА начинаются шагами: «Авторизоваться…», «Перейти на страницу…».
+   • НЕЛЬЗЯ проверять сообщения отдельных полей и вводить невалидные данные полей — максимум 1–2 ключевых негативных сценария на уровне всего потока (например, «ошибка сервера при сохранении»).
+3) Integration (C2–C3) — взаимодействия компонент/эндпоинтов:
+   • В рамках одного компонента (FE) или одного API-вызова (BE), без навигации по страницам.
+   • Основная работа: классы эквивалентности, граничные значения (BVA), контракты API.
+4) Unit (C4) — одна функция/метод, строгий AAA (Arrange-Act-Assert).
+
+## 2.1) Для слоев "E2E Tests" и "Integration Tests" (Строгий "Чёрный Ящик")
+- **Действия (Steps):** Описывай только действия пользователя в интерфейсе (клик, ввод, скролл, навигация).
+- **Результат (Expected):** Описывай только видимые пользователю изменения в UI или ответы, определённые в API-контракте.
+- **ЗАПРЕЩЕНО:** Додумывать детали реализации, такие как вызовы внутренних функций, работа с базой данных, кэширование, или отправка HTTP-запросов.
+
+  - **Неправильно (гадание о реализации):** "Вызывается GET-запрос для фильтрации."
+  - **Правильно (наблюдаемый результат):** "В списке остаются только элементы, содержащие 'X'."
+
+  - **Неправильно:** "Нажать Enter для применения фильтра."
+  - **Правильно:** "Ввести в поле фильтра 'X'". Если нужно явно завершить действие — "Снять фокус с поля".
+
+## 2.2) Для слоя "Unit Tests" (Условный "Белый Ящик")
+- Ты **МОЖЕШЬ** описывать внутреннюю логику, но **ТОЛЬКО** если она основана на узле \`code\` из входной тестовой модели.
+- **Шаги (Steps):** Описывай подготовку данных (Arrange) и вызов действия (Act) в терминах, близких к узлу \`code\`.
+- **Результат (Expected):** Описывай проверку результата (Assert), соответствующую узлу \`code\`.
+- **Если узел \`code\` отсутствует в модели для данного сценария, ты ОБЯЗАН вернуться к принципу "Чёрного Ящика"** и описать Unit-тест в терминах "входные данные -> результат", не выдумывая названий функций.
+
+## 2.3) ПРИНЦИП МИНИМАЛЬНОГО ДЕЙСТВИЯ (При Неполных Требованиях)
+Это одно из ГЛАВНЫХ правил. Если требование описывает *состояние* элемента (например, "поле невалидно", "кнопка неактивна"), но НЕ описывает точное *действие* пользователя, которое вызывает это состояние, ТЫ ОБЯЗАН следовать этому принципу.
+
+**Принцип:** Сгенерируй тест, который проверяет состояние через самое **минимальное, локальное и очевидное действие**. ЗАПРЕЩЕНО додумывать сложные сценарии или действия с другими элементами управления (например, с кнопкой "Сохранить"), если они не упомянуты в требовании явно.
+
+**Пример 1: Валидация поля**
+- **Требование (неполное):** \`Валидация: "Поле 'Дата документа' обязательно для заполнения"\`
+- **Неправильно (додумывание):**
+  - Шаги: ["Нажать кнопку 'Сохранить'"]
+  - Ожидаемый результат: "Система отображает ошибку 'Поле... обязательно'"
+- **ПРАВИЛЬНО (Минимальное действие):**
+  - Шаги: ["Сфокусироваться на поле 'Дата документа'", "Снять фокус с поля, оставив его пустым"]
+  - Ожидаемый результат: "Под полем 'Дата документа' отображается ошибка 'Поле... обязательно'"
+
+**Пример 2: Состояние кнопки**
+- **Требование (неполное):** \`Кнопка "Сохранить" неактивна, пока не заполнены все обязательные поля.\`
+- **Неправильно (додумывание):**
+  - Шаги: ["Нажать на неактивную кнопку 'Сохранить'"]
+  - Ожидаемый результат: "Ничего не происходит" 
+  (Этот тест не проверяет условие)
+- **ПРАВИЛЬНО (Минимальное действие):**
+  - **Тест 1 (проверка начального состояния):**
+    - Предусловие: "Форма открыта, обязательные поля пусты"
+    - Шаги: [] (Действий нет, проверяем исходное состояние)
+    - Ожидаемый результат: "Кнопка 'Сохранить' отображается, но неактивна (disabled)"
+  - **Тест 2 (проверка изменения состояния):**
+    - Предусловие: "Форма открыта, обязательные поля пусты"
+    - Шаги: ["Заполнить все обязательные поля валидными данными"]
+    - Ожидаемый результат: "Кнопка 'Сохранить' становится активной"
+
+# 3) Allure Style Guide (сводка отдела)
+— 1 тест-кейс = 1 проверка или 1 пользовательский сценарий.  
+— Тест-кейсы независимы друг от друга.  
+— Название информативно и по возможности уникально («Загрузка нового справочника», а не «Проверка справочников»).  
+— Предусловия (если есть) — только то, что подготавливается вне тестируемого приложения профилем исполнителя (данные в БД, настройки, сиды, интеграции, состояние устройства и т.п.).  
+— Шаги:
+   • Один шаг = одно действие. Всегда с глагола («Открыть», «Ввести», «Нажать»).  
+   • Общие повторяющиеся блоки — оформлять как shared steps (концептуально; в JSON шаги всё равно плоские).  
+   • Сценарные тесты: начинать с полного пользовательского пути (обычно с авторизации).  
+   • Атомарные тесты: начинать с инициализации изолированного компонента/эндпоинта (без «навигации»).  
+— Ожидаемый результат (обязателен) отражает СУТЬ проверки/сценария, формулирован чётко и без условных «если… то…».  
+— Вложения/файлы/мок-данные добавляются при необходимости (при наличии макетов/данных).  
+— Ссылки: указывать Confluence/макеты, если есть.  
+— Jira: указать связанное задание (ключ).  
+— Версия:
+   • Версия по умолчанию — "stable" для новых кейсов.  
+   • При доработках — клонировать кейс и указать нужную версию.  
+- Приоритет:
+   • Приоритет определяй по матрице риска:
+   • Critical — деньги/безопасность/ПДн, потеря/коррупция данных, недоступность критичного сервиса.
+   • High — основной бизнес-флоу ломается для многих, неверные суммы/конвертации/комиссии, нарушения авторизации/ролей.
+   • Medium — валидации, контент, нефатальные деградации UX.
+   • Low — косметика/копирайт/микро-UX.
+   • По умолчанию: E2E ≥ High, Integration ≥ Medium, Unit ≥ Low, но повышай при наличии рисков выше.
+
+# 4) Теги (ОБЯЗАТЕЛЬНО)
+В массиве "tags" используй:
+— Платформа интерфейса: D (desktop), A (adaptive), M (mobile), PWA (если уместно). Если платформа из контекста неочевидна — ставь "D".  
+— Бэкенд-проверки: добавь "S" (для Integration backend Tests и любых API-ориентированных проверок).   
+Примеры наборов тегов:
+• FE E2E/Integration (десктоп): ["D"]  
+• BE Integration: ["S"] или ["D","S"] если тест затрагивает интерфейсно-зависимые артефакты  
+
+# 5) Выходной формат: СТРОГО ТОЛЬКО JSON-массив
+Используй ровно один из трёх шаблонов ниже в зависимости от "layer". Никаких комментариев/markdown.
+
+## Шаблон: "layer": "E2E Tests"
+{
+  "feature": "Название фичи из модели",
+  "story": "Название истории из модели",
+  "title": "Название, описывающее ВЕСЬ сценарий (например, 'Успешное создание виджета авторизованным пользователем')",
+  "steps": [
+    "Авторизоваться как 'user_role'",
+    "Перейти на страницу 'Название страницы'",
+    "Нажать кнопку 'Создать виджет'",
+    "Заполнить поле 'Название' валидным значением",
+    "Нажать кнопку 'Сохранить'"
+  ],
+  "expected": "Система отображает сообщение об успешном создании. Виджет появляется в общем списке.",
+  "tags": ["‹по матрице тегов›"],
+  "layer": "E2E Tests",
+  "priority": "‹по матрице риска›"
+}
+
+## Шаблон: "layer": "Integration frontend Tests" / "Integration backend Tests"
+{
+  "feature": "Название фичи из модели",
+  "story": "Название истории из модели",
+  "scenario": "ТОЧНОЕ название сценария из модели",
+  "title": "Конкретная проверка (например, 'Валидация поля «Имя» при вводе более 100 символов')",
+  "precondition": "Компонент/эндпоинт подготовлен. (Коротко по существу, без кода.)",
+  "steps": [
+    "Ввести в поле 'Имя' строку длиной 101 символ",
+    "Снять фокус с поля"
+  ],
+  "expected": "Под полем 'Имя' отображается текст ошибки 'Превышена максимальная длина'. Кнопка 'Сохранить' неактивна.",
+  "tags": ["‹по матрице тегов›"],
+  "layer": "Integration frontend Tests",
+  "priority": "‹по матрице риска›"
+}
+
+## Шаблон: "layer": "Unit frontend Tests" / "Unit backend Tests"
+{
+  "feature": "Название фичи из модели",
+  "story": "Название истории из модели",
+  "scenario": "Название сценария, к которому относится модуль",
+  "code": "ТОЛЬКО если совпадает с codes[].text из модели (иначе — не указывать)",
+  "title": "Кратко: что проверяем (описательно, без имён функций и синтаксиса)",
+  "precondition": "Arrange: подготовить входные данные/контекст (описательно, без программного синтаксиса).",
+  "steps": [
+    "Act: выполнить проверяемое действие в изоляции (описательно).",
+    "Act: передать подготовленные входные данные.",
+    "Act: получить результат."
+  ],
+  "expected": "Assert: результат соответствует ожидаемому (описательно, без кода и идентификаторов).",
+  "tags": ["Unit", "‹по матрице тегов›"],
+  "layer": "Unit frontend Tests",
+  "priority": "‹по матрице риска›"
+}
+Правила для Unit:
+— НЕ придумывать имена функций/классов и не использовать синтаксис языков.  
+— "code" заполняется СТРОГО из codes[].text, иначе это поле опускается.
+- Unit = чистая бизнес-логика: без рендера UI, без DOM, без "Открыть/Перейти/Кликнуть/Ввести", без авторизации и навигации, без HTTP/эндпоинтов.
+- Любая инициализация компонента, взаимодействие с формами/страницей/браузером = только "Integration frontend Tests".
+- Любой полноценный HTTP-вызов/контракт/статус-код = только "Integration backend Tests".
+- Для Unit обязательный AAA: Arrange в precondition, цепочка Act в steps, Assert в expected.
+
+Допустимые дополнительные поля (если есть во входе или явно уместны): 
+• "links": [{ "text": "...", "url": "..." }], • "jiraIssue": "ABC-123", • "version": "stable" (по умолчанию для новых), • "attachments": [...], • "parameters": "..." (использовать только если во входе явно заданы параметры; для DDT/Pairwise — но не выдумывать).
+
+# 6) Правила генерации набора тест-кейсов
+Для КАЖДОЙ Story: 
+— 1–2 E2E-теста: Happy Path и (при необходимости) один ключевой Negative Path на уровне потока.
+
+Для КАЖДОГО Scenario:
+— 3–5 Integration-тестов (главный объём): позитивные/негативные случаи, BVA, классы эквивалентности, контракты API.  
+— Поле "scenario" должно 1:1 совпадать с текстом узла.
+
+Для КАЖДОГО Code:
+— 2–4 Unit-теста по AAA (описательно).  
+— "code" копировать из модели, если текст совпадает; иначе не указывать.
+
+# 7) Техники тест-дизайна (обязательно применять, если применимо)
+— BVA: мин, макс, мин-1, макс+1.  
+— Классы эквивалентности: валидный/невалидный/пустой/null.  
+— Error-guessing: разумные «углы».
+
+# 7.1) Генерация неявных сценариев (Error Guessing & BVA)
+После того, как ты сгенерировал тест-кейсы для всех ЯВНЫХ примеров из требований, дополнительно примени техники тест-дизайна, чтобы покрыть следующие случаи, даже если они не описаны в тексте:
+- **Граничные значения:** Для каждого числового диапазона (например, '48-84') ОБЯЗАТЕЛЬНО создай отдельные Integration-тесты для значений min-1, min, max, max+1 (в данном примере: 47, 48, 84, 85).
+- **Жизненный цикл:** Если есть сценарии на создание, ОБЯЗАТЕЛЬНО добавь по одному Integration-тесту на **редактирование** и **удаление** существующей зависимости.
+- **Невалидные типы данных:** Для полей с числовым вводом добавь Integration-тест на ввод текстовой строки. Для текстовых полей — проверку на ввод пустой строки.
+
+# 8) Чек-лист перед выводом
+— Все кейсы независимы; по одному «смыслу» на кейс.  
+— В E2E есть «Авторизоваться…» и «Перейти на страницу…».  
+— Детальные проверки (валидации полей и т.п.) не просочились в E2E.  
+— "scenario" (для Integration/Unit) совпадает с моделью.  
+— Теги проставлены по правилам: D/A/M/PWA; "S" для бэкенда; номер требования — только если есть во входе.  
+— "version" = "stable" для новых кейсов (если не указано иное).  
+
+# 9) Формат ответа
+Выведи СТРОГО один JSON-массив кейсов без каких-либо комментариев, текста или Markdown.
+
+ВАЖНО: Каждый тест-кейс ОБЯЗАТЕЛЬНО должен содержать поле "expected" с описанием ожидаемого результата. Без этого поля тест-кейс неполный и не может быть использован.
+`.trim();
+
+        // Подсчитываем статистику модели для COVENANT
+        const S = modelStructure.reduce((sum, f) => sum + (f.stories || []).length, 0);
+        const Sc = modelStructure.reduce((sum, f) => 
+            sum + (f.stories || []).reduce((s, st) => s + (st.scenarios || []).length, 0), 0);
+        const C = modelStructure.reduce((sum, f) => 
+            sum + (f.stories || []).reduce((s, st) => 
+                s + (st.scenarios || []).reduce((sc, scn) => sc + (scn.codes?.length || 0), 0), 0), 0);
+
+        const COVENANT = `
+# 6.1 Ковенанта покрытия (строго)
+В модели: Stories=${S}, Scenarios=${Sc}, Codes=${C}.
+Минимум по всей модели: E2E ≥ ${Math.max(1, S)}, Integration ≥ ${Sc * 3}, Unit ≥ ${C * 2}.
+Если объём большой, сокращай формулировки, но НЕ снижай счётчики.
+`.trim();
+
+        // === tool-schema с жёстким enum для сценариев ===
+        const buildSubmitCasesToolStrict = (allowedCodes = [], allowedScenarios = []) => ({
+            type: "function",
+            function: {
+                name: "submit_cases",
+                description: "Верни итоговые тест-кейсы строго в массиве cases",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        cases: {
+                            type: "array",
+                            items: {
+                                type: "object",
+                                properties: {
+                                    feature: { type: "string" },
+                                    story: { type: "string" },
+                                    scenario: allowedScenarios.length
+                                        ? { type: "string", enum: allowedScenarios }
+                                        : { type: "string" },
+                                    code: allowedCodes.length
+                                        ? { type: "string", enum: allowedCodes }
+                                        : { type: "string" },
+                                    title: { type: "string" },
+                                    precondition: { type: "string" },
+                                    steps: { type: "array", items: { type: "string" } },
+                                    expected: { type: "string" },
+                                    tags: { type: "array", items: { type: "string" } },
+                                    layer: {
+                                        type: "string", enum: [
+                                            "E2E Tests",
+                                            "Integration frontend Tests", "Integration backend Tests",
+                                            "Unit frontend Tests", "Unit backend Tests"
+                                        ]
+                                    },
+                                    priority: { type: "string", enum: ["Critical", "High", "Medium", "Low"] },
+                                    version: { type: "string" },
+                                    links: {
+                                        type: "array",
+                                        items: {
+                                            type: "object",
+                                            properties: {
+                                                text: { type: "string" },
+                                                url: { type: "string" },
+                                                type: { type: "string" }
+                                            }
+                                        }
+                                    },
+                                    jiraIssueOption: {
+                                        type: "object",
+                                        properties: {
+                                            value: { type: "string" },
+                                            integrationId: { type: "string" }
+                                        }
+                                    }
+                                },
+                                required: ["title", "layer", "expected"]
+                            }
+                        }
+                    },
+                    required: ["cases"],
+                    additionalProperties: false
+                }
+            }
+        });
+
+        const storyChunks = splitByStories(modelStructure);
+        const genLimit = pLimit(4);
+        const reqsChunks = splitRequirements(refinedReqs, 45000);
+        
+        const totalOperations = reqsChunks.length * storyChunks.length;
+        let completedOperations = 0;
+
+        // Функция для подсчета узлов в чанке
+        function countChunkNodes(modelChunk) {
+            let scenarios = 0, codes = 0;
+            for (const f of modelChunk) for (const st of (f.stories || [])) {
+                for (const sc of (st.scenarios || [])) {
+                    scenarios++;
+                    codes += (sc.codes || []).length;
+                }
+            }
+            return { scenarios, codes };
+        }
+
+        // Генерация для одного чанка (одной Story)
+        async function genForChunk(modelChunk, reqs, systemPrompt) {
+            const allowedForChunk = collectAllowedCodes(modelChunk);
+            const allowedScenarios = collectAllowedScenarios(modelChunk);
+            const { scenarios: scCnt, codes: cdCnt } = countChunkNodes(modelChunk);
+
+            // Обрежем "Контекст из ссылок" до безопасного размера
+            const linkCtxRaw = Array.isArray(autoPages) && autoPages.length
+                ? autoPages.join('\n\n---\n\n')
+                : '';
+            const sanitizeLinkCtx = (s) => String(s || '')
+                .replace(/```[\s\S]*?```/g, '')            // убрать большие код-блоки
+                .replace(/^#\s.*$/gm, '')                  // убрать H1
+                .replace(/^##\s.*$/gm, '###')              // H2 → H3 (компактнее)
+                .replace(/\n{3,}/g, '\n\n');
+            let linkCtx = sanitizeLinkCtx(linkCtxRaw);
+            const MAX_LINK_CTX = 12000; // ~12k символов на Story
+            if (linkCtx.length > MAX_LINK_CTX) linkCtx = linkCtx.slice(0, MAX_LINK_CTX);
+
+            const userPrompt = `
+Сгенерируй JSON-массив тест-кейсов на русском языке для ЭТОГО куска модели (одна Story).
+Модель (кусок):
+${JSON.stringify(modelChunk, null, 2)}
+
+Требования:
+${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+
+Контекст из ссылок исходного требования (используй только для прояснения ссылок; не придумывай новое):
+${linkCtx || '—'}
+
+ДОПУСТИМЫЕ ЗНАЧЕНИЯ ДЛЯ "code" (если используешь):
+${allowedForChunk.map(c => `- ${c}`).join('\n')}
+
+⚠️ Минимум для ЭТОГО куска:
+— E2E: ≥ 1 на Story (не более 3),
+— Integration: ≥ ${Math.max(0, scCnt * 3)} (по 3-5 на каждый Scenario),
+— Unit: ≥ ${Math.max(0, cdCnt * 2)} (по 2 на каждый Code из списка выше).
+Ответ — ТОЛЬКО чистый JSON-массив без Markdown.
+`.trim();
+
+            const tools = [buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios)];
+            const ai = await callWithCloudRuFallback(
+                OPENROUTER_URL,
+                [
+                    { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
+                    { role: 'user', content: userPrompt }
+                ],
+                config.openRouterAiKey,
+                {
+                    tools,
+                    tool_choice: { type: 'function', function: { name: 'submit_cases' } },
+                    temperature: 0,
+                    top_p: 1,
+                    max_tokens: 32000
+                }
+            );
+
+            const args = extractToolArgs(ai, 'submit_cases');
+            if (args && Array.isArray(args.cases) && args.cases.length) {
+                console.log(`[genForChunk] OK: Получено ${args.cases.length} кейсов через tool_call.`);
+                console.log(`[genForChunk] Первый кейс:`, JSON.stringify(args.cases[0], null, 2));
+                console.log(`[genForChunk] Проверка полей первого кейса:`, {
+                    hasTitle: !!args.cases[0].title,
+                    hasSteps: !!args.cases[0].steps,
+                    stepsLength: args.cases[0].steps?.length,
+                    hasExpected: !!args.cases[0].expected,
+                    expectedLength: args.cases[0].expected?.length
+                });
+                return args.cases;
+            }
+
+            console.warn(`[genForChunk] WARN: tool_call не найден. Попытка парсинга из content.`);
+            const content = ai.choices?.[0]?.message?.content || '';
+            if (!content.trim()) {
+                console.error('[genForChunk] CRITICAL: Ответ модели полностью пуст.');
+                return [];
+            }
+
+            try {
+                const rawJsonCandidate = extractJsonArray(content);
+                if (!rawJsonCandidate) {
+                    console.error('[genForChunk] CRITICAL: Не удалось извлечь JSON-массив из content.');
+                    console.log('--- RAW AI RESPONSE (genForChunk failed to parse) ---\n', content, '\n------------------------------------');
+                    return [];
+                }
+                try {
+                    const jsonText = cleanupJsonText(rawJsonCandidate);
+                    const parsed = JSON5.parse(jsonText);
+                    let result = Array.isArray(parsed) ? parsed : [];
+                    if (!result.length) {
+                        // одна попытка перегенерации с более строгими настройками
+                        try {
+                            const retry = await callWithCloudRuFallback(
+                                OPENROUTER_URL,
+                                [
+                                    { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
+                                    { role: 'user', content: userPrompt }
+                                ],
+                                config.openRouterAiKey,
+                                {
+                                    // повтор без tools: просим текстовый JSON вместо tool_call
+                                    // tools отключены, чтобы получить content
+                                    // models НЕ передаём - будут использованы значения по умолчанию
+                                    temperature: 0,
+                                    top_p: 1,
+                                    max_tokens: 32000
+                                }
+                            );
+                            const a2 = extractToolArgs(retry, 'submit_cases');
+                            if (a2 && Array.isArray(a2.cases) && a2.cases.length) return a2.cases;
+                        } catch { }
+                    }
+                    console.log(`[genForChunk] OK: Получено ${result.length} кейсов через фолбэк-парсер.`);
+                    return result;
+                } catch (e1) {
+                    console.warn('[genForChunk] JSON parse failed. Fallback. Error:', e1.message);
+                    const t = cleanupJsonText(rawJsonCandidate);
+                    const parsed = JSON5.parse(t);
+                    return Array.isArray(parsed) ? parsed : [];
+                }
+            } catch (parseError) {
+                console.error('[genForChunk] CRITICAL: Ошибка JSON5.parse при фолбэке:', parseError.message);
+                console.log('--- RAW AI RESPONSE (genForChunk JSON5 parse failed) ---\n', content, '\n-----------------------------------------');
+                return [];
+            }
+        }
+
+        const parts = [];
+        const TIMEOUT_MS = 1500000;
+
+        for (let reqIdx = 0; reqIdx < reqsChunks.length; reqIdx++) {
+            const reqsChunk = reqsChunks[reqIdx];
+            
+            const promises = storyChunks.map((chunk, storyIdx) => 
+                genLimit(async () => {
+                    const storyName = chunk[0]?.stories[0]?.text || 'N/A';
+                    
+                    const result = await withTimeout(
+                        genForChunk(chunk, reqsChunk, `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}`),
+                        TIMEOUT_MS,
+                        `Timeout for chunk ${reqIdx + 1}/${reqsChunks.length} → Story ${storyIdx + 1}/${storyChunks.length}: ${storyName}`
+                    );
+                    
+                    completedOperations++;
+                    const progress = Math.round((completedOperations / totalOperations) * 100);
+                    
+                    await db('generation_tasks').where('id', taskId).update({
+                        progress,
+                        updated_at: new Date()
+                    });
+                    
+                    return result;
+                })
+            );
+
+            const chunkResults = await Promise.all(promises);
+            const validResults = chunkResults.filter(result => Array.isArray(result) && result.length > 0);
+            
+            if (validResults.length === 0) {
+                console.warn(`[generate-test-cases-async] Чанк требований ${reqIdx + 1}: не получено валидных тест-кейсов`);
+                // Добавляем fallback тест-кейс
+                parts.push([{
+                    title: "Базовый тест-кейс",
+                    description: "Проверить основную функциональность",
+                    steps: ["Выполнить базовую проверку"],
+                    expectedResult: "Функциональность работает корректно",
+                    type: "E2E"
+                }]);
+            } else {
+                parts.push(...validResults.flat());
+            }
+        }
+
+        const allTestCases = parts.flat();
+
+        // === sanitize → fixAgainstModel до аудита покрытия ===
+        const idx = buildModelIndex(modelStructure);
+        let finalTestCases = sanitize(allTestCases);
+        finalTestCases = fixAgainstModel(finalTestCases, idx);
+
+        // Если в модели всего одна Feature — принудительно выставим её всем кейсам
+        const uniqueFeatures = [...new Set((modelStructure || []).map(f => f?.text?.trim()).filter(Boolean))];
+        if (uniqueFeatures.length === 1) {
+            const theOnlyFeature = uniqueFeatures[0];
+            finalTestCases = finalTestCases.map(tc => ({ ...tc, feature: theOnlyFeature }));
+        }
+        
+        if (finalTestCases.length === 0) {
+            console.warn('[generate-test-cases-async] Не получено ни одного тест-кейса, добавляем fallback');
+            finalTestCases.push({
+                title: "Базовый тест-кейс",
+                description: "Проверить основную функциональность",
+                steps: ["Выполнить базовую проверку"],
+                expectedResult: "Функциональность работает корректно",
+                type: "E2E"
+            });
+        }
+
+        await db('generation_tasks').where('id', taskId).update({
+            status: 'completed',
+            progress: 100,
+            result: { testCases: finalTestCases },
+            completed_at: new Date(),
+            updated_at: new Date()
+        });
+
+    } catch (error) {
+        console.error('Ошибка асинхронной генерации:', error);
+        await db('generation_tasks').where('id', taskId).update({
+            status: 'failed',
+            error_message: error.message,
+            updated_at: new Date()
+        });
+    }
+}
+
+app.post('/api/generate-test-cases-async', async (req, res) => {
+    try {
+        const taskId = uuidv4();
+        
+        await db('generation_tasks').insert({
+            id: taskId,
+            type: 'test_cases',
+            status: 'processing',
+            progress: 0,
+            input_data: req.body,
+            created_at: new Date(),
+            updated_at: new Date()
+        });
+
+        generateTestCasesAsync(taskId, req.body);
+
+        res.json({ taskId, status: 'started' });
+    } catch (error) {
+        console.error('Ошибка создания задачи:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/generate-test-cases-status/:taskId', async (req, res) => {
+    try {
+        const task = await db('generation_tasks').where('id', req.params.taskId).first();
+        
+        if (!task) {
+            return res.status(404).json({ error: 'Task not found' });
+        }
+
+        res.json({
+            id: task.id,
+            status: task.status,
+            progress: task.progress,
+            result: task.result,
+            error_message: task.error_message,
+            created_at: task.created_at,
+            updated_at: task.updated_at,
+            completed_at: task.completed_at
+        });
+    } catch (error) {
+        console.error('Ошибка получения статуса:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Отмена задачи генерации
+app.post('/api/cancel-generation/:taskId', async (req, res) => {
+    try {
+        const { taskId } = req.params;
+        
+        // Обновляем статус задачи на 'failed' с сообщением об отмене
+        await db('generation_tasks')
+            .where('id', taskId)
+            .update({
+                status: 'failed',
+                error_message: 'Задача отменена пользователем',
+                updated_at: new Date(),
+                completed_at: new Date()
+            });
+        
+        console.log(`Задача ${taskId} отменена пользователем`);
+        res.json({ success: true, message: 'Задача отменена' });
+    } catch (error) {
+        console.error('Ошибка отмены задачи:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
 
 // Запуск сервера
 app.listen(PORT, () => {

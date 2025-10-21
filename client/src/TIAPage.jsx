@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom'; // Для навигации н�
 import styles from './styles'; // Импортируем стили
 import Loader from './Loader'; // Предполагаем, что есть компонент Loader
 import config from './config.json';
+import GlobalBackgroundProgress from './components/GlobalBackgroundProgress';
 
 const TIAPage = ({ projects }) => {
     const [projectId, setProjectId] = useState('');
@@ -407,12 +408,16 @@ const TIAPage = ({ projects }) => {
 
     return (
         <div style={styles.container}>
+            {/* Глобальный фоновый прогресс-бар */}
+            <GlobalBackgroundProgress />
+            
             <div style={styles.headerSection}>
                 <h1 style={styles.title}>Test Impact Analysis (TIA)</h1>
                 <button style={styles.backButton} onClick={() => navigate('/')}>
                     Назад
                 </button>
             </div>
+
 
             <div style={styles.form}>
                 <div style={styles.formGroup}>

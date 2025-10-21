@@ -6,6 +6,10 @@ import App from './App';
 import TIAPage from './TIAPage';
 import SolutionPage from './SolutionPage';
 import CodeErrorPage from './CodeErrorPage';
+import { suppressResizeObserverErrors } from './utils/errorHandler';
+
+// Подавляем ResizeObserver ошибки
+suppressResizeObserverErrors();
 
 
 // Список проектов (можно вынести в отдельный файл, если он нужен в нескольких местах)

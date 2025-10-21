@@ -93,6 +93,25 @@ export const StyleInjector = () => {
             margin-left: 10px;
         }
 
+        .header-controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .minimize-btn {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 20px;
+            cursor: pointer;
+            padding: 0 8px;
+            transition: color 0.2s;
+        }
+        .minimize-btn:hover { 
+            color: var(--accent-orange); 
+        }
+
         .close-btn {
             background: none;
             border: none;
@@ -325,6 +344,31 @@ export const LoaderOverlay = ({ text }) => {
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        @keyframes slideInRight {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        @keyframes shimmer {
+            0% { background-position: -200px 0; }
+            100% { background-position: calc(200px + 100%) 0; }
+        }
     `;
     return (
         <>
@@ -524,15 +568,63 @@ const TreeNode = ({ node, index, path, handlers }) => {
 };
 
 
-export default function TestModelGeneratorModal({ isOpen, onClose, initialCases, onGenerate, requirements, jiraProject,
-    jiraPat }) {
+export default function TestModelGeneratorModal({ 
+    isOpen, 
+    onClose, 
+    initialCases, 
+    onGenerate, 
+    requirements, 
+    jiraProject,
+    jiraPat,
+    buildRequirementsPayload,
+    prepareRequirements,
+    inputMode,
+    solutionText,
+    confluencePageId,
+    bearerToken,
+    glossary,
+    glossaryPageId,
+    contextText,
+    contextPageIds,
+    contextInstruction,
+    tasks,
+    // Состояния генерации тестовой модели
+    modelGenerationTaskId,
+    setModelGenerationTaskId,
+    modelGenerationProgress,
+    setModelGenerationProgress,
+    modelGenerationStatus,
+    setModelGenerationStatus,
+    modelIsMinimized,
+    setModelIsMinimized,
+    checkModelGenerationStatus,
+    generatedModel,
+    projects,
+    cancelGeneration
+}) {
     const [treeData, setTreeData] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isGeneratingModel, setIsGeneratingModel] = useState(false);
     const [isGeneratingCases, setIsGeneratingCases] = useState(false);
-    const [generatedModel, setGeneratedModel] = useState(null);
+    const [localGeneratedModel, setLocalGeneratedModel] = useState(null);
     const [isGenerating, setIsGenerating] = useState(false);
     const [isGeneratingXmind, setIsGeneratingXmind] = useState(false);
+
+    // Функция для подсчета всех узлов в дереве
+    const countAllNodes = (treeData) => {
+        let count = 0;
+        const countNodes = (nodes) => {
+            if (!Array.isArray(nodes)) return;
+            for (const node of nodes) {
+                count++;
+                if (node.children && Array.isArray(node.children)) {
+                    countNodes(node.children);
+                }
+            }
+        };
+        countNodes(treeData);
+        return count;
+    };
 
     const handleGenerateXmind = async () => {
         setIsGeneratingXmind(true);
@@ -586,7 +678,7 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
         const generateIdLocal = () => Math.random().toString(36).substr(2, 9);
 
         try {
-            const featureTopics = treeData.map((featureData) => {
+            const featureTopics = (localGeneratedModel || treeData).map((featureData) => {
                 const featureName = featureData.text || 'Безымянная функция';
 
                 const storyTopics = (featureData.stories || []).map((storyData) => {
@@ -836,9 +928,22 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
 
     const handleCloseWithConfirm = () => {
         if (isGeneratingModel || isGeneratingCases) return;
-        if (window.confirm('Вы уверены? Данные не сохранятся')) {
+        
+        // Если идет генерация, минимизируем вместо закрытия
+        if (modelGenerationStatus === 'processing') {
+            setModelIsMinimized(true);
+        } else {
+            // Убираем подтверждение, так как данные сохраняются в БД
             onClose();
         }
+    };
+
+    const handleMinimize = () => {
+        setModelIsMinimized(true);
+    };
+
+    const handleRestore = () => {
+        setModelIsMinimized(false);
     };
 
 
@@ -909,11 +1014,40 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
     useEffect(() => {
         if (!isOpen) { setIsLoading(true); return; }
 
+        // Загружаем сохраненные данные из IndexedDB при открытии модального окна
+        const loadSavedData = async () => {
+            try {
+                const [savedTree, savedModel] = await Promise.all([
+                    idbGet('testModelTree'),
+                    idbGet('generatedTestModel')
+                ]);
+                
+                if (savedTree && savedTree.length > 0) {
+                    // Если есть сохраненные данные, используем их
+                    setTreeData(savedTree);
+                    if (savedModel) {
+                        setLocalGeneratedModel(savedModel);
+                        setModelGenerationStatus('completed'); // Устанавливаем статус как завершенный
+                    }
+                } else {
+                    // Иначе используем initialCases
         const dataToBuild = (initialCases && initialCases.length > 0) ? initialCases : [];
         const builtTree = buildTreeWithIds(dataToBuild);
         setTreeData(builtTree);
         idbSet('testModelTree', builtTree).catch(console.warn);
+                }
+            } catch (error) {
+                console.warn('Ошибка загрузки сохраненных данных:', error);
+                // Fallback к initialCases
+                const dataToBuild = (initialCases && initialCases.length > 0) ? initialCases : [];
+                const builtTree = buildTreeWithIds(dataToBuild);
+                setTreeData(builtTree);
+                idbSet('testModelTree', builtTree).catch(console.warn);
+            }
         setIsLoading(false);
+        };
+
+        loadSavedData();
     }, [isOpen, initialCases]);
 
 
@@ -922,6 +1056,20 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
             idbSet('testModelTree', treeData).catch(console.warn);
         }
     }, [treeData, isOpen, isLoading]);
+
+    // Обработка завершения генерации тестовой модели
+    useEffect(() => {
+        if (modelGenerationStatus === 'completed' && generatedModel) {
+            // Преобразуем сгенерированную модель в treeData
+            const newTree = buildTreeWithIds(generatedModel);
+            setTreeData(newTree);
+            setLocalGeneratedModel(generatedModel);
+            
+            // Сохраняем в IndexedDB
+            idbSet('testModelTree', newTree).catch(console.warn);
+            console.log('Тестовая модель загружена в редактор');
+        }
+    }, [modelGenerationStatus, generatedModel]);
 
     const findNodeAndParent = (nodes, path, parent = null) => {
         const [head, ...tail] = path;
@@ -983,60 +1131,43 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
         )];
     };
 
+
     // --- новый handleGenerateModel ---
     const handleGenerateModel = async () => {
         setIsGeneratingModel(true);
-        setGeneratedModel(null);
+        setLocalGeneratedModel(null);
+        // Очищаем предыдущие результаты при новой генерации
+        setModelGenerationStatus(null);
+        setModelGenerationProgress(0);
+        idbSet('generatedTestModel', null).catch(console.warn);
+        idbSet('modelGenerationProgress', 0).catch(console.warn);
+        
+        // Запрашиваем разрешение на уведомления
+        if (window.Notification && Notification.permission === 'default') {
+            await Notification.requestPermission();
+        }
         try {
+            // Используем переданные данные вместо чтения из IndexedDB
+            const payload = buildRequirementsPayload({ includeRequirements: true });
 
-            // 2) Тянем всё, что уже лежит в IndexedDB (SolutionPage это туда кладёт)
-            const [
-                inputMode,
-                idbConfluencePageId,
-                idbBearerToken,
-                idbGlossary,
-                idbGlossaryPageId,
-                idbContextPageIds,        // ← читаем современное хранилище (мультиселект)
-                idbContextInstruction,
-                idbContextText,
-            ] = await Promise.all([
-                idbGet('inputMode').catch(() => undefined),
-                idbGet('confluencePageId').catch(() => undefined),
-                idbGet('bearerToken').catch(() => undefined),
-                idbGet('glossary').catch(() => undefined),
-                idbGet('glossaryPageId').catch(() => undefined),
-                idbGet('contextPageIds').catch(() => undefined),   // ← вот оно
-                idbGet('contextInstruction').catch(() => undefined),
-                idbGet('contextText').catch(() => undefined),
-            ]);
-            const requirementsString = sanitizeRequirementsForPayload(requirements, inputMode);
-            // 3) Пытаемся аккуратно извлечь pageId (работает и для "Confluence Page ID: 123")
-            const pageIdFromReq =
-                Array.isArray(requirements)
-                    ? '' // когда с задач — уже чистый текст, pageId берём из IDB
-                    : getConfluencePageId(requirementsString);
+            // Сначала пробуем асинхронный API
+            try {
+                const { data } = await axios.post(
+                    `${config.serverUrl}/generate-test-model-async`,
+                    payload
+                );
+                
+                setModelGenerationTaskId(data.taskId);
+                setModelGenerationProgress(0);
+                setModelGenerationStatus('processing');
+                checkModelGenerationStatus(data.taskId);
+                return;
+            } catch (asyncErr) {
+                console.warn('Async API failed, falling back to sync:', asyncErr);
+                // Fallback к синхронному API
+            }
 
-            const pageId =
-                getConfluencePageId(idbConfluencePageId) || pageIdFromReq || '';
-
-            const glossaryPageId = getConfluencePageId(idbGlossaryPageId);
-            const contextPageIds = Array.isArray(idbContextPageIds)
-                ? [...new Set(idbContextPageIds.map(getConfluencePageId).filter(Boolean))]
-                : [];
-
-            const payload = {
-                ...(requirementsString ? { requirements: requirementsString } : {}),
-                pageId: pageId || undefined,
-                bearerToken: idbBearerToken || undefined,
-                glossary: idbGlossary || undefined,
-                glossaryPageId: glossaryPageId || undefined,
-                context: idbContextText || undefined,
-                contextPageIds: contextPageIds.length ? contextPageIds : undefined, // ← ок
-                contextInstruction: idbContextInstruction || undefined,
-                inputMode: inputMode || undefined,
-            };
-
-
+            // Fallback к старому синхронному API
             const { data } = await axios.post(
                 `${config.serverUrl}/generate-test-model`,
                 payload
@@ -1045,12 +1176,12 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
             const newTree = buildTreeWithIds(data);
             setTreeData(newTree);
 
-            setGeneratedModel(data);
+            setLocalGeneratedModel(data);
 
         } catch (error) {
             console.error('Ошибка при генерации тестовой модели:', error);
             alert('Не удалось сгенерировать модель: ' + (error.response?.data?.error || error.message));
-            setGeneratedModel(null);
+            setLocalGeneratedModel(null);
         } finally {
             setIsGeneratingModel(false);
         }
@@ -1184,18 +1315,20 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
         e.preventDefault();
         e.stopPropagation();
         if (isGeneratingCases || isGeneratingModel || isGeneratingXmind) return;
-        setIsGeneratingCases(true);
+        
         try {
             if (typeof onGenerate === 'function') {
-                await onGenerate(treeData);
+                // Передаем отредактированную структуру тестовой модели (treeData)
+                // Это гарантирует, что генерация тест-кейсов будет использовать актуальную структуру
+                console.log('TestModelGeneratorModal: передаем отредактированную структуру в генерацию тест-кейсов:', treeData);
+                onGenerate(treeData);
+                onClose(); // Закрываем модалку сразу
             } else {
                 console.error("onGenerate prop is not a function!");
             }
         } catch (error) {
             console.error("Ошибка во время генерации тест-кейсов:", error);
             window.alert('Ошибка при генерации тест-кейсов: ' + (error.message || 'Неизвестная ошибка'));
-        } finally {
-            setIsGeneratingCases(false);
         }
     };
 
@@ -1209,20 +1342,111 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
     }
 
     // Обновленная логика для определения состояния "занят"
-    const isBusy = isGeneratingModel || isGeneratingCases || isGeneratingXmind;
+    const isBusy = isGeneratingModel || isGeneratingXmind;
 
     // Исправленный текст лоадера
     const getLoaderText = () => {
-        if (isGeneratingModel) return "Генерация тестовой модели...";
-        if (isGeneratingCases) return "При больших требованиях генерация может быть минут 10, сходи покури или попей чай";
+        if (isGeneratingModel) {
+            if (modelGenerationStatus === 'processing') {
+                return `Генерация тестовой модели... ${modelGenerationProgress}%`;
+            }
+            return "Генерация тестовой модели...";
+        }
         if (isGeneratingXmind) return "Генерация Xmind карты...";
         return "Загрузка...";
     };
 
     return (
-        <Modal isOpen={isOpen} onRequestClose={isBusy ? () => { } : handleCloseWithConfirm} overlayClassName="modal-overlay" className="modal-content">
+        <>
+        <Modal isOpen={isOpen && !modelIsMinimized} onRequestClose={isBusy ? () => { } : handleCloseWithConfirm} overlayClassName="modal-overlay" className="modal-content">
             <StyleInjector />
             {isBusy && <LoaderOverlay text={getLoaderText()} />}
+
+                    {modelGenerationStatus === 'processing' && (
+                        <div style={{ 
+                            position: 'absolute', 
+                            top: '70px', 
+                            left: '20px', 
+                            right: '20px', 
+                            zIndex: 1002,
+                            backgroundColor: 'rgba(13, 17, 23, 0.95)', 
+                            border: '1px solid #30363d', 
+                            borderRadius: 12, 
+                            padding: 20,
+                            boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+                            backdropFilter: 'blur(10px)'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                    <div style={{
+                                        width: 12,
+                                        height: 12,
+                                        backgroundColor: '#58a6ff',
+                                        borderRadius: '50%',
+                                        animation: 'pulse 1.5s infinite'
+                                    }} />
+                                    <h4 style={{ margin: 0, color: '#c9d1d9', fontSize: 16, fontWeight: 600 }}>Генерация тестовой модели</h4>
+                                </div>
+                                <span style={{ fontSize: 14, fontWeight: 'bold', color: '#58a6ff' }}>{modelGenerationProgress}%</span>
+                            </div>
+                            
+                            <div style={{ 
+                                fontSize: 14, 
+                                color: '#8b949e', 
+                                lineHeight: 1.5,
+                                marginBottom: 16
+                            }}>
+                                Генерация выполняется в фоновом режиме. Вы можете закрыть это окно и продолжить работу. 
+                                Результат будет сохранен автоматически.
+                            </div>
+                            
+                            {/* Анимированный прогресс-бар */}
+                            <div style={{ 
+                                marginBottom: 16,
+                                backgroundColor: '#21262d',
+                                borderRadius: 8,
+                                height: 8,
+                                overflow: 'hidden',
+                                position: 'relative'
+                            }}>
+                                <div style={{
+                                    width: `${modelGenerationProgress}%`,
+                                    height: '100%',
+                                    background: 'linear-gradient(90deg, #58a6ff 0%, #79c0ff 50%, #58a6ff 100%)',
+                                    backgroundSize: '200px 100%',
+                                    animation: 'shimmer 2s infinite linear',
+                                    borderRadius: 8,
+                                    transition: 'width 0.3s ease'
+                                }} />
+                            </div>
+                            
+                            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+                                <button 
+                                    onClick={handleMinimize}
+                                    style={{
+                                        background: 'none',
+                                        border: '1px solid #30363d',
+                                        color: '#8b949e',
+                                        borderRadius: 6,
+                                        padding: '8px 16px',
+                                        cursor: 'pointer',
+                                        fontSize: 14,
+                                        transition: 'all 0.2s ease'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.target.style.borderColor = '#58a6ff';
+                                        e.target.style.color = '#58a6ff';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.target.style.borderColor = '#30363d';
+                                        e.target.style.color = '#8b949e';
+                                    }}
+                                >
+                                    Свернуть
+                                </button>
+                            </div>
+                        </div>
+                    )}
 
             <div className="modal-header">
                 <h2>Редактор тестовой модели</h2>
@@ -1231,9 +1455,13 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
                         type="button"
                         className="button-base button-accent"
                         onClick={handleGenerateModel}
-                        disabled={isBusy}
+                        disabled={isBusy || modelGenerationStatus === 'processing'}
+                        style={{
+                            opacity: (isBusy || modelGenerationStatus === 'processing') ? 0.6 : 1,
+                            cursor: (isBusy || modelGenerationStatus === 'processing') ? 'not-allowed' : 'pointer'
+                        }}
                     >
-                        Сгенерировать модель по требованиям
+                        {modelGenerationStatus === 'processing' ? `🔄 Генерация... ${modelGenerationProgress}%` : '🧱 Сгенерировать модель по требованиям'}
                     </button>
                     <button
                         type="button"
@@ -1244,7 +1472,18 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
                         Сгенерировать Xmind
                     </button>
                 </div>
+                <div className="header-controls">
+                    {modelGenerationStatus === 'processing' && (
+                        <button 
+                            className="minimize-btn" 
+                            onClick={handleMinimize} 
+                            title="Свернуть в фоновый режим"
+                        >
+                            −
+                        </button>
+                    )}
                 <button className="close-btn" onClick={handleCloseWithConfirm} disabled={isBusy}>×</button>
+                </div>
             </div>
 
             <div className="modal-main-split">
@@ -1273,7 +1512,7 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
                                 <button
                                     type="submit"
                                     className="button-base button-primary"
-                                    disabled={isBusy || treeData.length === 0}
+                                    disabled={isBusy || modelGenerationStatus === 'processing' || countAllNodes(treeData) === 0}
                                 >
                                     Далее к тесткейсам
                                 </button>
@@ -1289,5 +1528,104 @@ export default function TestModelGeneratorModal({ isOpen, onClose, initialCases,
                 </div>
             </div>
         </Modal>
+
+        {/* Уведомление в фоновом режиме */}
+        {modelIsMinimized && modelGenerationStatus === 'processing' && (
+            <div style={{
+                position: 'fixed',
+                top: '20px',
+                right: '20px',
+                zIndex: 1001,
+                backgroundColor: 'rgba(13, 17, 23, 0.95)',
+                border: '1px solid #30363d',
+                borderRadius: 12,
+                padding: 16,
+                boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+                backdropFilter: 'blur(10px)',
+                minWidth: 320,
+                maxWidth: 400,
+                animation: 'slideInRight 0.3s ease-out'
+            }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{
+                            width: 8,
+                            height: 8,
+                            backgroundColor: '#58a6ff',
+                            borderRadius: '50%',
+                            animation: 'pulse 1.5s infinite'
+                        }} />
+                        <h4 style={{ margin: 0, color: '#c9d1d9', fontSize: 14, fontWeight: 600 }}>Генерация тестовой модели</h4>
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 'bold', color: '#58a6ff' }}>{modelGenerationProgress}%</span>
+                </div>
+                
+                <div style={{ marginBottom: 12 }}>
+                    <div style={{ 
+                        width: '100%', 
+                        height: 6, 
+                        backgroundColor: '#21262d', 
+                        borderRadius: 3, 
+                        overflow: 'hidden',
+                        position: 'relative'
+                    }}>
+                        <div style={{ 
+                            width: `${modelGenerationProgress}%`, 
+                            height: '100%', 
+                            backgroundColor: '#58a6ff', 
+                            transition: 'width 0.5s ease',
+                            borderRadius: 3,
+                            position: 'relative'
+                        }}>
+                            <div style={{
+                                position: 'absolute',
+                                top: 0,
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent)',
+                                animation: 'shimmer 2s infinite'
+                            }} />
+                        </div>
+                    </div>
+                </div>
+                
+                <div style={{ 
+                    fontSize: 12, 
+                    color: '#8b949e',
+                    marginBottom: 12,
+                    lineHeight: 1.4
+                }}>
+                    Выполняется в фоновом режиме
+                </div>
+                
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                    <button 
+                        onClick={handleRestore}
+                        style={{
+                            background: 'none',
+                            border: '1px solid #30363d',
+                            color: '#8b949e',
+                            borderRadius: 6,
+                            padding: '6px 12px',
+                            cursor: 'pointer',
+                            fontSize: 12,
+                            transition: 'all 0.2s ease'
+                        }}
+                        onMouseEnter={(e) => {
+                            e.target.style.borderColor = '#58a6ff';
+                            e.target.style.color = '#58a6ff';
+                        }}
+                        onMouseLeave={(e) => {
+                            e.target.style.borderColor = '#30363d';
+                            e.target.style.color = '#8b949e';
+                        }}
+                    >
+                        Открыть
+                    </button>
+                </div>
+            </div>
+        )}
+        </>
     );
 }

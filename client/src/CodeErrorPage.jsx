@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
 import useAttachmentsMap from './components/useAttachmentsMap'
 import { serializeFile } from './components/fileStorage'
+import GlobalBackgroundProgress from './components/GlobalBackgroundProgress';
 
 function useDebounce(value, delay) {
     const [debounced, setDebounced] = useState(value);
@@ -1134,7 +1135,11 @@ ${t.expected}
     );
     return (
         <div className="solution-page">
+            {/* Глобальный фоновый прогресс-бар */}
+            <GlobalBackgroundProgress />
+            
             <h1>Массовое создание баг-репортов</h1>
+
 
             <section className="page-section">
                 <h2>1. Настройки подключения</h2>

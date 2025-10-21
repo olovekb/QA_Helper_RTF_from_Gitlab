@@ -15,7 +15,7 @@ const DEFAULT_MODEL = 'Qwen/Qwen3-Coder-480B-A35B-Instruct';
 // Retry configuration
 const MAX_ATTEMPTS = 5;
 const BASE_RETRY_MS = 1000;
-const REQUEST_TIMEOUT_MS = 500000; // 60s per request timeout
+const REQUEST_TIMEOUT_MS = 900000; // 15 minutes per request timeout (Cloud.ru бывает медленный на больших запросах)
 
 // Keep-alive HTTPS agent to avoid "socket hang up" on reused connections
 const httpsAgent = new https.Agent({

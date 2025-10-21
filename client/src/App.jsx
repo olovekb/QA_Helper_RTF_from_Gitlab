@@ -7,6 +7,8 @@ import { parseXmindFile } from './parce-xmind/parce.xmind.mjs';
 import { useNavigate } from 'react-router-dom';
 import { marked } from 'marked'; // Импорт библиотеки marked
 import { get as idbGet, set as idbSet } from 'idb-keyval';
+import GlobalBackgroundProgress from './components/GlobalBackgroundProgress';
+import ErrorBoundary from './components/ErrorBoundary';
 
 function usePersistentState(key, defaultValue) {
   const [state, setState] = useState(defaultValue);
@@ -225,7 +227,11 @@ const App = ({ projects }) => {
   };
 
   return (
-    <div className="App">
+    <ErrorBoundary>
+      <div className="App">
+        {/* Глобальный фоновый прогресс-бар */}
+        <GlobalBackgroundProgress />
+      
       <div className="header-wrapper">
         <h1>QA-helper</h1>
         <div className="header-buttons">
@@ -240,6 +246,7 @@ const App = ({ projects }) => {
           </button>
         </div>
       </div>
+      
       <div className="tabs">
         <button onClick={() => handleTabChange('analysis')} className={activeTab === 'analysis' ? 'active' : ''}>
           Анализ тестов
@@ -339,7 +346,8 @@ const App = ({ projects }) => {
           )}
         </div>
       )}
-    </div>
+      </div>
+    </ErrorBoundary>
   );
 };
 

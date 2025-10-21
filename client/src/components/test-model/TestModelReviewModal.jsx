@@ -102,8 +102,13 @@ const createNewTestCase = (feature, story, scenario = '', code = '') => ({
 
 // --- STATE MANAGEMENT HELPERS ---
 const buildTreeFromCases = (cases) => {
+    console.log('buildTreeFromCases: input cases:', cases);
+    console.log('buildTreeFromCases: cases length:', cases?.length);
+    
     const tree = {};
-    (cases || []).forEach((c) => {
+    (cases || []).forEach((c, index) => {
+        console.log(`buildTreeFromCases: processing case ${index}:`, c);
+        
         const testCase = {
             ...c,
             id: c.id || generateId(),
@@ -111,6 +116,14 @@ const buildTreeFromCases = (cases) => {
             version: c.version ?? undefined,
         };
         const { feature, story, scenario = '', code = '' } = testCase;
+        
+        console.log(`buildTreeFromCases: extracted fields - feature: "${feature}", story: "${story}", scenario: "${scenario}", code: "${code}"`);
+        
+        if (!feature || !story) {
+            console.warn(`buildTreeFromCases: skipping case ${index} - missing feature or story:`, testCase);
+            return;
+        }
+        
         if (!tree[feature]) tree[feature] = { stories: {}, isExpanded: true };
         if (!tree[feature].stories[story])
             tree[feature].stories[story] = { scenarios: {}, cases: [], isExpanded: true };
@@ -130,6 +143,10 @@ const buildTreeFromCases = (cases) => {
             tree[feature].stories[story].cases.push(testCase);
         }
     });
+    
+    console.log('buildTreeFromCases: final tree:', tree);
+    console.log('buildTreeFromCases: tree keys:', Object.keys(tree));
+    
     return tree;
 };
 
@@ -832,20 +849,34 @@ export default function TestModelReviewModal({
     jiraPat,
 }) {
     const [treeData, setTreeData] = useState({});
+    
+    // Логирование изменений treeData
+    useEffect(() => {
+        console.log('TestModelReviewModal: treeData state changed:', treeData);
+        console.log('TestModelReviewModal: treeData keys:', Object.keys(treeData));
+    }, [treeData]);
     const [sharedStepsOptions, setSharedStepsOptions] = useState([]);
     const [isSending, setIsSending] = useState(false);
     const [allureLink, setAllureLink] = useState(null);
     const [isGenerating, setIsGenerating] = useState(false);
 
     useEffect(() => {
-        if (!isOpen || !projectId) return;
-        setTreeData(buildTreeFromCases(initialCases));
-        axios
-            .get(`${config.serverUrl}/shared-steps`, { params: { projectId } })
-            .then((resp) =>
-                setSharedStepsOptions(resp.data.map((s) => ({ value: s.id, label: s.body })))
-            )
-            .catch(console.error);
+        if (!isOpen) return;
+        console.log('TestModelReviewModal: initialCases received:', initialCases);
+        console.log('TestModelReviewModal: initialCases length:', initialCases?.length);
+        const treeData = buildTreeFromCases(initialCases);
+        console.log('TestModelReviewModal: built tree data:', treeData);
+        console.log('TestModelReviewModal: setting treeData state...');
+        setTreeData(treeData);
+        console.log('TestModelReviewModal: treeData state set');
+        if (projectId) {
+            axios
+                .get(`${config.serverUrl}/shared-steps`, { params: { projectId } })
+                .then((resp) =>
+                    setSharedStepsOptions(resp.data.map((s) => ({ value: s.id, label: s.body })))
+                )
+                .catch(console.warn);
+        }
     }, [isOpen, projectId, initialCases]);
     const handleCloseWithConfirm = useCallback(() => {
         if (isGenerating || isSending) return; // не даём закрыть во время процессов
@@ -1326,6 +1357,7 @@ export default function TestModelReviewModal({
         setIsSending(true);
 
         try {
+            console.log('TestModelReviewModal: отправляем в create-test-cases:', { projectId, casesCount: cases.length });
             const resp = await axios.post(
                 `${config.serverUrl}/create-test-cases`,
                 { projectId, cases },
@@ -1547,6 +1579,7 @@ export default function TestModelReviewModal({
                             <Droppable droppableId="features" type="STRUCTURE">
                                 {(prov) => (
                                     <div ref={prov.innerRef} {...prov.droppableProps}>
+                                        {console.log('Rendering treeData:', treeData, 'Keys:', Object.keys(treeData))}
                                         {Object.entries(treeData).map(([featureName, featureData], idx) => (
                                             <Draggable key={featureName} draggableId={featureName} index={idx} type="STRUCTURE">
                                                 {(dragProv) => (
