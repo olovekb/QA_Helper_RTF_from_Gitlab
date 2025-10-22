@@ -2189,6 +2189,9 @@ app.post('/api/generate-test-cases', async (req, res) => {
             const t = trimText(s, n);
             return t ? t : undefined;
         };
+        
+        const seenTitles = new Set(); // Предотвращаем дубли по названиям
+        
         return (arr || [])
             .filter(x => x && typeof x === 'object')
             .map(x => {
@@ -2223,7 +2226,16 @@ app.post('/api/generate-test-cases', async (req, res) => {
                     } : undefined
                 };
             })
-            .filter(x => x.title && x.layer);
+            .filter(x => {
+                // Предотвращаем дубли по названиям
+                if (x.title && seenTitles.has(x.title.trim())) {
+                    console.log(`[sanitize] Пропускаем дубликат по названию: ${x.title}`);
+                    return false;
+                }
+                if (x.title) seenTitles.add(x.title.trim());
+                
+                return x.title && x.layer;
+            });
     };
 
     // === Индекс модели и фиксация кейсов по модели ===
@@ -2250,38 +2262,45 @@ app.post('/api/generate-test-cases', async (req, res) => {
 
     function fixAgainstModel(cases, idx) {
         const out = [];
+        const seenTitles = new Set(); // Предотвращаем дубли по названиям
+        
         for (const tc of (cases || [])) {
             const layer = String(tc.layer || '');
 
-            // E2E: story обязателен, feature восстанавливаем по карте story->feature
+            // Предотвращаем дубли по названиям
+            if (tc.title && seenTitles.has(tc.title.trim())) {
+                console.log(`[fixAgainstModel] Пропускаем дубликат по названию: ${tc.title}`);
+                continue;
+            }
+            if (tc.title) seenTitles.add(tc.title.trim());
+
+            // ВАЖНО: НЕ отбрасываем кейсы, а ВОССТАНАВЛИВАЕМ структуру из модели
+            // E2E: восстанавливаем feature по карте story->feature, но НЕ отбрасываем
             if (layer === 'E2E Tests') {
-                if (!tc.story || !idx.storyToFeature.has(tc.story)) continue; // неизвестная Story — выбрасываем
-                const feat = idx.storyToFeature.get(tc.story);
-                if (!tc.feature || tc.feature !== feat) tc.feature = feat;
+                if (tc.story && idx.storyToFeature.has(tc.story)) {
+                    const feat = idx.storyToFeature.get(tc.story);
+                    if (!tc.feature || tc.feature !== feat) tc.feature = feat;
+                }
             }
 
-            // Unit: нужен корректный code → восстанавливаем scenario/story/feature по карте
+            // Unit: восстанавливаем scenario/story/feature по карте code, но НЕ отбрасываем
             if (layer.startsWith('Unit')) {
-                if (!tc.code) continue;
-                const m = idx.codeTo.get(tc.code);
-                if (!m) continue; // неизвестный code — отбрасываем
-                if (!tc.scenario) tc.scenario = m.scenario;
-                if (!tc.story) tc.story = m.story;
-                if (!tc.feature) tc.feature = m.feature;
+                if (tc.code && idx.codeTo.has(tc.code)) {
+                    const m = idx.codeTo.get(tc.code);
+                    if (!tc.scenario) tc.scenario = m.scenario;
+                    if (!tc.story) tc.story = m.story;
+                    if (!tc.feature) tc.feature = m.feature;
+                }
             }
 
-            // Integration: scenario обязателен и должен быть из модели
+            // Integration: восстанавливаем story/feature по карте scenario, но НЕ отбрасываем
             if (layer.startsWith('Integration')) {
-                if (!tc.scenario || !idx.scenarioSet.has(tc.scenario)) continue;
-                const p = idx.scenarioToParent.get(tc.scenario);
-                if (p) {
+                if (tc.scenario && idx.scenarioToParent.has(tc.scenario)) {
+                    const p = idx.scenarioToParent.get(tc.scenario);
                     if (!tc.story) tc.story = p.story;
                     if (!tc.feature) tc.feature = p.feature;
                 }
             }
-
-            // Если scenario указан, но его нет в модели — выкидываем (ловим «Проверка»)
-            if (tc.scenario && !idx.scenarioSet.has(tc.scenario)) continue;
 
             // Общая страховка: если есть Story из модели — фича должна быть ровно её родитель
             if (tc.story && idx.storyToFeature.has(tc.story)) {
@@ -2291,6 +2310,7 @@ app.post('/api/generate-test-cases', async (req, res) => {
 
             out.push(tc);
         }
+        console.log(`[fixAgainstModel] Возвращаем ${out.length} кейсов (было ${cases?.length || 0})`);
         return out;
     }
 
@@ -4239,6 +4259,8 @@ async function generateTestCasesAsync(taskId, inputData) {
         function fixAgainstModel(cases, idx) {
             console.log(`[fixAgainstModel] Обрабатываем ${cases?.length || 0} кейсов`);
             const out = [];
+            const seenTitles = new Set(); // Предотвращаем дубли по названиям
+            
             for (const tc of (cases || [])) {
                 const layer = String(tc.layer || '');
                 console.log(`[fixAgainstModel] Обрабатываем кейс:`, {
@@ -4250,28 +4272,36 @@ async function generateTestCasesAsync(taskId, inputData) {
                     expectedLength: tc.expected?.length
                 });
 
-                // E2E: story обязателен, feature восстанавливаем по карте story->feature
+                // Предотвращаем дубли по названиям
+                if (tc.title && seenTitles.has(tc.title.trim())) {
+                    console.log(`[fixAgainstModel] Пропускаем дубликат по названию: ${tc.title}`);
+                    continue;
+                }
+                if (tc.title) seenTitles.add(tc.title.trim());
+
+                // ВАЖНО: НЕ отбрасываем кейсы, а ВОССТАНАВЛИВАЕМ структуру из модели
+                // E2E: восстанавливаем feature по карте story->feature, но НЕ отбрасываем
                 if (layer === 'E2E Tests') {
-                    if (!tc.story || !idx.storyToFeature.has(tc.story)) continue; // неизвестная Story — выбрасываем
-                    const feat = idx.storyToFeature.get(tc.story);
-                    if (!tc.feature || tc.feature !== feat) tc.feature = feat;
+                    if (tc.story && idx.storyToFeature.has(tc.story)) {
+                        const feat = idx.storyToFeature.get(tc.story);
+                        if (!tc.feature || tc.feature !== feat) tc.feature = feat;
+                    }
                 }
 
-                // Unit: нужен корректный code → восстанавливаем scenario/story/feature по карте
+                // Unit: восстанавливаем scenario/story/feature по карте code, но НЕ отбрасываем
                 if (layer.startsWith('Unit')) {
-                    if (!tc.code) continue;
-                    const m = idx.codeTo.get(tc.code);
-                    if (!m) continue; // неизвестный code — отбрасываем
-                    if (!tc.scenario) tc.scenario = m.scenario;
-                    if (!tc.story) tc.story = m.story;
-                    if (!tc.feature) tc.feature = m.feature;
+                    if (tc.code && idx.codeTo.has(tc.code)) {
+                        const m = idx.codeTo.get(tc.code);
+                        if (!tc.scenario) tc.scenario = m.scenario;
+                        if (!tc.story) tc.story = m.story;
+                        if (!tc.feature) tc.feature = m.feature;
+                    }
                 }
 
-                // Integration: scenario обязателен и должен быть из модели
+                // Integration: восстанавливаем story/feature по карте scenario, но НЕ отбрасываем
                 if (layer.startsWith('Integration')) {
-                    if (!tc.scenario || !idx.scenarioSet.has(tc.scenario)) continue;
-                    const p = idx.scenarioToParent.get(tc.scenario);
-                    if (p) {
+                    if (tc.scenario && idx.scenarioToParent.has(tc.scenario)) {
+                        const p = idx.scenarioToParent.get(tc.scenario);
                         if (!tc.story) tc.story = p.story;
                         if (!tc.feature) tc.feature = p.feature;
                     }
@@ -4279,6 +4309,7 @@ async function generateTestCasesAsync(taskId, inputData) {
 
                 out.push(tc);
             }
+            console.log(`[fixAgainstModel] Возвращаем ${out.length} кейсов (было ${cases?.length || 0})`);
             return out;
         }
 
@@ -4295,6 +4326,9 @@ async function generateTestCasesAsync(taskId, inputData) {
                 const t = trimText(s, n);
                 return t ? t : undefined;
             };
+            
+            const seenTitles = new Set(); // Предотвращаем дубли по названиям
+            
             return (arr || [])
                 .filter(x => x && typeof x === 'object')
                 .map(x => {
@@ -4331,7 +4365,16 @@ async function generateTestCasesAsync(taskId, inputData) {
                         jiraIssue: take(x.jiraIssue, 100)
                     };
                 })
-                .filter(x => x.title && x.layer);
+                .filter(x => {
+                    // Предотвращаем дубли по названиям
+                    if (x.title && seenTitles.has(x.title.trim())) {
+                        console.log(`[sanitize] Пропускаем дубликат по названию: ${x.title}`);
+                        return false;
+                    }
+                    if (x.title) seenTitles.add(x.title.trim());
+                    
+                    return x.title && x.layer;
+                });
         };
 
         const {
