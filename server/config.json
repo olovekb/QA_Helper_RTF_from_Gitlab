@@ -12,7 +12,7 @@
     "openRouterAiKey":  "__REDACTED__",
     "openAiToken":  "__REDACTED__",
     "cloudruModels":  [
-                          "t-tech/T-pro-it-2.0"
+                          "GigaChat/GigaChat-2-Max"
                       ],
     "fallbackModels":  [
                            "qwen/qwen3-235b-a22b:free",
