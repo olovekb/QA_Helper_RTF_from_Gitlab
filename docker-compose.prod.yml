@@ -1,0 +1,107 @@
+version: '3.8'
+
+services:
+  allure-test-inspector:
+    image: git.abanking.ru:4567/vpoliakov/allure-test-inspector/allure-test-inspector:main
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - CLIENT_PORT=3000
+    ports:
+      - 3000:3000
+      - 5000:5000
+    networks:
+      - allure-test-net
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  tia-mapping-service:
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    image: git.abanking.ru:4567/vpoliakov/allure-test-inspector/tia-mapping-service:main
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PORT=5001
+      - DB_HOST=postgresql
+      - DB_PORT=5432
+    ports:
+      - 5001:5001
+    networks:
+      - allure-test-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  postgresql:
+    image: postgres:16
+    restart: always
+    ports:
+      - 5432:5432
+    networks:
+      - allure-test-net
+    environment:
+      POSTGRES_USER: ${DB_USER:-tia_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+      POSTGRES_DB: ${DB_NAME:-tia_mapping_db}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-tia_user} -d ${DB_NAME:-tia_mapping_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - allure-test-net
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  allure-test-net:
+    driver: bridge
