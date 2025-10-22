@@ -2144,6 +2144,7 @@ app.post('/api/generate-test-cases', async (req, res) => {
         const needCd = new Map(); // code -> remaining Unit
 
         for (const f of model) for (const st of (f.stories || [])) {
+            // КРИТИЧЕСКИ ВАЖНО: Каждая Story ДОЛЖНА иметь минимум 1 E2E тест
             needE2EByStory.set(st.text, 1);
             for (const sc of (st.scenarios || [])) {
                 needSc.set(sc.text, 3);
@@ -2172,6 +2173,12 @@ app.post('/api/generate-test-cases', async (req, res) => {
         const missingE2E = [...needE2EByStory].filter(([, n]) => n > 0).map(([story, need]) => ({ story, need }));
         const missingSc = [...needSc].filter(([, n]) => n > 0).map(([scenario, need]) => ({ scenario, need }));
         const missingCd = [...needCd].filter(([, n]) => n > 0).map(([code, need]) => ({ code, need }));
+
+        // Логирование для отслеживания E2E тестов
+        console.log(`[auditCoverage] E2E тесты по историям:`, Object.fromEntries(needE2EByStory));
+        console.log(`[auditCoverage] Недостающие E2E тесты:`, missingE2E);
+        console.log(`[auditCoverage] Недостающие Integration тесты:`, missingSc);
+        console.log(`[auditCoverage] Недостающие Unit тесты:`, missingCd);
 
         return { missingE2E, missingSc, missingCd };
     }
@@ -2384,6 +2391,7 @@ app.post('/api/generate-test-cases', async (req, res) => {
    • Чёрный ящик, имитация реального пользователя.
    • ВСЕГДА начинаются шагами: «Авторизоваться…», «Перейти на страницу…».
    • НЕЛЬЗЯ проверять сообщения отдельных полей и вводить невалидные данные полей — максимум 1–2 ключевых негативных сценария на уровне всего потока (например, «ошибка сервера при сохранении»).
+   • 🚨 КРИТИЧЕСКИ ВАЖНО: КАЖДАЯ Story ДОЛЖНА иметь минимум 1 E2E тест-кейс!
 3) Integration (C2–C3) — взаимодействия компонент/эндпоинтов:
    • В рамках одного компонента (FE) или одного API-вызова (BE), без навигации по страницам.
    • Основная работа: классы эквивалентности, граничные значения (BVA), контракты API.
@@ -2831,6 +2839,13 @@ ${JSON.stringify(chunk, null, 2)}
 
 Нужно добрать:
 ${mustLines.map(l => `- ${l}`).join('\n')}
+
+🚨 КРИТИЧЕСКИ ВАЖНО ДЛЯ E2E ТЕСТОВ! 🚨
+- КАЖДАЯ Story ДОЛЖНА иметь минимум 1 E2E тест-кейс
+- E2E тесты должны быть сквозными пользовательскими сценариями
+- E2E тесты должны начинаться с авторизации/навигации
+- E2E тесты должны проверять целостный бизнес-процесс
+- НЕ создавай E2E тесты для детальных проверок полей - это для Integration
 
 Требования${reqsChunks.length > 1 ? ` (часть ${i + 1}/${reqsChunks.length})` : ''}:
 ${reqsChunk.map((r, idx) => `${idx + 1}. ${r}`).join('\n')}
@@ -4635,6 +4650,7 @@ async function generateTestCasesAsync(taskId, inputData) {
    • Чёрный ящик, имитация реального пользователя.
    • ВСЕГДА начинаются шагами: «Авторизоваться…», «Перейти на страницу…».
    • НЕЛЬЗЯ проверять сообщения отдельных полей и вводить невалидные данные полей — максимум 1–2 ключевых негативных сценария на уровне всего потока (например, «ошибка сервера при сохранении»).
+   • 🚨 КРИТИЧЕСКИ ВАЖНО: КАЖДАЯ Story ДОЛЖНА иметь минимум 1 E2E тест-кейс!
 3) Integration (C2–C3) — взаимодействия компонент/эндпоинтов:
    • В рамках одного компонента (FE) или одного API-вызова (BE), без навигации по страницам.
    • Основная работа: классы эквивалентности, граничные значения (BVA), контракты API.
