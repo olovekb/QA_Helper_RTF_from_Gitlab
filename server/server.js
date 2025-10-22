@@ -395,7 +395,7 @@ function normalizeModelStructure(model) {
 }
 
 // Выделение релевантных секций из markdown страницы по ключам из цитаты
-function extractRelevantSections(markdown, mentionText, { maxSections = 6, maxChars = 16000 } = {}) {
+function extractRelevantSections(markdown, mentionText, { maxSections = 6, maxChars = 50000 } = {}) {
     const md = String(markdown || '');
     const mention = String(mentionText || '').toLowerCase();
     const tokens = new Set(
@@ -1968,7 +1968,7 @@ app.post('/api/generate-test-cases', async (req, res) => {
                         const end = Math.min(lines.length, refIdx + 3);
                         mention = lines.slice(start, end).join('\n').trim();
                     }
-                    const relevant = extractRelevantSections(md, mention, { maxSections: 8, maxChars: 22000 });
+                    const relevant = extractRelevantSections(md, mention, { maxSections: 8, maxChars: 50000 });
                     autoPages.push([
                         `### Контекст по ссылке из основной статьи (pageId=${lid})`,
                         mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${lid})`,
@@ -2067,7 +2067,7 @@ app.post('/api/generate-test-cases', async (req, res) => {
     }
 
     // Разбивка требований на чанки по размеру (для больших документов)
-    function splitRequirements(reqs, maxCharsPerChunk = 40000) {
+    function splitRequirements(reqs, maxCharsPerChunk = 120000) {
         if (!Array.isArray(reqs) || reqs.length === 0) return [[]];
         
         const chunks = [];
@@ -2826,7 +2826,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
         // === ЧАНКОВАНИЕ ТРЕБОВАНИЙ для gapFill ===
         const reqsSize = reqs.join('').length;
         // Для gapFill используем меньший размер чанка, т.к. модель уже есть в промпте
-        const reqsChunks = reqsSize > 35000 ? splitRequirements(reqs, 35000) : [reqs];
+        const reqsChunks = reqsSize > 100000 ? splitRequirements(reqs, 100000) : [reqs];
         
         if (reqsChunks.length > 1) {
             console.log(`[gapFill] CHUNKING: Требования разбиты на ${reqsChunks.length} чанков (общий размер: ${reqsSize} символов)`);
@@ -3084,7 +3084,7 @@ app.post('/api/generate-test-model', async (req, res) => {
                         const end = Math.min(lines.length, refIdx + 3);
                         mention = lines.slice(start, end).join('\n').trim();
                     }
-                    const relevant = extractRelevantSections(md, mention, { maxSections: 8, maxChars: 22000 });
+                    const relevant = extractRelevantSections(md, mention, { maxSections: 8, maxChars: 50000 });
                     autoPages.push([
                         `### Контекст по ссылке из основной статьи (pageId=${lid})`,
                         mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${lid})`,
@@ -3123,7 +3123,7 @@ app.post('/api/generate-test-model', async (req, res) => {
     console.log(`Размер требований: ${reqStringForModel.length} символов`)
     
     // === ФУНКЦИЯ ЧАНКОВАНИЯ БОЛЬШИХ ТРЕБОВАНИЙ ===
-    function chunkTextBySize(text, maxChars = 80000) {
+    function chunkTextBySize(text, maxChars = 120000) {
         if (!text || text.length <= maxChars) return [text];
         
         const chunks = [];
@@ -3555,7 +3555,7 @@ async function generateTestModelAsync(taskId, inputData) {
                             const end = Math.min(lines.length, refIdx + 3);
                             mention = lines.slice(start, end).join('\n').trim();
                         }
-                        const relevant = extractRelevantSections(md, mention, { maxSections: 8, maxChars: 22000 });
+                        const relevant = extractRelevantSections(md, mention, { maxSections: 8, maxChars: 50000 });
                         autoPages.push([
                             `### Контекст по ссылке из основной статьи (pageId=${lid})`,
                             mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${lid})`,
@@ -3593,7 +3593,7 @@ async function generateTestModelAsync(taskId, inputData) {
         console.log('[generate-test-model-async] Размер требований:', reqStringForModel.length, 'символов');
 
         // Функция чанкования больших требований
-        function chunkTextBySize(text, maxChars = 80000) {
+        function chunkTextBySize(text, maxChars = 120000) {
             if (!text || text.length <= maxChars) return [text];
             
             const chunks = [];
@@ -4435,7 +4435,7 @@ async function generateTestCasesAsync(taskId, inputData) {
                             const end = Math.min(lines.length, refIdx + 3);
                             mention = lines.slice(start, end).join('\n').trim();
                         }
-                        const relevant = extractRelevantSections(md, mention, { maxSections: 8, maxChars: 22000 });
+                        const relevant = extractRelevantSections(md, mention, { maxSections: 8, maxChars: 50000 });
                         autoPages.push([
                             `### Контекст по ссылке из основной статьи (pageId=${lid})`,
                             mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${lid})`,
@@ -4530,7 +4530,7 @@ async function generateTestCasesAsync(taskId, inputData) {
         }
 
         // Разбивка требований на чанки по размеру (для больших документов)
-        function splitRequirements(reqs, maxCharsPerChunk = 40000) {
+        function splitRequirements(reqs, maxCharsPerChunk = 120000) {
             if (!Array.isArray(reqs) || reqs.length === 0) return [[]];
             
             const chunks = [];
