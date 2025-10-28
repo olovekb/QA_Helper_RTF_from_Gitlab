@@ -267,15 +267,7 @@ export async function callCloudRuAPI(messages, opts = {}) {
         return await processLargeRequest(messages, opts);
     }
     
-    // Логируем первые несколько сообщений для контекста
-    messages.slice(0, 2).forEach((msg, i) => {
-        const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-        console.log(`📄 Message ${i + 1} (${msg.role}): ${content.slice(0, 200)}${content.length > 200 ? '...' : ''}`);
-    });
-    if (messages.length > 2) {
-        console.log(`📄 ... and ${messages.length - 2} more messages`);
-    }
-    console.log(`${'='*80}\n`);
+    // Убрано логирование сообщений для чистоты консоли
 
     // === ТЕСТОВЫЙ ЗАПРОС ДЛЯ ПРОВЕРКИ API ===
     console.log(`\n🧪 TESTING CLOUD.RU API CONNECTIVITY`);
@@ -365,6 +357,9 @@ export async function callCloudRuAPI(messages, opts = {}) {
                 console.log(`⏰ Retry-After: ${response.headers.get('retry-after') || 'Not set'}`);
                 console.log(`🔄 Attempt: ${attempt}/${MAX_ATTEMPTS}`);
                 console.log(`📊 Rate retries: ${rateRetries}/${MAX_RATE_LIMIT_RETRIES}`);
+                console.log(`📋 Model: ${model}`);
+                console.log(`📏 Request size: ${JSON.stringify(requestBody).length} chars`);
+                console.log(`🔢 Estimated tokens: ${Math.ceil(JSON.stringify(requestBody).length / 4)}`);
                 console.log(`${'='*60}\n`);
 
                 // Handle rate limiting
@@ -407,6 +402,29 @@ export async function callCloudRuAPI(messages, opts = {}) {
             console.log(`📝 Response length: ${JSON.stringify(data).length} chars`);
             console.log(`🎯 Model used: ${data.model || 'Unknown'}`);
             console.log(`📄 Choices count: ${data.choices?.length || 0}`);
+            
+            // ✅ ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ СТРУКТУРЫ ОТВЕТА
+            console.log(`🔍 Response structure analysis:`);
+            console.log(`  - has_choices: ${!!data.choices}`);
+            console.log(`  - choices_length: ${data.choices?.length || 0}`);
+            console.log(`  - has_message: ${!!data.choices?.[0]?.message}`);
+            console.log(`  - has_content: ${!!data.choices?.[0]?.message?.content}`);
+            console.log(`  - content_length: ${data.choices?.[0]?.message?.content?.length || 0}`);
+            console.log(`  - has_tool_calls: ${!!data.choices?.[0]?.message?.tool_calls}`);
+            console.log(`  - tool_calls_count: ${data.choices?.[0]?.message?.tool_calls?.length || 0}`);
+            
+            // Если есть tool_calls - логируем их детально
+            if (data.choices?.[0]?.message?.tool_calls) {
+                console.log(`🛠️ Tool calls details:`);
+                data.choices[0].message.tool_calls.forEach((tc, i) => {
+                    console.log(`  Tool ${i + 1}: ${tc.function?.name} (args: ${tc.function?.arguments?.length || 0} chars)`);
+                });
+            }
+            
+            // Если content пустой но есть tool_calls - это НОРМАЛЬНО для Cloud.ru
+            if (!data.choices?.[0]?.message?.content && data.choices?.[0]?.message?.tool_calls) {
+                console.log(`ℹ️ Content пустой, но есть tool_calls - это ожидаемое поведение для Cloud.ru`);
+            }
             
             // Проверяем и исправляем неполный markdown ответ
             const content = data.choices?.[0]?.message?.content || '';
@@ -461,6 +479,9 @@ export async function callCloudRuAPI(messages, opts = {}) {
             console.log(`📝 Error message: ${error.message}`);
             console.log(`🔄 Attempt: ${attempt}/${MAX_ATTEMPTS}`);
             console.log(`📊 Rate retries: ${rateRetries}/${MAX_RATE_LIMIT_RETRIES}`);
+            console.log(`🔍 Error code: ${error.code || 'N/A'}`);
+            console.log(`🌐 Endpoint: ${endpoint}`);
+            console.log(`📋 Model: ${model}`);
             if (error.stack) {
                 console.log(`📚 Stack trace: ${error.stack.split('\n').slice(0, 3).join('\n')}`);
             }
@@ -576,6 +597,9 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
             
             // For other errors (like invalid API key), fall back to OpenRouter immediately
             console.log(`🚨 [hybrid] Non-retryable error - falling back to OpenRouter immediately`);
+            console.log(`📝 Error details: ${error.message}`);
+            console.log(`🔍 Error type: ${error.constructor.name}`);
+            if (error.code) console.log(`🔍 Error code: ${error.code}`);
             break;
         }
     }

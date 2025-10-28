@@ -16,6 +16,7 @@ import 'github-markdown-css/github-markdown-dark.css';
 import TestModelGeneratorModal from './components/test-model/TestModelGeneratorModal';
 import TestModelReviewModal from './components/test-model/TestModelReviewModal';
 import GlobalGenerationWindow from './components/GlobalGenerationWindow';
+import ErrorBoundary from './components/ErrorBoundary';
 import * as pdfjsLib from 'pdfjs-dist/build/pdf';
 
 // CSS для анимаций прогресс-бара
@@ -876,11 +877,13 @@ export default function SolutionPage({ projects = [] }) {
         setGenerationStatus('completed'); // Не сбрасываем статус, а устанавливаем 'completed'
         setIsGenerationMinimized(false); // Показать модальное окно при завершении
         
-        // Очищаем временные данные генерации
-        await idbSet('generationTaskId', null);
-        await idbSet('generationProgress', 0);
-        await idbSet('generationStatus', null);
-        await idbSet('isGenerationMinimized', false);
+        // Очищаем временные данные генерации (батчим операции)
+        await Promise.all([
+          idbSet('generationTaskId', null),
+          idbSet('generationProgress', 0),
+          idbSet('generationStatus', null),
+          idbSet('isGenerationMinimized', false)
+        ]);
         
         // Показать уведомление о завершении
         if (window.Notification && Notification.permission === 'granted') {
@@ -895,12 +898,12 @@ export default function SolutionPage({ projects = [] }) {
         setGenerationProgress(0);
         setGenerationStatus(null);
       } else if (data.status === 'processing') {
-        // Продолжаем опрашивать статус каждые 2 секунды
+        // Продолжаем опрашивать статус каждые 5 секунд (оптимизация)
         setTimeout(() => {
           if (generationTaskId === taskId) {
             checkGenerationStatus(taskId);
           }
-        }, 2000);
+        }, 5000);
       }
     } catch (err) {
       console.error('Ошибка проверки статуса:', err);
@@ -972,11 +975,13 @@ export default function SolutionPage({ projects = [] }) {
           console.log('Тестовая модель сохранена в IndexedDB и состояние');
         }
         
-        // Очищаем временные данные генерации
-        await idbSet('modelGenerationTaskId', null);
-        await idbSet('modelGenerationProgress', 0);
-        await idbSet('modelGenerationStatus', null);
-        await idbSet('modelIsMinimized', false);
+        // Очищаем временные данные генерации (батчим операции)
+        await Promise.all([
+          idbSet('modelGenerationTaskId', null),
+          idbSet('modelGenerationProgress', 0),
+          idbSet('modelGenerationStatus', null),
+          idbSet('modelIsMinimized', false)
+        ]);
         
         // Показать уведомление о завершении
         if (window.Notification && Notification.permission === 'granted') {
@@ -991,12 +996,12 @@ export default function SolutionPage({ projects = [] }) {
         setModelGenerationProgress(0);
         setModelGenerationStatus(null);
       } else if (data.status === 'processing') {
-        // Продолжаем опрашивать статус каждые 2 секунды
+        // Продолжаем опрашивать статус каждые 5 секунд (оптимизация)
         setTimeout(() => {
           if (modelGenerationTaskId === taskId) {
             checkModelGenerationStatus(taskId);
           }
-        }, 2000);
+        }, 5000);
       }
     } catch (err) {
       console.error('Ошибка проверки статуса генерации тестовой модели:', err);
@@ -1020,6 +1025,12 @@ export default function SolutionPage({ projects = [] }) {
     }
 
     try {
+      // ОЧИЩАЕМ СТАРЫЕ ДАННЫЕ ПЕРЕД ГЕНЕРАЦИЕЙ
+      console.log('Очищаем старые данные перед генерацией новых тест-кейсов...');
+      setGeneratedCases([]);
+      localStorage.removeItem('generatedTestCases');
+      setGenerationStatus(null);
+      
       // Сначала пробуем асинхронный API
       try {
         const payload = { ...payloadBase, modelStructure };
@@ -1033,10 +1044,6 @@ export default function SolutionPage({ projects = [] }) {
           }
         }
         );
-        
-        // Очищаем предыдущие результаты при новой генерации
-        setGeneratedCases([]);
-        localStorage.removeItem('generatedTestCases');
         
         setGenerationTaskId(data.taskId);
         setGenerationProgress(0);
@@ -1615,6 +1622,7 @@ export default function SolutionPage({ projects = [] }) {
   const canAnalyze = (inputMode === 'text' ? solutionText.trim() : confluencePageId.trim()) && !loading;
 
   return (
+    <ErrorBoundary>
     <div className="solution-page">
       <h1>Тестирование требований</h1>
 
@@ -2033,5 +2041,6 @@ export default function SolutionPage({ projects = [] }) {
       </div>
 
     </div>
+    </ErrorBoundary>
   );
 }

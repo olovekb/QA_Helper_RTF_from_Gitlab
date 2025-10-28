@@ -8,6 +8,11 @@ class ErrorBoundary extends React.Component {
   }
 
   static getDerivedStateFromError(error) {
+    // Игнорируем ошибки ResizeObserver, так как они не критичны
+    if (isResizeObserverError(error)) {
+      return null; // Не обновляем состояние для ResizeObserver ошибок
+    }
+    
     // Обновляем состояние так, чтобы следующий рендер показал fallback UI
     return { hasError: true };
   }
