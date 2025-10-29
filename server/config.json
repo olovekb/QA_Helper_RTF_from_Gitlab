@@ -6,18 +6,17 @@
     "url":  "https://abanking.qatools.cloud",
     "jiraUrl":  "https://jira.abanking.ru/browse",
     "huggingfaceToken":  "__REDACTED__",
-    "serverUrl":  "http://localhost:5003",
+    "serverUrl":  "https://test-inspector.abanking.ru/api",
     "defaultJiraIntegrationId":  67,
     "cloudruApiKey":  "__REDACTED__",
     "openRouterAiKey":  "__REDACTED__",
     "openAiToken":  "__REDACTED__",
     "cloudruModels":  [
-                          "Qwen/Qwen3-Next-80B-A3B-Instruct",
                           "Qwen/Qwen3-235B-A22B-Instruct-2507",
-                          "Qwen/Qwen3-Coder-480B-A35B-Instruct",
-                          "Qwen/Qwen3-Next-80B-A3B-Instruct"
+                          "Qwen/Qwen3-Coder-480B-A35B-Instruct"
                       ],
     "fallbackModels":  [
+                           "openai/gpt-oss-120b",
                            "qwen/qwen3-235b-a22b:free",
                            "deepseek/deepseek-chat-v3.1:free",
                            "meta-llama/llama-4-maverick:free"

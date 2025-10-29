@@ -1,4 +1,3 @@
-
 /**
  * Объект конфигурации для микросервиса TIA Mapping Service
  * Содержит настройки порта, URL базы данных, Allure API, токен авторизации и параметры подключения к базе данных
@@ -6,7 +5,7 @@
  */
 const config = {
     // Порт, на котором будет запускаться микросервис (по умолчанию 5001, если не указан в .env)
-    port: process.env.PORT || 5003,
+    port: process.env.PORT || 5001,
 
     // URL подключения к базе данных PostgreSQL (берётся из .env, если доступен)
     databaseUrl: process.env.DATABASE_URL || "postgres://tia_user:password@postgresql:5432/tia_mapping_db",

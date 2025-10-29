@@ -194,7 +194,7 @@ import { callWithCloudRuFallback } from './cloudruClient.mjs';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const app = express();
-const PORT = 5002;
+const PORT = 5000;
 
 // Добавляем gzip сжатие для всех ответов
 app.use(compression({
@@ -225,7 +225,7 @@ const upload = multer({
 
 
 const corsOptions = {
-    origin: 'http://localhost:3000',
+    origin: 'https://test-inspector.abanking.ru',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-OpenRouter-Key'],
     credentials: true,
@@ -1701,12 +1701,12 @@ function extractToolArgs(aiResponse, preferredFnName) {
                         if (jsonText.length > 100000) {
                             console.log(`[extractToolArgs] 🔧 JSON слишком большой (${jsonText.length} символов), обрезаем до 100KB`);
                             jsonText = jsonText.substring(0, 100000);
-                            
+
                             // Находим последний полный объект/массив
                             const lastCompleteBrace = jsonText.lastIndexOf('}');
                             const lastCompleteBracket = jsonText.lastIndexOf(']');
                             const cutPos = Math.max(lastCompleteBrace, lastCompleteBracket);
-                            
+
                             if (cutPos > 0) {
                                 jsonText = jsonText.substring(0, cutPos + 1);
                                 console.log(`[extractToolArgs] 🔧 Обрезано до позиции ${cutPos + 1}`);
@@ -1799,7 +1799,7 @@ function extractToolArgs(aiResponse, preferredFnName) {
         // ✅ ПОСЛЕДНИЙ FALLBACK: Попробуем извлечь хотя бы один тест-кейс из обрезанного JSON
         if (content && content.length > 1000) {
             console.log(`[extractToolArgs] 🔧 Последний fallback: пытаемся извлечь частичные данные из ${content.length} символов`);
-            
+
             try {
                 // Ищем первый валидный объект тест-кейса
                 const firstCaseMatch = content.match(/\{\s*"feature"[\s\S]*?\}/);
@@ -3366,7 +3366,7 @@ app.post('/api/create-test-cases', async (req, res) => {
 async function generateTestCasesAsync(taskId, inputData) {
     // Объявляем переменную в начале функции
     let finalTestCases = [];
-    
+
     try {
         await db('generation_tasks').where('id', taskId).update({
             status: 'processing',
@@ -3530,6 +3530,57 @@ async function generateTestCasesAsync(taskId, inputData) {
             };
         }
 
+        function validateTestPyramid(testCases, modelStructure) {
+            console.log(`[validateTestPyramid] Проверка соблюдения пирамиды тестирования...`);
+
+            const S = modelStructure.reduce((sum, f) => sum + (f.stories || []).length, 0);
+            const Sc = modelStructure.reduce((sum, f) =>
+                sum + (f.stories || []).reduce((s, st) => s + (st.scenarios || []).length, 0), 0);
+
+            const layerCounts = testCases.reduce((acc, tc) => {
+                acc[tc.layer] = (acc[tc.layer] || 0) + 1;
+                return acc;
+            }, {});
+
+            const e2eCount = layerCounts['E2E Tests'] || 0;
+            const integrationCount = (layerCounts['Integration frontend Tests'] || 0) +
+                (layerCounts['Integration backend Tests'] || 0);
+            const unitCount = (layerCounts['Unit frontend Tests'] || 0) +
+                (layerCounts['Unit backend Tests'] || 0);
+
+            const expectedE2E = Math.max(1, S);
+            const expectedE2EMax = expectedE2E + 3;
+            const expectedIntegrationMin = Sc * 2;
+            const expectedIntegrationMax = Sc * 4 + 5;
+
+            console.log(`[validateTestPyramid] Модель: Stories=${S}, Scenarios=${Sc}`);
+            console.log(`[validateTestPyramid] Ожидается: E2E=${expectedE2E}-${expectedE2EMax}, Integration=${expectedIntegrationMin}-${expectedIntegrationMax}, Unit=гибко`);
+            console.log(`[validateTestPyramid] Получено: E2E=${e2eCount}, Integration=${integrationCount}, Unit=${unitCount}`);
+
+            const warnings = [];
+
+            if (e2eCount > expectedE2EMax) {
+                warnings.push(`⚠️ ПЕРЕКОС: Слишком много E2E тестов (${e2eCount} вместо ${expectedE2E}-${expectedE2EMax}). Возможно дублируются для iOS/Android!`);
+            }
+
+            if (integrationCount > expectedIntegrationMax) {
+                warnings.push(`⚠️ ПЕРЕКОС: Слишком много Integration тестов (${integrationCount} вместо ${expectedIntegrationMin}-${expectedIntegrationMax}). Возможны дубликаты для doc_type!`);
+            }
+
+            if (e2eCount < Math.max(1, Math.floor(S * 0.7))) {
+                warnings.push(`⚠️ НЕДОСТАТОК: Мало E2E тестов (${e2eCount} вместо минимум ${Math.floor(S * 0.7)})`);
+            }
+
+            if (warnings.length > 0) {
+                console.warn(`[validateTestPyramid] ❌ Найдены нарушения пирамиды:`);
+                warnings.forEach(w => console.warn(w));
+            } else {
+                console.log(`[validateTestPyramid] ✅ Пирамида соблюдена!`);
+            }
+
+            return { valid: warnings.length === 0, warnings };
+        }
+
 
 
         function getRequirementPriority(key) {
@@ -3566,10 +3617,10 @@ async function generateTestCasesAsync(taskId, inputData) {
 
                 if (missingReq.modelContext?.feature) {
                     // 1. Пытаемся найти Feature в modelStructure
-                    const foundFeature = modelStructure.find(f => 
+                    const foundFeature = modelStructure.find(f =>
                         f.text === missingReq.modelContext.feature
                     );
-                    
+
                     if (foundFeature) {
                         correctFeature = foundFeature.text;
                         correctStories = foundFeature.stories?.map(s => s.text) || [];
@@ -3653,7 +3704,7 @@ async function generateTestCasesAsync(taskId, inputData) {
                 ${JSON.stringify(missingReq.modelContext || {}, null, 2)}
 
                 🎯 СТРОГИЙ МАППИНГ УРОВНЕЙ:
-                - layer: "E2E Tests" → ОБЯЗАТЕЛЬНО указать feature + story (БЕЗ scenario, БЕЗ code)
+                - layer: "E2E Tests" → ОБЯЗАТЕЛЬНО указать feature + story + scenario (БЕЗ code)
                 - layer: "Integration frontend/backend Tests" → ОБЯЗАТЕЛЬНО указать feature + story + scenario (БЕЗ code)
                 - layer: "Unit frontend/backend Tests" → ОБЯЗАТЕЛЬНО указать feature + story + scenario + code
                 
@@ -3847,212 +3898,170 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return allGapCases;
         }
 
-        function fixAgainstModel(cases, idx) {
-            console.log(`[fixAgainstModel] Обрабатываем ${cases?.length || 0} кейсов`);
-            const out = [];
-            const seenTitles = new Set(); // Предотвращаем дубли по названиям
+        function fixAgainstModel(testCases, idx) {
+            return testCases.map(tc => {
+                const title = (tc.title || '').toLowerCase();
+                const steps = (tc.steps || []).map(s => s.toLowerCase()).join(' ');
+                const expected = (tc.expected || '').toLowerCase();
+                const precondition = (tc.precondition || '').toLowerCase();
+                let correctedLayer = tc.layer || '';
 
-            for (const tc of (cases || [])) {
-                const layer = String(tc.layer || '');
-                console.log(`[fixAgainstModel] Обрабатываем кейс:`, {
-                    title: tc.title,
-                    layer: tc.layer,
-                    hasSteps: !!tc.steps,
-                    stepsLength: tc.steps?.length,
-                    hasExpected: !!tc.expected,
-                    expectedLength: tc.expected?.length
-                });
+                // =============================================================
+                // ПРАВИЛО 1: Integration → Unit (ТОЛЬКО изолированные методы)
+                // =============================================================
+                if (correctedLayer.includes('Integration')) {
 
-                // Предотвращаем дубли по названиям
-                if (tc.title && seenTitles.has(tc.title.trim())) {
-                    console.log(`[fixAgainstModel] Пропускаем дубликат по названию: ${tc.title}`);
-                    continue;
-                }
-                if (tc.title) seenTitles.add(tc.title.trim());
+                    // Unit = проверка ВОЗВРАЩАЕМОГО ЗНАЧЕНИЯ метода в ИЗОЛЯЦИИ
+                    const isIsolatedMethod =
+                        (title.includes('метод') && title.includes('возвращает')) ||
+                        (title.includes('функция') && title.includes('возвращает')) ||
+                        (title.includes('getreport()') && title.includes('возвращает')) ||
+                        expected.includes('метод вернул') ||
+                        expected.includes('функция вернула');
 
-                // СТРОГАЯ ПРОВЕРКА УРОВНЕЙ ТЕСТИРОВАНИЯ
-                let isValidLevel = true;
+                    // Проверяем наличие ВЗАИМОДЕЙСТВИЯ (если есть → остаётся Integration!)
+                    const hasInteraction =
+                        title.includes('после') ||
+                        title.includes('при') ||
+                        title.includes('во время') ||
+                        title.includes('вызов метода после') ||
+                        title.includes('вызов метода при') ||
+                        title.includes('авторизаци') ||
+                        title.includes('инициализ') ||
+                        steps.includes('post /') ||
+                        steps.includes('get /') ||
+                        steps.includes('вызвать post') ||
+                        steps.includes('вызвать get') ||
+                        steps.includes('дождаться') ||
+                        steps.includes('выполнить post') ||
+                        steps.includes('выполнить get') ||
+                        steps.includes('открыть') ||
+                        steps.includes('нажать') ||
+                        expected.includes('вызван после') ||
+                        expected.includes('вызван при');
 
-                // E2E: восстанавливаем feature по карте story->feature, но НЕ отбрасываем
-                if (layer === 'E2E Tests') {
-                    if (tc.story && idx.storyToFeature.has(tc.story)) {
-                        const feat = idx.storyToFeature.get(tc.story);
-                        if (!tc.feature || tc.feature !== feat) tc.feature = feat;
-                    } else if (!tc.story) {
-                        console.warn(`[fixAgainstModel] E2E тест без валидной story: ${tc.title}`);
-                        isValidLevel = false;
+                    // ПРАВИЛО: Изолированный метод БЕЗ взаимодействия → Unit
+                    if (isIsolatedMethod && !hasInteraction) {
+                        correctedLayer = correctedLayer.includes('frontend')
+                            ? 'Unit frontend Tests'
+                            : 'Unit backend Tests';
+                        console.log(`[fixAgainstModel] Integration → Unit (изолированный метод): ${tc.title}`);
                     }
-                    // Очищаем поля, которые не должны быть в E2E тестах
-                    delete tc.scenario;
-                    delete tc.code;
-                }
 
-                // Проверяем корректность слоя на основе шагов
-                const stepsText = tc.steps ? tc.steps.join(' ').toLowerCase() : '';
-                const expectedText = tc.expected ? tc.expected.toLowerCase() : '';
-
-                // Если шаги содержат пользовательские действия (клик, ввод, навигация), но слой backend - исправляем
-                const hasUIActions = stepsText.includes('клик') ||
-                    stepsText.includes('нажать') ||
-                    stepsText.includes('ввести') ||
-                    stepsText.includes('свернуть') ||
-                    stepsText.includes('развернуть') ||
-                    stepsText.includes('перейти') ||
-                    stepsText.includes('открыть') ||
-                    stepsText.includes('выбрать') ||
-                    stepsText.includes('сканировать');
-
-                // Если шаги содержат только API вызовы без UI действий, но слой frontend - исправляем на backend
-                const hasOnlyAPIActions = !hasUIActions && (
-                    stepsText.includes('post ') ||
-                    stepsText.includes('get ') ||
-                    stepsText.includes('put ') ||
-                    stepsText.includes('delete ') ||
-                    stepsText.includes('/rest/') ||
-                    stepsText.includes('/api/') ||
-                    stepsText.includes('вызвать метод')
-                );
-
-                if (layer.includes('backend') && hasUIActions) {
-                    console.warn(`[fixAgainstModel] Исправляем слой с backend на frontend для теста: ${tc.title}`);
-                    if (layer === 'Integration backend Tests') {
-                        tc.layer = 'Integration frontend Tests';
-                    } else if (layer === 'Unit backend Tests') {
-                        tc.layer = 'Unit frontend Tests';
-                    }
-                } else if (layer.includes('frontend') && hasOnlyAPIActions) {
-                    console.warn(`[fixAgainstModel] Исправляем слой с frontend на backend для теста: ${tc.title}`);
-                    if (layer === 'Integration frontend Tests') {
-                        tc.layer = 'Integration backend Tests';
-                    } else if (layer === 'Unit frontend Tests') {
-                        tc.layer = 'Unit backend Tests';
+                    // ПРАВИЛО: Есть взаимодействие → остаётся Integration
+                    if (hasInteraction) {
+                        console.log(`[fixAgainstModel] ✓ Остаётся Integration (взаимодействие): ${tc.title}`);
                     }
                 }
 
-                // Исправляем теги на основе слоя
-                if (tc.layer && tc.tags && Array.isArray(tc.tags)) {
-                    const currentLayer = tc.layer;
-                    if (currentLayer.includes('backend')) {
-                        // Удаляем FE теги и добавляем BE если его нет
-                        tc.tags = tc.tags.filter(tag => !['FE', 'M', 'D', 'A', 'PWA'].includes(tag));
-                        if (!tc.tags.includes('BE')) {
-                            tc.tags.push('BE');
-                        }
-                    } else if (currentLayer.includes('frontend') || currentLayer === 'E2E Tests') {
-                        // Удаляем BE теги для frontend/E2E
-                        tc.tags = tc.tags.filter(tag => tag !== 'BE');
+                // =============================================================
+                // ПРАВИЛО 2: Unit → Integration (если проверяется взаимодействие)
+                // =============================================================
+                if (correctedLayer.includes('Unit')) {
+                    const isIntegrationTest =
+                        // UI-состояния (Component Tests)
+                        expected.includes('отображается') ||
+                        expected.includes('отображена') ||
+                        expected.includes('доступен') ||
+                        expected.includes('доступна') ||
+                        expected.includes('активна') ||
+                        expected.includes('форма заполнена') ||
+                        // API-ответы
+                        (expected.includes('статус') && expected.includes('ответ')) ||
+                        expected.includes('возвращает 200') ||
+                        expected.includes('возвращает 404') ||
+                        expected.includes('возвращает 401') ||
+                        expected.includes('возвращает 500') ||
+                        // UI-действия
+                        steps.includes('открыть') ||
+                        steps.includes('выбрать') ||
+                        steps.includes('нажать') ||
+                        steps.includes('ввести') ||
+                        // API-вызовы
+                        steps.includes('выполнить post') ||
+                        steps.includes('выполнить get') ||
+                        steps.includes('вызвать post') ||
+                        steps.includes('вызвать get');
+
+                    if (isIntegrationTest) {
+                        correctedLayer = correctedLayer.includes('frontend')
+                            ? 'Integration frontend Tests'
+                            : 'Integration backend Tests';
+                        console.log(`[fixAgainstModel] Unit → Integration (взаимодействие): ${tc.title}`);
                     }
                 }
 
-                // Unit: восстанавливаем scenario/story/feature по карте code, но НЕ отбрасываем
-                if (layer.startsWith('Unit')) {
-                    if (tc.code && idx.codeTo.has(tc.code)) {
-                        const m = idx.codeTo.get(tc.code);
-                        if (!tc.scenario) tc.scenario = m.scenario;
-                        if (!tc.story) tc.story = m.story;
-                        if (!tc.feature) tc.feature = m.feature;
-                    } else if (!tc.code) {
-                        console.warn(`[fixAgainstModel] Unit тест без валидного code: ${tc.title}`);
+                // =============================================================
+                // ПРАВИЛО 3: Frontend ↔ Backend (ОДНА ПРОВЕРКА с маркером)
+                // =============================================================
 
-                        // АВТОМАТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Попытаемся найти подходящий code
-                        let foundCode = null;
-                        let foundScenario = null;
-                        let foundStory = null;
-                        let foundFeature = null;
+                // 3.1. Frontend → Backend (API-контекст)
+                if (correctedLayer.includes('frontend') && !correctedLayer.includes('__fixed')) {
+                    const isBackend =
+                        // Явное упоминание API
+                        title.includes('api post') ||
+                        title.includes('api get') ||
+                        title.includes('api delete') ||
+                        title.includes('api put') ||
+                        // Выполнение API без UI-действий
+                        (steps.includes('выполнить post') && !steps.includes('открыть') && !steps.includes('нажать')) ||
+                        (steps.includes('выполнить get') && !steps.includes('открыть') && !steps.includes('нажать')) ||
+                        (steps.includes('выполнить delete') && !steps.includes('открыть') && !steps.includes('нажать'));
 
-                        // Ищем по названию тест-кейса
-                        const titleLower = tc.title.toLowerCase();
-                        for (const [codeName, parent] of idx.codeTo.entries()) {
-                            if (titleLower.includes(codeName.toLowerCase()) ||
-                                codeName.toLowerCase().includes(titleLower.split(' ')[0])) {
-                                foundCode = codeName;
-                                foundScenario = parent.scenario;
-                                foundStory = parent.story;
-                                foundFeature = parent.feature;
-                                break;
-                            }
-                        }
-
-                        if (foundCode) {
-                            tc.code = foundCode;
-                            tc.scenario = foundScenario;
-                            tc.story = foundStory;
-                            tc.feature = foundFeature;
-                            console.log(`[fixAgainstModel] АВТОИСПРАВЛЕНИЕ: Найден code "${foundCode}" для теста: ${tc.title}`);
-                        } else {
-                            // Если не нашли code - переклассифицируем в Integration
-                            console.warn(`[fixAgainstModel] Не найден code, переклассифицируем в Integration: ${tc.title}`);
-                            tc.layer = 'Integration Tests';
-                            delete tc.code;
-                        }
-                        isValidLevel = false;
+                    if (isBackend) {
+                        correctedLayer = correctedLayer.replace('frontend', 'backend') + '__fixed';
+                        console.log(`[fixAgainstModel] Frontend → Backend (API-контекст): ${tc.title}`);
                     }
                 }
 
-                // Integration: восстанавливаем story/feature по карте scenario, но НЕ отбрасываем
-                if (layer.startsWith('Integration')) {
-                    if (tc.scenario && idx.scenarioToParent.has(tc.scenario)) {
-                        const p = idx.scenarioToParent.get(tc.scenario);
-                        if (!tc.story) tc.story = p.story;
-                        if (!tc.feature) tc.feature = p.feature;
-                    } else if (!tc.scenario) {
-                        console.warn(`[fixAgainstModel] Integration тест без валидного scenario: ${tc.title}`);
+                // 3.2. Backend → Frontend (UI-контекст)
+                if (correctedLayer.includes('backend') && !correctedLayer.includes('__fixed')) {
+                    const isFrontend =
+                        // UI-состояния
+                        expected.includes('отображается') ||
+                        expected.includes('отображена') ||
+                        expected.includes('доступен') ||
+                        expected.includes('доступна') ||
+                        expected.includes('активна') ||
+                        expected.includes('форма') ||
+                        expected.includes('кнопка') ||
+                        expected.includes('поле') ||
+                        expected.includes('страница') ||
+                        // UI-действия
+                        steps.includes('открыть') ||
+                        steps.includes('ввести') ||
+                        steps.includes('нажать') ||
+                        steps.includes('выбрать') ||
+                        steps.includes('свернуть') ||
+                        steps.includes('развернуть') ||
+                        // Precondition с пользовательскими действиями
+                        precondition.includes('пользователь') ||
+                        precondition.includes('приложение запущено') ||
+                        precondition.includes('пользователь находится') ||
+                        precondition.includes('sdk инициализирован');
 
-                        // АВТОМАТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Попытаемся найти подходящий scenario
-                        let foundScenario = null;
-                        let foundStory = null;
-                        let foundFeature = null;
+                    // НЕ переносим, если это проверка API → метод
+                    const isApiThenMethod =
+                        (title.includes('вызов метода') && title.includes('после')) ||
+                        (title.includes('вызов метода') && title.includes('при')) ||
+                        (title.includes('при успешном ответе') && expected.includes('вызван')) ||
+                        (title.includes('при ошибке') && expected.includes('не вызывается'));
 
-                        // Ищем по названию тест-кейса
-                        const titleLower = tc.title.toLowerCase();
-                        for (const [scenarioName, parent] of idx.scenarioToParent.entries()) {
-                            if (titleLower.includes(scenarioName.toLowerCase()) ||
-                                scenarioName.toLowerCase().includes(titleLower.split(' ')[0])) {
-                                foundScenario = scenarioName;
-                                foundStory = parent.story;
-                                foundFeature = parent.feature;
-                                break;
-                            }
-                        }
-
-                        if (foundScenario) {
-                            tc.scenario = foundScenario;
-                            tc.story = foundStory;
-                            tc.feature = foundFeature;
-                            console.log(`[fixAgainstModel] АВТОИСПРАВЛЕНИЕ: Найден scenario "${foundScenario}" для теста: ${tc.title}`);
-                        } else {
-                            // Если не нашли scenario - переклассифицируем в E2E
-                            console.warn(`[fixAgainstModel] Не найден scenario, переклассифицируем в E2E: ${tc.title}`);
-                            tc.layer = 'E2E Tests';
-                            delete tc.scenario;
-                            delete tc.code;
-                        }
-                    }
-                    // Очищаем поле code, которое не должно быть в Integration тестах
-                    delete tc.code;
-                }
-
-                // Дополнительная проверка: если layer не определен или невалиден
-                if (!layer || !['E2E Tests', 'Integration frontend Tests', 'Integration backend Tests', 'Unit frontend Tests', 'Unit backend Tests'].includes(layer)) {
-                    console.warn(`[fixAgainstModel] Невалидный layer "${layer}" для тест-кейса: ${tc.title}`);
-                    // Попытаемся исправить на основе контекста
-                    if (tc.story && !tc.scenario && !tc.code) {
-                        tc.layer = 'E2E Tests';
-                        console.log(`[fixAgainstModel] Исправлен layer на E2E Tests для: ${tc.title}`);
-                    } else if (tc.scenario && !tc.code) {
-                        tc.layer = 'Integration frontend Tests';
-                        console.log(`[fixAgainstModel] Исправлен layer на Integration frontend Tests для: ${tc.title}`);
-                    } else if (tc.code) {
-                        tc.layer = 'Unit frontend Tests';
-                        console.log(`[fixAgainstModel] Исправлен layer на Unit frontend Tests для: ${tc.title}`);
+                    if (isFrontend && !isApiThenMethod) {
+                        correctedLayer = correctedLayer.replace('backend', 'frontend') + '__fixed';
+                        console.log(`[fixAgainstModel] Backend → Frontend (UI-контекст): ${tc.title}`);
                     }
                 }
 
-                out.push(tc);
-            }
-            console.log(`[fixAgainstModel] Возвращаем ${out.length} кейсов (было ${cases?.length || 0})`);
-            return out;
+                return {
+                    ...tc,
+                    layer: correctedLayer.replace(/__fixed/g, '')
+                };
+
+            });
         }
+
+
 
         const sanitize = (arr) => {
             console.log(`[sanitize] Обрабатываем ${arr?.length || 0} кейсов`);
@@ -4068,7 +4077,25 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 return t ? t : undefined;
             };
 
-            const seenTitles = new Set(); // Предотвращаем дубли по названиям
+            const seenTitles = new Set();
+            const seenLogic = new Map();
+
+            // ✅ Общая функция нормализации
+            function normalizeText(text) {
+                return String(text || '')
+                    .toLowerCase()
+                    .replace(/\b(успешн\w+|сбор и передача|передача и сбор|отправка|передача)\b/gi, '<ACTION>')
+                    .replace(/\b(после|при|при запуске)\b/gi, '<TIMING>')
+                    .replace(/\b(авторизаци\w+|авторизоваться)\b/gi, '<AUTH>')
+                    .replace(/\b(пин-код\w*|пинкод)\b/gi, '<PIN>')
+                    .replace(/\b(отчёт\w*|отчет\w*)\b/gi, '<REPORT>')
+                    .replace(/\b(и|с|на|в|по|для|от|до|из|к|у|о|об|про|через)\b/gi, '')
+                    .replace(/\s+/g, ' ').trim();
+            }
+
+            function getLogicSignature(testCase) {
+                return `${testCase.layer || ''}::${normalizeText(testCase.story)}::${normalizeText(testCase.scenario)}::${normalizeText(testCase.title)}::${(testCase.steps || []).map(s => normalizeText(s)).join('|')}::${normalizeText(testCase.expected)}`;
+            }
 
             return (arr || [])
                 .filter(x => x && typeof x === 'object')
@@ -4096,7 +4123,6 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                         expected: take(x.expected || x.expectedResult, 800),
                         tags,
                         layer,
-                        // ✅ ИСПРАВЛЕНО: Извлекаем текстовые названия из модели
                         feature: extractTextFromModel(modelStructure, 'feature', take(x.feature, 200)),
                         story: extractTextFromModel(modelStructure, 'story', take(x.story, 200)),
                         scenario: extractTextFromModel(modelStructure, 'scenario', take(x.scenario, 200)),
@@ -4109,14 +4135,22 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                     };
                 })
                 .filter(x => {
-                    // Предотвращаем дубли по названиям
-                    if (x.title && seenTitles.has(x.title.trim())) {
-                        console.log(`[sanitize] Пропускаем дубликат по названию: ${x.title}`);
+                    if (!x.title || !x.steps?.length || !x.expected || !x.layer) return false;
+
+                    const normalized = normalizeText(x.title);
+                    if (seenTitles.has(normalized)) {
+                        console.log(`[sanitize] ⚠️ Дубликат: "${x.title}"`);
                         return false;
                     }
-                    if (x.title) seenTitles.add(x.title.trim());
+                    seenTitles.add(normalized);
 
-                    return x.title && x.layer;
+                    const signature = getLogicSignature(x);
+                    if (seenLogic.has(signature)) {
+                        console.log(`[sanitize] ⚠️ Дубликат по логике: "${x.title}"`);
+                        return false;
+                    }
+                    seenLogic.set(signature, x.title);
+                    return true;
                 });
         };
 
@@ -4126,14 +4160,12 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken
         } = inputData;
 
-        // ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Нормализуем модель как в синхронной версии
         const modelStructure = normalizeModelStructure(rawModel);
 
         if ((!Array.isArray(requirements) && typeof requirements !== 'string') || !modelStructure) {
             throw new Error('requirements и modelStructure обязательны');
         }
 
-        // === АВТОМАТИЧЕСКОЕ ИЗВЛЕЧЕНИЕ МАППИНГА ИЗ МОДЕЛИ ===
         function buildRequirementToStoryMapping(modelStructure) {
             const mapping = {};
 
@@ -4290,19 +4322,59 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return Promise.race([promise, timeout]);
         }
 
-        // ====== ВСПОМОГАТЕЛЬНЫЕ ======
-        function splitByStories(model) {
+        function splitByStories(modelStructure) {
             const chunks = [];
-            for (const f of (model || [])) {
-                const stories = f.stories || [];
-                // Группируем Stories по 2-3 для сохранения контекста между связанными Stories
-                for (let i = 0; i < stories.length; i += 2) {
-                    const storyChunk = stories.slice(i, i + 2);
-                    chunks.push([{ text: f.text, stories: storyChunk }]);
+            const MAX_SCENARIOS_PER_CHUNK = 3;
+
+            for (const feature of modelStructure) {
+                for (const story of feature.stories) {
+                    const scenarios = story.scenarios || [];
+
+                    // ✅ ВСЕГДА создаём мастер-chunk (даже для маленьких Story)
+                    const masterChunk = [{
+                        text: feature.text,
+                        stories: [{
+                            text: story.text,
+                            scenarios: scenarios,  // ВСЕ Scenarios
+                            _isMasterChunk: true
+                        }]
+                    }];
+                    chunks.push(masterChunk);
+
+                    // Создаём детальные chunk'и ТОЛЬКО если Scenarios > 3
+                    if (scenarios.length > MAX_SCENARIOS_PER_CHUNK) {
+                        for (let i = 0; i < scenarios.length; i += MAX_SCENARIOS_PER_CHUNK) {
+                            const scenariosBatch = scenarios.slice(i, i + MAX_SCENARIOS_PER_CHUNK);
+
+                            const detailChunk = [{
+                                text: feature.text,
+                                stories: [{
+                                    text: story.text,
+                                    scenarios: scenariosBatch,
+                                    _isDetailChunk: true
+                                }]
+                            }];
+
+                            chunks.push(detailChunk);
+                        }
+                    } else {
+                        // ✅ Для маленьких Story тоже создаём детальный chunk
+                        const detailChunk = [{
+                            text: feature.text,
+                            stories: [{
+                                text: story.text,
+                                scenarios: scenarios,
+                                _isDetailChunk: true
+                            }]
+                        }];
+                        chunks.push(detailChunk);
+                    }
                 }
             }
+
             return chunks;
         }
+
 
         function collectAllowedCodes(modelChunk) {
             const set = new Set();
@@ -4535,6 +4607,10 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 
 Технологический стек проекта: фронтенд — Angular (TypeScript), бэкенд — .NET/C#. Если требования явно описывают поведение клиента, трактуй его для Angular; если описывают серверное поведение/API — трактуй для .NET. Никогда не додумывай детали вне текста.
 
+🚨 КРИТИЧЕСКИ ВАЖНО: ЗАПРЕТ НА ДУБЛИКАТЫ! 🚨
+ЗАПРЕЩЕНО создавать тесты с похожими названиями или одинаковой логикой!
+Если видишь похожие названия — это ДУБЛИКАТ! Создавай ОДИН обобщённый тест!
+
 # 1) Принцип "Один Пример из Требований -> Один Тест-Кейс" (КРАТКО И СТРОГО)
 Ты создаёшь тест-кейсы исключительно на основе абсолютно явных и конкретных примеров из текста требований. Никаких домыслов, предположений или недосказанностей в шагах и expected результатах быть не должно.
 
@@ -4555,27 +4631,198 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
   - \`steps\`: ["Выбрать значение '27 LADA FREE'", "Ввести значение '10'"]
   - \`expected\`: "Система отображает текст ошибки 'Срок кредита, не может быть <12 мес. и >84 мес.'"
 
-# 2) Пирамида тестирования — нерушимые правила
-1) Сдвигай проверки вниз: детальные проверки (валидации, границы, форматы) — в Integration/Unit, а не в E2E.
-2) E2E (C1) — только сквозные бизнес-сценарии:
-   • Чёрный ящик, имитация реального пользователя.
-   • ВСЕГДА начинаются шагами: «Авторизоваться…», «Перейти на страницу…».
-   • НЕЛЬЗЯ проверять сообщения отдельных полей и вводить невалидные данные полей — максимум 1–2 ключевых негативных сценария на уровне всего потока (например, «ошибка сервера при сохранении»).
-3) Integration (C2–C3) — взаимодействия компонент/эндпоинтов:
-   • В рамках одного компонента (FE) или одного API-вызова (BE), без навигации по страницам.
-   • Основная работа: классы эквивалентности, граничные значения (BVA), контракты API.
-4) Unit (C4) — одна функция/метод, строгий AAA (Arrange-Act-Assert).
+1.1) КРИТИЧЕСКИ ВАЖНО: НЕ ВЫДУМЫВАЙ ДЕТАЛИ!
+🚨 ЗАПРЕЩЕНО ДОДУМЫВАТЬ ТО, ЧЕГО НЕТ В REQUIREMENTS! 🚨
 
-## 2.1) Для слоев "E2E Tests" и "Integration Tests" (Строгий "Чёрный Ящик")
-- **Действия (Steps):** Описывай только действия пользователя в интерфейсе (клик, ввод, скролл, навигация).
-- **Результат (Expected):** Описывай только видимые пользователю изменения в UI или ответы, определённые в API-контракте.
-- **ЗАПРЕЩЕНО:** Додумывать детали реализации, такие как вызовы внутренних функций, работа с базой данных, кэширование, или отправка HTTP-запросов.
+НЕ придумывай API-методы:
+❌ Если в requirements сказано "GET /get_by_id" — пиши ТОЛЬКО его
+❌ НЕ добавляй "POST /validate", "GET /check_status", "DELETE /clear" и другие методы, которых нет в тексте
+✅ Используй ТОЛЬКО те API-endpoints, которые ЯВНО упомянуты в requirements
 
-  - **Неправильно (гадание о реализации):** "Вызывается GET-запрос для фильтрации."
-  - **Правильно (наблюдаемый результат):** "В списке остаются только элементы, содержащие 'X'."
+НЕ придумывай HTTP-коды:
+❌ Если в requirements написано "при статусе 200" — НЕ добавляй 202, 204, 201
+✅ Тестируй ТОЛЬКО указанные коды + стандартные негативные (404, 500 для GET/POST)
+✅ Исключение: если requirements явно пишут "200 или 202" — тогда тестируй оба
 
-  - **Неправильно:** "Нажать Enter для применения фильтра."
-  - **Правильно:** "Ввести в поле фильтра 'X'". Если нужно явно завершить действие — "Снять фокус с поля".
+НЕ додумывай параметры запросов:
+❌ Если в requirements нет параметра user_id — НЕ пиши про него в тесте
+❌ Если упомянут только doc_type — НЕ добавляй session_token, api_key, request_id
+✅ Используй ТОЛЬКО те параметры, которые явно указаны в requirements
+
+НЕ додумывай бизнес-логику:
+❌ НЕ пиши "система должна проверить права доступа", если этого нет в requirements
+❌ НЕ пиши "отображается сообщение об ошибке", если requirements не описывают его текст
+❌ НЕ пиши "данные сохраняются в БД", если requirements не упоминают сохранение
+✅ Описывай ТОЛЬКО ту логику, которая явно прописана в requirements
+
+НЕ додумывай шаги:
+❌ НЕ добавляй шаги типа "Дождаться загрузки", "Проверить статус", если их нет в requirements
+❌ НЕ пиши "Ввести валидные данные" — укажи КОНКРЕТНЫЕ данные из requirements
+✅ Шаги = ТОЛЬКО действия пользователя/системы, явно описанные в requirements
+✅ Expected = ТОЛЬКО результаты, явно описанные в requirements
+
+Expected ОБЯЗАТЕЛЬНО должен быть КОНКРЕТНЫМ и ПРОВЕРЯЕМЫМ:
+
+Примеры НЕПРАВИЛЬНО (слишком общо):
+❌ "expected": "Система работает корректно"
+❌ "expected": "Платеж выполнен успешно"
+❌ "expected": "Данные переданы"
+❌ "expected": "Ошибка обработана"
+
+Примеры ПРАВИЛЬНО (конкретно):
+✅ "expected": "Метод GET /get_by_id вызван с параметром doc_type=payment и вернул статус 200 с полями: id, amount, date"
+✅ "expected": "После ответа 200 от GET /get_by_id вызван метод getReport(), данные переданы через POST /create/sdk с кодом ответа 204"
+✅ "expected": "На экране отображено сообщение 'Платеж выполнен на сумму 100₽', баланс счёта уменьшен на 100₽"
+
+ПРАВИЛО: Expected ДОЛЖЕН содержать:
+
+HTTP-код ответа (для Integration/Unit backend Tests)
+
+Текст сообщения или название элемента UI (для E2E/Integration frontend Tests)
+
+Конкретное изменение данных (для E2E Tests)
+
+Факт вызова метода с указанием параметров (для Unit Tests)
+
+✅ ЧТО РАЗРЕШЕНО (стандартные практики тестирования):
+
+Негативные сценарии с 404, 500 для ЛЮБОГО API-метода (это стандарт HTTP)
+
+Проверка обязательных полей: если requirements говорят "поле X обязательное" — тестируй его отсутствие
+
+Граничные значения (BVA): ТОЛЬКО если requirements дают явные границы (например, "от 48 до 84 символов")
+
+Timeout/network errors: ТОЛЬКО если requirements упоминают обработку сетевых ошибок
+
+ПРИНЦИП: Если сомневаешься — лучше НЕ добавляй тест, чем выдумывай детали!
+
+🚨 КРИТИЧЕСКИ ВАЖНО: ЗАПРЕТ НА ОКРУЖЕНИЕ-СПЕЦИФИЧНЫЕ ТЕСТЫ! 🚨
+ЗАПРЕЩЕНО создавать отдельные тест-кейсы для разных платформ (iOS/Android/web) или окружений.
+Если логика различается между платформами — указывай это В ПРЕДУСЛОВИЯХ или ШАГАХ, но НЕ создавай отдельные тесты!
+
+Примеры НЕПРАВИЛЬНО:
+- "Инициализация SDK Bi_Zone при запуске приложения (на iOS)"
+- "Инициализация SDK Bi_Zone при запуске приложения (на Android)"
+- "Инициализация SDK Bi_Zone при запуске приложения (дублирующий вызов)"
+
+Пример ПРАВИЛЬНО:
+{
+  "title": "Инициализация SDK Bi_Zone при запуске приложения",
+  "precondition": "Приложение установлено на устройстве (iOS/Android). При дублирующем вызове метода — повторная инициализация не происходит.",
+  "tags": ["M"]
+}
+
+ПРАВИЛО: Один функциональный сценарий = ОДИН тест-кейс. Различия в окружениях указывать в precondition!
+# 2) СЛОИ ТЕСТОВ
+
+E2E Tests:
+- Полный сквозной сценарий от начала до конца
+- Steps: Действия пользователя через UI
+- Expected: Финальный результат для пользователя
+- Layer: "E2E Tests"
+
+INTEGRATION FRONTEND TESTS (Component Tests):
+- Проверка UI-компонентов и их взаимодействия с API
+- Precondition: "Модальное окно появилось", "Открыта страница"
+- Steps: 1-2 UI-действия (открыть, выбрать, нажать)
+- Expected: "отображается алерт", "кнопка активна", "форма заполнена"
+- НЕ проверяем: Внутренние методы (getReport()), вызовы API
+- Проверяем: Видимость UI, состояния форм, переходы между экранами
+- ✅ Проверяем: UI-реакцию на API ответы (200 → алерт успеха)
+- Layer: "Integration frontend Tests"
+
+Примеры ПРАВИЛЬНЫХ Integration Frontend тестов:
+  ✅ "Форма перевода отображается после выбора типа операции"
+  ✅ "Кнопка 'Отправить' активна после заполнения всех полей"
+  ✅ "Страница платежа открывается после сканирования QR-кода"
+
+Примеры НЕПРАВИЛЬНЫХ (это Unit!):
+  ❌ "Метод getReport() вызван после авторизации"
+  ❌ "POST /create/sdk отправлен с данными SDK"
+
+INTEGRATION BACKEND TESTS (API Tests):
+- Проверка ТОЛЬКО серверных API endpoints
+- Precondition: Серверное ("Сервер доступен", "БД готова")
+- Steps: Вызов API с параметрами
+- Expected: Статус ответа (200, 404, 500), формат данных в ответе
+- НЕ проверяем: Внутреннюю логику, бизнес-правила
+- ❌ НЕ проверяем: UI, алерты, модальные окна, кнопки
+- ❌ НЕ используем: "отображается", "пользователь", "нажать"
+- Проверяем: HTTP-статусы, структуру ответа
+- Layer: "Integration backend Tests"
+
+
+🚨 КРИТИЧЕСКИ ВАЖНО ДЛЯ BACKEND ТЕСТОВ:
+
+ЗАПРЕЩЁННЫЕ precondition для backend:
+❌ "Пользователь ввёл..."
+❌ "Пользователь нажал..."
+❌ "Пользователь открыл..."
+❌ "Приложение запущено"
+❌ "SDK инициализирован"
+❌ Любое упоминание пользовательских действий
+
+ПРАВИЛЬНЫЕ precondition для backend:
+✅ "Сервер доступен"
+✅ "БД готова"
+✅ "API endpoint работает"
+✅ "Тестовые данные загружены"
+✅ ВООБЩЕ НЕ УКАЗЫВАТЬ precondition
+
+ЕСЛИ В PRECONDITION УПОМИНАЕТСЯ "ПОЛЬЗОВАТЕЛЬ" → ЭТО FRONTEND ТЕСТ!
+
+Примеры ПРАВИЛЬНЫХ Integration Backend тестов:
+  ✅ "API POST /oauth/te возвращает 200 при валидных данных"
+  ✅ "API GET /payment_data возвращает 404 при несуществующем ID"
+
+UNIT FRONTEND TESTS:
+- Проверка ОТДЕЛЬНЫХ методов/функций фронтенда
+- Steps: Вызов метода с параметрами
+- Expected: Возвращаемое значение метода
+- Проверяем: getReport(), валидация полей, форматирование данных
+- Layer: "Unit frontend Tests"
+
+Примеры ПРАВИЛЬНЫХ Unit Frontend тестов:
+  ✅ "Метод getReport() возвращает объект с полями DeviceModel, AppKey"
+  ✅ "Функция validateCardNumber() возвращает true для валидного номера"
+
+UNIT BACKEND TESTS:
+- Проверка ОТДЕЛЬНЫХ серверных функций/методов
+- Steps: Вызов функции с параметрами
+- Expected: Результат работы функции
+- Проверяем: Парсинг, валидация, бизнес-логика
+- Layer: "Unit backend Tests"
+
+КРИТИЧЕСКИ ВАЖНО - РАЗДЕЛЕНИЕ INTEGRATION И UNIT:
+
+Integration тесты (Component/API):
+  - Проверяют ВЗАИМОДЕЙСТВИЕ нескольких компонентов/модулей
+  - Frontend: UI-состояния, поведение компонентов
+  - Backend: API endpoints, статусы ответов
+
+Unit тесты:
+  - Проверяют ОТДЕЛЬНЫЕ методы/функции
+  - Frontend: getReport(), валидация, форматирование
+  - Backend: бизнес-логика, парсинг данных
+
+ЗАПРЕЩЕНО в Integration тестах:
+❌ Упоминать getReport() в Integration frontend
+❌ Упоминать "метод X вызван" в Integration frontend
+❌ Проверять внутренние методы в Integration
+❌ "Пользователь ввёл данные" в precondition для backend теста
+
+ОБЯЗАТЕЛЬНО в Integration тестах:
+✅ Frontend Integration: проверка UI-состояний ("отображается", "доступен", "активна")
+✅ Backend Integration: проверка API-статусов ("возвращает 200", "формат ответа")
+✅ Разделять проверку UI (Integration) и методов (Unit)
+✅ Создавать ОБА теста (frontend + backend) если требование описывает взаимодействие
+
+ПРАВИЛО ОПРЕДЕЛЕНИЯ СЛОЯ:
+- Integration Frontend: "отображается", "доступен", "активна", "форма заполнена"
+- Integration Backend: "возвращает статус", "формат ответа"
+- Unit Frontend: "метод возвращает", "функция валидирует"
+- Unit Backend: "функция парсит", "бизнес-правило применяется"
+
 
 ## 2.2) Для слоя "Unit Tests" (Условный "Белый Ящик")
 - Ты **МОЖЕШЬ** описывать внутреннюю логику, но **ТОЛЬКО** если она основана на узле \`code\` из входной тестовой модели.
@@ -4649,10 +4896,32 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 # 5) Выходной формат: СТРОГО ТОЛЬКО JSON-массив
 Используй ровно один из трёх шаблонов ниже в зависимости от "layer". Никаких комментариев/markdown.
 
+🚨 ПРАВИЛО ДЛЯ STEPS: ТОЛЬКО ИЗ REQUIREMENTS! 🚨
+
+ЗАПРЕЩЕНО додумывать шаги:
+❌ "Дождаться загрузки страницы" (если не указано в requirements)
+❌ "Проверить, что кнопка активна" (это проверка — идёт в expected, а не в steps)
+❌ "Ввести валидные данные" (укажи КОНКРЕТНЫЕ данные из requirements или используй placeholders типа <НОМЕР_КАРТЫ>)
+
+ПРАВИЛЬНЫЕ шаги (конкретные действия):
+✅ "Открыть страницу 'История операций'"
+✅ "Выбрать операцию с типом 'payment' из списка"
+✅ "Нажать кнопку 'Повторить'"
+✅ "Ввести сумму 1000₽ в поле 'Сумма платежа'"
+
+ПРАВИЛО:
+
+Steps описывают ДЕЙСТВИЯ пользователя или системы
+
+Проверки результата НЕ пишутся в steps — только в expected
+
+Если requirements описывают действие как "при открытии страницы вызывается API X" — это НЕ шаг, это автоматическое действие (пишем в expected)
+
 ## Шаблон: "layer": "E2E Tests"
 {
   "feature": "Название фичи из модели",
   "story": "Название истории из модели",
+  "scenario": "Название сценария из модели",
   "title": "Название, описывающее ВЕСЬ сценарий (например, 'Успешное создание виджета авторизованным пользователем')",
   "steps": [
     "Авторизоваться как 'user_role'",
@@ -4713,21 +4982,112 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 Допустимые дополнительные поля (если есть во входе или явно уместны): 
 • "links": [{ "text": "...", "url": "..." }], • "jiraIssue": "ABC-123", • "version": "stable" (по умолчанию для новых), • "attachments": [...], • "parameters": "..." (использовать только если во входе явно заданы параметры; для DDT/Pairwise — но не выдумывать).
 
-# 6) Правила генерации набора тест-кейсов (СТРОГИЕ ОГРАНИЧЕНИЯ)
-🚨 КРИТИЧЕСКИ ВАЖНО: КАЧЕСТВО ПРЕВЫШЕ КОЛИЧЕСТВА! 🚨
-Создавай ТОЛЬКО самые важные и релевантные тест-кейсы. Лучше меньше, но качественнее!
+🚨 КРИТИЧЕСКИ ВАЖНО: EXPECTED ДОЛЖЕН БЫТЬ ПРОВЕРЯЕМЫМ! 🚨
 
-Для КАЖДОЙ Story: 
-— 1–2 E2E-теста: Happy Path и (при необходимости) один ключевой Negative Path на уровне потока.
+ЗАПРЕЩЁННЫЕ формулировки (непроверяемые):
+❌ "Система работает корректно"
+❌ "Операция выполнена успешно"
+❌ "Данные обработаны"
+❌ "Ошибка отображена"
+❌ "Пользователь перенаправлен"
+
+ОБЯЗАТЕЛЬНЫЕ формулировки (конкретные и проверяемые):
+✅ "GET /get_by_id вернул статус 200 с JSON: {"id": "<ID>", "type": "payment", "amount": 1000}"
+✅ "На экране отображено сообщение 'Платеж №12345 выполнен', кнопка 'Повторить' активна"
+✅ "Метод getReport() вызван 1 раз, вернул массив из 5 элементов типа BiZoneData"
+✅ "POST /create/sdk вызван с телом {"bizone": {...}}, получен ответ 204 No Content"
+
+ПРАВИЛО: Expected ОБЯЗАТЕЛЬНО должен содержать минимум ОДИН из:
+
+HTTP-код и структура ответа (для backend)
+
+Текст элемента UI или название компонента (для frontend)
+
+Факт вызова метода с параметрами (для Unit)
+
+Конкретное изменение состояния (для E2E)
+
+# 6) Правила генерации набора тест-кейсов (СТРОГАЯ ПИРАМИДА)
+
+🚨 КРИТИЧЕСКИ ВАЖНО: СОБЛЮДАЙ ПИРАМИДУ ТЕСТИРОВАНИЯ! 🚨
+
+Для КАЖДОЙ Story:
+— РОВНО 2-3 E2E-тест на Happy Path (полный пользовательский путь)
+— ОПЦИОНАЛЬНО: 1-2 E2E на критичный Negative Path (только если есть явный негативный сценарий в требованиях)
 
 Для КАЖДОГО Scenario:
-— 3–5 Integration-тестов (главный объём): позитивные/негативные случаи, BVA, классы эквивалентности, контракты API.  
-— Поле "scenario" должно 1:1 совпадать с текстом узла.
-— **ПРИОРИТЕТ**: Выбирай тесты с наибольшим бизнес-риском!
+— МИНИМУМ 2, МАКСИМУМ 6 Integration-теста:
+  • 2 позитивный (Happy Path)
+  • 1-2 негативных (ошибки API: 404, 500, timeout)
+  • 0-2 граничный (BVA, только если применимо)
 
 Для КАЖДОГО Code:
-— 2–4 Unit-теста по AAA (описательно).  
-— "code" копировать из модели, если текст совпадает; иначе не указывать.
+— МИНИМУМ 1, МАКСИМУМ 2 Unit-теста:
+  • 1 позитивный (корректные входные данные)
+  • 0-1 негативный (ошибка обработки, если применимо)
+
+🚨 СТРОГИЕ ЗАПРЕТЫ:
+❌ Создавать больше 3 E2E тестов на Story
+❌ Создавать больше 6 Integration тестов на Scenario
+❌ Создавать больше 3 Unit тестов на Code
+❌ Дублировать тесты для разных значений параметров ( например doc_type, платформы, окружения)
+
+# 6.1) Параметризация вместо дубликатов
+
+🚨 КРИТИЧЕСКИ ВАЖНО: ОБОБЩЕНИЕ ОДИНАКОВОЙ ЛОГИКИ! 🚨
+Если несколько тест-кейсов проверяют ОДНУ И ТУ ЖЕ логику с разными входными данными — создавай ОДИН обобщённый тест!
+
+Пример НЕПРАВИЛЬНО (11 отдельных тестов):
+- "Метод GET /get_by_id с doc_type=payment"
+- "Метод GET /get_by_id с doc_type=payment_template"
+- "Метод GET /get_by_id с doc_type=doc_service"
+... (ещё 8 тестов с идентичной логикой)
+
+Пример ПРАВИЛЬНО (1 обобщённый тест):
+{
+  "title": "Метод GET /get_by_id возвращает корректные данные для всех типов документов повтора",
+  "precondition": "Подготовлены тестовые документы типов: payment, payment_template, doc_service, payment_counter, payment_counter_template, doc_pay_transfer_rur_template, doc_pay_selffree, doc_pay_transfer_person, doc_pay_p2p_kuban, doc_pay_selfconv, quick_pay",
+  "steps": [
+    "Выполнить GET /backend/rest/stateful/personal/template/get_by_id с параметром doc_type для каждого типа из списка",
+    "Проверить структуру ответа"
+  ],
+  "expected": "Получен ответ 200 с валидными данными для каждого типа документа"
+}
+
+АЛЬТЕРНАТИВНЫЙ ПОДХОД (если есть критичные отличия):
+- Создай ОДИН обобщённый тест для всех стандартных случаев
+- Создай 1-2 отдельных теста ТОЛЬКО для случаев, где логика ОТЛИЧАЕТСЯ
+
+Примеры обобщения:
+• "Метод X для всех doc_type" вместо 11 отдельных тестов
+• "Метод Y при различных HTTP-ответах (200/404/500)" вместо 3 отдельных тестов
+• "Открытие страниц переводов (все типы)" вместо 7 отдельных тестов
+
+ПРАВИЛО: Одинаковая логика → ОДИН обобщённый тест (все значения в precondition). Разная логика → отдельные тесты.
+
+🚨 КОНКРЕТНЫЕ ПРИМЕРЫ ДУБЛИКАТОВ ДЛЯ ВАШЕГО ПРОЕКТА: 🚨
+
+❌ НЕПРАВИЛЬНО (дубликаты):
+- "Успешная отправка отчёта после авторизации по пин-коду"
+- "Отправка отчёта после авторизации по пин-коду" 
+- "Сбор и передача отчёта после успешной авторизации по пин-коду"
+- "Передача отчёта после авторизации по пин-коду"
+- "Инициализация SDK Bi_Zone при запуске приложения"
+- "Инициализация SDK Bi_Zone и передача отчёта после успешной авторизации"
+
+✅ ПРАВИЛЬНО (один обобщённый тест):
+{
+  "title": "Отправка отчёта после авторизации по пин-коду",
+  "precondition": "Пользователь авторизован по пин-коду, SDK Bi_Zone инициализирован",
+  "steps": [
+    "Авторизоваться по пин-коду",
+    "Дождаться инициализации SDK Bi_Zone",
+    "Выполнить сбор и передачу отчёта"
+  ],
+  "expected": "Отчёт успешно собран и передан через POST /create/sdk с кодом ответа 204"
+}
+
+🚨 ЗАПОМНИ: Если видишь похожие названия — это ДУБЛИКАТ! Создавай ОДИН тест!
 
 # 7) Техники тест-дизайна (обязательно применять, если применимо)
 — BVA: мин, макс, мин-1, макс+1.  
@@ -4739,6 +5099,18 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 - **Граничные значения:** Для каждого числового диапазона (например, '48-84') ОБЯЗАТЕЛЬНО создай отдельные Integration-тесты для значений min-1, min, max, max+1 (в данном примере: 47, 48, 84, 85).
 - **Жизненный цикл:** Если есть сценарии на создание, ОБЯЗАТЕЛЬНО добавь по одному Integration-тесту на **редактирование** и **удаление** существующей зависимости.
 - **Невалидные типы данных:** Для полей с числовым вводом добавь Integration-тест на ввод текстовой строки. Для текстовых полей — проверку на ввод пустой строки.
+
+🚨 ВАЖНО: ПРОВЕРКА КРИТИЧНЫХ HTTP-КОДОВ! 🚨
+При работе с API ОБЯЗАТЕЛЬНО проверяй граничные случаи:
+- Если требование указывает "при статусе 200" — создай тест на 404, 500
+- Если требование указывает "при статусе 200 или 202" — создай тесты на оба кода + негативные (404, 500)
+- Если требование указывает "если НЕ 200 — не передавать отчёт" — создай тесты на 400, 401, 404, 500
+
+Примеры критичных проверок:
+• POST /oauth/te вернул 200 → отчёт передаётся ✅
+• POST /oauth/te вернул 401 → отчёт НЕ передаётся ✅ (ОБЯЗАТЕЛЬНЫЙ негативный тест!)
+• POST /create/sdk вернул 500 → ошибка НЕ показывается пользователю ✅
+• GET /qrcode вернул 202 → отчёт передаётся ✅ (граничный случай!)
 
 # 8) Чек-лист перед выводом
 — Все кейсы независимы; по одному «смыслу» на кейс.  
@@ -4753,12 +5125,44 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 ЗАПРЕЩЕНО создавать тесты с одинаковыми названиями для разных doc_type/параметров!
 Если логика теста одинаковая — создай ОДИН параметризованный тест.
 
+🚨 ДОПОЛНИТЕЛЬНЫЕ ЗАПРЕТЫ НА ДУБЛИКАТЫ:
+❌ ЗАПРЕЩЕНО создавать тесты с похожими названиями:
+- "Успешная отправка отчёта" + "Отправка отчёта после авторизации" = ДУБЛИКАТ!
+- "Сбор и передача отчёта" + "Передача отчёта после авторизации" = ДУБЛИКАТ!
+- "Инициализация SDK" + "Инициализация SDK Bi_Zone" = ДУБЛИКАТ!
+
+✅ ПРАВИЛЬНО: Один обобщённый тест вместо множества похожих:
+- "Отправка отчёта после авторизации по пин-коду" (вместо 3 отдельных тестов)
+- "Инициализация SDK Bi_Zone при запуске приложения" (вместо вариаций)
+
+ПРАВИЛО: Если тесты проверяют ОДНУ И ТУ ЖЕ логику — создавай ОДИН тест!
+
 Пример НЕПРАВИЛЬНО:
 - "Метод getReport() не вызывается при ошибке для payment"
 - "Метод getReport() не вызывается при ошибке для doc_service"  
 
 Пример ПРАВИЛЬНО:
 - "Метод getReport() не вызывается при ошибке GET /get_by_id" (один тест, параметризуй doc_type в precondition)
+
+🚨 СТРОГИЙ ЗАПРЕТ НА ДУБЛИКАТЫ НА УРОВНЕ ГЕНЕРАЦИИ! 🚨
+
+❌ ЗАПРЕЩЕНО создавать тесты с похожими названиями:
+- "Успешная отправка отчёта" + "Отправка отчёта после авторизации" = ДУБЛИКАТ!
+- "Сбор и передача отчёта" + "Передача отчёта после авторизации" = ДУБЛИКАТ!
+- "Инициализация SDK" + "Инициализация SDK Bi_Zone" = ДУБЛИКАТ!
+- "Успешная отправка отчёта после авторизации по пин-коду" (3 раза) = ДУБЛИКАТ!
+
+❌ ЗАПРЕЩЕНО создавать тесты с одинаковой логикой:
+- Если тест проверяет "отправку отчёта после авторизации" — создай ОДИН тест
+- Если тест проверяет "инициализацию SDK" — создай ОДИН тест
+- Если тест проверяет "сбор данных" — создай ОДИН тест
+
+✅ ОБЯЗАТЕЛЬНО перед генерацией каждого теста:
+1. Проверь: нет ли уже похожего теста в списке?
+2. Если есть — НЕ создавай новый, а расширь существующий
+3. Если логика отличается — создавай новый, но с УНИКАЛЬНЫМ названием
+
+🚨 ПРАВИЛО: ОДИН ФУНКЦИОНАЛЬНЫЙ СЦЕНАРИЙ = ОДИН ТЕСТ-КЕЙС! 🚨
 
 🚨 ФИНАЛЬНОЕ ОГРАНИЧЕНИЕ: МАКСИМУМ 8 ТЕСТ-КЕЙСОВ! 🚨
 Перед выводом пересмотри все тест-кейсы и оставь ТОЛЬКО самые критичные:
@@ -4898,6 +5302,27 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 # 5) Выходной формат: СТРОГО ТОЛЬКО JSON-массив
 Используй ровно один из трёх шаблонов ниже в зависимости от "layer". Никаких комментариев/markdown.
 
+🚨 ПРАВИЛО ДЛЯ STEPS: ТОЛЬКО ИЗ REQUIREMENTS! 🚨
+
+ЗАПРЕЩЕНО додумывать шаги:
+❌ "Дождаться загрузки страницы" (если не указано в requirements)
+❌ "Проверить, что кнопка активна" (это проверка — идёт в expected, а не в steps)
+❌ "Ввести валидные данные" (укажи КОНКРЕТНЫЕ данные из requirements или используй placeholders типа <НОМЕР_КАРТЫ>)
+
+ПРАВИЛЬНЫЕ шаги (конкретные действия):
+✅ "Открыть страницу 'История операций'"
+✅ "Выбрать операцию с типом 'payment' из списка"
+✅ "Нажать кнопку 'Повторить'"
+✅ "Ввести сумму 1000₽ в поле 'Сумма платежа'"
+
+ПРАВИЛО:
+
+Steps описывают ДЕЙСТВИЯ пользователя или системы
+
+Проверки результата НЕ пишутся в steps — только в expected
+
+Если requirements описывают действие как "при открытии страницы вызывается API X" — это НЕ шаг, это автоматическое действие (пишем в expected)
+
 ## Шаблон: "layer": "E2E Tests"
 {
   "feature": "ОБЯЗАТЕЛЬНО: Название фичи из модели",
@@ -5035,6 +5460,18 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
 - **Жизненный цикл:** Если есть сценарии на создание, ОБЯЗАТЕЛЬНО добавь по одному Integration-тесту на **редактирование** и **удаление** существующей зависимости.
 - **Невалидные типы данных:** Для полей с числовым вводом добавь Integration-тест на ввод текстовой строки. Для текстовых полей — проверку на ввод пустой строки.
 
+🚨 ВАЖНО: ПРОВЕРКА КРИТИЧНЫХ HTTP-КОДОВ! 🚨
+При работе с API ОБЯЗАТЕЛЬНО проверяй граничные случаи:
+- Если требование указывает "при статусе 200" — создай тест на 404, 500
+- Если требование указывает "при статусе 200 или 202" — создай тесты на оба кода + негативные (404, 500)
+- Если требование указывает "если НЕ 200 — не передавать отчёт" — создай тесты на 400, 401, 404, 500
+
+Примеры критичных проверок:
+• POST /oauth/te вернул 200 → отчёт передаётся ✅
+• POST /oauth/te вернул 401 → отчёт НЕ передаётся ✅ (ОБЯЗАТЕЛЬНЫЙ негативный тест!)
+• POST /create/sdk вернул 500 → ошибка НЕ показывается пользователю ✅
+• GET /qrcode вернул 202 → отчёт передаётся ✅ (граничный случай!)
+
 # 8) Чек-лист перед выводом
 🚨 КРИТИЧЕСКИ ВАЖНО: ПРОВЕРЬ КАЖДЫЙ ТЕСТ-КЕЙС! 🚨
 — КАЖДЫЙ тест-кейс ОБЯЗАТЕЛЬНО содержит массив "steps" с минимум 1 шагом!
@@ -5051,7 +5488,7 @@ expected — одна фраза без «и/также». Если нужно �
 
 🚨 КРИТИЧЕСКИ ВАЖНО ДЛЯ КАСТОМНЫХ ПОЛЕЙ! 🚨
 — ДЛЯ ВСЕХ ТЕСТОВ: "feature" ОБЯЗАТЕЛЬНО!
-— E2E Tests: ОБЯЗАТЕЛЬНО "feature" + "story" (БЕЗ scenario и code!)
+— E2E Tests: ОБЯЗАТЕЛЬНО "feature" + "story" + "scenario" (БЕЗ code!)
 — Integration Tests: ОБЯЗАТЕЛЬНО "feature" + "story" + "scenario" (БЕЗ code!)  
 — Unit Tests: ОБЯЗАТЕЛЬНО "feature" + "story" + "scenario" + "code"
 — ЗАПРЕЩЕНО добавлять поля из других уровней!
@@ -5089,11 +5526,33 @@ expected — одна фраза без «и/также». Если нужно �
                 s + (st.scenarios || []).reduce((sc, scn) => sc + (scn.codes?.length || 0), 0), 0), 0);
 
         const COVENANT = `
-# 6.1 Ковенанта покрытия (строго)
-В модели: Stories=${S}, Scenarios=${Sc}, Codes=${C}.
-Минимум по всей модели: E2E ≥ ${Math.max(1, S)}, Integration ≥ ${Sc * 3}, Unit ≥ ${C * 2}.
-Если объём большой, сокращай формулировки, но НЕ снижай счётчики.
-`.trim();
+        # 6.1 Ковенанта покрытия (двухпроходная генерация)
+        В модели: Stories=${S}, Scenarios=${Sc}, Codes=${C}.
+        
+        ПРОХОД 1 (E2E_ONLY):
+        - E2E: ${Math.max(1, Math.floor(S / 2))} тестов
+          • 1 сквозной E2E на Story (или 2 если есть критичные альтернативные пути)
+          • E2E = полный путь пользователя через ВСЕ Scenarios
+        
+        ПРОХОД 2 (INTEGRATION_UNIT) — С КОНТЕКСТОМ E2E:
+        - Integration: МИНИМУМ ${Sc * 2}, МАКСИМУМ ${Sc * 3} тестов
+          • 2-3 атомарных теста на КАЖДЫЙ Scenario
+          • НЕ дублируй E2E-логику! Фокус на технических деталях.
+          
+        - Unit: МИНИМУМ ${Math.floor(Sc * 0.7)}, МАКСИМУМ ${Sc * 2} тестов
+          • 1-2 изолированных теста на КАЖДЫЙ Code
+          • НЕ дублируй Integration-логику! Фокус на методах.
+        
+        ИТОГО: ${Math.max(1, Math.floor(S / 2)) + Sc * 2.5 + Sc} ± 30% тестов
+        
+        🚨 КРИТИЧЕСКИ ВАЖНО:
+        - E2E тесты НЕ привязаны к конкретному Scenario (только Story)
+        - Integration тесты привязаны к конкретному Scenario
+        - Unit тесты привязаны к конкретному Code
+        - Каждый слой НЕ дублирует предыдущий!
+        `.trim();
+
+
 
         // === tool-schema с жёстким enum для сценариев ===
         const buildSubmitCasesToolStrict = (allowedCodes = [], allowedScenarios = []) => ({
@@ -5169,62 +5628,148 @@ expected — одна фраза без «и/также». Если нужно �
         const totalOperations = 1; // Одна операция для всей модели
         let completedOperations = 0;
 
-        // Генерация для одного чанка (одной Story)
-        async function genForChunk(modelChunk, reqs, systemPrompt, modelStructure) {
-            const allowedForChunk = collectAllowedCodes(modelChunk);
-            const allowedScenarios = collectAllowedScenarios(modelChunk);
-            const { scenarios: scCnt, codes: cdCnt } = countChunkNodes(modelChunk);
+        async function genForChunk(chunk, requirements, systemPrompt, mode, existingTests, modelStructure, allowedForChunk, allowedScenarios) {
+            // ✅ НОВОЕ: Формируем промпт в зависимости от режима
+            let modeSpecificPrompt = '';
 
-            // Обрежем "Контекст из ссылок" до безопасного размера
-            const linkCtxRaw = Array.isArray(autoPages) && autoPages.length
-                ? autoPages.join('\n\n---\n\n')
-                : '';
-            const sanitizeLinkCtx = (s) => String(s || '')
-                .replace(/```[\s\S]*?```/g, '')            // убрать большие код-блоки
-                .replace(/^#\s.*$/gm, '')                  // убрать H1
-                .replace(/^##\s.*$/gm, '###')              // H2 → H3 (компактнее)
-                .replace(/\n{3,}/g, '\n\n');
-            let linkCtx = sanitizeLinkCtx(linkCtxRaw);
-            const MAX_LINK_CTX = 12000; // ~12k символов на Story
-            if (linkCtx.length > MAX_LINK_CTX) linkCtx = linkCtx.slice(0, MAX_LINK_CTX);
+            if (mode === 'E2E_ONLY') {
+                const isMasterChunk = chunk[0].stories[0]._isMasterChunk === true;
+                const allScenariosCount = chunk[0].stories[0].scenarios?.length || 0;
 
+                modeSpecificPrompt = `
+🎯 РЕЖИМ: ГЕНЕРАЦИЯ E2E ТЕСТОВ (Story-level)
+
+${isMasterChunk ? `
+✅ ЭТО МАСТЕР-CHUNK: Содержит ВСЕ ${allScenariosCount} Scenarios для Story!
+
+ЗАДАНИЕ: Создай ОДИН СКВОЗНОЙ E2E тест, который проходит через основной путь Story.
+
+ПРАВИЛА ДЛЯ СКВОЗНОГО E2E:
+1. Один E2E тест = полный путь пользователя от начала до конца
+2. Выбери ОДИН ТИПИЧНЫЙ Scenario из списка (обычно первый или самый распространённый)
+3. Тест должен показать, как работает вся Story целиком
+4. НЕ создавай отдельные E2E для каждого Scenario (это задача Integration тестов!)
+5. Указывай: feature + story + scenario, БЕЗ code
+
+ПРИМЕР СКВОЗНОГО E2E:
+{
+  "title": "Полный цикл авторизации и отправки отчёта в мобильном приложении",
+  "layer": "E2E Tests",
+  "feature": "Интеграция SDK Bi_Zone",
+  "story": "Отправка отчёта после авторизации",
+  "scenario": "Авторизация по пин-коду",  // ← выбрали один типичный способ
+  "steps": [
+    "Открыть мобильное приложение",
+    "Авторизоваться (по пин-коду)",  // ← выбрали один типичный способ
+    "Дождаться загрузки главной страницы",
+    "Проверить, что отчёт автоматически отправлен"
+  ],
+  "expected": "Пользователь успешно авторизован, метод getReport() вызван 1 раз, данные переданы через POST /create/sdk с кодом 204, отчёт содержит: DeviceModel, AppKey, SDK_VERSION"
+}
+
+❌ НЕПРАВИЛЬНО (слишком много E2E):
+- Создавать отдельный E2E для "авторизации по пин-коду"
+- Создавать отдельный E2E для "авторизации по FaceID"
+- Создавать отдельный E2E для "авторизации по карте"
+→ Это задача Integration тестов!
+
+✅ ПРАВИЛЬНО: ОДИН сквозной E2E, который показывает всю Story целиком.
+` : `
+⚠️ ЭТО ОБЫЧНЫЙ CHUNK: Для маленькой Story (≤3 Scenarios).
+
+ЗАДАНИЕ: Создай 1-2 E2E теста для основных путей Story.
+`}
+`;
+            } else if (mode === 'INTEGRATION_UNIT') {
+                // Показываем модели, какие E2E тесты УЖЕ ЕСТЬ
+                const e2eContext = existingTests.length > 0
+                    ? `\n📋 УЖЕ СОЗДАНЫ E2E ТЕСТЫ:\n${existingTests.map(tc => `- ${tc.title}`).join('\n')}\n`
+                    : '';
+
+                modeSpecificPrompt = `
+                    🎯 РЕЖИМ: ГЕНЕРАЦИЯ INTEGRATION/UNIT ТЕСТОВ (Scenario/Code-level)
+                    
+                    ${e2eContext}
+                    
+                    ✅ E2E тесты УЖЕ ПОКРЫВАЮТ сквозные пути пользователя!
+                    ❌ НЕ дублируй E2E-логику в Integration/Unit тестах!
+                    
+                    ═══════════════════════════════════════════════════════════
+                    🚨 КРИТИЧЕСКИ ВАЖНО: ФОКУС НА КОНТЕКСТЕ FEATURE/STORY!
+                    ═══════════════════════════════════════════════════════════
+                    
+                    КОНТЕКСТ ТЕКУЩЕГО ТЕСТА:
+                  Feature: "${chunk.feature || 'Не указано'}"
+                  Story: "${chunk.story || 'Не указано'}"
+                  Scenario: "${chunk.scenario || 'Не указано'}"                
+                    
+                    ВАЖНО: Integration тесты должны проверять СПЕЦИФИКУ FEATURE/STORY!
+                    
+                    ЕСЛИ Feature = "Интеграция SDK Bi_Zone":
+                      - Frontend Integration: проверка инициализации SDK, сбора данных, подготовки отчёта
+                      - Backend Integration: проверка API POST /create/sdk с данными BiZone
+                      - НЕ проверяем: общую UI авторизации БЕЗ контекста SDK
+                    
+                    ПРИМЕРЫ ПРАВИЛЬНЫХ тестов ДЛЯ "Интеграция SDK Bi_Zone":
+                    
+                    ✅ ПРАВИЛЬНО (Frontend Integration - привязан к SDK):
+                    {
+                      "title": "SDK BiZone начинает сбор данных при открытии формы авторизации",
+                      "layer": "Integration frontend Tests",
+                      "feature": "Интеграция SDK Bi_Zone",
+                      "story": "Отправка отчёта после авторизации",
+                      "scenario": "Авторизоваться по пин-коду",
+                      "expected": "SDK инициализирован, начат сбор DeviceModel, AppKey, SDK_VERSION"
+                    }
+                    
+                    ✅ ПРАВИЛЬНО (Backend Integration - привязан к SDK):
+                    {
+                      "title": "API POST /create/sdk принимает массив BiZone данных после авторизации по пин-коду",
+                      "layer": "Integration backend Tests",
+                      "feature": "Интеграция SDK Bi_Zone",
+                      "story": "Отправка отчёта после авторизации",
+                      "scenario": "Авторизоваться по пин-коду",
+                      "steps": ["Выполнить POST /create/sdk с массивом данных BiZone"],
+                      "expected": "Статус 204, данные приняты"
+                    }
+                    
+                    ❌ НЕПРАВИЛЬНО (общий тест авторизации БЕЗ контекста SDK):
+                    {
+                      "title": "Форма авторизации отображается после запуска приложения", // ❌ НЕТ SDK!
+                      "layer": "Integration frontend Tests",
+                      "expected": "Форма отображается" // ❌ НЕТ SDK!
+                    }
+                    
+                    ❌ НЕПРАВИЛЬНО (общий тест UI БЕЗ контекста SDK):
+                    {
+                      "title": "Кнопка 'Войти' активируется после ввода пин-кода", // ❌ НЕТ SDK!
+                      "layer": "Integration frontend Tests"
+                    }
+                    
+                    ПРАВИЛО: Integration тест ОБЯЗАТЕЛЬНО должен проверять СПЕЦИФИКУ Feature/Story!
+                    Если Feature = "Интеграция SDK Bi_Zone" → тест ОБЯЗАТЕЛЬНО про SDK, getReport(), BiZone данные!
+                    
+                    ЗАДАНИЕ: 
+                    1. Для КАЖДОГО Scenario создай тесты, ПРИВЯЗАННЫЕ к Feature/Story
+                    2. Frontend Integration: проверка SDK, сбора данных, инициализации
+                    3. Backend Integration: проверка API /create/sdk с данными BiZone
+                    4. НЕ создавай общие UI-тесты БЕЗ контекста Feature!
+                    `;
+
+
+            }
             const userPrompt = `
-Сгенерируй JSON-массив тест-кейсов на русском языке для ЭТОГО куска модели (одна Story).
+            ${modeSpecificPrompt}
+            
+            Модель для генерации:
+            ${JSON.stringify(chunk, null, 2)}
+            
+            Требования:
+            ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+            
+            ${COVENANT}
+            `.trim();
 
-🚨 КРИТИЧЕСКИ ВАЖНО: СОБЛЮДЕНИЕ УРОВНЕЙ ТЕСТИРОВАНИЯ! 🚨
-- E2E Tests: только для целостных пользовательских сценариев (Story) - МАКСИМУМ 2-3 на Story
-- Integration Tests: ОБЯЗАТЕЛЬНО для каждого Scenario - взаимодействия между компонентами  
-- Unit Tests: ОБЯЗАТЕЛЬНО для каждого Code - отдельные функции/методы
-
-🚨 ОБЯЗАТЕЛЬНО ГЕНЕРИРОВАТЬ ВСЕ ТИПЫ ТЕСТОВ! 🚨
-ЗАПРЕЩЕНО: генерировать только E2E тесты!
-ОБЯЗАТЕЛЬНО: создавать Integration Tests для каждого Scenario!
-ОБЯЗАТЕЛЬНО: создавать Unit Tests для каждого Code!
-${JSON.stringify(modelChunk, null, 2)}
-
-Требования:
-${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
-
-Контекст из ссылок исходного требования (используй только для прояснения ссылок; не придумывай новое):
-${linkCtx || '—'}
-
-ДОПУСТИМЫЕ ЗНАЧЕНИЯ ДЛЯ "code" (если используешь):
-${allowedForChunk.map(c => `- ${c}`).join('\n')}
-
-⚠️ Минимум для ЭТОГО куска:
-— E2E: ≥ 1 на Story (не более 3),
-— Integration: ≥ ${Math.max(0, scCnt * 3)} (по 3-5 на каждый Scenario),
-— Unit: ≥ ${Math.max(0, cdCnt * 2)} (по 2 на каждый Code из списка выше).
-
-🎯 ПРАВИЛА КЛАССИФИКАЦИИ УРОВНЕЙ:
-- E2E Tests: тест-кейсы для полных пользовательских сценариев (Story), включающие авторизацию, навигацию и завершение бизнес-процесса
-- Integration frontend Tests: тест-кейсы для взаимодействия Angular компонентов, сервисов и API (Scenario)
-- Integration backend Tests: тест-кейсы для взаимодействия .NET сервисов, контроллеров и внешних API (Scenario)
-- Unit frontend Tests: тест-кейсы для отдельных Angular компонентов, методов сервисов (Code)
-- Unit backend Tests: тест-кейсы для отдельных .NET методов, классов (Code)
-
-Ответ — ТОЛЬКО чистый JSON-массив без Markdown.
-`.trim();
 
             const tools = [buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios)];
             const ai = await callWithCloudRuFallback(
@@ -5239,7 +5784,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                     // tool_choice убран для Cloud.ru совместимости
                     temperature: 0,
                     top_p: 1,
-                    max_tokens: 200000 
+                    max_tokens: 200000
                 }
             );
 
@@ -5258,7 +5803,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             // Если Cloud.ru вернул большой content но нет tool_calls - это нормально
             const contentLength = ai.choices?.[0]?.message?.content?.length || 0;
             const hasToolCalls = ai.choices?.[0]?.message?.tool_calls?.length > 0;
-            
+
             if (contentLength > 10000 && !hasToolCalls) {
                 console.log(`[genForChunk] Cloud.ru вернул большой content (${contentLength} символов) без tool_calls - используем fallback парсер`);
             }
@@ -5411,47 +5956,120 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             // Не спамим API: free-модель часто с лимитом — гоняем последовательно
             const genLimit = pLimit(1);
 
-        // === Подготовка данных ===
-        console.log(`[generate-test-cases-async] Подготовлено ${storyChunks.length} chunks для генерации`);
+            // === Подготовка данных ===
+            console.log(`[generate-test-cases-async] Подготовлено ${storyChunks.length} chunks для генерации`);
 
-        // Обновляем progress после подготовки данных
-        await db('generation_tasks').where('id', taskId).update({
-            progress: 10,
-            updated_at: new Date()
-        });
-
-        // Генерация по кускам с таймаутами
-        const parts = [];
-        const TIMEOUT_MS = 900000;
-        for (let i = 0; i < storyChunks.length; i++) {
-            const chunk = storyChunks[i];
-            const promise = genLimit(() => genForChunk(chunk, refinedReqs, BASE_SYSTEM_PROMPT));
-            const chunkCases = await withTimeout(promise, TIMEOUT_MS, `genForChunk (story: ${chunk[0]?.stories[0]?.text})`);
-            parts.push(chunkCases);
-            
-            // Обновляем progress после каждого chunk
-            const chunkProgress = 10 + Math.floor((i + 1) / storyChunks.length * 40); // 10% + до 50%
+            // Обновляем progress после подготовки данных
             await db('generation_tasks').where('id', taskId).update({
-                progress: chunkProgress,
+                progress: 10,
                 updated_at: new Date()
             });
-            
-            console.log(`[generate-test-cases-async] Обработан chunk ${i + 1}/${storyChunks.length}, progress: ${chunkProgress}%`);
-        }
 
-            let allCases = parts.flat();
+            // Генерация по кускам с таймаутами
+            // ✅ ПРОХОД 1: Генерация E2E тестов (ТОЛЬКО для мастер-chunk'ов)
+            console.log(`[generate-test-cases-async] === ПРОХОД 1: Генерация E2E тестов ===`);
+            const e2eTests = [];
+            const TIMEOUT_MS = 900000;
+
+            // Фильтруем ТОЛЬКО мастер-chunk'и для E2E
+            const masterChunks = storyChunks.filter(chunk => chunk[0].stories[0]._isMasterChunk === true);
+            console.log(`[generate-test-cases-async] Найдено ${masterChunks.length} мастер-chunk'ов для E2E`);
+
+            for (let i = 0; i < masterChunks.length; i++) {
+                const chunk = masterChunks[i];
+                const storyText = chunk[0].stories[0].text;
+                console.log(`[generate-test-cases-async] E2E для мастер chunk ${i + 1}/${masterChunks.length}: "${storyText}"`);
+
+                try {
+                    const result = await genForChunk(
+                        chunk,
+                        refinedReqs,
+                        BASE_SYSTEM_PROMPT,
+                        'E2E_ONLY',
+                        [],
+                        modelStructure,
+                        [], []
+                    );
+                    e2eTests.push(...result);
+                    console.log(`[generate-test-cases-async] Мастер chunk ${i + 1}: ${result.length} E2E тестов`);
+                } catch (err) {
+                    console.error(`[generate-test-cases-async] Ошибка E2E для мастер chunk ${i + 1}:`, err);
+                }
+
+                await db('generation_tasks').where('id', taskId).update({
+                    progress: Math.round((i + 1) / masterChunks.length * 50),
+                    updated_at: new Date()
+                });
+            }
+
+            console.log(`[generate-test-cases-async] ПРОХОД 1 завершён: ${e2eTests.length} E2E тестов`);
+
+            // ✅ ПРОХОД 2: Генерация Integration/Unit тестов (ТОЛЬКО для детальных chunk'ов)
+            console.log(`[generate-test-cases-async] === ПРОХОД 2: Генерация Integration/Unit тестов ===`);
+            const integrationUnitTests = [];
+
+            // Фильтруем ТОЛЬКО детальные chunk'и или маленькие Story для Integration/Unit
+            const detailChunks = storyChunks.filter(chunk =>
+                chunk[0].stories[0]._isDetailChunk === true ||
+                (!chunk[0].stories[0]._isMasterChunk && !chunk[0].stories[0]._isDetailChunk)
+            );
+            console.log(`[generate-test-cases-async] Найдено ${detailChunks.length} детальных chunk'ов для Integration/Unit`);
+
+            for (let i = 0; i < detailChunks.length; i++) {
+                const chunk = detailChunks[i];
+                const chunkStoryText = chunk[0].stories[0].text;
+                console.log(`[generate-test-cases-async] Integration/Unit для chunk ${i + 1}/${detailChunks.length}: "${chunkStoryText}"`);
+
+                // Находим релевантные E2E тесты для контекста
+                const relevantE2ETests = e2eTests.filter(tc => tc.story === chunkStoryText);
+                console.log(`[generate-test-cases-async] Контекст: ${relevantE2ETests.length} E2E тестов`);
+
+                try {
+                    const result = await genForChunk(
+                        chunk,
+                        refinedReqs,
+                        BASE_SYSTEM_PROMPT,
+                        'INTEGRATION_UNIT',
+                        relevantE2ETests,
+                        modelStructure,
+                        [], []
+                    );
+                    integrationUnitTests.push(...result);
+                    console.log(`[generate-test-cases-async] Chunk ${i + 1}: ${result.length} Integration/Unit тестов`);
+                } catch (err) {
+                    console.error(`[generate-test-cases-async] Ошибка Integration/Unit для chunk ${i + 1}:`, err);
+                }
+
+                await db('generation_tasks').where('id', taskId).update({
+                    progress: 50 + Math.round((i + 1) / detailChunks.length * 50),
+                    updated_at: new Date()
+                });
+            }
+
+            console.log(`[generate-test-cases-async] ПРОХОД 2 завершён: ${integrationUnitTests.length} Integration/Unit тестов`);
+
+            // Объединяем все тесты
+            let allCases = [...e2eTests, ...integrationUnitTests];
+            console.log(`[generate-test-cases-async] Всего сгенерировано: ${allCases.length} тестов`);
 
             // === sanitize → fixAgainstModel до аудита покрытия ===
             const idx = buildModelIndex(modelStructure);
             allCases = sanitize(allCases);
-            
+
             // Обновляем progress после sanitize
             await db('generation_tasks').where('id', taskId).update({
                 progress: 60,
                 updated_at: new Date()
             });
-            
+
             allCases = fixAgainstModel(allCases, idx);
+
+            // ✅ НОВАЯ ВАЛИДАЦИЯ: Проверка пирамиды
+            const pyramidValidation = validateTestPyramid(allCases, modelStructure);
+            if (!pyramidValidation.valid) {
+                console.warn('[generate-test-cases-async] ❌ ВНИМАНИЕ: Нарушена пирамида тестирования!');
+                pyramidValidation.warnings.forEach(w => console.warn(w));
+            }
 
             // Обновляем progress после fixAgainstModel
             await db('generation_tasks').where('id', taskId).update({
@@ -5467,7 +6085,7 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             }
             console.log('Требования для тест кейсов')
             console.log(refinedReqs)
-            
+
             // ОТКЛЮЧЕНО: Аудит покрытия и догенерация недостающего
             // const missing = auditCoverage(modelStructure, allCases);
             // if (missing.missingE2E.length || missing.missingSc.length || missing.missingCd.length) {
@@ -5493,9 +6111,9 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             //         updated_at: new Date()
             //     });
             // }
-            
+
             console.log('[COVERAGE] GapFill отключен - используем только основные тест-кейсы');
-            
+
             // Обновляем progress перед финальным сохранением
             await db('generation_tasks').where('id', taskId).update({
                 progress: 90,
@@ -5594,18 +6212,20 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
                     `;
                 }
 
-                const reqCases = await gapFillRequirements(refinedReqs, [{
-                    requirementId: missingReqId,
-                    functionality: `req_${missingReqId}`,
-                    description: `Догенерация для требования ${missingReqId}${additionalContext}`,
-                    priority: 'High',
-                    modelContext: storyContext
-                }], BASE_SYSTEM_PROMPT, modelStructure);
+                /*
+                // Закомментировано: gapFillRequirements отключен
+                // const reqCases = await gapFillRequirements(refinedReqs, [{
+                //     requirementId: missingReqId,
+                //     functionality: `req_${missingReqId}`,
+                //     description: `Догенерация для требования ${missingReqId}${additionalContext}`,
+                //     priority: 'High',
+                //     modelContext: storyContext
+                // }], BASE_SYSTEM_PROMPT, modelStructure);
 
-                if (reqCases && reqCases.length > 0) {
-                    finalTestCases.push(...reqCases);
-                    console.log(`[generate-test-cases-async] ✅ Добавлено ${reqCases.length} кейсов для ${missingReqId}`);
-                }
+                // finalTestCases.push(...reqCases);
+                // console.log(`[generate-test-cases-async] ✅ Добавлено ${reqCases.length} кейсов для ${missingReqId}`);
+                */
+
             }
         }
 
