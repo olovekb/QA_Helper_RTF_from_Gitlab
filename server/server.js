@@ -172,7 +172,10 @@ import {
     getProjectCustomFieldSchema,
     fetchWithAuth,
     suggestTags,
-    createTag
+    createTag,
+    addParameterToTestCase,
+    createTestCaseExamples,
+    generatePairwiseExamples
 } from './http-service.mjs';
 import { spinningLoader } from './spinning-loader.mjs';
 import pLimit from 'p-limit';
@@ -194,7 +197,7 @@ import { callWithCloudRuFallback } from './cloudruClient.mjs';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const app = express();
-const PORT = 5000;
+const PORT = 5002;
 
 // Добавляем gzip сжатие для всех ответов
 app.use(compression({
@@ -225,7 +228,7 @@ const upload = multer({
 
 
 const corsOptions = {
-    origin: 'https://test-inspector.abanking.ru',
+    origin: 'http://localhost:3000',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-OpenRouter-Key'],
     credentials: true,
@@ -2165,12 +2168,35 @@ async function generateTestModelAsync(taskId, inputData) {
         let autoPages = [];
         let baseRequirement = '';
         if (pageId) {
+            if (!bearerToken) {
+                throw new Error('bearerToken обязателен для загрузки страницы Confluence');
+            }
+            
+            // Проверяем формат bearerToken
+            if (typeof bearerToken !== 'string' || !bearerToken.trim()) {
+                throw new Error('bearerToken должен быть непустой строкой');
+            }
+            
+            console.log(`[generate-test-model-async] Загружаем страницу Confluence pageId=${pageId}...`);
+            console.log(`[generate-test-model-async] bearerToken длина: ${bearerToken.length}, первые 20 символов: ${bearerToken.substring(0, 20)}...`);
+            
             try {
-                if (!bearerToken) throw new Error('bearerToken is required for Confluence');
-                const { markdown } = await fetchConfluencePage(bearerToken, pageId, { inlineTextAttachments: true });
+                const { markdown } = await fetchConfluencePage(bearerToken.trim(), pageId, { inlineTextAttachments: true });
                 baseRequirement = markdown || '';
+                console.log(`[generate-test-model-async] ✅ Страница загружена, размер: ${baseRequirement.length} символов`);
+                
+                if (!baseRequirement || !baseRequirement.trim()) {
+                    throw new Error(`Страница Confluence pageId=${pageId} загружена, но содержимое пустое`);
+                }
+                
+                // Логируем первые 200 символов для проверки
+                console.log(`[generate-test-model-async] Первые 200 символов контента: ${baseRequirement.substring(0, 200)}...`);
+                
+                // Извлекаем ссылки на другие страницы
                 const ids = new Set(Array.from(String(markdown || '').matchAll(/pageId=(\d{4,})/g)).map(m => m[1]));
                 ids.delete(String(pageId));
+                console.log(`[generate-test-model-async] Найдено ${ids.size} ссылок на другие страницы`);
+                
                 for (const lid of ids) {
                     try {
                         const { markdown: md } = await fetchConfluencePage(bearerToken, lid, { inlineTextAttachments: true });
@@ -2189,34 +2215,61 @@ async function generateTestModelAsync(taskId, inputData) {
                             '',
                             relevant
                         ].join('\n'));
-                    } catch { }
+                    } catch (linkErr) {
+                        console.warn(`[generate-test-model-async] Не удалось загрузить связанную страницу pageId=${lid}:`, linkErr.message);
+                    }
                 }
             } catch (e) {
-                console.warn('[generate-test-model-async] auto-context fetch failed:', e.message);
+                console.error(`[generate-test-model-async] ❌ КРИТИЧЕСКАЯ ОШИБКА при загрузке страницы Confluence:`, e.message);
+                throw new Error(`Не удалось загрузить страницу Confluence pageId=${pageId}: ${e.message}. Проверьте bearerToken и доступ к странице.`);
             }
         }
 
         // Приводим к строке требований, предварительно прогнав через contextRefiner
         let reqStringForModel = '';
+        
+        // Если pageId был передан, но загрузка не удалась - выбрасываем ошибку
+        if (pageId && !baseRequirement) {
+            throw new Error(`Не удалось загрузить страницу Confluence pageId=${pageId}. Проверьте bearerToken и доступ к странице.`);
+        }
+        
+        // Если requirements пустой массив, но есть pageId - используем загруженный контент
+        const requirementsToUse = (Array.isArray(requirements) && requirements.length > 0) 
+            ? requirements 
+            : (requirements ? [requirements] : undefined);
+        
         try {
             const { refinedText, refinedArray } = await contextRefiner({
-                requirements: Array.isArray(requirements) ? requirements : (requirements ? [requirements] : undefined),
+                requirements: requirementsToUse,
                 text: baseRequirement || text,
                 glossary,
                 context,
                 contextInstruction,
                 contextPageIds: undefined,
                 glossaryPageId: undefined,
-                bearerToken: undefined,
+                bearerToken: bearerToken, // ✅ ИСПРАВЛЕНО: передаем bearerToken
                 contextPages: autoPages
             });
             reqStringForModel = refinedText || (refinedArray?.join('\n\n') ?? '');
         } catch (e) {
             console.warn('[generate-test-model-async] contextRefiner warning:', e.message);
-            reqStringForModel = baseRequirement || (typeof requirements === 'string' ? requirements : (Array.isArray(requirements) ? requirements.join('\n\n') : (text || '')));
+            // Fallback: используем загруженный контент или переданный text
+            reqStringForModel = baseRequirement || (typeof requirements === 'string' ? requirements : (Array.isArray(requirements) && requirements.length > 0 ? requirements.join('\n\n') : (text || '')));
         }
-
-        // Убрано логирование требований для чистоты консоли
+        
+        // Если после всех попыток reqStringForModel пустой - это ошибка
+        if (!reqStringForModel || !reqStringForModel.trim()) {
+            throw new Error('Не удалось получить текст требований. Проверьте параметры: pageId, requirements, text.');
+        }
+        
+        // Логируем размер и начало требований для проверки
+        console.log(`[generate-test-model-async] ✅ Требования подготовлены, размер: ${reqStringForModel.length} символов`);
+        console.log(`[generate-test-model-async] Первые 500 символов требований: ${reqStringForModel.substring(0, 500)}...`);
+        
+        // Проверяем, что требования не содержат только примеры из промпта
+        if (reqStringForModel.length < 100) {
+            console.warn(`[generate-test-model-async] ⚠️ ВНИМАНИЕ: Требования очень короткие (${reqStringForModel.length} символов). Возможно, контент не загружен.`);
+        }
 
         // Функция чанкования больших требований
         function chunkTextBySize(text, maxChars = 120000) {
@@ -2383,6 +2436,29 @@ async function generateTestModelAsync(taskId, inputData) {
 
 ПРАВИЛО: Каждый раздел требований = отдельная Story!
 ПРАВИЛО: Если в требованиях есть несколько разделов (например, X.X.1, X.X.2, X.X.3) - создай Story для КАЖДОГО!
+
+🚨 КРИТИЧЕСКИ ВАЖНО: ЗАПРЕТ НА BACKEND API КАК STORIES! 🚨
+СТРОГО ЗАПРЕЩЕНО создавать Stories для:
+- Разделов с названиями "Получение...", "Смена...", "Запрос...", "API..."
+- Backend API-методов (GET/POST/PUT/DELETE /rest/...)
+- Технических операций без пользовательского контекста
+- Операций с данными без UI-действия пользователя
+
+ПРАВИЛО: Backend API = это Code внутри UI Story!
+ПРИМЕРЫ НЕПРАВИЛЬНОГО (НЕ ДЕЛАТЬ):
+❌ Story: "Получение настроек отображения продуктов" (requirement: 6.1)
+❌ Story: "Получение списка кредитов" (requirement: 6.2)
+❌ Story: "Смена наименования продукта" (requirement: 6.3)
+
+ПРИМЕРЫ ПРАВИЛЬНОГО:
+✅ Story: "Отображение кредита на главной странице" → Code: "GET /rest/stateful/corp/credit?sync_credits=true"
+✅ Story: "Редактирование названия кредита" → Code: "PUT /rest/stateful/corp/product/change_alias"
+✅ Story: "Просмотр графика платежей" → Code: "GET /rest/stateful/corp/payment_schedule?account_id={credit.id}"
+
+АЛГОРИТМ ПРОВЕРКИ:
+1. Если раздел описывает API-метод БЕЗ пользовательского действия → это Code, НЕ Story!
+2. Если раздел начинается с "Получение", "Запрос", "Смена" (без "Пользователь получает") → это Code!
+3. Если раздел описывает UI-функцию с пользовательским действием → это Story!
 
 🚨 ПРИМЕР: Если в требованиях есть разделы 2.2.1, 2.2.2, 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7, 2.2.8 - создай Story для КАЖДОГО! 🚨
 
@@ -2595,9 +2671,23 @@ Code: { text: "Системная реакция", requirement: "X.X.1" }
         - **Описание реакции системы на действие пользователя — это Code.**
 - **ОБЯЗАТЕЛЬНО: Если в требованиях упоминается "несколько способов" — создавай отдельные Scenario для каждого способа.**
 - **ОБЯЗАТЕЛЬНО: Если есть условия "если... то..." — создавай отдельные Scenario для каждого варианта.**
-- **ОБЯЗАТЕЛЬНО: Если упоминается API-метод — создавай соответствующий Code.**
+- **ОБЯЗАТЕЛЬНО: Если упоминается API-метод — создавай соответствующий Code (НЕ Story!).**
         - **ОБЯЗАТЕЛЬНО: Если упоминаются различные типы операций (doc_type, категории, типы документов) — создавай отдельные Scenario для КАЖДОГО типа.**
 - **ОБЯЗАТЕЛЬНО: Покрывать ВСЕ функции из требований, даже если они описаны кратко.**
+- **ОБЯЗАТЕЛЬНО: Если в требованиях упоминается обработка ошибок, пустых данных, null-значений, условия "если...то..." — создавай отдельные Scenarios для КАЖДОГО случая!**
+
+🚨 КРИТИЧЕСКИ ВАЖНО: НЕГАТИВНЫЕ СЦЕНАРИИ И УСЛОВИЯ! 🚨
+ОБЯЗАТЕЛЬНО: Если в требованиях есть условия "если...то...", обработка ошибок, пустых данных, null-значений — создавай отдельные Scenarios для КАЖДОГО варианта!
+
+ПРИМЕРЫ УСЛОВИЙ ИЗ ТРЕБОВАНИЙ:
+- "Если errorCode присутствует → отобразить ошибку" → Scenario: "Обработать ошибку при загрузке данных"
+- "Если массив кредитов пустой [] → скрыть блок" → Scenario: "Обработать отсутствие кредитов"
+- "Если поля null → не отображать" → Scenario: "Обработать отсутствие данных в поле"
+- "Если doc_type=payment → вызвать метод X" → Scenario: "Повторить платеж с doc_type=payment"
+- "Если doc_type=payment_counter → вызвать метод Y" → Scenario: "Повторить платеж с doc_type=payment_counter"
+
+ЗАПРЕЩЕНО: Пропускать негативные сценарии и условия из требований!
+ОБЯЗАТЕЛЬНО: Для каждого условия создавай отдельный Scenario!
         
 
 ## 3.2. Обязательные Stories для полного покрытия
@@ -2626,6 +2716,23 @@ Code: { text: "Системная реакция", requirement: "X.X.1" }
 - **Не вставляй детали технической реализации.**
 - Твоя задача — распознать КОНКРЕТНЫЕ ПРИМЕРЫ в требованиях, но в итоговой модели заменить их на **АБСТРАКТНЫЕ ОПИСАНИЯ ДЕЙСТВИЙ И РЕАКЦИЙ.**
 - Сосредоточься на связке **"действие пользователя (Scenario) -> видимая реакция системы (Code)"**. Модель должна быть независима от конкретной технологии.
+
+🚨 КРИТИЧЕСКИ ВАЖНО: АБСТРАКЦИЯ ОТОБРАЖЕНИЯ ПОЛЕЙ UI! 🚨
+ЗАПРЕЩЕНО: Создавать отдельные Codes для каждого отображаемого поля UI!
+ПРАВИЛЬНО: Объединять отображение полей в один Code "Отобразить [название блока/компонента]"
+
+ПРИМЕРЫ НЕПРАВИЛЬНОГО (НЕ ДЕЛАТЬ):
+❌ Code: "Отобразить пользовательское наименование кредита из параметра credit.alias"
+❌ Code: "Отобразить номер кредитного договора из параметра credit.creditInformation.contractNum"
+❌ Code: "Отобразить дату кредитного договора из параметра credit.creditInformation.contractDate"
+❌ Code: "Отобразить сумму кредита из параметра credit.creditInformation.amount"
+
+ПРИМЕРЫ ПРАВИЛЬНОГО:
+✅ Code: "Отобразить информацию о кредите на карточке"
+✅ Code: "Отобразить блок 'Основное' с данными договора"
+✅ Code: "Отобразить блок 'Очередной платёж' с суммой и датой"
+
+ПРАВИЛО: Один UI-блок = один Code, НЕ несколько Codes для каждого поля!
 
         
         ## 3.5. При недостатке информации — минимализм
@@ -2730,15 +2837,42 @@ ${reqStringForModel}
         
 
 ## 6. Задание
-        Основываясь на **принципах декомпозиции (п.2), детализации (п.3.1) и абстракции (п.3.4)**, проанализируй требования и сгенерируй тестовую модель в формате JSON. 
-        
-        КРИТИЧЕСКИ ВАЖНО:
-        1. Извлеки ВСЕ нумерованные разделы из требований
-        2. Для КАЖДОГО раздела создай Story с соответствующим полем requirement
-        3. Если в разделе упоминаются различные типы/способы/варианты - создай отдельные Scenarios для каждого
-        4. Убедись что ни один раздел не пропущен!
-        
-        Ответ — **только** чистый JSON. Обязательно тестовая модель только на русском языке.
+
+🚨 ПЕРЕД ГЕНЕРАЦИЕЙ МОДЕЛИ - ВЫПОЛНИ ОБЯЗАТЕЛЬНЫЙ АНАЛИЗ! 🚨
+
+ШАГ 1: АНАЛИЗ ТРЕБОВАНИЙ
+1. Выпиши ВСЕ нумерованные разделы из требований (X, X.X, X.X.X, X.X.X.X)
+2. Для каждого раздела определи: это UI-функция или Backend API?
+3. Если Backend API (начинается с "Получение", "Запрос", "Смена", содержит GET/POST/PUT/DELETE) → НЕ создавай Story, добавь как Code в соответствующую UI Story
+4. Выпиши все условия "если...то...", обработку ошибок, пустых данных, null-значений
+5. Для каждого условия создай отдельный Scenario
+
+ШАГ 2: ГЕНЕРАЦИЯ МОДЕЛИ
+Основываясь на **принципах декомпозиции (п.2), детализации (п.3.1) и абстракции (п.3.4)**, проанализируй требования и сгенерируй тестовую модель в формате JSON. 
+
+КРИТИЧЕСКИ ВАЖНО:
+1. Извлеки ВСЕ нумерованные разделы из требований
+2. Для КАЖДОГО UI-раздела создай Story с соответствующим полем requirement
+3. НЕ создавай Stories для Backend API - это должны быть Codes!
+4. Если в разделе упоминаются различные типы/способы/варианты - создай отдельные Scenarios для каждого
+5. Для каждого условия "если...то..." создай отдельный Scenario
+6. Объединяй отображение полей UI в один Code, НЕ создавай отдельные Codes для каждого поля
+7. Убедись что ни один раздел не пропущен!
+
+🚨 ПОСЛЕ ГЕНЕРАЦИИ - ОБЯЗАТЕЛЬНАЯ ВАЛИДАЦИЯ! 🚨
+
+ПРОВЕРЬ ПЕРЕД ОТПРАВКОЙ:
+1. ✅ Проверь что ВСЕ разделы из требований покрыты Stories (кроме Backend API)
+2. ✅ Проверь что НЕТ Stories для Backend API (это должны быть Codes!)
+3. ✅ Проверь что есть Scenarios для негативных случаев (ошибки, пустые данные, null)
+4. ✅ Проверь что есть Scenarios для всех условий "если...то..."
+5. ✅ Проверь что НЕТ избыточной детализации Codes (один Code для UI-блока, не для каждого поля)
+6. ✅ Проверь что НЕТ дублирования (одинаковые Stories с разными requirement)
+7. ✅ Проверь что все элементы имеют UUID v4 и поле requirement
+
+ЕСЛИ ХОТЬ ОДИН ПУНКТ НЕ ВЫПОЛНЕН - ПЕРЕДЕЛАЙ МОДЕЛЬ!
+
+Ответ — **только** чистый JSON. Обязательно тестовая модель только на русском языке.
 
         СТРОГОЕ ПРАВИЛО ДЛЯ HTTP-ЭНДПОИНТОВ: узлы Code, описывающие HTTP‑запросы (GET|POST|PUT|PATCH|DELETE "/..."), добавляй ТОЛЬКО если метод и путь явно указаны в тексте требований. Если в требованиях нет однозначного упоминания такого запроса — не добавляй его и не придумывай.
 `.trim();
@@ -2747,8 +2881,8 @@ ${reqStringForModel}
         // === ЧАНКОВАНИЕ БОЛЬШИХ ТРЕБОВАНИЙ ===
         const reqChunks = chunkTextBySize(reqStringForModel, 120000);
         const totalSize = reqStringForModel.length;
-
-        // Убрано логирование чанков
+        
+        console.log(`[generate-test-model-async] Требования разбиты на ${reqChunks.length} чанк(ов), общий размер: ${totalSize} символов`);
 
         const partialModels = [];
 
@@ -3349,6 +3483,66 @@ app.post('/api/create-test-cases', async (req, res) => {
                 await setTestCaseCustomFieldValues(testCaseId, cfv);
             }
 
+            // 12) Параметры и примеры (если есть)
+            if (Array.isArray(c.parameters) && c.parameters.length > 0) {
+                // В Allure параметры определяются через массив "parameters" в тест-кейсе
+                // Но для добавления нужно использовать PATCH с полем parameters
+                try {
+                    // Получаем текущий тест-кейс
+                    const currentTC = await fetchWithAuth(`${config.baseUrl}/testcase/${testCaseId}`).then(r => r.json());
+                    
+                    // Формируем массив параметров (только имена, без значений)
+                    const parametersForApi = c.parameters
+                        .filter(p => p.name && p.name.trim())
+                        .map(p => ({ name: p.name.trim() }));
+                    
+                    if (parametersForApi.length > 0) {
+                        // Обновляем тест-кейс с параметрами
+                        await fetchWithAuth(
+                            `${config.baseUrl}/testcase/${testCaseId}`,
+                            {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ parameters: parametersForApi })
+                            }
+                        );
+                        console.log(`[create-test-cases] Добавлено ${parametersForApi.length} параметров для ТК ${testCaseId}`);
+                    }
+                } catch (err) {
+                    console.warn(`[create-test-cases] Не удалось добавить параметры для ТК ${testCaseId}:`, err.message);
+                }
+
+                // Добавляем примеры (конкретные комбинации параметров)
+                if (Array.isArray(c.examples) && c.examples.length > 0) {
+                    try {
+                        // Преобразуем examples в формат Allure API
+                        // Allure ожидает: Array<Array<{name: string, value: string}>>
+                        // То есть массив массивов параметров, а не массив объектов с полем parameters
+                        const examplesForApi = c.examples
+                            .filter(ex => ex.parameters && Array.isArray(ex.parameters))
+                            .map(example => 
+                                example.parameters
+                                    .filter(p => p.name && p.value !== undefined && p.value !== '')
+                                    .map(p => ({
+                                        name: String(p.name).trim(),
+                                        value: String(p.value).trim()
+                                    }))
+                            )
+                            .filter(exParams => exParams.length > 0);
+                        
+                        if (examplesForApi.length > 0) {
+                            await createTestCaseExamples(testCaseId, examplesForApi);
+                            console.log(`[create-test-cases] Добавлено ${examplesForApi.length} примеров для ТК ${testCaseId}`);
+                        }
+                    } catch (err) {
+                        console.warn(`[create-test-cases] Не удалось добавить примеры для ТК ${testCaseId}:`, err.message);
+                    }
+                } else if (c.parameters && c.parameters.length > 0) {
+                    // Если примеров нет, но есть параметры - можно сгенерировать pairwise
+                    // Но это опционально, так как может быть слишком много комбинаций
+                    console.log(`[create-test-cases] ТК ${testCaseId} имеет параметры, но нет примеров. Можно сгенерировать pairwise вручную.`);
+                }
+            }
 
             created.push({ id: testCaseId });
         }
@@ -3836,7 +4030,9 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                                         requirement: missingReq.requirementId, // ✅ ПРИНУДИТЕЛЬНО добавляем requirement!
                                         precondition: testCase.precondition,
                                         links: testCase.links || [],
-                                        jiraIssue: testCase.jiraIssueOption?.value
+                                        jiraIssue: testCase.jiraIssueOption?.value,
+                                        parameters: testCase.parameters || [],
+                                        examples: testCase.examples || []
                                     });
                                 }
                                 console.log(`[gapFillRequirements-ASYNC] ✅ Добавлено ${args.cases.length} тест-кейсов через tool_call`);
@@ -4131,7 +4327,17 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                         version: take(x.version, 50),
                         links: Array.isArray(x.links) ? x.links.slice(0, 10) : [],
                         jiraIssue: take(x.jiraIssue, 100),
-                        requirement: take(x.requirement, 50)  // 🚨 ДОБАВЛЕНО!
+                        requirement: take(x.requirement, 50),  // 🚨 ДОБАВЛЕНО!
+                        parameters: Array.isArray(x.parameters) ? x.parameters.map(p => ({
+                            name: take(p.name, 100),
+                            values: Array.isArray(p.values) ? p.values.map(v => take(v, 500)).filter(Boolean) : []
+                        })).filter(p => p.name && p.values.length > 0) : [],
+                        examples: Array.isArray(x.examples) ? x.examples.map(ex => ({
+                            parameters: Array.isArray(ex.parameters) ? ex.parameters.map(p => ({
+                                name: take(p.name, 100),
+                                value: take(p.value, 500)
+                            })).filter(p => p.name && p.value) : []
+                        })).filter(ex => ex.parameters.length > 0) : []
                     };
                 })
                 .filter(x => {
@@ -5034,8 +5240,14 @@ HTTP-код и структура ответа (для backend)
 
 # 6.1) Параметризация вместо дубликатов
 
-🚨 КРИТИЧЕСКИ ВАЖНО: ОБОБЩЕНИЕ ОДИНАКОВОЙ ЛОГИКИ! 🚨
-Если несколько тест-кейсов проверяют ОДНУ И ТУ ЖЕ логику с разными входными данными — создавай ОДИН обобщённый тест!
+🚨 КРИТИЧЕСКИ ВАЖНО: ИСПОЛЬЗОВАНИЕ ПАРАМЕТРИЗАЦИИ ВМЕСТО ДУБЛИКАТОВ! 🚨
+
+Если несколько тест-кейсов проверяют ОДНУ И ТУ ЖЕ логику с разными входными данными — создавай ОДИН ПАРАМЕТРИЗОВАННЫЙ тест!
+
+ПРАВИЛО ПАРАМЕТРИЗАЦИИ:
+1. Если логика теста ИДЕНТИЧНА, но меняются только входные данные → используй параметризацию
+2. Если меняется логика проверки или expected результат → создавай отдельные тесты
+3. Параметризация подходит для: HTTP-коды, типы документов, значения полей, варианты ответов API
 
 Пример НЕПРАВИЛЬНО (11 отдельных тестов):
 - "Метод GET /get_by_id с doc_type=payment"
@@ -5043,27 +5255,75 @@ HTTP-код и структура ответа (для backend)
 - "Метод GET /get_by_id с doc_type=doc_service"
 ... (ещё 8 тестов с идентичной логикой)
 
-Пример ПРАВИЛЬНО (1 обобщённый тест):
+Пример ПРАВИЛЬНО (1 параметризованный тест):
 {
-  "title": "Метод GET /get_by_id возвращает корректные данные для всех типов документов повтора",
-  "precondition": "Подготовлены тестовые документы типов: payment, payment_template, doc_service, payment_counter, payment_counter_template, doc_pay_transfer_rur_template, doc_pay_selffree, doc_pay_transfer_person, doc_pay_p2p_kuban, doc_pay_selfconv, quick_pay",
+  "title": "Метод GET /get_by_id возвращает корректные данные для всех типов документов",
   "steps": [
-    "Выполнить GET /backend/rest/stateful/personal/template/get_by_id с параметром doc_type для каждого типа из списка",
+    "Выполнить GET /backend/rest/stateful/personal/template/get_by_id с параметром doc_type из таблицы параметров",
     "Проверить структуру ответа"
   ],
-  "expected": "Получен ответ 200 с валидными данными для каждого типа документа"
+  "expected": "Получен ответ 200 с валидными данными для типа документа из параметра 'Тип документа'",
+  "parameters": [
+    {
+      "name": "Тип документа",
+      "values": ["payment", "payment_template", "doc_service", "payment_counter", "payment_counter_template", "doc_pay_transfer_rur_template", "doc_pay_selffree", "doc_pay_transfer_person", "doc_pay_p2p_kuban", "doc_pay_selfconv", "quick_pay"]
+    }
+  ]
 }
 
+Пример ПРАВИЛЬНО для HTTP-кодов (параметризация):
+{
+  "title": "Отображение ошибки при отправке запроса с подтверждением (!=200)",
+  "precondition": "Подменено тело ответа метода PUT /customer/profile/email/confirm на данные из параметров",
+  "steps": [
+    "Выполнить запрос PUT /customer/profile/email/confirm",
+    "Проверить ответ сервера"
+  ],
+  "expected": "Появляется модальное окно с ошибкой 'Операция не удалась' и текстом ошибки из параметра 'Выводимый текст ошибки', в зависимости от данных из параметров 'Код ответа' и 'Тело ответа'",
+  "parameters": [
+    { "name": "Код ответа", "values": ["200", "400", "401", "403", "404", "500", "503", "504"] },
+    { "name": "Тело ответа", "values": ["{ \"errorCode\": \"1007\", \"errorText\": \"...\" }", "пустое(или без errorCode и errorText)", "любое"] },
+    { "name": "Выводимый текст ошибки", "values": ["Введенные данные не найдены...", "Отсутствуют требуемые параметры.", "Ошибка обработки запроса...", "..."] }
+  ],
+  "examples": [
+    {
+      "parameters": [
+        { "name": "Код ответа", "value": "200" },
+        { "name": "Тело ответа", "value": "{ \"errorCode\": \"1007\", \"errorText\": \"Введенные данные не найдены...\" }" },
+        { "name": "Выводимый текст ошибки", "value": "Введенные данные не найдены..." }
+      ]
+    },
+    {
+      "parameters": [
+        { "name": "Код ответа", "value": "400" },
+        { "name": "Тело ответа", "value": "{ \"errorCode\": \"1007\", \"errorText\": \"Отсутствуют требуемые параметры\" }" },
+        { "name": "Выводимый текст ошибки", "value": "Отсутствуют требуемые параметры." }
+      ]
+    }
+    // ... остальные примеры
+  ]
+}
+
+ФОРМАТ ПАРАМЕТРОВ В JSON:
+- "parameters": массив объектов { "name": "Название параметра", "values": ["значение1", "значение2", ...] }
+- "examples": массив объектов, каждый содержит "parameters": [{ "name": "...", "value": "..." }]
+
+КРИТЕРИИ ДЛЯ ПАРАМЕТРИЗАЦИИ:
+✅ Одинаковая логика шагов
+✅ Одинаковая структура expected (только значения меняются)
+✅ 3+ варианта входных данных
+✅ Все варианты проверяют одно и то же поведение
+
+❌ НЕ параметризуй если:
+- Разная логика проверки
+- Разные expected результаты (не просто разные значения)
+- Меньше 3 вариантов (лучше отдельные тесты)
+
 АЛЬТЕРНАТИВНЫЙ ПОДХОД (если есть критичные отличия):
-- Создай ОДИН обобщённый тест для всех стандартных случаев
+- Создай ОДИН параметризованный тест для всех стандартных случаев
 - Создай 1-2 отдельных теста ТОЛЬКО для случаев, где логика ОТЛИЧАЕТСЯ
 
-Примеры обобщения:
-• "Метод X для всех doc_type" вместо 11 отдельных тестов
-• "Метод Y при различных HTTP-ответах (200/404/500)" вместо 3 отдельных тестов
-• "Открытие страниц переводов (все типы)" вместо 7 отдельных тестов
-
-ПРАВИЛО: Одинаковая логика → ОДИН обобщённый тест (все значения в precondition). Разная логика → отдельные тесты.
+ПРАВИЛО: Одинаковая логика → ОДИН параметризованный тест. Разная логика → отдельные тесты.
 
 🚨 КОНКРЕТНЫЕ ПРИМЕРЫ ДУБЛИКАТОВ ДЛЯ ВАШЕГО ПРОЕКТА: 🚨
 
@@ -5349,7 +5609,8 @@ Steps описывают ДЕЙСТВИЯ пользователя или сис
     }
   ],
   "attachments": [],
-  "parameters": {}
+  "parameters": [],
+  "examples": []
 }
 
 ## Шаблон: "layer": "Integration frontend Tests" / "Integration backend Tests"
@@ -5377,7 +5638,8 @@ Steps описывают ДЕЙСТВИЯ пользователя или сис
     }
   ],
   "attachments": [],
-  "parameters": {}
+  "parameters": [],
+  "examples": []
 }
 
 🚨 КРИТИЧЕСКИ ВАЖНО: ГЕЙТ ПО СТАТУС-КОДАМ ДЛЯ API! 🚨
@@ -5410,7 +5672,8 @@ Steps описывают ДЕЙСТВИЯ пользователя или сис
     }
   ],
   "attachments": [],
-  "parameters": {}
+  "parameters": [],
+  "examples": []
 }
 Правила для Unit:
 — НЕ придумывать имена функций/классов и не использовать синтаксис языков.  
@@ -5426,7 +5689,8 @@ Steps описывают ДЕЙСТВИЯ пользователя или сис
 • "jiraIssue": "ABC-123" - ОБЯЗАТЕЛЬНО для связанных задач из Jira
 • "version": "stable" - ОБЯЗАТЕЛЬНО (по умолчанию "stable" для новых)
 • "attachments": [...] - ОПЦИОНАЛЬНО для файлов/скриншотов/видео
-• "parameters": "..." - ОПЦИОНАЛЬНО для DDT/Pairwise (использовать только если во входе явно заданы параметры)
+• "parameters": [{ "name": "...", "values": [...] }] - ОПЦИОНАЛЬНО для параметризации (использовать когда логика идентична, но меняются входные данные)
+• "examples": [{ "parameters": [{ "name": "...", "value": "..." }] }] - ОПЦИОНАЛЬНО для конкретных примеров параметров
 • "precondition": "..." - ОПЦИОНАЛЬНО для предварительных условий
 
 # 6) Правила генерации набора тест-кейсов
@@ -5608,7 +5872,40 @@ expected — одна фраза без «и/также». Если нужно �
                                             integrationId: { type: "string" }
                                         }
                                     },
-                                    requirement: { type: "string", description: "Номер требования из ЧТЗ (например, '2.2.1', '4.1')" }
+                                    requirement: { type: "string", description: "Номер требования из ЧТЗ (например, '2.2.1', '4.1')" },
+                                    parameters: {
+                                        type: "array",
+                                        description: "Массив параметров для параметризации теста",
+                                        items: {
+                                            type: "object",
+                                            properties: {
+                                                name: { type: "string" },
+                                                values: { type: "array", items: { type: "string" } }
+                                            },
+                                            required: ["name", "values"]
+                                        }
+                                    },
+                                    examples: {
+                                        type: "array",
+                                        description: "Массив примеров (конкретных комбинаций параметров)",
+                                        items: {
+                                            type: "object",
+                                            properties: {
+                                                parameters: {
+                                                    type: "array",
+                                                    items: {
+                                                        type: "object",
+                                                        properties: {
+                                                            name: { type: "string" },
+                                                            value: { type: "string" }
+                                                        },
+                                                        required: ["name", "value"]
+                                                    }
+                                                }
+                                            },
+                                            required: ["parameters"]
+                                        }
+                                    }
                                 },
                                 required: ["title", "layer", "expected", "requirement"]
                             }
@@ -5850,7 +6147,9 @@ ${isMasterChunk ? `
                                 requirement: testCase.requirement,
                                 precondition: testCase.precondition,
                                 links: testCase.links || [],
-                                jiraIssue: testCase.jiraIssueOption?.value
+                                jiraIssue: testCase.jiraIssueOption?.value,
+                                parameters: testCase.parameters || [],
+                                examples: testCase.examples || []
                             });
                         }
                         console.log(`[genForChunk] ✅ Добавлено ${args.cases.length} тест-кейсов через tool_call`);

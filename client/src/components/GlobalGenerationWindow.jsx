@@ -174,14 +174,98 @@ const GlobalGenerationWindow = ({
     setIsGenModalOpen(false);
   };
 
+  // Функция для подсчета тест-кейсов из сохраненного состояния или из generatedCases
+  const getTestCasesCount = () => {
+    if (!allureProject?.id) return generatedCases?.length || 0;
+    
+    // Пытаемся получить сохраненное состояние из localStorage
+    try {
+      // Ищем все ключи, начинающиеся с testCasesReview_${projectId}_
+      const projectId = allureProject.id;
+      const prefix = `testCasesReview_${projectId}_`;
+      
+      // Проходим по всем ключам localStorage
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(prefix)) {
+          const saved = localStorage.getItem(key);
+          if (saved) {
+            const savedState = JSON.parse(saved);
+            if (savedState.treeData && Object.keys(savedState.treeData).length > 0) {
+              // Подсчитываем количество тест-кейсов в treeData
+              let count = 0;
+              const countCases = (nodeData) => {
+                if (nodeData.cases && Array.isArray(nodeData.cases)) {
+                  count += nodeData.cases.length;
+                }
+                if (nodeData.stories) {
+                  Object.values(nodeData.stories).forEach(story => {
+                    if (story.cases && Array.isArray(story.cases)) {
+                      count += story.cases.length;
+                    }
+                    if (story.scenarios) {
+                      Object.values(story.scenarios).forEach(scenario => {
+                        if (scenario.cases && Array.isArray(scenario.cases)) {
+                          count += scenario.cases.length;
+                        }
+                        if (scenario.codes) {
+                          Object.values(scenario.codes).forEach(code => {
+                            if (code.cases && Array.isArray(code.cases)) {
+                              count += code.cases.length;
+                            }
+                          });
+                        }
+                      });
+                    }
+                  });
+                }
+              };
+              
+              Object.values(savedState.treeData).forEach(feature => {
+                countCases(feature);
+              });
+              
+              if (count > 0) {
+                return count;
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('GlobalGenerationWindow: Ошибка при подсчете из localStorage:', err);
+    }
+    
+    // Если не нашли в localStorage, возвращаем количество из generatedCases
+    return generatedCases?.length || 0;
+  };
+
+  const [testCasesCount, setTestCasesCount] = useState(() => getTestCasesCount());
+
+  // Обновляем счетчик при изменении generatedCases или при открытии/закрытии модалки
+  useEffect(() => {
+    const count = getTestCasesCount();
+    setTestCasesCount(count);
+  }, [generatedCases, reviewModalOpen, allureProject?.id]);
+
   // Обработчик открытия модального окна просмотра тест-кейсов
   const handleOpenReviewModal = () => {
     setReviewModalOpen(true);
+    // Обновляем счетчик при открытии модалки
+    setTimeout(() => {
+      const count = getTestCasesCount();
+      setTestCasesCount(count);
+    }, 100);
   };
 
   // Обработчик закрытия модального окна просмотра тест-кейсов
   const handleCloseReviewModal = () => {
     setReviewModalOpen(false);
+    // Обновляем счетчик при закрытии модалки
+    setTimeout(() => {
+      const count = getTestCasesCount();
+      setTestCasesCount(count);
+    }, 100);
   };
 
   // Определяем, есть ли активная генерация или сохраненные результаты
@@ -436,13 +520,13 @@ const GlobalGenerationWindow = ({
       )}
 
       {/* Кнопки для работы с готовыми тест-кейсами */}
-      {hasCompletedGeneration && generatedCases.length > 0 && (
+      {hasCompletedGeneration && (generatedCases.length > 0 || testCasesCount > 0) && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 16, marginLeft: 8 }}>
           <button 
             onClick={handleOpenReviewModal}
             className="btn btn-primary"
           >
-            📋 Просмотреть тест-кейсы ({generatedCases.length})
+            📋 Просмотреть тест-кейсы ({testCasesCount})
           </button>
           <button 
             onClick={onClearTestCases}
@@ -506,6 +590,9 @@ const GlobalGenerationWindow = ({
         projectId={allureProject?.id}
         jiraProject={jiraProject}
         jiraPat={jiraPat}
+        onCasesCountChange={(count) => {
+          setTestCasesCount(count);
+        }}
       />
     </>
   );

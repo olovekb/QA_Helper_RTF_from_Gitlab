@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Modal from 'react-modal';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import config from '../../config.json';
@@ -79,6 +79,376 @@ const debouncePromise = (fn, delay = 300) => {
 // --- UTILITY FUNCTIONS ---
 const generateId = () => `case_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
+// Компонент для редактируемого тега значения параметра
+const EditableValueTag = ({ value, onSave, onDelete, autoEdit = false }) => {
+    const [isEditing, setIsEditing] = React.useState(autoEdit || !value);
+    const [editValue, setEditValue] = React.useState(value);
+    
+    React.useEffect(() => {
+        setEditValue(value);
+        if (!value) {
+            setIsEditing(true);
+        }
+    }, [value]);
+    
+    if (isEditing) {
+        return (
+            <div style={{ 
+                display: 'flex',
+                alignItems: 'center',
+                margin: '4px 4px 4px 0',
+                gap: '4px'
+            }}>
+                <input
+                    type="text"
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    onBlur={() => {
+                        onSave(editValue);
+                        setIsEditing(false);
+                    }}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                            onSave(editValue);
+                            setIsEditing(false);
+                        }
+                        if (e.key === 'Escape') {
+                            setEditValue(value);
+                            setIsEditing(false);
+                        }
+                    }}
+                    autoFocus
+                    style={{ 
+                        flex: 1,
+                        padding: '4px 8px',
+                        backgroundColor: '#161b22',
+                        border: '1px solid #58a6ff',
+                        borderRadius: '4px',
+                        color: '#c9d1d9',
+                        fontSize: '12px'
+                    }}
+                />
+            </div>
+        );
+    }
+    
+    return (
+        <div style={{ 
+            display: 'inline-flex',
+            alignItems: 'center',
+            margin: '4px 4px 4px 0',
+            padding: '4px 8px',
+            backgroundColor: '#161b22',
+            border: '1px solid #30363d',
+            borderRadius: '4px',
+            fontSize: '12px',
+            cursor: 'pointer'
+        }}
+        onClick={() => {
+            setEditValue(value);
+            setIsEditing(true);
+        }}
+        >
+            <span style={{ color: '#c9d1d9', marginRight: '6px' }}>
+                {value || 'Пустое значение'}
+            </span>
+            <button
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete();
+                }}
+                style={{ 
+                    background: 'none',
+                    border: 'none',
+                    color: '#8b949e',
+                    cursor: 'pointer',
+                    padding: '0',
+                    marginLeft: '4px',
+                    fontSize: '14px',
+                    lineHeight: '1'
+                }}
+            >
+                ×
+            </button>
+        </div>
+    );
+};
+
+// Функция для генерации всех комбинаций (полный перебор)
+const generateAllCombinations = (parameters) => {
+    if (!parameters || parameters.length === 0) return [];
+    
+    // Фильтруем только валидные параметры, но сохраняем исходный порядок
+    const validParams = parameters.filter(p => 
+        p.name && p.name.trim() && 
+        p.values && Array.isArray(p.values) && 
+        p.values.length > 0 && 
+        p.values.some(v => v && v.trim())
+    );
+    
+    if (validParams.length === 0) return [];
+    
+    // Сохраняем исходные имена и значения для правильного сопоставления
+    const paramMap = new Map();
+    validParams.forEach(p => {
+        paramMap.set(p.name.trim(), p.values.filter(v => v && v.trim()).map(v => v.trim()));
+    });
+    
+    const paramNames = Array.from(paramMap.keys());
+    const paramValues = Array.from(paramMap.values());
+    
+    const maxCombinations = 50;
+    const combinations = [];
+    
+    const generate = (paramIndex, currentCombo) => {
+        if (combinations.length >= maxCombinations) return;
+        
+        if (paramIndex >= paramNames.length) {
+            // Создаем комбинацию с ВСЕМИ параметрами (включая те, у которых нет значений)
+            const exampleParams = parameters.map(p => {
+                const paramName = p.name?.trim();
+                if (!paramName) return { name: '', value: '' };
+                
+                // Если это валидный параметр, берем значение из комбинации
+                const validIdx = paramNames.indexOf(paramName);
+                if (validIdx >= 0 && currentCombo[validIdx] !== undefined) {
+                    return { name: paramName, value: currentCombo[validIdx] };
+                }
+                // Если параметр не валиден (нет значений), ставим пустое значение
+                return { name: paramName, value: '' };
+            }).filter(p => p.name); // Убираем пустые имена
+            
+            combinations.push({ parameters: exampleParams });
+            return;
+        }
+        
+        for (const value of paramValues[paramIndex]) {
+            if (combinations.length >= maxCombinations) break;
+            generate(paramIndex + 1, [...currentCombo, value]);
+        }
+    };
+    
+    generate(0, []);
+    return combinations;
+};
+
+// Функция для генерации pairwise комбинаций (n=2 для pairwise)
+// Покрывает все пары значений между всеми параметрами минимальным набором комбинаций
+const generatePairwiseCombinations = (parameters) => {
+    if (!parameters || parameters.length === 0) return [];
+    
+    // Фильтруем параметры с валидными именами и значениями, но сохраняем исходный порядок
+    const validParams = parameters.filter(p => 
+        p.name && p.name.trim() && 
+        p.values && Array.isArray(p.values) && 
+        p.values.length > 0 && 
+        p.values.some(v => v && v.trim())
+    );
+    
+    if (validParams.length === 0) return [];
+    
+    // Сохраняем исходные имена и значения для правильного сопоставления
+    const paramMap = new Map();
+    validParams.forEach(p => {
+        paramMap.set(p.name.trim(), p.values.filter(v => v && v.trim()).map(v => v.trim()));
+    });
+    
+    const paramNames = Array.from(paramMap.keys());
+    const paramValues = Array.from(paramMap.values());
+    
+    const maxCombinations = 50; // Лимит как в TestOps
+    
+    // Если один параметр - просто все значения
+    if (validParams.length === 1) {
+        const paramName = paramNames[0];
+        return paramValues[0].slice(0, maxCombinations).map(value => {
+            // Создаем комбинацию с ВСЕМИ параметрами
+            const exampleParams = parameters.map(p => {
+                const pName = p.name?.trim();
+                if (!pName) return { name: '', value: '' };
+                if (pName === paramName) {
+                    return { name: pName, value };
+                }
+                return { name: pName, value: '' };
+            }).filter(p => p.name);
+            return { parameters: exampleParams };
+        });
+    }
+    
+    // Если два параметра - для pairwise это все пары (минимальное покрытие = все комбинации)
+    if (validParams.length === 2) {
+        const combinations = [];
+        const param1Name = paramNames[0];
+        const param2Name = paramNames[1];
+        
+        for (const val1 of paramValues[0]) {
+            for (const val2 of paramValues[1]) {
+                if (combinations.length >= maxCombinations) break;
+                
+                // Создаем комбинацию с ВСЕМИ параметрами
+                const exampleParams = parameters.map(p => {
+                    const pName = p.name?.trim();
+                    if (!pName) return { name: '', value: '' };
+                    if (pName === param1Name) {
+                        return { name: pName, value: val1 };
+                    }
+                    if (pName === param2Name) {
+                        return { name: pName, value: val2 };
+                    }
+                    return { name: pName, value: '' };
+                }).filter(p => p.name);
+                
+                combinations.push({ parameters: exampleParams });
+            }
+            if (combinations.length >= maxCombinations) break;
+        }
+        return combinations;
+    }
+    
+    // Для 3+ параметров используем оптимизированный pairwise алгоритм
+    // Цель: покрыть все пары значений минимальным количеством комбинаций
+    
+    // Шаг 1: Генерируем все возможные пары, которые нужно покрыть
+    const allPairsToCover = [];
+    for (let i = 0; i < paramNames.length; i++) {
+        for (let j = i + 1; j < paramNames.length; j++) {
+            for (const val1 of paramValues[i]) {
+                for (const val2 of paramValues[j]) {
+                    allPairsToCover.push({
+                        param1Idx: i,
+                        param2Idx: j,
+                        param1Name: paramNames[i],
+                        param2Name: paramNames[j],
+                        val1,
+                        val2,
+                        key: `${i}-${val1}|${j}-${val2}`
+                    });
+                }
+            }
+        }
+    }
+    
+    const combinations = [];
+    const coveredPairs = new Set(); // Множество покрытых пар
+    
+    // Шаг 2: Жадный алгоритм - пытаемся покрыть максимальное количество пар в одной комбинации
+    while (coveredPairs.size < allPairsToCover.length && combinations.length < maxCombinations) {
+        let bestCombo = null;
+        let bestCoverage = 0;
+        let bestComboValues = null;
+        
+        // Пробуем разные комбинации значений для всех параметров
+        // Используем ограниченный перебор для оптимизации
+        const maxAttempts = 100; // Ограничиваем количество попыток
+        let attempts = 0;
+        
+        for (const pair of allPairsToCover) {
+            if (coveredPairs.has(pair.key)) continue; // Пара уже покрыта
+            if (attempts >= maxAttempts) break;
+            attempts++;
+            
+            // Создаем комбинацию, начиная с этой пары (используем массив вместо Map)
+            const comboValues = new Array(paramNames.length).fill(null);
+            comboValues[pair.param1Idx] = pair.val1;
+            comboValues[pair.param2Idx] = pair.val2;
+            
+            // Для остальных параметров выбираем значения, которые максимизируют покрытие
+            for (let idx = 0; idx < paramNames.length; idx++) {
+                if (comboValues[idx] !== null) continue; // Уже установлено
+                
+                // Пробуем найти значение, которое покрывает больше непокрытых пар
+                let bestValue = paramValues[idx][0];
+                let bestValueCoverage = 0;
+                
+                for (const val of paramValues[idx]) {
+                    comboValues[idx] = val;
+                    
+                    // Подсчитываем, сколько новых непокрытых пар покроет эта комбинация
+                    let newCoverage = 0;
+                    for (let i = 0; i < paramNames.length; i++) {
+                        for (let j = i + 1; j < paramNames.length; j++) {
+                            if (comboValues[i] === null || comboValues[j] === null) continue;
+                            const pairKey = `${i}-${comboValues[i]}|${j}-${comboValues[j]}`;
+                            if (!coveredPairs.has(pairKey)) {
+                                const exists = allPairsToCover.some(p => 
+                                    p.param1Idx === i && p.param2Idx === j && 
+                                    p.val1 === comboValues[i] && p.val2 === comboValues[j]
+                                );
+                                if (exists) newCoverage++;
+                            }
+                        }
+                    }
+                    
+                    if (newCoverage > bestValueCoverage) {
+                        bestValueCoverage = newCoverage;
+                        bestValue = val;
+                    }
+                }
+                
+                comboValues[idx] = bestValue;
+            }
+            
+            // Подсчитываем покрытие этой комбинации
+            let coverage = 0;
+            for (let i = 0; i < paramNames.length; i++) {
+                for (let j = i + 1; j < paramNames.length; j++) {
+                    if (comboValues[i] === null || comboValues[j] === null) continue;
+                    const pairKey = `${i}-${comboValues[i]}|${j}-${comboValues[j]}`;
+                    if (!coveredPairs.has(pairKey)) {
+                        const exists = allPairsToCover.some(p => 
+                            p.param1Idx === i && p.param2Idx === j && 
+                            p.val1 === comboValues[i] && p.val2 === comboValues[j]
+                        );
+                        if (exists) coverage++;
+                    }
+                }
+            }
+            
+            if (coverage > bestCoverage) {
+                bestCoverage = coverage;
+                bestComboValues = [...comboValues];
+            }
+        }
+        
+        // Если нашли хорошую комбинацию, добавляем её
+        if (bestComboValues && bestCoverage > 0) {
+            // Создаем комбинацию с ВСЕМИ параметрами
+            const exampleParams = parameters.map(p => {
+                const pName = p.name?.trim();
+                if (!pName) return { name: '', value: '' };
+                const paramIdx = paramNames.indexOf(pName);
+                if (paramIdx >= 0 && bestComboValues[paramIdx] !== null) {
+                    return { name: pName, value: bestComboValues[paramIdx] };
+                }
+                return { name: pName, value: '' };
+            }).filter(p => p.name);
+            
+            bestCombo = { parameters: exampleParams };
+            combinations.push(bestCombo);
+            
+            // Отмечаем все покрытые пары
+            for (let i = 0; i < paramNames.length; i++) {
+                for (let j = i + 1; j < paramNames.length; j++) {
+                    if (bestComboValues[i] === null || bestComboValues[j] === null) continue;
+                    const pairKey = `${i}-${bestComboValues[i]}|${j}-${bestComboValues[j]}`;
+                    const exists = allPairsToCover.some(p => 
+                        p.param1Idx === i && p.param2Idx === j && 
+                        p.val1 === bestComboValues[i] && p.val2 === bestComboValues[j]
+                    );
+                    if (exists) {
+                        coveredPairs.add(pairKey);
+                    }
+                }
+            }
+        } else {
+            // Если не нашли комбинацию, которая покрывает новые пары, выходим
+            break;
+        }
+    }
+    
+    return combinations.slice(0, maxCombinations);
+};
+
 const createNewTestCase = (feature, story, scenario = '', code = '') => ({
     id: generateId(),
     title: 'Новый тест-кейс',
@@ -96,7 +466,8 @@ const createNewTestCase = (feature, story, scenario = '', code = '') => ({
     jiraIssue: '',
     priority: 'Medium',
     version: 'stable',
-    parameters: '',
+    parameters: [],
+    examples: [],
     attachments: [],
 });
 
@@ -203,7 +574,6 @@ export function TestCaseCard({
     jiraProject,
     jiraPat,
 }) {
-    const [isExpanded, setIsExpanded] = useState(false);
     const [sharedOptions, setSharedOptions] = useState([]);
 
     const PAGE_SIZE = 20;
@@ -269,37 +639,24 @@ export function TestCaseCard({
     };
 
     return (
-        <Draggable draggableId={testCase.id} index={index}>
-            {(prov, snap) => (
-                <div
-                    ref={prov.innerRef}
-                    {...prov.draggableProps}
-                    className={`case-card ${snap.isDragging ? 'is-dragging' : ''}`}
+        <div className="case-card">
+            <div className="case-card-header">
+                <CaseIcon />
+                <span className="node-title" style={{ flex: 1, cursor: 'default' }}>
+                    {testCase.title || 'Тест-кейс без названия'}
+                </span>
+                <button
+                    className="delete-btn"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(testCase.id);
+                    }}
                 >
-                    <div className="case-card-header">
-                        <span
-                            className="drag-handle"
-                            {...prov.dragHandleProps}
-                        >
-                            <DragHandleIcon />
-                        </span>
-                        <CaseIcon />
-                        <span className="node-title" onClick={() => setIsExpanded(!isExpanded)}>
-                            {testCase.title || 'Тест-кейс без названия'}
-                        </span>
-                        <button
-                            className="delete-btn"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                onDelete(testCase.id);
-                            }}
-                        >
-                            ×
-                        </button>
-                    </div>
+                    ×
+                </button>
+            </div>
 
-                    {isExpanded && (
-                        <div className="case-card-details">
+            <div className="case-card-details">
                             <div className="case-field">
                                 <label>Название*</label>
                                 <input
@@ -421,11 +778,36 @@ export function TestCaseCard({
                                         }
                                     />
                                 </div>
-                                <div className="case-field">
-                                    <label>Тестовый слой*</label>
+                                <div className="case-field" style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '8px',
+                                    marginBottom: '20px'
+                                }}>
+                                    <label style={{
+                                        fontSize: '13px',
+                                        color: 'var(--on-text-primary, #f6fafef5)',
+                                        fontWeight: '500',
+                                        lineHeight: '20px',
+                                        marginBottom: '0'
+                                    }}>Тестовый слой*</label>
                                     <select
                                         value={testCase.layer}
                                         onChange={(e) => handleFieldChange('layer', e.target.value)}
+                                        style={{
+                                            width: '100%',
+                                            padding: '10px 16px',
+                                            backgroundColor: 'var(--bg-base-primary, #1b2129)',
+                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                            borderRadius: '6px',
+                                            color: 'var(--on-text-primary, #f6fafef5)',
+                                            fontSize: '13px',
+                                            height: '40px',
+                                            boxSizing: 'border-box',
+                                            outline: 'none',
+                                            cursor: 'pointer',
+                                            lineHeight: '20px'
+                                        }}
                                     >
                                         <option value="E2E Tests">E2E Tests</option>
                                         <option value="Integration frontend Tests">
@@ -504,11 +886,429 @@ export function TestCaseCard({
                                     + Добавить ссылку
                                 </button>
                             </div>
-                        </div>
-                    )}
-                </div>
-            )}
-        </Draggable>
+                            
+                            {/* Параметры для параметризации */}
+                            <div className="case-field">
+                                <label>Параметры (для параметризации теста)</label>
+                                <div style={{ marginBottom: '12px', fontSize: '12px', color: '#8b949e' }}>
+                                    Используйте параметры, когда логика теста идентична, но меняются только входные данные
+                                </div>
+                                
+                                {/* Двухколоночный layout: параметры слева, таблица комбинаций справа */}
+                                <div style={{ 
+                                    display: 'grid', 
+                                    gridTemplateColumns: testCase.parameters && testCase.parameters.length > 0 ? '1fr 1fr' : '1fr',
+                                    gap: '20px',
+                                    marginBottom: '16px',
+                                    alignItems: 'start'
+                                }}>
+                                    {/* Левая колонка: Определение параметров */}
+                                    <div style={{ overflowX: 'auto', overflowY: 'visible' }}>
+                                        <div style={{ 
+                                            display: 'grid',
+                                            gridTemplateColumns: `repeat(${Math.min((testCase.parameters || []).length || 1, 5)}, 1fr)`,
+                                            gap: '16px',
+                                            marginBottom: '16px'
+                                        }}>
+                                            {(testCase.parameters || []).map((param, paramIdx) => (
+                                                <div key={paramIdx} style={{ 
+                                                    padding: '16px', 
+                                                    border: '1px solid var(--on-border-light, #bdd4ff36)', 
+                                                    borderRadius: '8px',
+                                                    backgroundColor: 'var(--bg-base-secondary, #2c343f)',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    gap: '12px',
+                                                    minWidth: '200px'
+                                                }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        <input
+                                                            type="text"
+                                                            placeholder="Название параметра"
+                                                            value={param.name || ''}
+                                                            onChange={(e) => {
+                                                                const newParams = [...(testCase.parameters || [])];
+                                                                newParams[paramIdx] = { ...newParams[paramIdx], name: e.target.value };
+                                                                handleFieldChange('parameters', newParams);
+                                                            }}
+                                                            style={{ 
+                                                                flex: 1, 
+                                                                padding: '10px 12px',
+                                                                backgroundColor: 'var(--bg-base-primary, #1b2129)',
+                                                                border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                                borderRadius: '6px',
+                                                                color: 'var(--on-text-primary, #f6fafef5)',
+                                                                fontSize: '13px',
+                                                                boxSizing: 'border-box'
+                                                            }}
+                                                        />
+                                                        <button
+                                                            className="remove-item-btn"
+                                                            onClick={() => {
+                                                                const newParams = (testCase.parameters || []).filter((_, i) => i !== paramIdx);
+                                                                handleFieldChange('parameters', newParams);
+                                                            }}
+                                                            style={{ 
+                                                                padding: '10px 12px',
+                                                                minWidth: '40px',
+                                                                height: '40px',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                fontSize: '16px'
+                                                            }}
+                                                        >
+                                                            ×
+                                                        </button>
+                                                    </div>
+                                                    
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                        {(param.values || []).map((value, valueIdx) => (
+                                                            <EditableValueTag
+                                                                key={valueIdx}
+                                                                value={value}
+                                                                autoEdit={!value}
+                                                                onSave={(newValue) => {
+                                                                    const newParams = [...(testCase.parameters || [])];
+                                                                    const newValues = [...(newParams[paramIdx].values || [])];
+                                                                    // Если значение пустое, удаляем его
+                                                                    if (!newValue || !newValue.trim()) {
+                                                                        const filteredValues = newValues.filter((_, i) => i !== valueIdx);
+                                                                        newParams[paramIdx] = { ...newParams[paramIdx], values: filteredValues };
+                                                                    } else {
+                                                                        newValues[valueIdx] = newValue.trim();
+                                                                        newParams[paramIdx] = { ...newParams[paramIdx], values: newValues };
+                                                                    }
+                                                                    handleFieldChange('parameters', newParams);
+                                                                }}
+                                                                onDelete={() => {
+                                                                    const newParams = [...(testCase.parameters || [])];
+                                                                    const newValues = (newParams[paramIdx].values || []).filter((_, i) => i !== valueIdx);
+                                                                    newParams[paramIdx] = { ...newParams[paramIdx], values: newValues };
+                                                                    handleFieldChange('parameters', newParams);
+                                                                }}
+                                                            />
+                                                        ))}
+                                                        <button
+                                                            className="add-item-btn"
+                                                            onClick={() => {
+                                                                const newParams = [...(testCase.parameters || [])];
+                                                                const newValues = [...(newParams[paramIdx].values || []), ''];
+                                                                newParams[paramIdx] = { ...newParams[paramIdx], values: newValues };
+                                                                handleFieldChange('parameters', newParams);
+                                                            }}
+                                                            style={{ 
+                                                                marginTop: '4px', 
+                                                                fontSize: '12px', 
+                                                                padding: '8px 12px',
+                                                                width: '100%',
+                                                                height: '36px'
+                                                            }}
+                                                        >
+                                                            + Добавить значение
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        
+                                        <div style={{ display: 'flex', gap: '12px', flexDirection: 'column' }}>
+                                            <button
+                                                className="add-item-btn"
+                                                onClick={() => {
+                                                    if ((testCase.parameters || []).length >= 5) {
+                                                        alert('Максимальное количество параметров: 5');
+                                                        return;
+                                                    }
+                                                    addArrayItem('parameters', { name: '', values: [''] });
+                                                }}
+                                                disabled={(testCase.parameters || []).length >= 5}
+                                                style={{ 
+                                                    width: '100%',
+                                                    padding: '10px 12px',
+                                                    height: '40px',
+                                                    fontSize: '13px',
+                                                    opacity: (testCase.parameters || []).length >= 5 ? 0.5 : 1,
+                                                    cursor: (testCase.parameters || []).length >= 5 ? 'not-allowed' : 'pointer'
+                                                }}
+                                            >
+                                                + Добавить параметр {(testCase.parameters || []).length >= 5 ? '(максимум 5)' : ''}
+                                            </button>
+                                            {testCase.parameters && testCase.parameters.length > 0 && (
+                                                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                                    <select
+                                                        id={`combo-mode-${testCase.id}`}
+                                                        defaultValue="pairwise"
+                                                        style={{
+                                                            flex: 1,
+                                                            padding: '10px 12px',
+                                                            backgroundColor: 'var(--bg-base-primary, #1b2129)',
+                                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                            borderRadius: '6px',
+                                                            color: 'var(--on-text-primary, #f6fafef5)',
+                                                            fontSize: '13px',
+                                                            cursor: 'pointer',
+                                                            height: '40px',
+                                                            boxSizing: 'border-box'
+                                                        }}
+                                                    >
+                                                        <option value="all">Все значения</option>
+                                                        <option value="pairwise">Pairwise</option>
+                                                    </select>
+                                                    <button
+                                                        className="add-item-btn"
+                                                        onClick={() => {
+                                                            const mode = document.getElementById(`combo-mode-${testCase.id}`)?.value || 'all';
+                                                            
+                                                            // Проверяем валидность параметров перед генерацией
+                                                            const validParams = (testCase.parameters || []).filter(p => 
+                                                                p.name && p.name.trim() && 
+                                                                p.values && Array.isArray(p.values) && 
+                                                                p.values.length > 0 && 
+                                                                p.values.some(v => v && v.trim())
+                                                            );
+                                                            
+                                                            if (validParams.length === 0) {
+                                                                alert('Невозможно сгенерировать комбинации. Убедитесь, что все параметры имеют имена и хотя бы одно значение.');
+                                                                return;
+                                                            }
+                                                            
+                                                            // Генерируем комбинации в зависимости от выбранного режима
+                                                            const combinations = mode === 'pairwise' 
+                                                                ? generatePairwiseCombinations(testCase.parameters || [])
+                                                                : generateAllCombinations(testCase.parameters || []);
+                                                            
+                                                            if (combinations.length === 0) {
+                                                                alert('Невозможно сгенерировать комбинации. Убедитесь, что все параметры имеют имена и хотя бы одно значение.');
+                                                                return;
+                                                            }
+                                                            
+                                                            // Заменяем существующие примеры на сгенерированные
+                                                            handleFieldChange('examples', combinations);
+                                                        }}
+                                                        style={{ 
+                                                            flex: 1,
+                                                            backgroundColor: 'var(--on-support-castor, #45e57b)',
+                                                            borderColor: 'var(--on-support-castor, #45e57b)',
+                                                            color: '#000',
+                                                            padding: '10px 12px',
+                                                            height: '40px',
+                                                            fontSize: '13px',
+                                                            fontWeight: '500'
+                                                        }}
+                                                    >
+                                                        Комбинировать
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Правая колонка: Таблица комбинаций */}
+                                    {testCase.parameters && testCase.parameters.length > 0 && (
+                                        <div style={{
+                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                            borderRadius: '8px',
+                                            backgroundColor: 'var(--bg-base-secondary, #2c343f)',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            height: '100%',
+                                            minHeight: '400px'
+                                        }}>
+                                            <div style={{ 
+                                                padding: '12px 16px',
+                                                borderBottom: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'space-between',
+                                                backgroundColor: 'var(--bg-base-primary, #1b2129)',
+                                                borderRadius: '8px 8px 0 0',
+                                                flexShrink: 0
+                                            }}>
+                                                <span style={{ fontSize: '13px', color: 'var(--on-text-hint, #d2e4fe80)', fontWeight: '500' }}>
+                                                    Максимальное количество комбинаций: 50
+                                                </span>
+                                            </div>
+                                            
+                                            <div style={{ overflow: 'auto', flex: 1, minHeight: 0, paddingBottom: '8px' }}>
+                                                {testCase.examples && testCase.examples.length > 0 ? (
+                                                    <table style={{ 
+                                                        width: '100%',
+                                                        borderCollapse: 'collapse',
+                                                        fontSize: '13px'
+                                                    }}>
+                                                        <thead>
+                                                            <tr style={{ 
+                                                                backgroundColor: 'var(--bg-base-primary, #1b2129)',
+                                                                borderBottom: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                                height: '44px'
+                                                            }}>
+                                                                {(testCase.parameters || []).map((param, idx) => (
+                                                                    <th key={idx} style={{ 
+                                                                        padding: '0 16px',
+                                                                        textAlign: 'left',
+                                                                        color: 'var(--on-text-primary, #f6fafef5)',
+                                                                        fontWeight: '500',
+                                                                        borderRight: idx < (testCase.parameters || []).length - 1 ? '1px solid var(--on-border-light, #bdd4ff36)' : 'none',
+                                                                        height: '44px',
+                                                                        verticalAlign: 'middle'
+                                                                    }}>
+                                                                        {param.name || `Параметр ${idx + 1}`}
+                                                                    </th>
+                                                                ))}
+                                                                <th style={{ 
+                                                                    padding: '0',
+                                                                    width: '50px',
+                                                                    textAlign: 'center',
+                                                                    height: '44px',
+                                                                    verticalAlign: 'middle'
+                                                                }}></th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {testCase.examples.map((example, exampleIdx) => (
+                                                                <tr key={exampleIdx} style={{
+                                                                    borderBottom: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                                    backgroundColor: exampleIdx % 2 === 0 ? 'var(--bg-base-secondary, #2c343f)' : 'transparent',
+                                                                    height: '44px'
+                                                                }}>
+                                                                    {(testCase.parameters || []).map((param, paramIdx) => {
+                                                                        const exParam = (example.parameters || []).find(p => p.name === param.name);
+                                                                        return (
+                                                                            <td key={paramIdx} style={{ 
+                                                                        padding: '0',
+                                                                        color: 'var(--on-text-primary, #f6fafef5)',
+                                                                        borderRight: paramIdx < (testCase.parameters || []).length - 1 ? '1px solid var(--on-border-light, #bdd4ff36)' : 'none',
+                                                                        verticalAlign: 'middle',
+                                                                        height: '44px'
+                                                                    }}>
+                                                                                <select
+                                                                                    value={exParam?.value || ''}
+                                                                                    onChange={(e) => {
+                                                                                        const newExamples = [...(testCase.examples || [])];
+                                                                                        const newExParams = [...(newExamples[exampleIdx].parameters || [])];
+                                                                                        const paramIdxInExample = newExParams.findIndex(p => p.name === param.name);
+                                                                                        if (paramIdxInExample >= 0) {
+                                                                                            newExParams[paramIdxInExample] = { ...newExParams[paramIdxInExample], value: e.target.value };
+                                                                                        } else {
+                                                                                            newExParams.push({ name: param.name, value: e.target.value });
+                                                                                        }
+                                                                                        newExamples[exampleIdx] = { ...newExamples[exampleIdx], parameters: newExParams };
+                                                                                        handleFieldChange('examples', newExamples);
+                                                                                    }}
+                                                                                    style={{ 
+                                                                                        width: '100%',
+                                                                                        height: '44px',
+                                                                                        padding: '0 16px',
+                                                                                        backgroundColor: 'var(--bg-base-primary, #1b2129)',
+                                                                                        border: 'none',
+                                                                                        borderRadius: '0',
+                                                                                        color: 'var(--on-text-primary, #f6fafef5)',
+                                                                                        fontSize: '13px',
+                                                                                        cursor: 'pointer',
+                                                                                        boxSizing: 'border-box',
+                                                                                        outline: 'none',
+                                                                                        display: 'block',
+                                                                                        margin: '0',
+                                                                                        appearance: 'none',
+                                                                                        WebkitAppearance: 'none',
+                                                                                        MozAppearance: 'none'
+                                                                                    }}
+                                                                                >
+                                                                                    <option value="">-</option>
+                                                                                    {param.values && param.values.filter(v => v && v.trim()).map((val, valIdx) => (
+                                                                                        <option key={valIdx} value={val.trim()}>
+                                                                                            {val.trim()}
+                                                                                        </option>
+                                                                                    ))}
+                                                                                </select>
+                                                                            </td>
+                                                                        );
+                                                                    })}
+                                                                    <td style={{ 
+                                                                        padding: '6px',
+                                                                        textAlign: 'center',
+                                                                        verticalAlign: 'middle',
+                                                                        height: '44px',
+                                                                        width: '50px'
+                                                                    }}>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                const newExamples = (testCase.examples || []).filter((_, i) => i !== exampleIdx);
+                                                                                handleFieldChange('examples', newExamples);
+                                                                            }}
+                                                                            style={{ 
+                                                                                background: 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))',
+                                                                                border: '1px solid var(--on-support-capella, #ff584d)',
+                                                                                color: 'var(--on-support-capella, #ff584d)',
+                                                                                cursor: 'pointer',
+                                                                                padding: '0',
+                                                                                width: '32px',
+                                                                                height: '32px',
+                                                                                borderRadius: '4px',
+                                                                                fontSize: '16px',
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                justifyContent: 'center',
+                                                                                margin: '0 auto'
+                                                                            }}
+                                                                        >
+                                                                            ×
+                                                                        </button>
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                ) : (
+                                                    <div style={{ 
+                                                        padding: '24px',
+                                                        textAlign: 'center',
+                                                        color: '#8b949e',
+                                                        fontSize: '12px'
+                                                    }}>
+                                                        Нет комбинаций. Нажмите "→ Комбинировать" для генерации.
+                                                    </div>
+                                                )}
+                                            </div>
+                                            
+                                            {testCase.examples && testCase.examples.length > 0 && (
+                                                <div style={{ 
+                                                    padding: '12px 16px',
+                                                    borderTop: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                    display: 'flex',
+                                                    justifyContent: 'flex-end',
+                                                    backgroundColor: 'var(--bg-base-primary, #1b2129)',
+                                                    borderRadius: '0 0 8px 8px'
+                                                }}>
+                                                    <button
+                                                        className="add-item-btn"
+                                                        onClick={() => {
+                                                            const newExample = {
+                                                                parameters: (testCase.parameters || []).map(p => ({
+                                                                    name: p.name || '',
+                                                                    value: ''
+                                                                }))
+                                                            };
+                                                            addArrayItem('examples', newExample);
+                                                        }}
+                                                        style={{ 
+                                                            fontSize: '13px', 
+                                                            padding: '10px 16px',
+                                                            height: '40px',
+                                                            minWidth: '140px'
+                                                        }}
+                                                    >
+                                                        + Добавить строку
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+            </div>
+        </div>
     );
 }
 
@@ -839,6 +1639,867 @@ const FeatureNode = ({
     </div>
 );
 
+// Компонент для resizable панели
+const ResizablePanel = ({ children, initialWidth, minWidth, maxWidth, side, onWidthChange }) => {
+    const [width, setWidth] = useState(initialWidth);
+    const [isResizing, setIsResizing] = useState(false);
+
+    const handleMouseDown = (e) => {
+        e.preventDefault();
+        setIsResizing(true);
+    };
+
+    useEffect(() => {
+        if (!isResizing) return;
+
+        const handleMouseMove = (e) => {
+            const newWidth = side === 'left' 
+                ? e.clientX 
+                : window.innerWidth - e.clientX;
+            
+            if (newWidth >= minWidth && newWidth <= maxWidth) {
+                setWidth(newWidth);
+                if (onWidthChange) {
+                    onWidthChange(newWidth);
+                }
+            }
+        };
+
+        const handleMouseUp = () => {
+            setIsResizing(false);
+        };
+
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+
+        return () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isResizing, minWidth, maxWidth, side, onWidthChange]);
+
+    return (
+        <div style={{ position: 'relative', width: `${width}px`, flexShrink: 0 }}>
+            {children}
+            <div 
+                className="resizer"
+                onMouseDown={handleMouseDown}
+                style={{ 
+                    cursor: isResizing ? 'col-resize' : 'col-resize',
+                    userSelect: 'none'
+                }}
+            />
+        </div>
+    );
+};
+
+// Иконка зеленого круга для тест-кейсов
+const GreenCircleIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="#3fb950">
+        <circle cx="8" cy="8" r="6" />
+    </svg>
+);
+
+// Упрощенное дерево для левой панели (только названия, кликабельные)
+const SimpleTreeView = ({ 
+    treeData, 
+    selectedCaseId, 
+    onSelectCase, 
+    onToggleExpand,
+    onAddNode,
+    onDeleteNode,
+    onRenameNode,
+    onDeleteCase
+}) => {
+    const [editingNode, setEditingNode] = useState(null);
+    const [editValue, setEditValue] = useState('');
+    // Функция для подсчета количества элементов в узле
+    const countItems = (nodeData, nodeType) => {
+        if (nodeType === 'feature') {
+            let count = 0;
+            Object.values(nodeData.stories || {}).forEach(story => {
+                count += (story.cases || []).length;
+                Object.values(story.scenarios || {}).forEach(scenario => {
+                    count += (scenario.cases || []).length;
+                    Object.values(scenario.codes || {}).forEach(code => {
+                        count += (code.cases || []).length;
+                    });
+                });
+            });
+            return count;
+        } else if (nodeType === 'story') {
+            let count = (nodeData.cases || []).length;
+            Object.values(nodeData.scenarios || {}).forEach(scenario => {
+                count += (scenario.cases || []).length;
+                Object.values(scenario.codes || {}).forEach(code => {
+                    count += (code.cases || []).length;
+                });
+            });
+            return count;
+        } else if (nodeType === 'scenario') {
+            let count = (nodeData.cases || []).length;
+            Object.values(nodeData.codes || {}).forEach(code => {
+                count += (code.cases || []).length;
+            });
+            return count;
+        } else if (nodeType === 'code') {
+            return (nodeData.cases || []).length;
+        }
+        return 0;
+    };
+
+    const renderTestCaseItem = (testCase, level, path) => {
+        const isSelected = selectedCaseId === testCase.id;
+        const displayTitle = testCase.title || 'Без названия';
+        
+        return (
+            <div
+                key={testCase.id}
+                className={`test-tree-row ${isSelected ? 'selected' : ''}`}
+                onClick={() => onSelectCase(testCase)}
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '4px 8px',
+                    paddingLeft: `${8 + level * 20}px`,
+                    cursor: 'pointer',
+                    backgroundColor: isSelected ? 'rgba(88, 166, 255, 0.15)' : 'transparent'
+                }}
+            >
+                <div style={{ marginRight: '8px', display: 'flex', alignItems: 'center' }}>
+                    <GreenCircleIcon />
+                </div>
+                <span 
+                    className="test-tree-node-title" 
+                    title={displayTitle}
+                    style={{ 
+                        flex: 1,
+                        fontSize: '13px',
+                        color: '#c9d1d9'
+                    }}
+                >
+                    {displayTitle}
+                </span>
+                <div 
+                    className="test-tree-node-controls"
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ display: 'flex', alignItems: 'center' }}
+                >
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (window.confirm('Удалить тест-кейс?')) {
+                                if (onDeleteCase) {
+                                    onDeleteCase(testCase.id, path);
+                                }
+                            }
+                        }}
+                        style={{
+                            background: 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))',
+                            border: '1px solid var(--on-support-capella, #ff584d)',
+                            color: 'var(--on-support-capella, #ff584d)',
+                            cursor: 'pointer',
+                            padding: '6px 10px',
+                            fontSize: '16px',
+                            borderRadius: '4px',
+                            minWidth: '32px',
+                            height: '28px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.2))'}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))'}
+                        title="Удалить тест-кейс"
+                    >
+                        ×
+                    </button>
+                </div>
+            </div>
+        );
+    };
+    
+    const renderNode = (nodeData, path, level = 0) => {
+        let nodeName, nodeType;
+        if (path.length === 1) {
+            nodeName = path[0];
+            nodeType = 'feature';
+        } else if (path.length === 2) {
+            nodeName = path[1];
+            nodeType = 'story';
+        } else if (path.length === 3) {
+            nodeName = path[2];
+            nodeType = 'scenario';
+        } else if (path.length === 4) {
+            nodeName = path[3];
+            nodeType = 'code';
+        } else {
+            return null;
+        }
+        
+        const isExpanded = nodeData.isExpanded !== false;
+        const hasChildren = 
+            (nodeType === 'feature' && Object.keys(nodeData.stories || {}).length > 0) ||
+            (nodeType === 'story' && (
+                (nodeData.cases || []).length > 0 ||
+                Object.keys(nodeData.scenarios || {}).length > 0
+            )) ||
+            (nodeType === 'scenario' && (
+                (nodeData.cases || []).length > 0 ||
+                Object.keys(nodeData.codes || {}).length > 0
+            )) ||
+            (nodeType === 'code' && (nodeData.cases || []).length > 0);
+        
+        return (
+            <div key={path.join('/')}>
+                {nodeType === 'feature' && (
+                    <div
+                        className="test-tree-row"
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '4px 8px',
+                            paddingLeft: `${8 + level * 20}px`,
+                            cursor: 'pointer'
+                        }}
+                    >
+                        <div className="test-tree-node-icon" style={{ cursor: hasChildren ? 'pointer' : 'default', marginRight: '8px', display: 'flex', alignItems: 'center' }} onClick={() => hasChildren && onToggleExpand(path)}>
+                            <span style={{ fontSize: '11px', minWidth: '12px', marginRight: '4px' }}>
+                                {hasChildren ? (isExpanded ? '▼' : '▶') : ' '}
+                            </span>
+                            <FolderIcon />
+                        </div>
+                        {editingNode === path.join('/') ? (
+                            <input
+                                type="text"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onBlur={() => {
+                                    if (editValue.trim() && editValue !== nodeName) {
+                                        onRenameNode(path, editValue.trim());
+                                    }
+                                    setEditingNode(null);
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        if (editValue.trim() && editValue !== nodeName) {
+                                            onRenameNode(path, editValue.trim());
+                                        }
+                                        setEditingNode(null);
+                                    } else if (e.key === 'Escape') {
+                                        setEditingNode(null);
+                                    }
+                                }}
+                                autoFocus
+                                style={{
+                                    flex: 1,
+                                    padding: '2px 6px',
+                                    backgroundColor: '#161b22',
+                                    border: '1px solid #58a6ff',
+                                    borderRadius: '4px',
+                                    color: '#c9d1d9',
+                                    fontSize: '13px'
+                                }}
+                            />
+                        ) : (
+                            <>
+                                <span 
+                                    className="test-tree-node-title"
+                                    style={{ 
+                                        fontWeight: '600', 
+                                        color: 'var(--on-support-aldebaran, #7aa8ff)',
+                                        flex: 1,
+                                        fontSize: '13px'
+                                    }}
+                                    onClick={() => hasChildren && onToggleExpand(path)}
+                                    onDoubleClick={() => {
+                                        setEditingNode(path.join('/'));
+                                        setEditValue(nodeName);
+                                    }}
+                                    title={nodeName}
+                                >
+                                    {nodeName}
+                                </span>
+                                <span style={{ 
+                                    fontSize: '12px', 
+                                    color: '#8b949e',
+                                    marginLeft: '8px',
+                                    marginRight: '8px'
+                                }}>
+                                    {countItems(nodeData, nodeType)}
+                                </span>
+                                <div className="test-tree-node-controls" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onAddNode(path, 'story');
+                                        }}
+                                        style={{
+                                            background: 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))',
+                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                            color: 'var(--on-text-primary, #f6fafef5)',
+                                            cursor: 'pointer',
+                                            padding: '6px 10px',
+                                            fontSize: '13px',
+                                            borderRadius: '4px',
+                                            minWidth: '40px',
+                                            height: '28px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.2))'}
+                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))'}
+                                        title="Добавить Story"
+                                    >
+                                        Story
+                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (window.confirm('Удалить фичу и всё внутри?')) {
+                                                onDeleteNode(path, 'feature');
+                                            }
+                                        }}
+                                        style={{
+                                            background: 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))',
+                                            border: '1px solid var(--on-support-capella, #ff584d)',
+                                            color: 'var(--on-support-capella, #ff584d)',
+                                            cursor: 'pointer',
+                                            padding: '6px 10px',
+                                            fontSize: '13px',
+                                            borderRadius: '4px',
+                                            minWidth: '32px',
+                                            height: '28px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.2))'}
+                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))'}
+                                        title="Удалить"
+                                    >
+                                        ×
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                )}
+                {nodeType === 'story' && (
+                    <div
+                        className="test-tree-row"
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '4px 8px',
+                            paddingLeft: `${8 + level * 20}px`,
+                            cursor: 'pointer'
+                        }}
+                    >
+                        <div className="test-tree-node-icon" style={{ cursor: hasChildren ? 'pointer' : 'default', marginRight: '8px', display: 'flex', alignItems: 'center' }} onClick={() => hasChildren && onToggleExpand(path)}>
+                            <span style={{ fontSize: '11px', minWidth: '12px', marginRight: '4px' }}>
+                                {hasChildren ? (isExpanded ? '▼' : '▶') : ' '}
+                            </span>
+                            <FolderIcon />
+                        </div>
+                        {editingNode === path.join('/') ? (
+                            <input
+                                type="text"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onBlur={() => {
+                                    if (editValue.trim() && editValue !== nodeName) {
+                                        onRenameNode(path, editValue.trim());
+                                    }
+                                    setEditingNode(null);
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        if (editValue.trim() && editValue !== nodeName) {
+                                            onRenameNode(path, editValue.trim());
+                                        }
+                                        setEditingNode(null);
+                                    } else if (e.key === 'Escape') {
+                                        setEditingNode(null);
+                                    }
+                                }}
+                                autoFocus
+                                style={{
+                                    flex: 1,
+                                    padding: '2px 6px',
+                                    backgroundColor: '#161b22',
+                                    border: '1px solid #3fb950',
+                                    borderRadius: '4px',
+                                    color: '#c9d1d9',
+                                    fontSize: '13px'
+                                }}
+                            />
+                        ) : (
+                            <>
+                                <span 
+                                    className="test-tree-node-title"
+                                    style={{ 
+                                        color: 'var(--on-support-castor, #45e57b)',
+                                        flex: 1,
+                                        fontSize: '13px'
+                                    }}
+                                    onClick={() => hasChildren && onToggleExpand(path)}
+                                    onDoubleClick={() => {
+                                        setEditingNode(path.join('/'));
+                                        setEditValue(nodeName);
+                                    }}
+                                    title={nodeName}
+                                >
+                                    {nodeName}
+                                </span>
+                                <span style={{ 
+                                    fontSize: '12px', 
+                                    color: '#8b949e',
+                                    marginLeft: '8px',
+                                    marginRight: '8px'
+                                }}>
+                                    {countItems(nodeData, nodeType)}
+                                </span>
+                                <div className="test-tree-node-controls">
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onAddNode(path, 'scenario');
+                                        }}
+                                        style={{
+                                            background: 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))',
+                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                            color: 'var(--on-text-primary, #f6fafef5)',
+                                            cursor: 'pointer',
+                                            padding: '6px 10px',
+                                            fontSize: '13px',
+                                            borderRadius: '4px',
+                                            minWidth: '40px',
+                                            height: '28px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.2))'}
+                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))'}
+                                        title="Добавить Scenario"
+                                    >
+                                        +Sc
+                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onAddNode(path, 'case');
+                                        }}
+                                        style={{
+                                            background: 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))',
+                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                            color: 'var(--on-text-primary, #f6fafef5)',
+                                            cursor: 'pointer',
+                                            padding: '6px 10px',
+                                            fontSize: '13px',
+                                            borderRadius: '4px',
+                                            minWidth: '40px',
+                                            height: '28px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.2))'}
+                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))'}
+                                        title="Добавить Test Case"
+                                    >
+                                        +TC
+                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (window.confirm('Удалить историю и всё внутри?')) {
+                                                onDeleteNode(path, 'story');
+                                            }
+                                        }}
+                                        style={{
+                                            background: 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))',
+                                            border: '1px solid var(--on-support-capella, #ff584d)',
+                                            color: 'var(--on-support-capella, #ff584d)',
+                                            cursor: 'pointer',
+                                            padding: '6px 10px',
+                                            fontSize: '13px',
+                                            borderRadius: '4px',
+                                            minWidth: '32px',
+                                            height: '28px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.2))'}
+                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))'}
+                                        title="Удалить"
+                                    >
+                                        ×
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                )}
+                {nodeType === 'scenario' && (
+                    <div
+                        className="test-tree-row"
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '4px 8px',
+                            paddingLeft: `${8 + level * 20}px`,
+                            cursor: 'pointer'
+                        }}
+                    >
+                        <div className="test-tree-node-icon" style={{ cursor: hasChildren ? 'pointer' : 'default', marginRight: '8px', display: 'flex', alignItems: 'center' }} onClick={() => hasChildren && onToggleExpand(path)}>
+                            <span style={{ fontSize: '11px', minWidth: '12px', marginRight: '4px' }}>
+                                {hasChildren ? (isExpanded ? '▼' : '▶') : ' '}
+                            </span>
+                            <FolderIcon />
+                        </div>
+                        {editingNode === path.join('/') ? (
+                            <input
+                                type="text"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onBlur={() => {
+                                    if (editValue.trim() && editValue !== nodeName) {
+                                        onRenameNode(path, editValue.trim());
+                                    }
+                                    setEditingNode(null);
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        if (editValue.trim() && editValue !== nodeName) {
+                                            onRenameNode(path, editValue.trim());
+                                        }
+                                        setEditingNode(null);
+                                    } else if (e.key === 'Escape') {
+                                        setEditingNode(null);
+                                    }
+                                }}
+                                autoFocus
+                                style={{
+                                    flex: 1,
+                                    padding: '2px 6px',
+                                    backgroundColor: '#161b22',
+                                    border: '1px solid #a371f7',
+                                    borderRadius: '4px',
+                                    color: '#c9d1d9',
+                                    fontSize: '13px'
+                                }}
+                            />
+                        ) : (
+                            <>
+                                <span 
+                                    className="test-tree-node-title"
+                                    style={{ 
+                                        color: 'var(--on-support-betelgeuse, #b17aff)',
+                                        flex: 1,
+                                        fontSize: '13px'
+                                    }}
+                                    onClick={() => hasChildren && onToggleExpand(path)}
+                                    onDoubleClick={() => {
+                                        setEditingNode(path.join('/'));
+                                        setEditValue(nodeName);
+                                    }}
+                                    title={nodeName}
+                                >
+                                    {nodeName}
+                                </span>
+                                <span style={{ 
+                                    fontSize: '12px', 
+                                    color: '#8b949e',
+                                    marginLeft: '8px',
+                                    marginRight: '8px'
+                                }}>
+                                    {countItems(nodeData, nodeType)}
+                                </span>
+                                <div className="test-tree-node-controls">
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onAddNode(path, 'code');
+                                        }}
+                                        style={{
+                                            background: 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))',
+                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                            color: 'var(--on-text-primary, #f6fafef5)',
+                                            cursor: 'pointer',
+                                            padding: '6px 10px',
+                                            fontSize: '13px',
+                                            borderRadius: '4px',
+                                            minWidth: '40px',
+                                            height: '28px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.2))'}
+                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))'}
+                                        title="Добавить Code"
+                                    >
+                                        +C
+                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onAddNode(path, 'case');
+                                        }}
+                                        style={{
+                                            background: 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))',
+                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                            color: 'var(--on-text-primary, #f6fafef5)',
+                                            cursor: 'pointer',
+                                            padding: '6px 10px',
+                                            fontSize: '13px',
+                                            borderRadius: '4px',
+                                            minWidth: '40px',
+                                            height: '28px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.2))'}
+                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))'}
+                                        title="Добавить Test Case"
+                                    >
+                                        +TC
+                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (window.confirm('Удалить сценарий и всё внутри?')) {
+                                                onDeleteNode(path, 'scenario');
+                                            }
+                                        }}
+                                        style={{
+                                            background: 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))',
+                                            border: '1px solid var(--on-support-capella, #ff584d)',
+                                            color: 'var(--on-support-capella, #ff584d)',
+                                            cursor: 'pointer',
+                                            padding: '6px 10px',
+                                            fontSize: '13px',
+                                            borderRadius: '4px',
+                                            minWidth: '32px',
+                                            height: '28px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.2))'}
+                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))'}
+                                        title="Удалить"
+                                    >
+                                        ×
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                )}
+                {nodeType === 'code' && (
+                    <div
+                        className="test-tree-row"
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '4px 8px',
+                            paddingLeft: `${8 + level * 20}px`,
+                            cursor: 'pointer'
+                        }}
+                    >
+                        <div className="test-tree-node-icon" style={{ cursor: hasChildren ? 'pointer' : 'default', marginRight: '8px', display: 'flex', alignItems: 'center' }} onClick={() => hasChildren && onToggleExpand(path)}>
+                            <span style={{ fontSize: '11px', minWidth: '12px', marginRight: '4px' }}>
+                                {hasChildren ? (isExpanded ? '▼' : '▶') : ' '}
+                            </span>
+                            <FolderIcon />
+                        </div>
+                        {editingNode === path.join('/') ? (
+                            <input
+                                type="text"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onBlur={() => {
+                                    if (editValue.trim() && editValue !== nodeName) {
+                                        onRenameNode(path, editValue.trim());
+                                    }
+                                    setEditingNode(null);
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        if (editValue.trim() && editValue !== nodeName) {
+                                            onRenameNode(path, editValue.trim());
+                                        }
+                                        setEditingNode(null);
+                                    } else if (e.key === 'Escape') {
+                                        setEditingNode(null);
+                                    }
+                                }}
+                                autoFocus
+                                style={{
+                                    flex: 1,
+                                    padding: '2px 6px',
+                                    backgroundColor: '#161b22',
+                                    border: '1px solid #f85149',
+                                    borderRadius: '4px',
+                                    color: '#c9d1d9',
+                                    fontSize: '13px'
+                                }}
+                            />
+                        ) : (
+                            <>
+                                <span 
+                                    className="test-tree-node-title"
+                                    style={{ 
+                                        color: 'var(--on-support-atlas, #ffa94d)',
+                                        flex: 1,
+                                        fontSize: '13px'
+                                    }}
+                                    onClick={() => hasChildren && onToggleExpand(path)}
+                                    onDoubleClick={() => {
+                                        setEditingNode(path.join('/'));
+                                        setEditValue(nodeName);
+                                    }}
+                                    title={nodeName}
+                                >
+                                    {nodeName}
+                                </span>
+                                <span style={{ 
+                                    fontSize: '12px', 
+                                    color: '#8b949e',
+                                    marginLeft: '8px',
+                                    marginRight: '8px'
+                                }}>
+                                    {countItems(nodeData, nodeType)}
+                                </span>
+                                <div className="test-tree-node-controls" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onAddNode(path, 'case');
+                                        }}
+                                        style={{
+                                            background: 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))',
+                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                            color: 'var(--on-text-primary, #f6fafef5)',
+                                            cursor: 'pointer',
+                                            padding: '6px 10px',
+                                            fontSize: '13px',
+                                            borderRadius: '4px',
+                                            minWidth: '40px',
+                                            height: '28px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.2))'}
+                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))'}
+                                        title="Добавить Test Case"
+                                    >
+                                        +TC
+                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (window.confirm('Удалить код и всё внутри?')) {
+                                                onDeleteNode(path, 'code');
+                                            }
+                                        }}
+                                        style={{
+                                            background: 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))',
+                                            border: '1px solid var(--on-support-capella, #ff584d)',
+                                            color: 'var(--on-support-capella, #ff584d)',
+                                            cursor: 'pointer',
+                                            padding: '6px 10px',
+                                            fontSize: '16px',
+                                            borderRadius: '4px',
+                                            minWidth: '32px',
+                                            height: '28px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.2))'}
+                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))'}
+                                        title="Удалить"
+                                    >
+                                        ×
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                )}
+                
+                {isExpanded && (
+                    <div>
+                        {/* Кейсы на уровне story */}
+                        {nodeType === 'story' && (nodeData.cases || []).map(c => renderTestCaseItem(c, level + 1, path))}
+                        
+                        {/* Кейсы на уровне scenario */}
+                        {nodeType === 'scenario' && (nodeData.cases || []).map(c => renderTestCaseItem(c, level + 1, path))}
+                        
+                        {/* Кейсы на уровне code */}
+                        {nodeType === 'code' && (nodeData.cases || []).map(c => renderTestCaseItem(c, level + 1, path))}
+                        
+                        {/* Вложенные узлы */}
+                        {nodeType === 'feature' && Object.entries(nodeData.stories || {}).map(([storyName, storyData]) =>
+                            renderNode(storyData, [path[0], storyName], level + 1)
+                        )}
+                        {nodeType === 'story' && Object.entries(nodeData.scenarios || {}).map(([scenarioName, scenarioData]) =>
+                            renderNode(scenarioData, [...path, scenarioName], level + 1)
+                        )}
+                        {nodeType === 'scenario' && Object.entries(nodeData.codes || {}).map(([codeName, codeData]) =>
+                            renderNode(codeData, [...path, codeName], level + 1)
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    };
+    
+    return (
+        <div className="test-tree-container">
+            {Object.entries(treeData).map(([featureName, featureData]) =>
+                renderNode(featureData, [featureName], 0)
+            )}
+            <div style={{ padding: '8px', borderTop: '1px solid var(--on-border-light, #bdd4ff36)', marginTop: '8px' }}>
+                <button
+                    onClick={() => onAddNode([], 'feature')}
+                    style={{
+                        width: '100%',
+                        padding: '6px',
+                        background: 'none',
+                        border: '1px dashed var(--on-border-light, #bdd4ff36)',
+                        borderRadius: '4px',
+                        color: 'var(--on-text-hint, #d2e4fe80)',
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                        transition: 'all 0.15s'
+                    }}
+                    onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.05))';
+                        e.currentTarget.style.borderColor = 'var(--on-support-aldebaran, #7aa8ff)';
+                        e.currentTarget.style.color = 'var(--on-support-aldebaran, #7aa8ff)';
+                    }}
+                    onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = 'transparent';
+                        e.currentTarget.style.borderColor = 'var(--on-border-light, #bdd4ff36)';
+                        e.currentTarget.style.color = 'var(--on-text-hint, #d2e4fe80)';
+                    }}
+                >
+                    + Добавить Feature
+                </button>
+            </div>
+        </div>
+    );
+};
+
 export default function TestModelReviewModal({
     isOpen,
     onClose,
@@ -847,8 +2508,10 @@ export default function TestModelReviewModal({
     projectId,
     jiraProject,
     jiraPat,
+    onCasesCountChange,
 }) {
     const [treeData, setTreeData] = useState({});
+    const [selectedCase, setSelectedCase] = useState(null);
     
     // Логирование изменений treeData
     useEffect(() => {
@@ -860,15 +2523,176 @@ export default function TestModelReviewModal({
     const [allureLink, setAllureLink] = useState(null);
     const [isGenerating, setIsGenerating] = useState(false);
 
+    // Функция для копирования ссылки в буфер обмена
+    const copyToClipboard = (text) => {
+        navigator.clipboard.writeText(text).then(() => {
+            alert('Ссылка скопирована в буфер обмена!');
+        }).catch(err => {
+            console.error('Ошибка при копировании:', err);
+            // Fallback для старых браузеров
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.style.position = 'fixed';
+            textArea.style.opacity = '0';
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                alert('Ссылка скопирована в буфер обмена!');
+            } catch (err) {
+                console.error('Ошибка при копировании (fallback):', err);
+            }
+            document.body.removeChild(textArea);
+        });
+    };
+
+    // Функция для получения ключа localStorage
+    const getStorageKey = () => {
+        if (!projectId) return null;
+        // Создаем хеш от initialCases для уникальности
+        // Используем простую хеш-функцию вместо btoa (который не поддерживает Unicode)
+        let casesHash = 'default';
+        if (initialCases && initialCases.length > 0) {
+            try {
+                const str = JSON.stringify(initialCases);
+                // Простая хеш-функция для строки
+                let hash = 0;
+                for (let i = 0; i < str.length; i++) {
+                    const char = str.charCodeAt(i);
+                    hash = ((hash << 5) - hash) + char;
+                    hash = hash & hash; // Convert to 32bit integer
+                }
+                // Преобразуем в положительное число и берем первые 8 символов
+                casesHash = Math.abs(hash).toString(36).substring(0, 8);
+            } catch (err) {
+                console.warn('TestModelReviewModal: Ошибка при создании хеша:', err);
+                casesHash = 'default';
+            }
+        }
+        return `testCasesReview_${projectId}_${casesHash}`;
+    };
+
+    // Подсчет количества тест-кейсов из treeData
+    const countTestCases = useCallback((tree) => {
+        if (!tree || Object.keys(tree).length === 0) return 0;
+        let count = 0;
+        Object.values(tree).forEach(feature => {
+            if (feature.cases && Array.isArray(feature.cases)) {
+                count += feature.cases.length;
+            }
+            if (feature.stories) {
+                Object.values(feature.stories).forEach(story => {
+                    if (story.cases && Array.isArray(story.cases)) {
+                        count += story.cases.length;
+                    }
+                    if (story.scenarios) {
+                        Object.values(story.scenarios).forEach(scenario => {
+                            if (scenario.cases && Array.isArray(scenario.cases)) {
+                                count += scenario.cases.length;
+                            }
+                            if (scenario.codes) {
+                                Object.values(scenario.codes).forEach(code => {
+                                    if (code.cases && Array.isArray(code.cases)) {
+                                        count += code.cases.length;
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
+            }
+        });
+        return count;
+    }, []);
+
+    // Сохранение состояния в localStorage при изменении treeData и обновление счетчика
     useEffect(() => {
-        if (!isOpen) return;
-        console.log('TestModelReviewModal: initialCases received:', initialCases);
-        console.log('TestModelReviewModal: initialCases length:', initialCases?.length);
-        const treeData = buildTreeFromCases(initialCases);
-        console.log('TestModelReviewModal: built tree data:', treeData);
+        if (!isOpen || !treeData || Object.keys(treeData).length === 0) return;
+        
+        const storageKey = getStorageKey();
+        if (!storageKey) return;
+        
+        try {
+            const dataToSave = {
+                treeData,
+                selectedCaseId: selectedCase?.id || null,
+                timestamp: Date.now()
+            };
+            localStorage.setItem(storageKey, JSON.stringify(dataToSave));
+            console.log('TestModelReviewModal: Сохранено состояние в localStorage:', storageKey);
+            
+            // Обновляем счетчик в родительском компоненте
+            const count = countTestCases(treeData);
+            if (onCasesCountChange) {
+                onCasesCountChange(count);
+            }
+        } catch (err) {
+            console.warn('TestModelReviewModal: Ошибка при сохранении в localStorage:', err);
+        }
+    }, [treeData, selectedCase, isOpen, projectId, initialCases, countTestCases, onCasesCountChange]);
+
+    useEffect(() => {
+        if (!isOpen) {
+            // При закрытии не очищаем состояние сразу - оно уже сохранено в localStorage
+            return;
+        }
+        
+        const storageKey = getStorageKey();
+        let savedState = null;
+        
+        // Пытаемся загрузить сохраненное состояние
+        if (storageKey) {
+            try {
+                const saved = localStorage.getItem(storageKey);
+                if (saved) {
+                    savedState = JSON.parse(saved);
+                    // Проверяем, что сохраненное состояние не слишком старое (например, не старше 7 дней)
+                    const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 дней
+                    if (savedState.timestamp && (Date.now() - savedState.timestamp) < maxAge) {
+                        console.log('TestModelReviewModal: Загружено сохраненное состояние из localStorage');
+                    } else {
+                        console.log('TestModelReviewModal: Сохраненное состояние устарело, используем initialCases');
+                        savedState = null;
+                    }
+                }
+            } catch (err) {
+                console.warn('TestModelReviewModal: Ошибка при загрузке из localStorage:', err);
+                savedState = null;
+            }
+        }
+        
+        // Используем сохраненное состояние или строим из initialCases
+        let treeDataToUse;
+        let selectedCaseToUse = null;
+        
+        if (savedState && savedState.treeData && Object.keys(savedState.treeData).length > 0) {
+            treeDataToUse = savedState.treeData;
+            console.log('TestModelReviewModal: Используем сохраненное treeData');
+            
+            // Восстанавливаем выбранный кейс
+            if (savedState.selectedCaseId) {
+                const allCases = flattenTreeToCases(treeDataToUse);
+                selectedCaseToUse = allCases.find(c => c.id === savedState.selectedCaseId) || allCases[0] || null;
+            } else {
+                const allCases = flattenTreeToCases(treeDataToUse);
+                selectedCaseToUse = allCases[0] || null;
+            }
+        } else {
+            console.log('TestModelReviewModal: initialCases received:', initialCases);
+            console.log('TestModelReviewModal: initialCases length:', initialCases?.length);
+            treeDataToUse = buildTreeFromCases(initialCases);
+            console.log('TestModelReviewModal: built tree data:', treeDataToUse);
+            
+            // Автоматически выбираем первый тест-кейс, если есть
+            const allCases = flattenTreeToCases(treeDataToUse);
+            selectedCaseToUse = allCases[0] || null;
+        }
+        
         console.log('TestModelReviewModal: setting treeData state...');
-        setTreeData(treeData);
+        setTreeData(treeDataToUse);
+        setSelectedCase(selectedCaseToUse);
         console.log('TestModelReviewModal: treeData state set');
+        
         if (projectId) {
             axios
                 .get(`${config.serverUrl}/shared-steps`, { params: { projectId } })
@@ -878,12 +2702,46 @@ export default function TestModelReviewModal({
                 .catch(console.warn);
         }
     }, [isOpen, projectId, initialCases]);
+    
+    // Функция для поиска тест-кейса в дереве по ID
+    const findCaseInTree = (tree, caseId) => {
+        for (const f in tree) {
+            for (const s in tree[f].stories) {
+                const storyNode = tree[f].stories[s];
+                // Кейсы на уровне story
+                const caseInStory = (storyNode.cases || []).find(c => c.id === caseId);
+                if (caseInStory) return caseInStory;
+                
+                // Кейсы в сценариях
+                for (const sc in storyNode.scenarios || {}) {
+                    const scenarioNode = storyNode.scenarios[sc];
+                    const caseInScenario = (scenarioNode.cases || []).find(c => c.id === caseId);
+                    if (caseInScenario) return caseInScenario;
+                    
+                    // Кейсы в code-узлах
+                    for (const code in scenarioNode.codes || {}) {
+                        const codeNode = scenarioNode.codes[code];
+                        const caseInCode = (codeNode.cases || []).find(c => c.id === caseId);
+                        if (caseInCode) return caseInCode;
+                    }
+                }
+            }
+        }
+        return null;
+    };
+    
+    const handleSelectCase = (testCase) => {
+        // Обновляем тест-кейс из дерева, чтобы получить актуальные данные
+        const updatedCase = findCaseInTree(treeData, testCase.id) || testCase;
+        setSelectedCase(updatedCase);
+    };
     const handleCloseWithConfirm = useCallback(() => {
         if (isGenerating || isSending) return; // не даём закрыть во время процессов
-        if (window.confirm('Вы уверены? Данные не сохранятся')) {
-            setAllureLink(null); // на всякий случай очищаем состояние успеха
-            onClose();
-        }
+        
+        // Состояние уже сохраняется автоматически при изменении treeData
+        // Просто закрываем модалку
+        setAllureLink(null); // на всякий случай очищаем состояние успеха
+        onClose();
     }, [isGenerating, isSending, onClose]);
     const handleUpdateCase = useCallback((caseId, updatedCase) => {
         setTreeData((prevTree) => {
@@ -1223,6 +3081,17 @@ export default function TestModelReviewModal({
                         }
                     }
                 }
+            
+            // Если удалили выбранный кейс, очищаем выбор или выбираем первый доступный
+            setSelectedCase((prevSelected) => {
+                if (prevSelected?.id === caseId) {
+                    const allCases = flattenTreeToCases(newTree);
+                    const remainingCases = allCases.filter(c => c.id !== caseId);
+                    return remainingCases.length > 0 ? remainingCases[0] : null;
+                }
+                return prevSelected;
+            });
+            
             return newTree;
         });
     }, []);
@@ -1296,6 +3165,69 @@ export default function TestModelReviewModal({
             return newTree;
         });
     };
+    
+    const handleRenameNode = (path, newName) => {
+        setTreeData((prevTree) => {
+            const newTree = JSON.parse(JSON.stringify(prevTree));
+            const [f, s, sc, code] = path;
+            if (path.length === 1) {
+                // Переименование feature
+                if (newTree[f] && newName !== f) {
+                    newTree[newName] = newTree[f];
+                    delete newTree[f];
+                }
+            } else if (path.length === 2) {
+                // Переименование story
+                if (newTree[f]?.stories[s] && newName !== s) {
+                    newTree[f].stories[newName] = newTree[f].stories[s];
+                    delete newTree[f].stories[s];
+                    // Обновляем feature и story в кейсах
+                    Object.values(newTree[f].stories[newName].cases || []).forEach(c => {
+                        c.feature = f;
+                        c.story = newName;
+                    });
+                    Object.values(newTree[f].stories[newName].scenarios || {}).forEach(scData => {
+                        Object.values(scData.cases || []).forEach(c => {
+                            c.feature = f;
+                            c.story = newName;
+                        });
+                        Object.values(scData.codes || {}).forEach(codeData => {
+                            Object.values(codeData.cases || []).forEach(c => {
+                                c.feature = f;
+                                c.story = newName;
+                            });
+                        });
+                    });
+                }
+            } else if (path.length === 3) {
+                // Переименование scenario
+                if (newTree[f]?.stories[s]?.scenarios[sc] && newName !== sc) {
+                    newTree[f].stories[s].scenarios[newName] = newTree[f].stories[s].scenarios[sc];
+                    delete newTree[f].stories[s].scenarios[sc];
+                    // Обновляем scenario в кейсах
+                    Object.values(newTree[f].stories[s].scenarios[newName].cases || []).forEach(c => {
+                        c.scenario = newName;
+                    });
+                    Object.values(newTree[f].stories[s].scenarios[newName].codes || {}).forEach(codeData => {
+                        Object.values(codeData.cases || []).forEach(c => {
+                            c.scenario = newName;
+                        });
+                    });
+                }
+            } else if (path.length === 4) {
+                // Переименование code
+                if (newTree[f]?.stories[s]?.scenarios[sc]?.codes[code] && newName !== code) {
+                    newTree[f].stories[s].scenarios[sc].codes[newName] = newTree[f].stories[s].scenarios[sc].codes[code];
+                    delete newTree[f].stories[s].scenarios[sc].codes[code];
+                    // Обновляем code в кейсах
+                    Object.values(newTree[f].stories[s].scenarios[sc].codes[newName].cases || []).forEach(c => {
+                        c.code = newName;
+                    });
+                }
+            }
+            return newTree;
+        });
+    };
 
     const handleToggleExpand = (path) => {
         setTreeData((prevTree) => {
@@ -1346,6 +3278,17 @@ export default function TestModelReviewModal({
             version: c.version || 'stable',
             links: (c.links || []).filter(l => l?.text || l?.url),
             jiraIssue: c.jiraIssueOption?.value || c.jiraIssue || undefined,
+            // Параметры и примеры для параметризации
+            parameters: (c.parameters || []).map(p => ({
+                name: (p.name || '').trim(),
+                values: (p.values || []).filter(v => v && v.trim()).map(v => v.trim())
+            })).filter(p => p.name && p.values.length > 0),
+            examples: (c.examples || []).map(ex => ({
+                parameters: (ex.parameters || []).map(ep => ({
+                    name: (ep.name || '').trim(),
+                    value: (ep.value || '').trim()
+                })).filter(ep => ep.name && ep.value)
+            })).filter(ex => ex.parameters.length > 0),
             // Если хочешь передавать уже в формате кастомок:
             customFields: [
                 { name: 'Scenario', value: c.scenario || '' },
@@ -1393,7 +3336,38 @@ export default function TestModelReviewModal({
         >
             <style>{`
       .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:1000;}
-      .modal-content{background:#161b22;color:#c9d1d9;border-radius:8px;width:95%;max-width:1200px;height:90vh;display:flex;flex-direction:column;overflow:hidden;border:1px solid #30363d;}
+      .modal-content{background:var(--bg-base-primary, #1b2129);color:var(--on-text-primary, #f6fafef5);border-radius:8px;width:98%;max-width:1800px;height:95vh;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--on-border-light, #bdd4ff36);}
+      .modal-layout{display:flex;flex:1;overflow:hidden;min-height:0;}
+      .modal-left-panel{width:100%;min-width:320px;border-right:1px solid var(--on-border-light, #bdd4ff36);display:flex;flex-direction:column;background:var(--bg-base-theme-1, #242a34);overflow:hidden;position:relative;box-sizing:border-box;height:100%;}
+      .modal-right-panel{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg-base-primary, #1b2129);min-width:0;position:relative;}
+      .resizer{width:4px;background:var(--on-border-light, #bdd4ff36);cursor:col-resize;position:absolute;right:0;top:0;bottom:0;z-index:10;transition:background 0.2s;}
+      .resizer:hover{background:var(--on-border-primary, #58a6ff);}
+      .resizer:active{background:var(--on-border-primary, #58a6ff);}
+      .modal-left-header{padding:14px 16px;border-bottom:1px solid var(--on-border-light, #bdd4ff36);font-weight:600;font-size:13px;color:var(--on-text-primary, #f6fafef5);background:var(--bg-base-primary, #1b2129);flex-shrink:0;}
+      .modal-left-content{flex:1;overflow-y:auto;overflow-x:hidden;padding:0;position:relative;min-height:0;max-height:100%;}
+      .modal-right-content{flex:1;overflow-y:auto;overflow-x:hidden;padding:20px 32px;max-width:1400px;margin:0 auto;width:100%;box-sizing:border-box;}
+      .test-tree-container{width:100%;padding:0 8px;position:relative;}
+      .test-tree-row{position:relative;width:100%;min-height:32px;display:flex;align-items:center;box-sizing:border-box;}
+      .test-tree-row:hover{background:var(--bg-control-flat-medium, rgba(174, 202, 244, 0.05));}
+      .test-tree-row.selected{background:var(--bg-alpha-aldebaran, rgba(44, 109, 232, 0.12));}
+      .test-tree-node-icon{margin-right:8px;display:flex;align-items:center;flex-shrink:0;color:var(--on-icon-secondary, #e2effda6);}
+      .test-tree-node-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;color:var(--on-text-primary, #f6fafef5);cursor:pointer;}
+      .test-tree-node-controls{display:flex;gap:4px;align-items:center;flex-shrink:0;opacity:0;transition:opacity 0.15s;}
+      .test-tree-row:hover .test-tree-node-controls{opacity:1;}
+      .case-card{background:var(--bg-base-secondary, #2c343f);border:1px solid var(--on-border-light, #bdd4ff36);border-radius:8px;margin-bottom:0;box-sizing:border-box;}
+      .case-card-header{padding:16px 20px;border-bottom:1px solid var(--on-border-light, #bdd4ff36);display:flex;align-items:center;gap:12px;background:var(--bg-base-primary, #1b2129);border-radius:8px 8px 0 0;flex-shrink:0;}
+      .case-card-details{padding:20px;background:var(--bg-base-secondary, #2c343f);border-radius:0 0 8px 8px;box-sizing:border-box;}
+      .case-field{margin-bottom:20px;box-sizing:border-box;}
+      .case-field label{display:block;margin-bottom:8px;font-size:13px;font-weight:500;color:var(--on-text-primary, #f6fafef5);}
+      .case-field input,.case-field textarea,.case-field select{width:100%;padding:8px 12px;background:var(--bg-base-primary, #1b2129);border:1px solid var(--on-border-light, #bdd4ff36);border-radius:6px;color:var(--on-text-primary, #f6fafef5);font-size:13px;font-family:inherit;transition:border-color 0.2s;box-sizing:border-box;}
+      .case-field input:focus,.case-field textarea:focus,.case-field select:focus{outline:none;border-color:var(--on-support-aldebaran, #7aa8ff);}
+      .case-field textarea{min-height:80px;resize:vertical;box-sizing:border-box;}
+      .add-item-btn{background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;transition:all 0.15s;font-weight:500;}
+      .add-item-btn:hover{background:#30363d;border-color:#58a6ff;color:#58a6ff;}
+      .remove-item-btn{background:none;border:none;color:#f85149;cursor:pointer;padding:4px 8px;border-radius:4px;font-size:14px;transition:background-color 0.15s;}
+      .remove-item-btn:hover{background:rgba(248,81,73,0.2);}
+      .delete-btn{background:none;border:none;color:#f85149;cursor:pointer;padding:4px 8px;border-radius:4px;font-size:18px;transition:background-color 0.15s;line-height:1;}
+      .delete-btn:hover{background:rgba(248,81,73,0.2);}
       .modal-header{padding:16px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #30363d;}
       .modal-header h2{margin:0;font-size:1.25rem;}
       .close-btn{background:none;border:none;color:#8b949e;font-size:24px;cursor:pointer;}
@@ -1542,29 +3516,80 @@ export default function TestModelReviewModal({
             )}
 
             {allureLink ? (
-                // --- экран успеха ---
+                // --- экран успешной загрузки ---
                 <>
                     <div className="modal-header">
-                        <h2>Успешно отправлено</h2>
-                        <button
-                            className="close-btn"
-                            onClick={handleCloseWithConfirm}
-                        >×</button>
+                        <h2>Allure успешно загрузил тест-кейсы!</h2>
+                        <button className="close-btn" onClick={() => {
+                            setAllureLink(null);
+                            handleCloseWithConfirm();
+                        }}>×</button>
                     </div>
-                    <div className="modal-body" style={{ textAlign: 'center' }}>
-                        <p>Тест-кейсы созданы в Allure по ссылке:</p>
-                        <a href={allureLink} target="_blank" rel="noopener noreferrer">
-                            {allureLink}
+                    
+                    <div className="modal-body">
+                        <div className="case-field">
+                            <label>Ссылка:</label>
+                            <div style={{
+                                display: 'flex',
+                                gap: '8px',
+                                alignItems: 'center',
+                                width: '100%'
+                            }}>
+                                <input
+                                    type="text"
+                                    value={allureLink}
+                                    readOnly
+                                    onClick={(e) => e.target.select()}
+                                    style={{
+                                        flex: 1,
+                                        fontFamily: 'monospace',
+                                        cursor: 'text',
+                                        minWidth: 0
+                                    }}
+                                />
+                                <button
+                                    onClick={() => copyToClipboard(allureLink)}
+                                    className="button-primary"
+                                    style={{
+                                        whiteSpace: 'nowrap',
+                                        minWidth: '120px',
+                                        flexShrink: 0
+                                    }}
+                                >
+                                    Копировать
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <footer className="modal-footer">
+                        <a
+                            href={allureLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="button-secondary"
+                            style={{
+                                textDecoration: 'none',
+                                display: 'inline-block',
+                                minWidth: '160px',
+                                textAlign: 'center'
+                            }}
+                        >
+                            Открыть в Allure
                         </a>
-                    </div>
-                    <div className="modal-footer">
                         <button
-                            className="button-primary"
-                            onClick={handleCloseWithConfirm}
+                            className="button-secondary"
+                            onClick={() => {
+                                setAllureLink(null);
+                                handleCloseWithConfirm();
+                            }}
+                            style={{
+                                minWidth: '160px'
+                            }}
                         >
                             Закрыть
                         </button>
-                    </div>
+                    </footer>
                 </>
             ) : (
                 // --- экран ревью/редактирования ---
@@ -1574,51 +3599,67 @@ export default function TestModelReviewModal({
                         <button className="close-btn" onClick={handleCloseWithConfirm} disabled={isSending}>×</button>
                     </div>
 
-                    <main className="modal-body">
-                        <DragDropContext onDragEnd={onDragEnd}>
-                            <Droppable droppableId="features" type="STRUCTURE">
-                                {(prov) => (
-                                    <div ref={prov.innerRef} {...prov.droppableProps}>
-                                        {console.log('Rendering treeData:', treeData, 'Keys:', Object.keys(treeData))}
-                                        {Object.entries(treeData).map(([featureName, featureData], idx) => (
-                                            <Draggable key={featureName} draggableId={featureName} index={idx} type="STRUCTURE">
-                                                {(dragProv) => (
-                                                    <div ref={dragProv.innerRef} {...dragProv.draggableProps}>
-                                                        <FeatureNode
-                                                            name={featureName}
-                                                            featureData={featureData}
-                                                            path={[featureName]}
-                                                            onUpdate={handleUpdateCase}
-                                                            onDelete={handleDeleteCase}
-                                                            onAddStory={(path) => handleAdd(path, 'story')}
-                                                            onAddScenario={(path) => handleAdd(path, 'scenario')}
-                                                            onToggleExpand={handleToggleExpand}
-                                                            onAddTestCase={(path) => handleAdd(path, 'case')}
-                                                            onAddCode={(path) => handleAdd(path, 'code')}
-                                                            projectId={projectId}
-                                                            jiraProject={jiraProject}
-                                                            jiraPat={jiraPat}
-                                                            onDeleteNode={handleDeleteNode}
-                                                        />
-                                                    </div>
-                                                )}
-                                            </Draggable>
-                                        ))}
-                                        {prov.placeholder}
+                    <div className="modal-layout">
+                        {/* Левая панель - упрощенное дерево структуры */}
+                        <ResizablePanel
+                            initialWidth={380}
+                            minWidth={320}
+                            maxWidth={500}
+                            side="left"
+                        >
+                            <div className="modal-left-panel">
+                                <div className="modal-left-header">
+                                    Структура тестов
+                                </div>
+                                <div className="modal-left-content">
+                                    <SimpleTreeView
+                                        treeData={treeData}
+                                        selectedCaseId={selectedCase?.id}
+                                        onSelectCase={handleSelectCase}
+                                        onToggleExpand={handleToggleExpand}
+                                        onAddNode={handleAdd}
+                                        onDeleteNode={handleDeleteNode}
+                                        onRenameNode={handleRenameNode}
+                                        onDeleteCase={handleDeleteCase}
+                                    />
+                                </div>
+                            </div>
+                        </ResizablePanel>
+
+                        {/* Правая панель - детальная информация о выбранном тест-кейсе */}
+                        <div className="modal-right-panel">
+                            <div className="modal-right-content">
+                                {selectedCase ? (
+                                    <TestCaseCard
+                                        testCase={selectedCase}
+                                        index={0}
+                                        onUpdate={(caseId, updatedCase) => {
+                                            handleUpdateCase(caseId, updatedCase);
+                                            // Обновляем выбранный кейс, если это он
+                                            if (selectedCase && caseId === selectedCase.id) {
+                                                setSelectedCase(updatedCase);
+                                            }
+                                        }}
+                                        onDelete={handleDeleteCase}
+                                        projectId={projectId}
+                                        jiraProject={jiraProject}
+                                        jiraPat={jiraPat}
+                                    />
+                                ) : (
+                                    <div style={{ 
+                                        display: 'flex', 
+                                        alignItems: 'center', 
+                                        justifyContent: 'center', 
+                                        height: '100%',
+                                        color: '#8b949e',
+                                        fontSize: '14px'
+                                    }}>
+                                        Выберите тест-кейс из структуры слева
                                     </div>
                                 )}
-                            </Droppable>
-                        </DragDropContext>
-
-                        <button
-                            className="add-node-btn"
-                            style={{ width: '100%', marginTop: '16px', padding: '8px' }}
-                            onClick={() => handleAdd([], 'feature')}
-                            disabled={isSending}
-                        >
-                            + Добавить фичу
-                        </button>
-                    </main>
+                            </div>
+                        </div>
+                    </div>
 
                     <footer className="modal-footer">
                         <button className="button-secondary" onClick={handleCloseWithConfirm} disabled={isSending}>

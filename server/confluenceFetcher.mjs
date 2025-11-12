@@ -447,13 +447,35 @@ export async function fetchConfluencePage(
     pageId,
     { inlineTextAttachments = true } = {}
 ) {
+    // Валидация входных параметров
+    if (!bearerToken || typeof bearerToken !== 'string' || !bearerToken.trim()) {
+        throw new Error('bearerToken обязателен и должен быть непустой строкой');
+    }
+    if (!pageId) {
+        throw new Error('pageId обязателен');
+    }
+    
+    const cleanToken = bearerToken.trim();
+    const url = CONTENT_URL(pageId);
+    
+    console.log(`[fetchConfluencePage] Запрос к Confluence: pageId=${pageId}, URL=${url}`);
+    console.log(`[fetchConfluencePage] bearerToken длина: ${cleanToken.length}, первые 20 символов: ${cleanToken.substring(0, 20)}...`);
+    
     // 1) HTML export_view
-    const contentRes = await fetch(CONTENT_URL(pageId), {
-        headers: { Accept: 'application/json', Authorization: `Bearer ${bearerToken}` },
+    const contentRes = await fetch(url, {
+        headers: { 
+            Accept: 'application/json', 
+            Authorization: `Bearer ${cleanToken}` 
+        },
     });
     const bodyText = await contentRes.text();
     if (!contentRes.ok) {
-        throw new Error(`Content fetch failed: ${contentRes.status} ${bodyText.trim().slice(0, 200)}…`);
+        const errorMsg = bodyText.trim().slice(0, 500);
+        console.error(`[fetchConfluencePage] ❌ Ошибка ${contentRes.status}: ${errorMsg}`);
+        if (contentRes.status === 401) {
+            throw new Error(`Ошибка авторизации (401) при загрузке страницы Confluence pageId=${pageId}. Проверьте bearerToken. Ответ сервера: ${errorMsg}`);
+        }
+        throw new Error(`Content fetch failed: ${contentRes.status} ${errorMsg}…`);
     }
     const data = JSON.parse(bodyText);
     const rawHtml = data.body?.export_view?.value;

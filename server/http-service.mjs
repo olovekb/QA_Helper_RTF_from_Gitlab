@@ -613,6 +613,73 @@ export async function addParameterToTestCase(testCaseId, { name, value, type }) 
     return resp.json();
 }
 
+/**
+ * Создать примеры (examples) для параметризованного тест-кейса
+ * @param {number} testCaseId
+ * @param {Array<Array<{name: string, value: string}>>} examples - массив примеров, каждый пример - массив параметров
+ * @returns {Promise<Array>} - массив созданных примеров с id
+ */
+export async function createTestCaseExamples(testCaseId, examples) {
+    const resp = await fetchWithAuth(
+        `${BASE_URL}/testcase/${testCaseId}/example`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(examples),
+        }
+    );
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Allure POST testcase examples failed ${resp.status}: ${txt}`);
+    }
+    return resp.json();
+}
+
+/**
+ * Генерация pairwise комбинаций параметров
+ * @param {number} n - степень pairwise (обычно 2)
+ * @param {Array<{name: string, values: Array<string>}>} parameters - массив параметров с их значениями
+ * @returns {Promise<Array>} - массив примеров (комбинаций параметров)
+ */
+export async function generatePairwiseExamples(n, parameters) {
+    const resp = await fetchWithAuth(
+        `${BASE_URL}/testcase/example/nwise?n=${encodeURIComponent(n)}`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(parameters),
+        }
+    );
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Allure POST pairwise examples failed ${resp.status}: ${txt}`);
+    }
+    return resp.json();
+}
+
+/**
+ * Удалить параметр из тест-кейса
+ * @param {number} testCaseId
+ * @param {string} parameterName - имя параметра для удаления
+ */
+export async function deleteTestCaseParameter(testCaseId, parameterName) {
+    // Note: Allure API может не иметь прямого DELETE для параметра
+    // В этом случае нужно получить все параметры, удалить нужный и обновить
+    const resp = await fetchWithAuth(
+        `${BASE_URL}/testcase/${testCaseId}/parameter`,
+        {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: parameterName }),
+        }
+    );
+    if (!resp.ok && resp.status !== 404) {
+        const txt = await resp.text();
+        throw new Error(`Allure DELETE parameter failed ${resp.status}: ${txt}`);
+    }
+    return resp.ok ? resp.json() : null;
+}
+
 // 9. Создать значение кастомного поля на уровне проекта
 export async function createProjectCustomFieldValue(projectId, customFieldId, name) {
     const resp = await fetchWithAuth(`${BASE_URL}/project/${projectId}/cfv`, {
