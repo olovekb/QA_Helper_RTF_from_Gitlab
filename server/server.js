@@ -175,7 +175,10 @@ import {
     createTag,
     addParameterToTestCase,
     createTestCaseExamples,
-    generatePairwiseExamples
+    generatePairwiseExamples,
+    createSharedStep,
+    addStepToSharedStep,
+    getSharedStepDetails
 } from './http-service.mjs';
 import { spinningLoader } from './spinning-loader.mjs';
 import pLimit from 'p-limit';
@@ -2853,15 +2856,14 @@ ${requirementsText}
     ];
 
     try {
-        const response = await callWithBackoff(
+        const response = await callWithCloudRuFallback(
             OPENROUTER_URL,
             [{ role: "user", content: prompt }],
             config.openRouterAiKey,
             {
-                model: "anthropic/claude-3.5-sonnet",
+                tools: tools,
                 temperature: 0,
-                max_tokens: 16000,  // ✅ Увеличено с 10000 до 16000 для более полной структуры
-                tools: tools
+                models: config.cloudruModels  // Используем модели из конфига
             }
         );
 
@@ -5857,14 +5859,31 @@ ${escalationPrompt}`;
         
         console.log(`[generateTestModelAsync] 📊 Метрики:`, metrics);
 
-        await db('generation_tasks').where('id', taskId).update({
+        // Сохраняем результат (метрики сохраняем только если столбец существует)
+        const updateData = {
             status: 'completed',
             progress: 100,
             result: { testModel: cleanedModel },
-            metrics: JSON.stringify(metrics),
             completed_at: new Date(),
             updated_at: new Date()
-        });
+        };
+        
+        // ✅ Условное сохранение метрик (если столбец существует)
+        try {
+            // Пробуем обновить с метриками
+            await db('generation_tasks').where('id', taskId).update({
+                ...updateData,
+                metrics: JSON.stringify(metrics)
+            });
+        } catch (error) {
+            // Если столбец metrics не существует - сохраняем без метрик
+            if (error.message && error.message.includes('столбец "metrics"')) {
+                console.warn('[generateTestModelAsync] Столбец metrics не существует, сохраняю без метрик');
+                await db('generation_tasks').where('id', taskId).update(updateData);
+            } else {
+                throw error; // Пробрасываем другие ошибки
+            }
+        }
 
         console.log(`[generate-test-model-async] Задача ${taskId} завершена успешно`);
 
@@ -7634,7 +7653,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         const {
             requirements,
             modelStructure: rawModel,
-            text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken
+            text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken,
+            projectId
         } = inputData;
 
         // ✅ Создаем глубокую копию modelStructure чтобы не модифицировать оригинал
@@ -7655,6 +7675,55 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                         }
                     }
                 }
+            }
+        }
+
+        // ✅ НОВОЕ: Получаем список shared steps для проекта (если projectId указан)
+        let sharedStepsList = [];
+        let sharedStepsMap = new Map(); // name -> { id, name, hasExpectedResult }
+        
+        if (projectId) {
+            try {
+                console.log(`[generateTestCasesAsync] Получаю список shared steps для проекта ${projectId}...`);
+                const sharedStepsResponse = await getSharedStepsList({
+                    projectId,
+                    page: 0,
+                    size: 100, // Получаем первые 100 shared steps
+                    archived: false
+                });
+                
+                if (sharedStepsResponse?.content && Array.isArray(sharedStepsResponse.content)) {
+                    sharedStepsList = sharedStepsResponse.content;
+                    console.log(`[generateTestCasesAsync] ✅ Найдено ${sharedStepsList.length} shared steps`);
+                    
+                    // Создаем карту для быстрого поиска
+                    for (const ss of sharedStepsList) {
+                        // Получаем детали shared step, чтобы проверить наличие Expected Result
+                        try {
+                            const details = await getSharedStepDetails(ss.id);
+                            const hasExpectedResult = details?.steps?.some(step => 
+                                step.expectedResultJson || step.expectedResult
+                            ) || false;
+                            
+                            sharedStepsMap.set(ss.name.toLowerCase().trim(), {
+                                id: ss.id,
+                                name: ss.name,
+                                hasExpectedResult
+                            });
+                        } catch (err) {
+                            console.warn(`[generateTestCasesAsync] Не удалось получить детали shared step ${ss.id}:`, err.message);
+                            // Добавляем без проверки Expected Result
+                            sharedStepsMap.set(ss.name.toLowerCase().trim(), {
+                                id: ss.id,
+                                name: ss.name,
+                                hasExpectedResult: false // По умолчанию считаем, что нет
+                            });
+                        }
+                    }
+                }
+            } catch (error) {
+                console.warn(`[generateTestCasesAsync] ⚠️ Ошибка получения shared steps:`, error.message);
+                // Продолжаем без shared steps
             }
         }
 
@@ -7909,6 +7978,85 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         });
         const interactiveTools = Array.isArray(contextToolset.tools) ? contextToolset.tools : [];
         const contextToolHandlers = contextToolset.handlers || {};
+        
+        // ✅ НОВОЕ: Добавляем tool для создания shared steps (если projectId указан)
+        if (projectId) {
+            const createSharedStepTool = {
+                type: "function",
+                function: {
+                    name: "create_shared_step",
+                    description: "Создать новый общий шаг (shared step) в Allure TestOps. Используй, если нужного shared step нет, но он должен быть общим (например, авторизация, вход в систему).",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            name: {
+                                type: "string",
+                                description: "Название shared step (например, 'Авторизация', 'Вход в систему')"
+                            },
+                            stepText: {
+                                type: "string",
+                                description: "Текст шага (например, 'Авторизоваться в системе с логином и паролем')"
+                            },
+                            expectedResult: {
+                                type: "string",
+                                description: "Ожидаемый результат (опционально, только если нужен Expected Result в shared step)"
+                            },
+                            withExpectedResult: {
+                                type: "boolean",
+                                description: "Включать ли Expected Result в shared step (по умолчанию false)"
+                            }
+                        },
+                        required: ["name", "stepText"]
+                    }
+                }
+            };
+            
+            // Добавляем tool в список
+            interactiveTools.push(createSharedStepTool);
+            
+            // Добавляем handler для создания shared step
+            contextToolHandlers.create_shared_step = async (args) => {
+                if (!projectId) {
+                    return { error: "projectId не указан, невозможно создать shared step" };
+                }
+                
+                try {
+                    const { name, stepText, expectedResult, withExpectedResult = false } = args;
+                    
+                    // Создаем shared step
+                    const sharedStep = await createSharedStep({ projectId, name });
+                    console.log(`[create_shared_step] ✅ Создан shared step "${name}" с ID ${sharedStep.id}`);
+                    
+                    // Добавляем шаг в shared step
+                    await addStepToSharedStep({
+                        sharedStepId: sharedStep.id,
+                        body: stepText,
+                        expectedResult: expectedResult || undefined,
+                        withExpectedResult: withExpectedResult || !!expectedResult
+                    });
+                    
+                    console.log(`[create_shared_step] ✅ Добавлен шаг в shared step ${sharedStep.id}`);
+                    
+                    // Обновляем локальный список shared steps
+                    sharedStepsList.push(sharedStep);
+                    sharedStepsMap.set(name.toLowerCase().trim(), {
+                        id: sharedStep.id,
+                        name: sharedStep.name,
+                        hasExpectedResult: withExpectedResult || !!expectedResult
+                    });
+                    
+                    return {
+                        success: true,
+                        sharedStepId: sharedStep.id,
+                        name: sharedStep.name,
+                        message: `Shared step "${name}" успешно создан с ID ${sharedStep.id}. Используй его в тест-кейсах через { "sharedStepId": ${sharedStep.id} }`
+                    };
+                } catch (error) {
+                    console.error(`[create_shared_step] Ошибка:`, error.message);
+                    return { error: `Не удалось создать shared step: ${error.message}` };
+                }
+            };
+        }
 
         let toolSummary = contextToolset.summary || '';
         if (toolSummary) {
@@ -8578,7 +8726,59 @@ Total = (Stories × 1.5) + (Scenarios × 2.5) ± 30%
 □ Expected конкретный во всех тестах?
 `.trim();
 
-        const baseSystemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}`;
+        // ✅ НОВОЕ: Добавляем информацию о shared steps в system prompt
+        const sharedStepsSection = sharedStepsList.length > 0 ? `
+═══════════════════════════════════════════════════════════════
+📋 ДОСТУПНЫЕ ОБЩИЕ ШАГИ (SHARED STEPS)
+═══════════════════════════════════════════════════════════════
+
+🚨 КРИТИЧЕСКИ ВАЖНО: ИСПОЛЬЗУЙ ОБЩИЕ ШАГИ ВМЕСТО ДУБЛИРОВАНИЯ!
+
+В проекте уже существуют следующие общие шаги (shared steps):
+${sharedStepsList.map((ss, idx) => {
+    const details = sharedStepsMap.get(ss.name.toLowerCase().trim());
+    const hasER = details?.hasExpectedResult ? ' (с Expected Result)' : ' (без Expected Result)';
+    return `${idx + 1}. "${ss.name}" (ID: ${ss.id})${hasER}`;
+}).join('\n')}
+
+ПРАВИЛА ИСПОЛЬЗОВАНИЯ:
+1. ✅ ПРОВЕРЯЙ перед созданием шага: может быть уже есть общий шаг?
+   - Например: "Авторизация", "Вход в систему", "Login" → используй существующий shared step
+   - Если шаг повторяется в нескольких тест-кейсах → используй shared step
+
+2. ✅ В тест-кейсе используй shared step так:
+   {
+     "steps": [
+       { "sharedStepId": 123 }  // ← Используй ID существующего shared step
+     ]
+   }
+
+3. ✅ Если нужного shared step НЕТ, но он должен быть общим:
+   - Вызови tool "create_shared_step" для создания нового shared step
+   - Затем используй его ID в тест-кейсе
+
+4. ⚠️ Expected Result в shared step:
+   - Если shared step имеет Expected Result → НЕ дублируй его в expected тест-кейса
+   - Если shared step БЕЗ Expected Result → добавь expected в тест-кейс
+
+ПРИМЕРЫ:
+❌ НЕПРАВИЛЬНО (дублирование):
+{
+  "steps": ["Авторизоваться в системе", "Перейти в раздел платежей"]
+}
+
+✅ ПРАВИЛЬНО (использование shared step):
+{
+  "steps": [
+    { "sharedStepId": 123 },  // "Авторизация" (уже существует)
+    "Перейти в раздел платежей"
+  ]
+}
+
+═══════════════════════════════════════════════════════════════
+`.trim() : '';
+
+        const baseSystemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}${sharedStepsSection ? '\n\n' + sharedStepsSection : ''}`;
         const baseCaseModelOptions = {
             models: config.cloudruModels,
             temperature: 0,
@@ -8690,7 +8890,22 @@ Total = (Stories × 1.5) + (Scenarios × 2.5) ± 30%
                                             : { type: "string" },
                                         title: { type: "string" },
                                         precondition: { type: "string" },
-                                        steps: { type: "array", items: { type: "string" } },
+                                        steps: { 
+                                            type: "array", 
+                                            description: "Массив шагов. Может содержать строки или объекты с sharedStepId",
+                                            items: { 
+                                                oneOf: [
+                                                    { type: "string" },
+                                                    { 
+                                                        type: "object",
+                                                        properties: {
+                                                            sharedStepId: { type: "number", description: "ID существующего shared step" }
+                                                        },
+                                                        required: ["sharedStepId"]
+                                                    }
+                                                ]
+                                            } 
+                                        },
                                         expected: { type: "string" },
                                         tags: { type: "array", items: { type: "string" } },
                                         layer: {

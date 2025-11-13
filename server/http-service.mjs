@@ -446,6 +446,120 @@ export async function getSharedStepsList({
     return response.json();
 }
 
+/**
+ * Создать общий шаг (shared step)
+ * @param {Object} opts
+ * @param {string|number} opts.projectId – ID проекта (обязательный)
+ * @param {string} opts.name – Название shared step (обязательный)
+ * @returns {Promise<Object>} – Созданный shared step с полями id, projectId, name и т.д.
+ */
+export async function createSharedStep({ projectId, name }) {
+    if (!projectId || !name) {
+        throw new Error('projectId and name are required to create shared step');
+    }
+
+    const url = `${BASE_URL}/sharedstep`;
+    const response = await fetchWithAuth(url, {
+        method: 'POST',
+        body: JSON.stringify({ projectId, name })
+    });
+
+    if (!response.ok) {
+        const text = await response.text().catch(() => response.statusText);
+        throw new Error(`Ошибка создания shared step: ${text}`);
+    }
+
+    return response.json();
+}
+
+/**
+ * Добавить шаг в shared step
+ * @param {Object} opts
+ * @param {string|number} opts.sharedStepId – ID shared step (обязательный)
+ * @param {string} [opts.body] – Текст шага (если не используется sharedStepId)
+ * @param {string} [opts.expectedResult] – Ожидаемый результат (опционально)
+ * @param {boolean} [opts.withExpectedResult=false] – Включать ли Expected Result в запрос
+ * @returns {Promise<Object>} – Созданный шаг с полем id
+ */
+export async function addStepToSharedStep({ sharedStepId, body, expectedResult, withExpectedResult = false }) {
+    if (!sharedStepId) {
+        throw new Error('sharedStepId is required to add step to shared step');
+    }
+
+    // Формируем bodyJson в формате TipTap (ProseMirror)
+    const bodyJson = {
+        type: "doc",
+        content: [
+            {
+                type: "paragraph",
+                content: [
+                    {
+                        type: "text",
+                        text: body || ""
+                    }
+                ]
+            }
+        ]
+    };
+
+    const payload = {
+        bodyJson,
+        sharedStepId: Number(sharedStepId)
+    };
+
+    // Если есть Expected Result, добавляем его
+    if (expectedResult && withExpectedResult) {
+        payload.expectedResultJson = {
+            type: "doc",
+            content: [
+                {
+                    type: "paragraph",
+                    content: [
+                        {
+                            type: "text",
+                            text: expectedResult
+                        }
+                    ]
+                }
+            ]
+        };
+    }
+
+    const url = `${BASE_URL}/sharedstep/step?withExpectedResult=${withExpectedResult}`;
+    const response = await fetchWithAuth(url, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        const text = await response.text().catch(() => response.statusText);
+        throw new Error(`Ошибка добавления шага в shared step: ${text}`);
+    }
+
+    return response.json();
+}
+
+/**
+ * Получить детали shared step (включая шаги и Expected Result)
+ * @param {string|number} sharedStepId – ID shared step
+ * @returns {Promise<Object>} – Детали shared step
+ */
+export async function getSharedStepDetails(sharedStepId) {
+    if (!sharedStepId) {
+        throw new Error('sharedStepId is required to get shared step details');
+    }
+
+    const url = `${BASE_URL}/sharedstep/${sharedStepId}`;
+    const response = await fetchWithAuth(url);
+
+    if (!response.ok) {
+        const text = await response.text().catch(() => response.statusText);
+        throw new Error(`Ошибка получения shared step: ${text}`);
+    }
+
+    return response.json();
+}
+
 
 // 1. Создать ТК
 export async function createTestCaseAllure({ projectId, name }) {
