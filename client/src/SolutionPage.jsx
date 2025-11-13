@@ -1033,7 +1033,11 @@ export default function SolutionPage({ projects = [] }) {
       
       // Сначала пробуем асинхронный API
       try {
-        const payload = { ...payloadBase, modelStructure };
+        const payload = { 
+          ...payloadBase, 
+          modelStructure,
+          ...(allureProject ? { projectId: allureProject } : {})  // ✅ Добавляем projectId для shared steps
+        };
         console.log('SolutionPage: отправляем payload с modelStructure:', payload);
         
         const { data } = await axios.post(

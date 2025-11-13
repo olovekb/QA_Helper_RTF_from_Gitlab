@@ -139,7 +139,8 @@ const GlobalGenerationWindow = ({
       // Собираем payload с требованиями
       const payload = {
         modelStructure,
-        ...buildRequirementsPayload({ includeRequirements: true })
+        ...buildRequirementsPayload({ includeRequirements: true }),
+        ...(allureProject?.id ? { projectId: allureProject.id } : {})  // ✅ Добавляем projectId для shared steps
       };
       
       console.log('GlobalGenerationWindow: отправляем payload с modelStructure:', payload);

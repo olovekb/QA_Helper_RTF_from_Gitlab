@@ -635,6 +635,9 @@ function detectCodeType(codeText) {
     return 'integration';
 }
 
+/**
+ * Нормализует текст Code: убирает префиксы, исправляет пользовательские действия, разделяет frontend+backend, убирает "При..."
+ */
 function normalizeCodeText(rawText) {
     let text = String(rawText || '').trim();
     if (!text) return '';
@@ -644,6 +647,22 @@ function normalizeCodeText(rawText) {
 
     // Если текст начинается с "Система" - убираем его (избыточно)
     text = text.replace(/^система\s+/i, '').trim();
+
+    // ✅ НОВОЕ: Убираем "При..." из начала Code (это условие, а не действие системы)
+    // "При выборе чек-бокса: перезаполнить поле" → "Перезаполнить поле"
+    // "При нажатии кнопки: POST /api" → "POST /api"
+    if (/^при\s+/i.test(text)) {
+        // Ищем двоеточие или запятую после условия
+        const match = text.match(/^при\s+[^:]+[:,\s]+(.+)/i);
+        if (match && match[1]) {
+            text = match[1].trim();
+            console.warn(`[normalizeCodeText] Удалён префикс "При..." из Code: "${text}"`);
+        } else {
+            // Если нет разделителя, просто убираем "При" и следующее слово
+            text = text.replace(/^при\s+\w+\s+/i, '').trim();
+            console.warn(`[normalizeCodeText] Удалён префикс "При..." из Code: "${text}"`);
+        }
+    }
 
     // ✅ Удаляем префиксы "API:", "UI:", "Frontend:", "Backend:"
     const invalidPrefixes = ['API:', 'UI:', 'Frontend:', 'Backend:'];
@@ -3136,6 +3155,44 @@ function postProcessModel(model) {
                         console.log(`[postProcessModel] Очищен Code: "${code.text}"`);
                     }
 
+                    // ✅ НОВОЕ: Разделяем frontend + backend в одном Code на отдельные
+                    // Проверяем, есть ли в Code и frontend-действие, и HTTP-запрос
+                    const hasHttpRequest = /(GET|POST|PUT|DELETE|PATCH)\s+\//i.test(code.text);
+                    const hasFrontendAction = /(отобразить|заполнить|скрыть|показать|активировать|деактивировать|перезаполнить|очистить)/i.test(code.text);
+                    
+                    if (hasHttpRequest && hasFrontendAction) {
+                        // Разделяем на два Code
+                        const parts = [];
+                        const httpMatch = code.text.match(/((GET|POST|PUT|DELETE|PATCH)\s+\/[^\s,]+(?:\?[^\s,]+)?)/i);
+                        const frontendPart = code.text.replace(/(GET|POST|PUT|DELETE|PATCH)\s+\/[^\s,]+(?:\?[^\s,]+)?/gi, '').trim().replace(/[,\s]+$/, '');
+                        
+                        if (httpMatch && httpMatch[1]) {
+                            parts.push({
+                                id: uuidv4(),
+                                text: httpMatch[1].trim(),
+                                type: 'backend'
+                            });
+                        }
+                        
+                        if (frontendPart) {
+                            parts.push({
+                                id: code.id || uuidv4(),
+                                text: frontendPart.trim(),
+                                type: code.type || 'frontend'
+                            });
+                        }
+                        
+                        if (parts.length > 1) {
+                            // Заменяем текущий Code на первый, добавляем остальные после него
+                            const codeIndex = scenario.codes.indexOf(code);
+                            scenario.codes[codeIndex] = parts[0];
+                            scenario.codes.splice(codeIndex + 1, 0, ...parts.slice(1));
+                            cleanedCount++;
+                            console.log(`[postProcessModel] Разделён Code на ${parts.length} части: "${code.text}" → ${parts.map(p => `"${p.text}"`).join(' + ')}`);
+                            continue; // Пропускаем дальнейшую обработку для уже разделённых Code
+                        }
+                    }
+
                     // ✅ Проверяем тип Code
                     if (!code.type && code.text) {
                         // Определяем тип автоматически
@@ -3977,10 +4034,24 @@ ${problematicCodes.map(c => `- "${c.text}" (type: ${c.type || 'не указан
 ✅ ПРАВИЛЬНО (поведение системы):
 - "Отобразить чек-бокс 'УНК в другом банке' доступным для редактирования и не выбранным"
 - "Установить значение поля 'Примечание' в 'Контракт стоит на учете в другом Банке'"
-- "Обработать нажатие кнопки 'Подписать' и вызвать POST /rest/stateful/corp/curr/inquiry_181"
+- "POST /rest/stateful/corp/curr/inquiry_181 с параметром deal.previousBankRegNumber = true"
 - "Заполнить поле 'Сумма' из параметра deal.amount"
 - "Сбросить значение поля 'Примечание'"
 - "Отобразить поле 'Ожидаемый срок репатриации' как обязательное для заполнения"
+
+🚨 КРИТИЧЕСКИ ВАЖНО:
+1. ⚠️ КАЖДЫЙ Code должен быть ОТДЕЛЬНЫМ действием (НЕ объединяй frontend + backend в один!)
+   ❌ "Отобразить чек-бокс, GET /rest/stateful/corp/document/visual/byid"
+   ✅ Раздели на два Code:
+      - "GET /rest/stateful/corp/document/visual/byid" (backend)
+      - "Отобразить чек-бокс 'УНК в другом банке' доступным для редактирования" (frontend)
+
+2. ⚠️ Code НЕ должен начинаться с "При..." (это условие, а не действие системы!)
+   ❌ "При выборе чек-бокса: перезаполнить поле 'Примечание'"
+   ✅ "Перезаполнить поле 'Примечание' текстом 'Контракт стоит на учете в другом Банке'"
+   
+   ❌ "При нажатии кнопки 'Подписать и отправить' с выбранным чек-боксом: POST /rest/..."
+   ✅ "POST /rest/stateful/corp/curr/inquiry_181 с параметром deal.previousBankRegNumber = true"
 
 КОНТЕКСТ:
 Feature: "${feature.text}"
@@ -4599,8 +4670,15 @@ ${JSON.stringify(testModelExample, null, 2)}
    ✅ "Отобразить страницу 'Письмо отправлено'"
    ❌ "Пользователь видит страницу" (это Step в тест-кейсе)
 
-2. Code может содержать НЕСКОЛЬКО действий Frontend + Backend ВМЕСТЕ
-   ✅ Scenario "4. Нажать на кнопку 'Подтвердить'":
+2. ⚠️ КАЖДЫЙ Code должен быть ОТДЕЛЬНЫМ действием (НЕ объединяй frontend + backend в один!)
+   ❌ НЕПРАВИЛЬНО: "Отобразить чек-бокс, GET /rest/stateful/corp/document/visual/byid"
+   ✅ ПРАВИЛЬНО:
+       codes: [
+         "GET /rest/stateful/corp/document/visual/byid",  // Backend (отдельный Code)
+         "Отобразить чек-бокс 'УНК в другом банке' доступным для редактирования и не выбранным"  // Frontend (отдельный Code)
+       ]
+   
+   ✅ ПРАВИЛЬНО (несколько отдельных Code):
        codes: [
          "Показать лоадер на кнопке",      // Frontend
          "PUT /nopaper/user",               // Backend
@@ -4608,11 +4686,18 @@ ${JSON.stringify(testModelExample, null, 2)}
          "Отправить push 'Требуется код'"  // Integration
        ]
 
-3. Code НЕ содержит префиксов "API:", "UI:", "Frontend:", "Backend:"
+3. ⚠️ Code НЕ должен начинаться с "При..." (это условие, а не действие системы!)
+   ❌ НЕПРАВИЛЬНО: "При выборе чек-бокса: перезаполнить поле 'Примечание'"
+   ✅ ПРАВИЛЬНО: "Перезаполнить поле 'Примечание' текстом 'Контракт стоит на учете в другом Банке'"
+   
+   ❌ НЕПРАВИЛЬНО: "При нажатии кнопки 'Подписать и отправить' с выбранным чек-боксом: POST /rest/..."
+   ✅ ПРАВИЛЬНО: "POST /rest/stateful/corp/curr/inquiry_181 с параметром deal.previousBankRegNumber = true"
+
+4. Code НЕ содержит префиксов "API:", "UI:", "Frontend:", "Backend:"
    ✅ "POST /confirm/code/check"
    ❌ "API: POST /confirm/code/check"
 
-4. Code извлекается ТОЛЬКО из requirements (НЕ выдумывай!)
+5. Code извлекается ТОЛЬКО из requirements (НЕ выдумывай!)
    ✅ Если в requirements написано "вызвать метод auth()" → добавляй "Вызвать метод auth()"
    ❌ Если нет информации о push-уведомлении → НЕ добавляй его
 
