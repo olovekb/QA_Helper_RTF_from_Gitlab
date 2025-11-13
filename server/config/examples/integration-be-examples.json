@@ -1,0 +1,99 @@
+[
+  {
+    "title": "API GET /stateful/personal/kuban/client/info/v2 возвращает параметры email и isEmailConfirmed",
+    "layer": "Integration backend Tests",
+    "feature": "Безбумажный офис",
+    "story": "Регистрация в ББО",
+    "scenario": "1. Нажать на кнопку \"Безбумажный офис\"",
+    "precondition": "",
+    "steps": [
+      "Выполнить GET /stateful/personal/kuban/client/info/v2"
+    ],
+    "expected": "Получен ответ 200 с JSON, содержащим параметры \"email\" и \"isEmailConfirmed\"",
+    "tags": ["S"],
+    "priority": "High",
+    "version": "stable"
+  },
+  {
+    "title": "API POST /confirm/code/check возвращает ответ с кодом {{Код ответа}}",
+    "layer": "Integration backend Tests",
+    "feature": "Безбумажный офис",
+    "story": "Регистрация в ББО",
+    "scenario": "5. Ввести ОТП-код",
+    "precondition": "",
+    "steps": [
+      "Выполнить POST /confirm/code/check с телом запроса: {\"code\": \"{{ОТП-код}}\"}"
+    ],
+    "expected": "Получен ответ {{Код ответа}} с JSON: {{Содержимое ответа}}",
+    "tags": ["S"],
+    "priority": "High",
+    "version": "stable",
+    "parameters": [
+      {
+        "name": "ОТП-код",
+        "values": ["Корректный код", "Некорректный код", "Истёкший код"]
+      },
+      {
+        "name": "Код ответа",
+        "values": ["200", "400", "403"]
+      },
+      {
+        "name": "Содержимое ответа",
+        "values": [
+          "{status: 'success', message: 'Код подтверждён'}",
+          "{error: 'Неверный код подтверждения'}",
+          "{error: 'Код истёк'}"
+        ]
+      }
+    ],
+    "examples": [
+      {
+        "parameters": [
+          {
+            "name": "ОТП-код",
+            "value": "Корректный код"
+          },
+          {
+            "name": "Код ответа",
+            "value": "200"
+          },
+          {
+            "name": "Содержимое ответа",
+            "value": "{status: 'success', message: 'Код подтверждён'}"
+          }
+        ]
+      },
+      {
+        "parameters": [
+          {
+            "name": "ОТП-код",
+            "value": "Некорректный код"
+          },
+          {
+            "name": "Код ответа",
+            "value": "400"
+          },
+          {
+            "name": "Содержимое ответа",
+            "value": "{error: 'Неверный код подтверждения'}"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "API GET /template/get_by_id возвращает шаблон платежа по doc_type=payment",
+    "layer": "Integration backend Tests",
+    "feature": "Оплата по QR-коду",
+    "story": "Получение шаблона платежа",
+    "scenario": "Получить шаблон платежа по doc_type",
+    "precondition": "в БД есть шаблон с doc_type=payment",
+    "steps": [
+      "Выполнить GET /template/get_by_id с параметром doc_type=payment"
+    ],
+    "expected": "Получен ответ 200 с JSON: {id, type, amount, date}",
+    "tags": ["S"],
+    "priority": "High",
+    "version": "stable"
+  }
+]

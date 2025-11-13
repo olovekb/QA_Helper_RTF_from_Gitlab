@@ -30,9 +30,9 @@ const SYSTEM_JSON_ONLY =
 
 const CLIP_REQ_IN = 120000;
 const CLIP_GLS_IN = 160000;
-const CLIP_CTX_IN = 300000;
-const LIMIT_GLS_OUT = 24000;   // увеличить выход глоссария
-const LIMIT_CTX_OUT = 36000;   // увеличить выход контекста
+const CLIP_CTX_IN = 500000;    // Увеличено для больших контекстов
+const LIMIT_GLS_OUT = 40000;   // Увеличено для лучшего качества глоссария
+const LIMIT_CTX_OUT = 120000;  // Увеличено в 3 раза для лучшей передачи контекста (120KB вместо 36KB)
 
 // === Чанкование ===
 const CHUNK_SIZE_GLOSSARY = 128000;  // Увеличено в 2 раза
@@ -82,7 +82,8 @@ async function callHybridAPI(messages, opts = {}) {
         temperature = 0.0,
         schemaName,
         schemaProps,
-        expectedKeys = []
+        expectedKeys = [],
+        apiToken = API_TOKEN  // Извлекаем apiToken из опций
     } = opts;
 
     // Сначала пробуем Cloud.ru
@@ -114,10 +115,43 @@ async function callHybridAPI(messages, opts = {}) {
         return safeParseContent(result.choices?.[0]?.message?.content || '', result, expectedKeys);
 
     } catch (error) {
-        console.warn(`[refiner] Cloud.ru failed: ${error.message}, falling back to OpenRouter`);
+        // Увеличиваем количество попыток для Cloud.ru перед fallback
+        // Пробуем еще раз с небольшой задержкой
+        console.warn(`[refiner] Cloud.ru failed (attempt 1): ${error.message}, retrying...`);
+        
+        try {
+            await sleep(1000); // Небольшая задержка перед повторной попыткой
+            console.log(`[refiner] Retrying Cloud.ru API`);
+            
+            const response_format = schemaName && schemaProps ? {
+                type: 'json_schema',
+                json_schema: {
+                    name: schemaName,
+                    schema: {
+                        type: 'object',
+                        properties: schemaProps,
+                        required: Object.keys(schemaProps),
+                        additionalProperties: false
+                    },
+                    strict: true
+                }
+            } : null;
 
-        // Fallback на OpenRouter
-        return await callJSON(messages, { maxTokens, temperature, schemaName, schemaProps, expectedKeys });
+            const result = await callCloudRuAPI(messages, {
+                model: config.cloudruModels[0],
+                temperature,
+                max_tokens: maxTokens,
+                response_format
+            });
+
+            console.log(`[refiner] Cloud.ru success on retry`);
+            return safeParseContent(result.choices?.[0]?.message?.content || '', result, expectedKeys);
+        } catch (retryError) {
+            console.warn(`[refiner] Cloud.ru failed (attempt 2): ${retryError.message}, falling back to OpenRouter`);
+
+            // Fallback на OpenRouter - ВАЖНО: передаем apiToken!
+            return await callJSON(messages, { maxTokens, temperature, schemaName, schemaProps, expectedKeys, apiToken });
+        }
     }
 }
 
@@ -767,12 +801,12 @@ async function reduceContext(originalRequirements, contextRaw, hintText, maxItem
 СТРОГИЙ РЕЖИМ ИЗВЛЕЧЕНИЯ.
 Используй блок "Требования" ниже ТОЛЬКО как ОРИЕНТИР, чтобы понять, какие факты из "Контекст фрагмент" релевантны.
 Ничего из Требований НЕ БРАТЬ в факты. Факты извлекать ТОЛЬКО из "Контекст фрагмент".
+ВАЖНО: Извлекай ВСЕ релевантные факты, даже если их больше ${remainForPage}. Не ограничивай себя этим числом — это только ориентир.
 Если во фрагменте нет релевантных фактов — верни пустую строку "".
-Не более ${remainForPage} коротких пунктов.
 ${whitelistNote}
 
 Подсказка (что считать фактом):
-${hintText || 'Опред., ограничения, допущения, роли/права, зависимости, конфиги.'}
+${hintText || 'Определения, ограничения, допущения, роли/права, зависимости, конфиги, API-методы, параметры запросов, форматы данных, бизнес-правила, валидации, статусы, коды ошибок.'}
 
 Требования (только для ориентира):
 ---------------------------------------
@@ -785,7 +819,9 @@ ${pageChunks[c]}
 ---------------------------------------
 
 ФОРМАТ ОТВЕТА:
-{ "context_md": "- [краткий факт 1]\\n- [краткий факт 2]" }
+{ "context_md": "- [детальный факт 1 с контекстом]\\n- [детальный факт 2 с контекстом]\\n- [детальный факт 3 с контекстом]" }
+
+ВАЖНО: Пиши факты ДЕТАЛЬНО, сохраняя важные детали (названия методов, параметры, значения, условия). Не сокращай критичную информацию!
 `.trim();
 
                 const messages = [
@@ -796,14 +832,14 @@ ${pageChunks[c]}
                 let out = null, part = '';
 
                 if (!part) {
-                    const result = await callHybridAPI(messages, {
-                        maxTokens: 900,
-                        temperature: 0.0,
-                        schemaName: 'ReduceContext',
-                        schemaProps: { context_md: { type: 'string' } },
-                        expectedKeys: ['context_md'],
-                        apiToken
-                    });
+                const result = await callHybridAPI(messages, {
+                    maxTokens: 2000,  // Увеличено с 900 для более детального извлечения
+                    temperature: 0.0,
+                    schemaName: 'ReduceContext',
+                    schemaProps: { context_md: { type: 'string' } },
+                    expectedKeys: ['context_md'],
+                    apiToken
+                });
                     out = result;
                     part = String(out?.context_md || '');
                 }
@@ -811,13 +847,16 @@ ${pageChunks[c]}
                 if (!part) {
                     console.warn(`[refiner] Stage#3 page=${p + 1} chunk=${c + 1}: fallback to text-mode`);
                     const user2 = `
-Верни ТОЛЬКО список Markdown-пунктов (до ${remainForPage}). Источники — ТОЛЬКО из списка ниже.
+Верни ТОЛЬКО список Markdown-пунктов. Извлекай ВСЕ релевантные факты, не ограничивай себя числом ${remainForPage}.
+Источники — ТОЛЬКО из списка ниже.
 ${whitelistNote}
 
 Используй "Требования" ниже ТОЛЬКО как ориентир релевантности. Факты брать ТОЛЬКО из "Контекст фрагмент".
 
-Подсказка:
-${hintText}
+Подсказка (что считать фактом):
+${hintText || 'Определения, ограничения, допущения, роли/права, зависимости, конфиги, API-методы, параметры запросов, форматы данных, бизнес-правила, валидации, статусы, коды ошибок.'}
+
+ВАЖНО: Пиши факты ДЕТАЛЬНО, сохраняя важные детали (названия методов, параметры, значения, условия). Не сокращай критичную информацию!
 
 Требования (только ориентир):
 ---------------------------------------
@@ -835,15 +874,15 @@ ${pageChunks[c]}
                             { role: 'system', content: 'Отвечай ТОЛЬКО списком Markdown, по одному пункту на строку.' },
                             { role: 'user', content: user2 }
                         ],
-                        { maxTokens: 600, temperature: 0.0, apiToken }
+                        { maxTokens: 1500, temperature: 0.0, apiToken }  // Увеличено с 600 для более детального извлечения
                     );
                 }
 
                 let items = mdToItems(part);
                 const chunk = pageChunks[c];
-                const RATIO_MIN = 0.18;
+                const RATIO_MIN = 0.12;  // Снижено с 0.18 до 0.12 для сохранения большего количества релевантных фактов
                 let filtered = items.filter(line => contentRatio(line, chunk) >= RATIO_MIN);
-                if (!filtered.length && items.length) filtered = [items[0]];
+                if (!filtered.length && items.length) filtered = items.slice(0, Math.min(3, items.length));  // Берем до 3 пунктов вместо 1
                 items = filtered;
 
                 items = filterContextItemsByAllowedSources(items, allowedUrls, forbiddenUrls);
@@ -892,13 +931,13 @@ ${pageChunks[c]}
  * @param {string} [p.glossary]
  * @param {string} [p.context]
  * @param {string} [p.contextHint]
- * @param {number} [p.maxGlossary=25]
- * @param {number} [p.maxContext=16]
+ * @param {number} [p.maxGlossary=40]
+ * @param {number} [p.maxContext=50]
  * @returns {Promise<{requirements_md:string, mini_glossary_md:string, context_md:string}>}
  */
 export async function prepareContextWithAI(p) {
-    const maxGlossary = Number.isFinite(p.maxGlossary) ? p.maxGlossary : 25;
-    const maxContext = Number.isFinite(p.maxContext) ? p.maxContext : 16;
+    const maxGlossary = Number.isFinite(p.maxGlossary) ? p.maxGlossary : 40;  // Увеличено с 25 до 40
+    const maxContext = Number.isFinite(p.maxContext) ? p.maxContext : 50;   // Увеличено с 16 до 50
     const apiToken = p.apiToken || API_TOKEN;
 
     // Маскируем ключ для логирования

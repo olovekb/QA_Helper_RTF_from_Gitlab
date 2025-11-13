@@ -778,52 +778,29 @@ export function TestCaseCard({
                                         }
                                     />
                                 </div>
-                                <div className="case-field" style={{
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: '8px',
-                                    marginBottom: '20px'
-                                }}>
-                                    <label style={{
-                                        fontSize: '13px',
-                                        color: 'var(--on-text-primary, #f6fafef5)',
-                                        fontWeight: '500',
-                                        lineHeight: '20px',
-                                        marginBottom: '0'
-                                    }}>Тестовый слой*</label>
-                                    <select
-                                        value={testCase.layer}
-                                        onChange={(e) => handleFieldChange('layer', e.target.value)}
-                                        style={{
-                                            width: '100%',
-                                            padding: '10px 16px',
-                                            backgroundColor: 'var(--bg-base-primary, #1b2129)',
-                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
-                                            borderRadius: '6px',
-                                            color: 'var(--on-text-primary, #f6fafef5)',
-                                            fontSize: '13px',
-                                            height: '40px',
-                                            boxSizing: 'border-box',
-                                            outline: 'none',
-                                            cursor: 'pointer',
-                                            lineHeight: '20px'
-                                        }}
-                                    >
-                                        <option value="E2E Tests">E2E Tests</option>
-                                        <option value="Integration frontend Tests">
-                                            Integration frontend Tests
-                                        </option>
-                                        <option value="Integration backend Tests">
-                                            Integration backend Tests
-                                        </option>
-                                        <option value="Unit frontend Tests">Unit frontend Tests</option>
-                                        <option value="Unit backend Tests">Unit backend Tests</option>
-                                    </select>
-                                </div>
-                                <div className="case-field">
-                                    <label>Связанные задачи (Jira)*</label>
-                                    <AsyncSelect
-                                        classNamePrefix="select"
+                            </div>
+                            
+                            <div className="case-field">
+                                <label>Тестовый слой*</label>
+                                <select
+                                    value={testCase.layer}
+                                    onChange={(e) => handleFieldChange('layer', e.target.value)}
+                                >
+                                    <option value="E2E Tests">E2E Tests</option>
+                                    <option value="Integration frontend Tests">
+                                        Integration frontend Tests
+                                    </option>
+                                    <option value="Integration backend Tests">
+                                        Integration backend Tests
+                                    </option>
+                                    <option value="Unit frontend Tests">Unit frontend Tests</option>
+                                    <option value="Unit backend Tests">Unit backend Tests</option>
+                                </select>
+                            </div>
+                            <div className="case-field">
+                                <label>Связанные задачи (Jira)*</label>
+                                <AsyncSelect
+                                    classNamePrefix="select"
                                         cacheOptions
                                         defaultOptions
                                         loadOptions={loadIssueOptions}
@@ -835,25 +812,24 @@ export function TestCaseCard({
                                                 ? 'Укажите проект и PAT'
                                                 : 'Ничего не найдено'
                                         }
-                                        styles={{
-                                            container: (base) => ({ ...base, marginTop: 4 }),
-                                            menuPortal: (base) => ({ ...base, zIndex: 9999 }),
-                                        }}
-                                        menuPortalTarget={document.body}
-                                    />
-                                </div>
-                                <div className="case-field">
-                                    <label>Приоритет*</label>
-                                    <select
-                                        value={testCase.priority}
-                                        onChange={(e) => handleFieldChange('priority', e.target.value)}
-                                    >
-                                        <option value="Medium">Medium</option>
-                                        <option value="Critical">Critical</option>
-                                        <option value="High">High</option>
-                                        <option value="Low">Low</option>
-                                    </select>
-                                </div>
+                                    styles={{
+                                        container: (base) => ({ ...base, marginTop: 4 }),
+                                        menuPortal: (base) => ({ ...base, zIndex: 9999 }),
+                                    }}
+                                    menuPortalTarget={document.body}
+                                />
+                            </div>
+                            <div className="case-field">
+                                <label>Приоритет*</label>
+                                <select
+                                    value={testCase.priority}
+                                    onChange={(e) => handleFieldChange('priority', e.target.value)}
+                                >
+                                    <option value="Medium">Medium</option>
+                                    <option value="Critical">Critical</option>
+                                    <option value="High">High</option>
+                                    <option value="Low">Low</option>
+                                </select>
                             </div>
                             <div className="case-field">
                                 <label>Ссылки (Confluence, Figma)</label>
@@ -2883,8 +2859,10 @@ export default function TestModelReviewModal({
                                 };
                             });
 
-                            const hasFE = (codeData.cases || []).some((c) => (c.layer || "").toLowerCase().includes("frontend"));
-                            const hasBE = (codeData.cases || []).some((c) => (c.layer || "").toLowerCase().includes("backend"));
+                            // ✅ Используем поле type из Code (если есть), иначе определяем по cases
+                            const codeType = codeData.type || 'integration';
+                            const hasFE = codeType === 'frontend' || (codeData.cases || []).some((c) => (c.layer || "").toLowerCase().includes("frontend"));
+                            const hasBE = codeType === 'backend' || (codeData.cases || []).some((c) => (c.layer || "").toLowerCase().includes("backend"));
                             const codeMarkers = [];
                             if (hasFE) codeMarkers.push({ markerId: "flag-green" });
                             if (hasBE) codeMarkers.push({ markerId: "flag-purple" });
@@ -3359,7 +3337,7 @@ export default function TestModelReviewModal({
       .case-card-details{padding:20px;background:var(--bg-base-secondary, #2c343f);border-radius:0 0 8px 8px;box-sizing:border-box;}
       .case-field{margin-bottom:20px;box-sizing:border-box;}
       .case-field label{display:block;margin-bottom:8px;font-size:13px;font-weight:500;color:var(--on-text-primary, #f6fafef5);}
-      .case-field input,.case-field textarea,.case-field select{width:100%;padding:8px 12px;background:var(--bg-base-primary, #1b2129);border:1px solid var(--on-border-light, #bdd4ff36);border-radius:6px;color:var(--on-text-primary, #f6fafef5);font-size:13px;font-family:inherit;transition:border-color 0.2s;box-sizing:border-box;}
+      .case-field input,.case-field textarea,.case-field select{width:-webkit-fill-available;padding:8px 12px;background:var(--bg-base-primary, #1b2129);border:1px solid var(--on-border-light, #bdd4ff36);border-radius:6px;color:var(--on-text-primary, #f6fafef5);font-size:13px;font-family:inherit;transition:border-color 0.2s;box-sizing:border-box;}
       .case-field input:focus,.case-field textarea:focus,.case-field select:focus{outline:none;border-color:var(--on-support-aldebaran, #7aa8ff);}
       .case-field textarea{min-height:80px;resize:vertical;box-sizing:border-box;}
       .add-item-btn{background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;transition:all 0.15s;font-weight:500;}
@@ -3397,7 +3375,7 @@ export default function TestModelReviewModal({
       .case-card-details{padding:12px;border-top:1px solid #30363d;margin-top:8px;}
       .case-field{margin-bottom:14px;}
       .case-field label{display:block;margin-bottom:6px;font-size:.85rem;color:#8b949e;}
-      .case-field input,.case-field textarea,.case-field select{width:100%;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:8px 10px;color:#c9d1d9;box-sizing:border-box;}
+      .case-field input,.case-field textarea,.case-field select{width:-webkit-fill-available;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:8px 10px;color:#c9d1d9;box-sizing:border-box;}
       .case-field input:focus,.case-field textarea:focus,.case-field select:focus{outline:none;border-color:#58a6ff;}
       .field-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;}
       .array-item{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;}

@@ -739,8 +739,10 @@ export default function TestModelGeneratorModal({
                                 };
                             });
 
-                            const hasFE = (codeData.cases || []).some((c) => (c.layer || "").toLowerCase().includes("frontend"));
-                            const hasBE = (codeData.cases || []).some((c) => (c.layer || "").toLowerCase().includes("backend"));
+                            // ✅ Используем поле type из Code (если есть), иначе определяем по cases
+                            const codeType = codeData.type || 'integration';
+                            const hasFE = codeType === 'frontend' || (codeData.cases || []).some((c) => (c.layer || "").toLowerCase().includes("frontend"));
+                            const hasBE = codeType === 'backend' || (codeData.cases || []).some((c) => (c.layer || "").toLowerCase().includes("backend"));
                             const codeMarkers = [];
                             if (hasFE) codeMarkers.push({ markerId: "flag-green" });
                             if (hasBE) codeMarkers.push({ markerId: "flag-purple" });

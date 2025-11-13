@@ -2,6 +2,8 @@
 import fs from 'fs';
 import { prepareContextWithAI } from './contextRefiner.mjs';
 import { callWithCloudRuFallback } from './cloudruClient.mjs';
+import { createContextSourceRegistry, createContextToolset } from './contextToolset.mjs';
+import { runInteractiveLLM } from './interactiveLLM.mjs';
 import config from './config.json' assert { type: 'json' };
 // Жёсткая инструкция к финальному ответу: только нужные Markdown-блоки
 const SYSTEM_ENFORCER =
@@ -67,6 +69,120 @@ export async function analyzeRequirementWithAI(
     }
   }
 
+  const sourceRegistry = createContextSourceRegistry();
+  const { register, safeTrim, deriveTitleFromContent, extractPageId } = sourceRegistry;
+
+  if (safeTrim(requirementText)) {
+    register({
+      id: 'raw-requirement',
+      title: 'Исходное требование',
+      description: 'Полный текст требования без предварительной обработки',
+      type: 'requirement',
+      content: requirementText
+    });
+  }
+
+  if (safeTrim(cleanedReq) && safeTrim(cleanedReq) !== safeTrim(requirementText)) {
+    register({
+      id: 'cleaned-requirement',
+      title: 'Требование после очистки',
+      description: 'Текст требования после предварительной подготовки',
+      type: 'requirement',
+      content: cleanedReq
+    });
+  }
+
+  if (safeTrim(glossary)) {
+    register({
+      id: 'raw-glossary',
+      title: 'Глоссарий (полный)',
+      description: 'Глоссарий, переданный в запросе',
+      type: 'glossary',
+      content: glossary
+    });
+  }
+
+  if (safeTrim(miniGlossary) && safeTrim(miniGlossary) !== safeTrim(glossary)) {
+    register({
+      id: 'filtered-glossary',
+      title: 'Глоссарий (выжимка)',
+      description: 'Сокращённый глоссарий после предварительной обработки',
+      type: 'glossary',
+      content: miniGlossary
+    });
+  }
+
+  if (safeTrim(context)) {
+    register({
+      id: 'raw-context',
+      title: 'Дополнительный контекст (сырые данные)',
+      description: contextHint && contextHint !== '—' ? String(contextHint) : 'Контекст, переданный в запросе',
+      type: 'context',
+      content: context
+    });
+  }
+
+  if (safeTrim(filteredContext) && safeTrim(filteredContext) !== safeTrim(context)) {
+    register({
+      id: 'filtered-context',
+      title: 'Дополнительный контекст (выжимка)',
+      description: 'Контекст после предварительной обработки',
+      type: 'context',
+      content: filteredContext
+    });
+  }
+
+  if (Array.isArray(contextPages) && contextPages.length) {
+    contextPages.forEach((rawPage, idx) => {
+      const pageContent = typeof rawPage === 'string'
+        ? rawPage
+        : safeTrim(rawPage?.content || rawPage?.text || '');
+
+      if (!safeTrim(pageContent)) return;
+
+      const foundPageId = extractPageId(pageContent);
+      const sourceId = foundPageId ? `page-${foundPageId}` : `context-page-${idx + 1}`;
+      const title = deriveTitleFromContent(
+        pageContent,
+        foundPageId ? `Контекст Confluence ${foundPageId}` : `Контекст ${idx + 1}`,
+        foundPageId
+      );
+
+      register({
+        id: sourceId,
+        title,
+        description: foundPageId
+          ? `Автоматически загруженный контекст из Confluence (pageId=${foundPageId})`
+          : 'Дополнительный контекст из Confluence',
+        type: 'confluence',
+        pageId: foundPageId,
+        content: pageContent
+      });
+    });
+  }
+
+  const contextToolset = createContextToolset({
+    sources: sourceRegistry.getSources()
+  });
+
+  const interactiveTools = Array.isArray(contextToolset.tools) ? contextToolset.tools : [];
+  const contextToolHandlers = contextToolset.handlers || {};
+
+  let toolSummary = contextToolset.summary || '';
+  if (toolSummary) {
+    const lines = toolSummary.split('\n').filter(Boolean);
+    if (lines.length > 15) {
+      const hiddenCount = lines.length - 15;
+      toolSummary = `${lines.slice(0, 15).join('\n')}\n- ... ещё ${hiddenCount} источников`;
+    }
+  } else {
+    toolSummary = '—';
+  }
+
+  const toolInstruction = interactiveTools.length
+    ? `**Как работать с дополнительным контекстом:**\n- Вызови \`list_context_sources()\`, чтобы получить список источников (они уже загружены из Confluence и запроса)\n- Используй \`fetch_context_chunk({ "sourceId": "...", "offset": 0, "limit": 4000 })\`, чтобы читать нужные фрагменты\n- Если требуется продолжить чтение, увеличивай значение \`offset\`\n\n**Доступные источники:**\n${toolSummary}\n`
+    : '**Как работать с дополнительным контекстом:**\nДополнительные источники не предоставлены, анализируй только текст требования.\n';
+
   // ---------- 1) Финальный промпт ----------
   const prompt = `Ты — ведущий системный аналитик-аудитор с 20-летним опытом в финтех-проектах. Ты перфекционист, предельно внимательный к деталям. Твоя задача — провести исчерпывающий аудит качества требований по стандартам ISO/IEC/IEEE 29148 и лучшим QA-практикам. Найди ВСЕ возможные ошибки, неясности, риски и потенциальные проблемы, даже самые незначительные. От качества твоей проверки зависит успех всего проекта, и любая пропущенная ошибка приведет к серьезным финансовым потерям. Не принимай ничего на веру, подвергай сомнению каждую формулировку.
 
@@ -83,6 +199,72 @@ ${filteredContext || '—'}
 **Глоссарий проекта (сокращения и термины):**
 ${miniGlossary || '—'}
 
+${toolInstruction}
+
+**ВАЖНО: Разделы, которые НЕ нужно анализировать**
+
+1. **Раздел "Тест-кейсы":**
+   - Полностью игнорируй любые разделы с названием "Тест-кейсы", "Test cases", "Тестовые сценарии"
+   - НЕ проверяй наличие или отсутствие тест-кейсов
+   - НЕ требуй добавления тест-кейсов в требования
+   - НЕ анализируй содержимое секции с тест-кейсами
+   - Тест-кейсы ведутся отдельно и не являются частью требований
+
+2. **Ссылки на тест-кейсы:**
+   - НЕ требуй наличия ссылок на тест-кейсы в Confluence или других системах
+   - НЕ проверяй корректность ссылок на тест-кейсы
+   - Это не практикуется в данном проекте
+
+**ВАЖНО: UI-компоненты и макеты**
+
+1. **Описание UI-компонентов:**
+   - Примерное/общее описание UI-компонентов ДОПУСКАЕТСЯ
+   - НЕ требуй детального описания визуальных компонентов, если макеты не готовы
+   - НЕ требуй точных размеров, отступов, цветов и других визуальных характеристик
+   - Достаточно функционального описания компонента (например, "кнопка", "поле ввода", "список")
+
+2. **Отсутствие макетов:**
+   - НЕ считай ошибкой отсутствие детального описания UI
+   - НЕ требуй наличия макетов или ссылок на макеты
+   - Макеты часто создаются позже, на этапе написания аналитики их может не быть
+
+3. **Что можно требовать:**
+   - Функциональное поведение компонента (что происходит при нажатии, какие данные отображаются)
+   - Условия отображения/скрытия компонента
+   - Взаимодействие компонента с другими элементами
+   - Валидацию и обработку ошибок
+
+4. **Что НЕ нужно требовать:**
+   - Точные размеры и позиционирование элементов
+   - Цветовую схему и стилизацию
+   - Шрифты и типографику
+   - Подробное описание анимаций и переходов
+   - Pixel-perfect описание UI
+
+**КРИТИЧЕСКИ ВАЖНО: Параметры между методами**
+
+1. **Переиспользование параметров:**
+   - Параметры могут передаваться между методами: из ЗАПРОСА метода A в ЗАПРОС метода B
+   - Это нормальная практика, НЕ требуй обоснования
+
+2. **Формулировки:**
+   - "из входного параметра X метода Y" = из ЗАПРОСА метода Y
+   - "из выходного параметра X метода Y" = из ОТВЕТА метода Y
+   - "из параметра X метода Y" (без уточнения) = обычно из ответа, но проверь спецификацию
+
+3. **Проверка перед багом:**
+   - Проверь спецификацию API — где находится параметр (запрос/ответ)
+   - Оцени логичность: совместима ли семантика параметров?
+   - Проверь аналоги: используется ли похожая схема в других методах?
+   - При сомнении — НЕ создавай баг
+
+4. **Баг только если:**
+   - Явное противоречие спецификации (параметр должен быть в ответе, но его там нет)
+   - Несовместимая семантика (userId вместо documentId)
+   - Логическая невозможность (серверный timestamp из клиентского запроса)
+
+**Главное правило:** Переиспользование параметров — норма. Баг только при ЯВНОЙ проблеме.
+
 **Критерии проверки:**
 1. Завершённость — полная информация без пропусков (негативные сценарии, параметры)
 2. Атомарность — описывает одну ситуацию/условие, без объединения нескольких
@@ -98,6 +280,40 @@ ${miniGlossary || '—'}
 — последовательности вида «1.» затем «a.)/i.)/–» трактуй как вложенные подпункты предыдущего пункта;
 — если отступы отсутствуют, используй порядок приоритетов уровней: число → буква → римская → маркер «–»;
 — не меняй порядок элементов.
+
+**КРИТИЧЕСКИ ВАЖНО: Правильная интерпретация нумерации методов и опечаток**
+
+1. **Нумерация методов (Метод1, Метод2, REST API методы):**
+   - Нумерация методов может быть ЛОКАЛЬНОЙ для каждого блока функциональности
+   - Если в разделе 3.2.7 есть "Метод1" и "Метод2", а в разделе 5.3 тоже есть "Метод1" и "Метод2" — это НОРМАЛЬНО
+   - Каждый блок функциональности может иметь свою внутреннюю нумерацию методов
+   - НЕ считай это ошибкой, если нумерация повторяется в разных разделах
+   - НЕ требуй глобальной сквозной нумерации методов по всему документу
+
+2. **Опечатки и несоответствия в названиях параметров:**
+   - ПЕРЕД тем как определить опечатку как баг, ПРОВЕРЬ контекст:
+     * Действительно ли это опечатка, или это разные параметры?
+     * Влияет ли это на функциональность или это просто опечатка в документации?
+     * Используется ли параметр одинаково в разных местах (тогда это опечатка)?
+   - НЕ считай опечатку багом, если:
+     * Параметр используется одинаково везде (одинаковое количество символов, одинаковое использование)
+     * Это явно опечатка в документации, но не влияет на функциональность
+     * В других методах используется правильное название
+   - Считай опечатку багом ТОЛЬКО если:
+     * Это создает реальную неоднозначность в требованиях
+     * Это может привести к ошибкам в реализации
+     * Это противоречит другим частям документа, где используется правильное название
+   - Пример: Если в требованиях написано \`accId\` в одном месте и \`accld\` в другом, но:
+     * В обоих местах используется одинаково (одинаковое количество символов, одинаковый контекст)
+     * В других методах используется \`accId\`
+     * Это явно опечатка (l вместо I), но не влияет на функциональность
+     * → НЕ создавай баг-репорт, это просто опечатка в документации
+
+3. **Проверка перед созданием баг-репорта:**
+   - Всегда проверяй контекст использования
+   - Всегда проверяй, влияет ли это на функциональность
+   - Всегда проверяй, используется ли это одинаково в разных местах
+   - Если сомневаешься — лучше НЕ создавай баг-репорт, чем создавать ложный
 
 **Формат ответа — обязательно использовать ровно этот шаблон Markdown**:
 
@@ -149,107 +365,129 @@ ${miniGlossary || '—'}
   console.log('[analyze] Финальный промпт:\n', prompt);
 
 
-  // ---------- 2) Вызов LLM с Cloud.ru приоритетом и OpenRouter fallback ----------
-  try {
-    const data = await callWithCloudRuFallback(
-      OPENROUTER_URL,
-      [
-        { role: 'system', content: SYSTEM_ENFORCER },
-        { role: 'user', content: prompt }
-      ],
-      apiKey || OPENROUTER_API_KEY,
-            {
-              models: config.cloudruModels,
-              temperature: 0.25,
-              max_tokens: 24000,  // Снижено с 24000 до 8000 для ускорения
-              logRateLimit: true
-            }
-    );
+  // ---------- 2) Вызов LLM с поддержкой интерактивного контекста ----------
+  const messagesFactory = () => ([
+    { role: 'system', content: SYSTEM_ENFORCER },
+    { role: 'user', content: prompt }
+  ]);
 
-    let content = data.choices?.[0]?.message?.content?.trim();
-    console.log(`[analyze] AI response length: ${content?.length || 0} chars`);
-    console.log(`[analyze] AI response preview: "${content?.slice(0, 200) || 'no content'}..."`);
-    
-    if (!content || content === '```' || content === '```\n```') {
-      console.warn('[analyze] Empty or invalid AI response, falling back to OpenRouter');
-      
-      // Fallback на OpenRouter при пустом ответе от Cloud.ru
-      try {
-        console.log('[analyze] Attempting OpenRouter fallback...');
-        const fallbackData = await callWithCloudRuFallback(
-          OPENROUTER_URL,
-          [
-            { role: 'system', content: SYSTEM_ENFORCER },
-            { role: 'user', content: prompt }
-          ],
-          OPENROUTER_API_KEY,
-                {
-                  temperature: 0.25,
-                  max_tokens: 24000,  // Снижено с 24000 до 8000 для ускорения
-                  logRateLimit: true
-                }
-        );
-        
-        const fallbackContent = fallbackData.choices?.[0]?.message?.content?.trim() || '';
-        console.log(`[analyze] OpenRouter fallback response length: ${fallbackContent.length} chars`);
-        
-        if (fallbackContent && fallbackContent !== '```' && fallbackContent !== '```\n```') {
-          console.log('[analyze] OpenRouter fallback successful');
-          content = fallbackContent;
-        } else {
-          console.error('[analyze] OpenRouter fallback also returned empty response. Full data:', JSON.stringify(fallbackData, null, 2));
+  const baseModelOptions = {
+    models: config.cloudruModels,
+    temperature: 0.25,
+    max_tokens: 24000,
+    logRateLimit: true
+  };
+
+  let content = '';
+  let rawResponse = null;
+
+  try {
+    console.log('[analyze] Запуск интерактивного режима (tools-enabled)');
+    const interactiveResult = await runInteractiveLLM({
+      initialMessages: messagesFactory(),
+      tools: interactiveTools,
+      toolHandlers: contextToolHandlers,
+      modelOptions: baseModelOptions
+    });
+
+    rawResponse = interactiveResult.response;
+
+    if (interactiveResult.status === 'assistant-message') {
+      content = interactiveResult.message?.content?.trim() || '';
+    } else if (interactiveResult.status === 'final-tool-call') {
+      console.warn(`[analyze] Модель завершила работу через tool "${interactiveResult.toolName}" — возвращаем аргументы как текст`);
+      content = JSON.stringify(interactiveResult.args || {}, null, 2);
+    }
+
+    console.log(`[analyze] Interactive response length: ${content.length}`);
+  } catch (interactiveError) {
+    console.warn('[analyze] Интерактивный режим не удался, fallback к одиночному запросу:', interactiveError.message);
+  }
+
+  const singleShotCall = async (useOpenRouterOnly = false) => {
+    return await callWithCloudRuFallback(
+      OPENROUTER_URL,
+      messagesFactory(),
+      useOpenRouterOnly ? OPENROUTER_API_KEY : (apiKey || OPENROUTER_API_KEY),
+      useOpenRouterOnly
+        ? {
+            temperature: 0.25,
+            max_tokens: 24000,
+            logRateLimit: true
+          }
+        : baseModelOptions
+    );
+  };
+
+  if (!content || content === '```' || content === '```\n```') {
+    try {
+      console.warn('[analyze] Результат пустой или некорректный — пробуем одиночный вызов (Cloud.ru -> OpenRouter)');
+      const singleShotResponse = await singleShotCall(false);
+      rawResponse = singleShotResponse;
+      content = singleShotResponse.choices?.[0]?.message?.content?.trim() || '';
+      console.log(`[analyze] Single-shot response length: ${content.length}`);
+
+      if (!content || content === '```' || content === '```\n```') {
+        console.warn('[analyze] Cloud.ru вернул пустой ответ, пробуем OpenRouter напрямую');
+        const fallbackResponse = await singleShotCall(true);
+        rawResponse = fallbackResponse;
+        content = fallbackResponse.choices?.[0]?.message?.content?.trim() || '';
+        console.log(`[analyze] OpenRouter-only response length: ${content.length}`);
+
+        if (!content || content === '```' || content === '```\n```') {
+          console.error('[analyze] Все провайдеры вернули пустой ответ');
           throw new Error('Все AI провайдеры вернули пустой ответ');
         }
-      } catch (fallbackError) {
-        console.warn('[analyze] OpenRouter fallback failed:', fallbackError.message);
-        throw new Error('Ответ от модели пустой и fallback не удался');
       }
+    } catch (fallbackError) {
+      console.error('[analyze] Ошибка во время fallback:', fallbackError.message);
+      throw fallbackError;
     }
-
-    // Нормализация вывода для моделей, склонных вставлять пустые или "```markdown" блоки
-    content = content.replace(/```\s*markdown\s*/g, '```');
-    content = content.replace(/```\s*\n\s*```/g, ''); // удаляем пустые блоки ```\n```
-
-    // Если вся выдача в одном общем fenced-блоке — режем по секциям "### ..."
-    const startsFence = /^\s*```/.test(content);
-    const endsFence = /```\s*$/.test(content);
-    if (startsFence && endsFence) {
-      const inner = content.replace(/^\s*```\s*/, '').replace(/\s*```\s*$/, '').trim();
-      const parts = inner.split(/\n(?=###\s)/).map(s => s.trim()).filter(Boolean);
-      if (parts.length > 1) {
-        content = parts.map(p => '```\n' + p + '\n```').join('\n\n');
-      }
-    }
-
-    // Если вообще нет fenced-блоков, но есть заголовки — обернём каждую секцию
-    if (!/```/.test(content) && /(^|\n)###\s/.test(content)) {
-      const parts = content.split(/\n(?=###\s)/).map(s => s.trim()).filter(Boolean);
-      if (parts.length) {
-        content = parts.map(p => '```\n' + p + '\n```').join('\n\n');
-      }
-    }
-
-    // Если в тексте уже есть несколько fenced-блоков — отфильтруем шумовые
-    const multiBlocks = content.match(/```[\s\S]*?```/g);
-    if (multiBlocks && multiBlocks.length > 1) {
-      const filtered = multiBlocks
-        .map(b => ({ raw: b, inner: b.replace(/^```\s*/,'').replace(/\s*```$/,'').trim() }))
-        .filter(x => x.inner && /^###\s/.test(x.inner));
-      if (filtered.length) {
-        content = filtered.map(x => '```\n' + x.inner + '\n```').join('\n\n');
-      }
-    }
-
-    // Сохраняем для отладки
-    try {
-      fs.writeFileSync('requirement-analysis.txt', content, 'utf8');
-    } catch (e) {
-      console.warn('Не удалось записать requirement-analysis.txt:', e.message);
-    }
-
-    return content;
-  } catch (err) {
-    console.error('[analyze] Ошибка анализа требования:', err.message);
-    throw err;
   }
+
+  console.log(`[analyze] Итоговая длина ответа: ${content.length} символов`);
+  console.log(`[analyze] Ответ (первые 200 символов): "${content.slice(0, 200) || 'no content'}..."`);
+
+  // Нормализация вывода для моделей, склонных вставлять пустые или "```markdown" блоки
+  content = content.replace(/```\s*markdown\s*/g, '```');
+  content = content.replace(/```\s*\n\s*```/g, ''); // удаляем пустые блоки ```\n```
+
+  // Если вся выдача в одном общем fenced-блоке — режем по секциям "### ..."
+  const startsFence = /^\s*```/.test(content);
+  const endsFence = /```\s*$/.test(content);
+  if (startsFence && endsFence) {
+    const inner = content.replace(/^\s*```\s*/, '').replace(/\s*```\s*$/, '').trim();
+    const parts = inner.split(/\n(?=###\s)/).map(s => s.trim()).filter(Boolean);
+    if (parts.length > 1) {
+      content = parts.map(p => '```\n' + p + '\n```').join('\n\n');
+    }
+  }
+
+  // Если вообще нет fenced-блоков, но есть заголовки — обернём каждую секцию
+  if (!/```/.test(content) && /(^|\n)###\s/.test(content)) {
+    const parts = content.split(/\n(?=###\s)/).map(s => s.trim()).filter(Boolean);
+    if (parts.length) {
+      content = parts.map(p => '```\n' + p + '\n```').join('\n\n');
+    }
+  }
+
+  // Если в тексте уже есть несколько fenced-блоков — отфильтруем шумовые
+  const multiBlocks = content.match(/```[\s\S]*?```/g);
+  if (multiBlocks && multiBlocks.length > 1) {
+    const filtered = multiBlocks
+      .map(b => ({ raw: b, inner: b.replace(/^```\s*/,'').replace(/\s*```$/,'').trim() }))
+      .filter(x => x.inner && /^###\s/.test(x.inner));
+    if (filtered.length) {
+      content = filtered.map(x => '```\n' + x.inner + '\n```').join('\n\n');
+    }
+  }
+
+  // Сохраняем для отладки
+  try {
+    fs.writeFileSync('requirement-analysis.txt', content, 'utf8');
+  } catch (e) {
+    console.warn('Не удалось записать requirement-analysis.txt:', e.message);
+  }
+
+  return content;
 }

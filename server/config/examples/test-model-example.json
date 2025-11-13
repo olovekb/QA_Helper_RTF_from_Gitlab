@@ -1,0 +1,87 @@
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "text": "Безбумажный офис",
+    "stories": [
+      {
+        "id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+        "text": "Регистрация в ББО",
+        "scenarios": [
+          {
+            "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+            "text": "1. Нажать на кнопку \"Безбумажный офис\"",
+            "codes": [
+              {
+                "id": "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
+                "text": "GET /stateful/personal/kuban/client/info/v2",
+                "type": "backend"
+              },
+              {
+                "id": "6ba7b812-9dad-11d1-80b4-00c04fd430c9",
+                "text": "Отобразить страницу \"Электронная почта не найдена\" или \"Письмо отправлено\"",
+                "type": "frontend"
+              }
+            ]
+          },
+          {
+            "id": "6ba7b817-9dad-11d1-80b4-00c04fd430ce",
+            "text": "4. Нажать на кнопку \"Подтвердить\"",
+            "codes": [
+              {
+                "id": "6ba7b818-9dad-11d1-80b4-00c04fd430cf",
+                "text": "Показать лоадер на кнопке \"Подтвердить\"",
+                "type": "frontend"
+              },
+              {
+                "id": "6ba7b819-9dad-11d1-80b4-00c04fd430d0",
+                "text": "PUT /nopaper/user",
+                "type": "backend"
+              },
+              {
+                "id": "6ba7b81a-9dad-11d1-80b4-00c04fd430d1",
+                "text": "Отобразить модальное окно ОТП",
+                "type": "frontend"
+              },
+              {
+                "id": "6ba7b81b-9dad-11d1-80b4-00c04fd430d2",
+                "text": "Отправить push-уведомление \"Требуется ввод кода\"",
+                "type": "integration"
+              }
+            ]
+          },
+          {
+            "id": "6ba7b81c-9dad-11d1-80b4-00c04fd430d3",
+            "text": "6. Нажать на кнопку \"Продолжить\"",
+            "codes": [
+              {
+                "id": "6ba7b81d-9dad-11d1-80b4-00c04fd430d4",
+                "text": "GET /stateful/personal/kuban/noPaper/secretCodeAsync",
+                "type": "backend"
+              },
+              {
+                "id": "6ba7b81e-9dad-11d1-80b4-00c04fd430d5",
+                "text": "Вызвать метод auth()",
+                "type": "backend"
+              },
+              {
+                "id": "6ba7b81f-9dad-11d1-80b4-00c04fd430d6",
+                "text": "Вызвать метод verificate()",
+                "type": "backend"
+              },
+              {
+                "id": "6ba7b820-9dad-11d1-80b4-00c04fd430d7",
+                "text": "Вызвать метод getKeyAcceptanceAct()",
+                "type": "backend"
+              },
+              {
+                "id": "6ba7b821-9dad-11d1-80b4-00c04fd430d8",
+                "text": "Отобразить страницу с актом признания ключа",
+                "type": "frontend"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

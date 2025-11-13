@@ -332,6 +332,30 @@ export async function callCloudRuAPI(messages, opts = {}) {
             console.log(`\n🔄 [cloudru] ATTEMPT ${attempt}/${MAX_ATTEMPTS}`);
             console.log(`📤 Request body size: ${JSON.stringify(requestBody).length} chars`);
             console.log(`📤 Sending to: ${endpoint}`);
+            
+            // ✅ ВАЛИДАЦИЯ JSON ПЕРЕД ОТПРАВКОЙ
+            let requestBodyString;
+            try {
+                requestBodyString = JSON.stringify(requestBody);
+                // Проверяем, что JSON валидный
+                JSON.parse(requestBodyString);
+                console.log(`✅ JSON validation passed`);
+            } catch (jsonError) {
+                console.error(`❌ JSON validation failed:`, jsonError.message);
+                // Логируем проблемные части
+                if (requestBody.messages) {
+                    requestBody.messages.forEach((msg, idx) => {
+                        try {
+                            JSON.stringify(msg);
+                        } catch (e) {
+                            console.error(`❌ Invalid message at index ${idx}:`, e.message);
+                            console.error(`Message content preview:`, msg.content?.substring(0, 500));
+                        }
+                    });
+                }
+                throw new Error(`Invalid JSON in request body: ${jsonError.message}`);
+            }
+            
             const callHeaders = { ...headers };
             const agent = forceFresh ? getFreshAgent(endpoint) : getAgentForUrl(endpoint);
             if (forceFresh) callHeaders['Connection'] = 'close';
@@ -339,7 +363,7 @@ export async function callCloudRuAPI(messages, opts = {}) {
             const response = await fetchWithTimeout(endpoint, {
                 method: 'POST',
                 headers: callHeaders,
-                body: JSON.stringify(requestBody),
+                body: requestBodyString,
                 agent
             });
 
@@ -357,6 +381,29 @@ export async function callCloudRuAPI(messages, opts = {}) {
                 console.log(`⏰ Retry-After: ${response.headers.get('retry-after') || 'Not set'}`);
                 console.log(`🔄 Attempt: ${attempt}/${MAX_ATTEMPTS}`);
                 console.log(`📊 Rate retries: ${rateRetries}/${MAX_RATE_LIMIT_RETRIES}`);
+                
+                // ✅ ДОПОЛНИТЕЛЬНАЯ ДИАГНОСТИКА: Проверяем наличие {{}} в сообщениях
+                if (requestBody.messages) {
+                    const hasPlaceholders = requestBody.messages.some(msg => 
+                        typeof msg.content === 'string' && msg.content.includes('{{')
+                    );
+                    if (hasPlaceholders) {
+                        console.log(`\n⚠️  DETECTED {{}} PLACEHOLDERS IN MESSAGES`);
+                        console.log(`📋 This might cause issues with Cloud.ru API`);
+                        console.log(`💡 Consider escaping or removing placeholders before sending`);
+                        
+                        // Показываем примеры мест, где найдены {{}}
+                        requestBody.messages.forEach((msg, idx) => {
+                            if (typeof msg.content === 'string' && msg.content.includes('{{')) {
+                                const matches = msg.content.match(/\{\{[^}]+\}\}/g);
+                                if (matches && matches.length > 0) {
+                                    console.log(`  Message ${idx} (${msg.role}): Found ${matches.length} placeholder(s)`);
+                                    console.log(`  Examples: ${matches.slice(0, 3).join(', ')}`);
+                                }
+                            }
+                        });
+                    }
+                }
                 console.log(`📋 Model: ${model}`);
                 console.log(`📏 Request size: ${JSON.stringify(requestBody).length} chars`);
                 console.log(`🔢 Estimated tokens: ${Math.ceil(JSON.stringify(requestBody).length / 4)}`);

@@ -194,6 +194,15 @@ import http from 'http';
 import https from 'https';
 import { prepareContextWithAI } from './contextRefiner.mjs';
 import { callWithCloudRuFallback } from './cloudruClient.mjs';
+import { createContextSourceRegistry, createContextToolset } from './contextToolset.mjs';
+import { runInteractiveLLM } from './interactiveLLM.mjs';
+import { selectExamples, buildExamplesSection } from './config/example-selector.js';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const app = express();
@@ -254,8 +263,9 @@ async function contextRefiner({
     contextPageIds,          // string|string[]|number[] | undefined
     contextInstruction,      // string | undefined
     bearerToken,             // string | undefined
-    maxGlossary = 25,        // можно прокидывать из тела запроса
-    maxContext = 16         // можно прокидывать из тела запроса
+    contextPages,            // string[] | undefined - дополнительные страницы контекста
+    maxGlossary = 40,        // можно прокидывать из тела запроса (увеличено с 25)
+    maxContext = 50         // можно прокидывать из тела запроса (увеличено с 16)
 }) {
     const normIds = (v) => {
         if (!v) return [];
@@ -264,20 +274,25 @@ async function contextRefiner({
     };
 
     // 0) База требований: массив/строка/Confluence pageId
+    console.log(`[contextRefiner] Входные параметры: requirements=${requirements ? (Array.isArray(requirements) ? `array[${requirements.length}]` : 'string') : 'undefined'}, text.length=${(text || '').length}, pageId=${pageId}`);
+
     let baseList = Array.isArray(requirements)
         ? requirements.map(String)
         : [];
 
     let baseText = String(text || '').trim();
+    console.log(`[contextRefiner] После обработки: baseList.length=${baseList.length}, baseText.length=${baseText.length}`);
 
     if (!baseList.length && !baseText && pageId) {
         if (!bearerToken) throw new Error('Для загрузки требования из Confluence нужен bearerToken');
         const { markdown } = await fetchConfluencePage(bearerToken, pageId, { inlineTextAttachments: true });
         baseText = markdown || '';
+        console.log(`[contextRefiner] Загружено из pageId: baseText.length=${baseText.length}`);
     }
 
     if (!baseList.length && baseText) {
         baseList = [baseText];
+        console.log(`[contextRefiner] Добавлено baseText в baseList: baseList.length=${baseList.length}`);
     }
 
     // 1) Глоссарий: строка + (опц.) страница
@@ -311,11 +326,24 @@ async function contextRefiner({
 
     // 3) Сжать глоссарий/контекст через prepareContextWithAI (требования — без изменений по смыслу)
     const reqJoined = baseList.length ? baseList.join('\n\n---\n\n') : (baseText || '');
+
+    // Логирование для диагностики
+    console.log(`[contextRefiner] baseList.length=${baseList.length}, baseText.length=${baseText.length}, reqJoined.length=${reqJoined.length}`);
+
+    // Объединяем contextPages с contextText, если они есть
+    let finalContextText = contextText || '';
+    if (Array.isArray(contextPages) && contextPages.length > 0) {
+        const contextPagesText = contextPages.join('\n\n--- page ---\n\n');
+        finalContextText = [contextText, contextPagesText].filter(Boolean).join('\n\n');
+        console.log(`[contextRefiner] Добавлено ${contextPages.length} contextPages, finalContextText.length=${finalContextText.length}`);
+    }
+
     const { requirements_md, mini_glossary_md, context_md } = await prepareContextWithAI({
         requirements: reqJoined || '',
         glossary: glossaryText || '',
-        context: contextText || '',
+        context: finalContextText || '',
         contextHint: contextInstruction || '—',
+        contextPages: contextPages || [], // Передаем contextPages для joinContextPages
         maxGlossary,
         maxContext
     });
@@ -412,6 +440,562 @@ function normalizeModelStructure(model) {
 
     const normalized = Array.isArray(model) ? walk(model, 1) : walk([model], 1);
     return dedupeByText(normalized);
+}
+
+const RAW_USER_ACTION_PATTERNS = ['\\[\\s*step', '\\d+\\.?\\d*\\.?\\s*'];
+const USER_ACTION_VERBS = [
+    'Открыть',
+    'Перейти',
+    'Нажать',
+    'Ввести',
+    'Выбрать',
+    'Сканировать',
+    'Сфокусироваться',
+    'Снять фокус',
+    'Продолжить',
+    'Авторизоваться',
+    'Заполнить',
+    'Кликнуть',
+    'Навести',
+    'Подтвердить',
+    'Загрузить',
+    'Установить',
+    'Снять',
+    'Выполнить',
+    'Отправить',
+    'Выставить',
+    'Изменить',
+    'Приложить',
+    'Проскроллить',
+    'Прочитать',
+    'Ввести код',
+    'Ввести смс',
+    'Ввести otp',
+    'Выбрать чек-бокс',
+    'Выбрать значение',
+    'Выполнить'
+];
+const RAW_SYSTEM_ACTION_PATTERNS = ['POST\\b', 'GET\\b', 'PUT\\b', 'DELETE\\b', 'PATCH\\b'];
+const SYSTEM_ACTION_PREFIXES = [
+    'Отобразить',
+    'Рассчитать',
+    'Сохранить',
+    'Инициализ',
+    'Вызвать',
+    'Получить',
+    'Вернуть',
+    'Передать',
+    'Сформировать',
+    'Проверить',
+    'Обработать',
+    'Выполнить',
+    'Скрыть',
+    'Показать',
+    'Не отображать',
+    'Не вызывать',
+    'Сгенерировать',
+    'Записать',
+    'Подготовить',
+    'Отправить ответ',
+    'Отправить запрос',
+    'Система',
+    'Продолжить',
+    'Продолжать',
+    'Убрать',
+    'Запустить',
+    'Создать',
+    'Очистить',
+    'Заполнить',
+    'Перезаполнить',
+    'Снять',
+    'Оставить',
+    'Сделать',
+    'Повторить',
+    'Отредактировать',
+    'Просмотреть',
+    'Не передавать',
+    'Не отображать',
+    'Не вызывать',
+    'Не передавать',
+    'Установить',
+    'Сбросить',
+    'Активировать',
+    'Деактивировать',
+    'Включить',
+    'Выключить',
+    'Доступн',
+    'Недоступн',
+    'Обязательн',
+    'Необязательн'
+];
+
+const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const USER_ACTION_REGEX = new RegExp(
+    `^\\s*(?:${[
+        ...RAW_USER_ACTION_PATTERNS,
+        ...USER_ACTION_VERBS.map(escapeRegex)
+    ].join('|')})`,
+    'i'
+);
+
+const SYSTEM_ACTION_REGEX = new RegExp(
+    `^\\s*(?:${[
+        ...RAW_SYSTEM_ACTION_PATTERNS,
+        ...SYSTEM_ACTION_PREFIXES.map(escapeRegex)
+    ].join('|')})`,
+    'i'
+);
+
+function ensureScenarioStepText(text, index) {
+    let trimmed = String(text || '').trim();
+    if (!trimmed) {
+        return 'Выполнить пользовательское действие';
+    }
+
+    // Убираем любые старые префиксы вида [step N]
+    trimmed = trimmed.replace(/^\s*\[\s*step\s*\d+\s*]\s*/i, '').trim();
+
+    // Если фраза начинается с "Система ..." — это реакция, превратим её в действие
+    if (/^система\s+/i.test(trimmed)) {
+        const withoutSystem = trimmed.replace(/^система\s+/i, '');
+        trimmed = `Выполнить ${withoutSystem}`;
+    }
+
+    if (USER_ACTION_REGEX.test(trimmed)) {
+        return trimmed;
+    }
+
+    const lower = trimmed.charAt(0).toLowerCase() + trimmed.slice(1);
+    return `Выполнить ${lower}`;
+}
+
+// ✅ Функция для определения типа Code (backend/frontend/integration)
+function detectCodeType(codeText) {
+    const text = String(codeText || '').trim().toLowerCase();
+
+    // Backend паттерны
+    const backendPatterns = [
+        /^(get|post|put|delete|patch)\s+\//i,  // HTTP методы
+        /^вызвать\s+метод/i,                    // Вызвать метод
+        /^выполнить\s+метод/i,                  // Выполнить метод
+        /\/api\//i,                             // API endpoint
+        /\/stateful\//i,                        // Stateful API
+        /\/confirm\//i,                         // Confirm API
+        /\/nopaper\//i,                         // Nopaper API
+    ];
+
+    // Frontend паттерны
+    const frontendPatterns = [
+        /^отобразить/i,                         // Отобразить
+        /^показать/i,                           // Показать
+        /^скрыть/i,                             // Скрыть
+        /^активировать/i,                       // Активировать
+        /^деактивировать/i,                     // Деактивировать
+        /^перейти\s+на/i,                       // Перейти на
+        /страницу/i,                            // Страницу
+        /модальное\s+окно/i,                    // Модальное окно
+        /кнопку/i,                              // Кнопку
+        /поле/i,                                // Поле
+        /лоадер/i,                              // Лоадер
+    ];
+
+    // Integration паттерны
+    const integrationPatterns = [
+        /^отправить\s+push/i,                   // Push уведомление
+        /^сохранить\s+в\s+бд/i,                 // Сохранить в БД
+        /^записать\s+лог/i,                     // Записать лог
+        /^отправить\s+email/i,                  // Email
+        /^отправить\s+sms/i,                    // SMS
+    ];
+
+    // Проверяем в порядке приоритета: integration -> backend -> frontend
+    for (const pattern of integrationPatterns) {
+        if (pattern.test(text)) {
+            return 'integration';
+        }
+    }
+
+    for (const pattern of backendPatterns) {
+        if (pattern.test(text)) {
+            return 'backend';
+        }
+    }
+
+    for (const pattern of frontendPatterns) {
+        if (pattern.test(text)) {
+            return 'frontend';
+        }
+    }
+
+    // По умолчанию - integration (если не определили)
+    return 'integration';
+}
+
+function normalizeCodeText(rawText) {
+    let text = String(rawText || '').trim();
+    if (!text) return '';
+
+    // Убираем префикс [step N]
+    text = text.replace(/^\s*\[\s*step\s*\d+\s*]\s*/i, '').trim();
+
+    // Если текст начинается с "Система" - убираем его (избыточно)
+    text = text.replace(/^система\s+/i, '').trim();
+
+    // ✅ Удаляем префиксы "API:", "UI:", "Frontend:", "Backend:"
+    const invalidPrefixes = ['API:', 'UI:', 'Frontend:', 'Backend:'];
+    for (const prefix of invalidPrefixes) {
+        if (text.startsWith(prefix)) {
+            text = text.replace(prefix, '').trim();
+            console.warn(`[normalizeCodeText] Удалён префикс '${prefix}' из Code: "${text}"`);
+        }
+    }
+
+    // ✅ АВТОМАТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Если текст начинается с пользовательского действия - преобразуем в системную реакцию
+    if (USER_ACTION_REGEX.test(text)) {
+        console.warn(`[normalizeCodeText] Code содержит пользовательское действие: "${text}" - исправляю автоматически`);
+
+        // Преобразуем пользовательские действия в системные реакции
+        // "Заполнить поле X текстом Y" → "Отобразить поле X с текстом Y"
+        text = text.replace(/^заполнить\s+поле\s+["']?([^"']+)["']?\s+текстом\s+["']?([^"']+)["']?/i, 'Отобразить поле "$1" с текстом "$2"');
+        text = text.replace(/^заполнить\s+поле\s+["']?([^"']+)["']?/i, 'Отобразить поле "$1"');
+        text = text.replace(/^ввести\s+(.+)/i, 'Обработать ввод: $1');
+        text = text.replace(/^нажать\s+(.+)/i, 'Обработать нажатие: $1');
+        text = text.replace(/^выбрать\s+(.+)/i, 'Обработать выбор: $1');
+        text = text.replace(/^открыть\s+(.+)/i, 'Отобразить: $1');
+        // ✅ НОВОЕ: Дополнительные преобразования
+        text = text.replace(/^установить\s+(чек-бокс|чекбокс|checkbox)\s+["']?([^"']+)["']?\s+в\s+состояние\s+не\s+выбран/i, 'Отобразить чек-бокс "$2" доступным для редактирования и не выбранным');
+        text = text.replace(/^установить\s+(чек-бокс|чекбокс|checkbox)\s+["']?([^"']+)["']?\s+в\s+состояние\s+выбран/i, 'Отобразить чек-бокс "$2" доступным для редактирования и выбранным');
+        text = text.replace(/^установить\s+(чек-бокс|чекбокс|checkbox)\s+["']?([^"']+)["']?/i, 'Отобразить чек-бокс "$2"');
+        text = text.replace(/^снять\s+(выбор\s+с\s+)?(чек-бокс|чекбокс|checkbox)\s+["']?([^"']+)["']?/i, 'Сбросить значение чек-бокса "$3"');
+        text = text.replace(/^выполнить\s+(GET|POST|PUT|DELETE|PATCH)\s+запрос\s+к\s+(.+)/i, '$1 $2');
+        text = text.replace(/^выполнить\s+(GET|POST|PUT|DELETE|PATCH)\s+(.+)/i, '$1 $2');
+
+        // Если после преобразования все еще начинается с пользовательского действия - добавляем префикс
+        if (USER_ACTION_REGEX.test(text)) {
+            text = `Обработать действие: ${text}`;
+        }
+    }
+
+    // Капитализируем первую букву, если нужно
+    if (text && text.length > 0) {
+        text = text.charAt(0).toUpperCase() + text.slice(1);
+    }
+
+    return text;
+}
+
+function convertScenarioToCodes(scenario, fallbackRequirement) {
+    const codes = [];
+    const scenarioText = String(scenario?.text || '').trim();
+    const scenarioRequirement = scenario?.requirement || fallbackRequirement;
+
+    if (scenarioText) {
+        const normalizedScenarioCode = normalizeCodeText(scenarioText);
+        if (normalizedScenarioCode) {
+            codes.push({
+                id: scenario?.id || uuidv4(),
+                text: normalizedScenarioCode,
+                requirement: scenarioRequirement
+            });
+        }
+    }
+
+    const originalCodes = Array.isArray(scenario?.codes) ? scenario.codes : [];
+    for (const code of originalCodes) {
+        const normalized = normalizeCodeText(code?.text);
+        if (!normalized) continue;
+        codes.push({
+            ...code,
+            id: code?.id || uuidv4(),
+            text: normalized,
+            requirement: code?.requirement || scenarioRequirement
+        });
+    }
+
+    return codes;
+}
+
+function repairStoryStructure(story) {
+    let stepCounter = 0;
+    const repairedScenarios = [];
+    let lastScenario = null;
+
+    const appendScenario = (scenario) => {
+        repairedScenarios.push(scenario);
+        lastScenario = scenario;
+    };
+
+    const ensureLastScenario = (sourceScenario) => {
+        if (lastScenario) return lastScenario;
+        const synthetic = {
+            id: sourceScenario?.id || uuidv4(),
+            text: ensureScenarioStepText('Выполнить пользовательское действие', ++stepCounter),
+            requirement: sourceScenario?.requirement || story?.requirement,
+            codes: []
+        };
+        appendScenario(synthetic);
+        return synthetic;
+    };
+
+    for (const originalScenario of (story?.scenarios || [])) {
+        const scenarioText = String(originalScenario?.text || '').trim();
+        const isUserAction = scenarioText && USER_ACTION_REGEX.test(scenarioText);
+
+        if (!isUserAction) {
+            const targetScenario = ensureLastScenario(originalScenario);
+            const convertedCodes = convertScenarioToCodes(originalScenario, targetScenario.requirement || story?.requirement);
+            if (convertedCodes.length) {
+                targetScenario.codes = [...(targetScenario.codes || []), ...convertedCodes];
+            }
+            continue;
+        }
+
+        const scenarioId = originalScenario?.id || uuidv4();
+        const scenarioRequirement = originalScenario?.requirement || story?.requirement;
+        const normalizedScenarioText = ensureScenarioStepText(scenarioText, ++stepCounter);
+
+        const normalizedCodes = [];
+        for (const code of (originalScenario?.codes || [])) {
+            const normalized = normalizeCodeText(code?.text);
+            if (!normalized) continue;
+            normalizedCodes.push({
+                ...code,
+                id: code?.id || uuidv4(),
+                text: normalized,
+                requirement: code?.requirement || scenarioRequirement
+            });
+        }
+
+        const scenarioClone = {
+            ...originalScenario,
+            id: scenarioId,
+            text: normalizedScenarioText,
+            requirement: scenarioRequirement,
+            codes: normalizedCodes
+        };
+
+        appendScenario(scenarioClone);
+    }
+
+    if (!repairedScenarios.length) {
+        repairedScenarios.push({
+            id: uuidv4(),
+            text: `Выполнить пользовательское действие`,
+            requirement: story?.requirement,
+            codes: []
+        });
+    }
+
+    return {
+        ...story,
+        scenarios: repairedScenarios
+    };
+}
+
+function repairModelStructure(model) {
+    return (model || []).map(feature => {
+        return {
+            ...feature,
+            stories: (feature?.stories || []).map(story => {
+                return {
+                    ...story,
+                    ...repairStoryStructure(story)
+                };
+            })
+        };
+    });
+}
+
+// ✅ Функция для автоматического исправления Code с пользовательскими действиями
+function autoFixCodeWithUserActions(model) {
+    return (model || []).map(feature => {
+        return {
+            ...feature,
+            stories: (feature?.stories || []).map(story => {
+                return {
+                    ...story,
+                    scenarios: (story?.scenarios || []).map(scenario => {
+                        return {
+                            ...scenario,
+                            codes: (scenario?.codes || []).map(code => {
+                                // Применяем normalizeCodeText для автоматического исправления
+                                const fixedText = normalizeCodeText(code?.text);
+                                return {
+                                    ...code,
+                                    text: fixedText
+                                };
+                            })
+                        };
+                    })
+                };
+            })
+        };
+    });
+}
+
+// ✅ Функция для валидации и очистки модели от requirement и префиксов, добавления типа Code
+function validateAndCleanModel(model) {
+    const errors = [];
+    const warnings = [];
+
+    for (const feature of model || []) {
+        // ✅ Проверка: requirement должен отсутствовать
+        if ('requirement' in feature) {
+            delete feature.requirement;
+            errors.push(`[CLEANED] Удалено поле 'requirement' из Feature: ${feature.text}`);
+        }
+
+        for (const story of feature.stories || []) {
+            if ('requirement' in story) {
+                delete story.requirement;
+                errors.push(`[CLEANED] Удалено поле 'requirement' из Story: ${story.text}`);
+            }
+
+            for (const scenario of story.scenarios || []) {
+                if ('requirement' in scenario) {
+                    delete scenario.requirement;
+                    errors.push(`[CLEANED] Удалено поле 'requirement' из Scenario: ${scenario.text}`);
+                }
+
+                // ✅ Проверка: Scenario должен начинаться с "N."
+                if (!/^\d+\./.test(scenario.text)) {
+                    warnings.push(`[WARNING] Scenario не начинается с номера: "${scenario.text}"`);
+                }
+
+                for (const code of scenario.codes || []) {
+                    if ('requirement' in code) {
+                        delete code.requirement;
+                        errors.push(`[CLEANED] Удалено поле 'requirement' из Code: ${code.text}`);
+                    }
+
+                    // ✅ Проверка: Code не содержит префиксов (нормализация уже применена в normalizeCodeText)
+                    const invalidPrefixes = ['API:', 'UI:', 'Frontend:', 'Backend:'];
+                    for (const prefix of invalidPrefixes) {
+                        if (code.text && code.text.startsWith(prefix)) {
+                            code.text = code.text.replace(prefix, '').trim();
+                            errors.push(`[CLEANED] Удалён префикс '${prefix}' из Code: "${code.text}"`);
+                        }
+                    }
+
+                    // ✅ Добавляем поле type для Code (если отсутствует)
+                    if (!code.type && code.text) {
+                        code.type = detectCodeType(code.text);
+                    }
+
+                    // ✅ Проверка: Code не пустой
+                    if (!code.text || !code.text.trim()) {
+                        warnings.push(`[WARNING] Code с пустым text в Scenario: ${scenario.text}`);
+                    }
+                }
+
+                // ✅ Проверка: Scenario содержит хотя бы один Code
+                if (!scenario.codes || scenario.codes.length === 0) {
+                    warnings.push(`[WARNING] Scenario без Code: "${scenario.text}"`);
+                }
+            }
+        }
+    }
+
+    if (errors.length > 0) {
+        console.warn(`[VALIDATION] Найдено ${errors.length} проблем (исправлено автоматически):`);
+        errors.forEach(err => console.warn(`  ${err}`));
+    }
+
+    if (warnings.length > 0) {
+        console.warn(`[VALIDATION] Найдено ${warnings.length} предупреждений:`);
+        warnings.forEach(warn => console.warn(`  ${warn}`));
+    }
+
+    return model;
+}
+
+const TECHNICAL_PREFIXES = /^(реализовать|алгоритм|функция|метод|api|система|доработка|реализация)\s+/i;
+const CONTROL_PATTERNS = /^(чек-бокс|чекбокс|checkbox|переключатель|radio|toggle|поле|field|input|кнопка|button|btn)\s*["']?/i;
+
+function detectModelStructureIssues(model, contextLabel = 'model') {
+    const issues = [];
+    (model || []).forEach((feature, featureIdx) => {
+        const featureTitle = String(feature?.text || `Feature#${featureIdx + 1}`).trim();
+
+        // Проверка Feature на технические формулировки
+        if (featureTitle && TECHNICAL_PREFIXES.test(featureTitle)) {
+            issues.push(`Feature "${featureTitle}" использует техническую формулировку вместо бизнес-потребности`);
+        }
+
+        // Проверка Feature на технические названия документов
+        if (featureTitle && /^доработка\s+/i.test(featureTitle)) {
+            issues.push(`Feature "${featureTitle}" является техническим названием документа, а не бизнес-потребностью. Feature должна описывать ЧТО получает пользователь, а не техническое название документа.`);
+        }
+
+        // Проверка Feature на описание технических деталей вместо бизнес-потребности
+        if (featureTitle && /(форма|документ|операция|метод|api|endpoint|запрос|ответ)/i.test(featureTitle) && !/(получить|создать|добавить|удалить|изменить|просмотреть|работа|использование)/i.test(featureTitle)) {
+            // Если Feature содержит технические термины, но не содержит глаголы действия пользователя - это подозрительно
+            if (!/(безбумажный|регистрация|авторизация|платеж|перевод|операция|документ)/i.test(featureTitle)) {
+                issues.push(`Feature "${featureTitle}" может быть техническим описанием вместо бизнес-потребности. Feature должна описывать ценность для пользователя (например, "Безбумажный офис", "Добавление операции в документ").`);
+            }
+        }
+
+        (feature?.stories || []).forEach((story, storyIdx) => {
+            const storyTitle = String(story?.text || `Story#${storyIdx + 1}`).trim();
+
+            // Проверка Story на технические формулировки
+            if (storyTitle && TECHNICAL_PREFIXES.test(storyTitle)) {
+                issues.push(`Story "${storyTitle}" использует техническую формулировку вместо пользовательской истории (${featureTitle})`);
+            }
+
+            // Проверка Story на описания контролов
+            if (storyTitle && CONTROL_PATTERNS.test(storyTitle)) {
+                issues.push(`Story "${storyTitle}" является описанием контрола, а не пользовательской историей (${featureTitle})`);
+            }
+
+            let lastValidScenario = null;
+
+            (story?.scenarios || []).forEach((scenario, scenarioIdx) => {
+                const scenarioTitle = String(scenario?.text || '').trim();
+                const labelBase = `${featureTitle} → ${storyTitle}`;
+
+                if (!scenarioTitle) {
+                    issues.push(`Scenario без текста (${labelBase})`);
+                } else if (!USER_ACTION_REGEX.test(scenarioTitle)) {
+                    issues.push(`Scenario "${scenarioTitle}" не начинается с действия пользователя (${labelBase})`);
+                } else {
+                    lastValidScenario = scenarioTitle;
+                }
+
+                const codes = Array.isArray(scenario?.codes) ? scenario.codes : [];
+                if (codes.length === 0) {
+                    issues.push(`Scenario "${scenarioTitle || `#${scenarioIdx + 1}`}" не содержит системных реакций (codes) (${labelBase})`);
+                }
+
+                codes.forEach(code => {
+                    const codeTitle = String(code?.text || '').trim();
+                    const detailedLabel = `${labelBase}${scenarioTitle ? ` → ${scenarioTitle}` : ''}`;
+
+                    if (!codeTitle) {
+                        issues.push(`Code без текста (${detailedLabel})`);
+                        return;
+                    }
+
+                    // Проверяем только на отсутствие пользовательских действий
+                    // Если это не пользовательское действие, то это системная реакция
+                    if (USER_ACTION_REGEX.test(codeTitle)) {
+                        issues.push(`Code "${codeTitle}" содержит пользовательское действие (${detailedLabel})`);
+                    }
+                    // Убрали строгую проверку SYSTEM_ACTION_REGEX - если это не пользовательское действие,
+                    // то считаем это системной реакцией (могут быть формулировки, не начинающиеся с известных префиксов)
+                });
+            });
+        });
+    });
+    return issues;
+}
+
+function summarizeStructureIssuesForPrompt(issues, limit = 3) {
+    if (!Array.isArray(issues) || issues.length === 0) return '';
+    const top = issues.slice(0, limit);
+    const rest = issues.length - top.length;
+    return `${top.map(issue => `- ${issue}`).join('\n')}${rest > 0 ? `\n- ... и ещё ${rest} нарушений` : ''}`;
 }
 
 // Выделение релевантных секций из markdown страницы по ключам из цитаты
@@ -892,11 +1476,16 @@ app.post('/api/analyze/solution', async (req, res) => {
             collectedAttachments = attachments || [];
             // AUTO-CONTEXT: извлечь ссылки вида ...pageId=123456 из основной статьи и подтянуть их как дополнительный контекст (без рекурсии)
             try {
-                const linkedIds = new Set(
-                    Array.from(String(markdown || '').matchAll(/pageId=(\d{4,})/g)).map(m => m[1])
-                );
+                const linkedIds = new Set();
+                // 1. Извлекаем pageId= из markdown
+                Array.from(String(markdown || '').matchAll(/pageId=(\d{4,})/g)).forEach(m => linkedIds.add(m[1]));
+                // 2. Извлекаем pageId из обычных URL вида https://confluence.../pages/viewpage.action?pageId=123456
+                Array.from(String(markdown || '').matchAll(/viewpage\.action\?pageId=(\d{4,})/gi)).forEach(m => linkedIds.add(m[1]));
+                // 3. Извлекаем pageId из коротких ссылок вида /pages/123456
+                Array.from(String(markdown || '').matchAll(/\/pages\/(\d{4,})/g)).forEach(m => linkedIds.add(m[1]));
                 // не включаем саму страницу
                 linkedIds.delete(String(pageId));
+                console.log(`[analyze/solution] Найдено ${linkedIds.size} ссылок на другие страницы: [${Array.from(linkedIds).join(', ')}]`);
                 if (linkedIds.size) {
                     // подготовим список markdown‑блоков для contextPages
                     const autoCtx = [];
@@ -1716,15 +2305,18 @@ function extractToolArgs(aiResponse, preferredFnName) {
                             }
                         }
 
-                        // 2) Убираем все после последней закрывающей скобки/кавычки
-                        const lastBrace = jsonText.lastIndexOf('}');
+                        // 2) Убираем все после последней закрывающей скобки массива (приоритет)
                         const lastBracket = jsonText.lastIndexOf(']');
-                        const lastQuote = jsonText.lastIndexOf('"');
-
-                        const cutPos = Math.max(lastBrace, lastBracket, lastQuote);
-                        if (cutPos > 0) {
-                            jsonText = jsonText.substring(0, cutPos + 1);
-                            console.log(`[extractToolArgs] 🔧 Обрезано до позиции ${cutPos + 1}`);
+                        if (lastBracket > 0 && lastBracket < jsonText.length - 1) {
+                            jsonText = jsonText.substring(0, lastBracket + 1);
+                            console.log(`[extractToolArgs] 🔧 Обрезано до последней закрывающей скобки массива (позиция ${lastBracket + 1})`);
+                        } else {
+                            // Если нет закрывающей скобки массива, ищем последнюю закрывающую скобку объекта
+                            const lastBrace = jsonText.lastIndexOf('}');
+                            if (lastBrace > 0 && lastBrace < jsonText.length - 1) {
+                                jsonText = jsonText.substring(0, lastBrace + 1);
+                                console.log(`[extractToolArgs] 🔧 Обрезано до последней закрывающей скобки объекта (позиция ${lastBrace + 1})`);
+                            }
                         }
 
                         // 2) Убираем trailing commas
@@ -2049,57 +2641,69 @@ function buildSubmitModelTool() {
         type: "function",
         function: {
             name: "submit_test_model",
-            description: "Верни иерархическую тест-модель (Feature→Story→Scenario→Code) строго в массиве model",
+            description: "Отправить сгенерированную тестовую модель Feature → Story → Scenario → Code",
             parameters: {
                 type: "object",
                 properties: {
                     model: {
                         type: "array",
+                        description: "Массив Features",
                         items: {
                             type: "object",
                             properties: {
-                                text: { type: "string" },                 // Feature name
+                                id: { type: "string", description: "UUID Feature" },
+                                text: { type: "string", description: "Название Feature" },
                                 stories: {
                                     type: "array",
                                     items: {
                                         type: "object",
                                         properties: {
-                                            text: { type: "string" },           // Story name
+                                            id: { type: "string", description: "UUID Story" },
+                                            text: { type: "string", description: "Название Story" },
                                             scenarios: {
                                                 type: "array",
                                                 items: {
                                                     type: "object",
                                                     properties: {
-                                                        text: { type: "string" },     // Scenario text
+                                                        id: { type: "string", description: "UUID Scenario" },
+                                                        text: {
+                                                            type: "string",
+                                                            description: "Действие пользователя, начинается с 'N. Глагол...'"
+                                                        },
                                                         codes: {
                                                             type: "array",
+                                                            description: "Поведения системы (Frontend + Backend + Integration)",
                                                             items: {
                                                                 type: "object",
                                                                 properties: {
-                                                                    text: { type: "string" } // Code action
+                                                                    id: { type: "string", description: "UUID Code" },
+                                                                    text: {
+                                                                        type: "string",
+                                                                        description: "Поведение системы: HTTP-метод, UI-действие, метод, интеграция. БЕЗ префиксов 'API:', 'UI:'"
+                                                                    },
+                                                                    type: {
+                                                                        type: "string",
+                                                                        enum: ["backend", "frontend", "integration"],
+                                                                        description: "Тип Code: 'backend' для API/методов, 'frontend' для UI, 'integration' для интеграций"
+                                                                    }
                                                                 },
-                                                                required: ["text"],
-                                                                additionalProperties: false
+                                                                required: ["id", "text"]
                                                             }
                                                         }
                                                     },
-                                                    required: ["text"],
-                                                    additionalProperties: false
+                                                    required: ["id", "text", "codes"]
                                                 }
                                             }
                                         },
-                                        required: ["text", "scenarios"],
-                                        additionalProperties: false
+                                        required: ["id", "text", "scenarios"]
                                     }
                                 }
                             },
-                            required: ["text", "stories"],
-                            additionalProperties: false
+                            required: ["id", "text", "stories"]
                         }
                     }
                 },
-                required: ["model"],
-                additionalProperties: false
+                required: ["model"]
             }
         }
     };
@@ -2147,7 +2751,1378 @@ app.get('/api/jira/search', async (req, res) => {
 
 
 // Асинхронная генерация тестовой модели
+// ✅ ФАЗА 1: ПРЕПРОЦЕССИНГ REQUIREMENTS - Извлечение структуры Feature → Story
+/**
+ * Извлекает структурированную иерархию Feature → Story из requirements
+ * @param {string} requirementsText - Текст requirements из Confluence
+ * @returns {Promise<RequirementsStructure>}
+ */
+async function extractRequirementsStructure(requirementsText) {
+    console.log('[extractRequirementsStructure] Начинаю извлечение структуры Feature → Story...');
+
+    const prompt = `
+Проанализируй требования и извлеки структуру Feature → Story.
+
+ПРАВИЛА:
+
+1. Feature = высокоуровневая функциональность (обычно в заголовке документа)
+   - Если заголовок "DA M Платежи. Реализовать X, Y, Z" → Feature: "DA M Платежи - X Y Z"
+   - ОДНА Feature на весь документ (если все требования про одну функциональность)
+   - НО если видишь РАЗНЫЕ функциональности (например, "Платежи" и "Переводы") → создай несколько Feature
+
+2. Story = пользовательская история (обычно начинается с "Реализовать...", "Добавить...", "Изменить...")
+   - Извлекай из пунктов требований (3.1, 3.2, 3.3...)
+   - Объединяй похожие требования в одну Story
+   - Пример: "3.4 Реализовать страницу X", "3.5 Реализовать страницу Y" → Story "Реализация страниц создания QR-кода"
+   - Story должна описывать ЧТО хочет получить пользователь, а НЕ техническую реализацию
+   - ✅ "QR-коды для физических лиц", "Оплата по QR-коду", "Создание функциональной ссылки"
+   - ❌ "Реализация кнопки...", "Вкладка X", "Фильтр Y", "Контрол Z"
+
+3. Scenario = пользовательское действие (НЕ извлекай сейчас, только позже)
+
+ТРЕБОВАНИЯ:
+${requirementsText}
+
+ВЫХОДНОЙ ФОРМАТ (JSON):
+{
+  "features": [
+    {
+      "name": "DA M Платежи - СБП QR-коды",
+      "description": "Реализовать выпуск функциональной/кассовой ссылок, активацию/деактивацию кассовой ссылки, отображение списка ссылок в разделе Эквайринг",
+      "stories": [
+        {
+          "name": "Создание QR-кода для физических лиц",
+          "requirements": ["3.1", "3.2", "3.3"],
+          "description": "Реализовать проверку подключения в СБП и загрузку страницы создания QR-кода"
+        },
+        {
+          "name": "Выпуск функциональной ссылки",
+          "requirements": ["3.4", "3.5"],
+          "description": "Реализовать страницу выпуска одноразового/многоразового QR-кода"
+        }
+      ]
+    }
+  ]
+}
+
+ВЫЗОВИ TOOL submit_requirements_structure с этим JSON.
+`.trim();
+
+    const tools = [
+        {
+            type: "function",
+            function: {
+                name: "submit_requirements_structure",
+                description: "Отправить извлечённую структуру Feature → Story",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        features: {
+                            type: "array",
+                            description: "Массив Feature (может быть несколько, если функциональности разные)",
+                            items: {
+                                type: "object",
+                                properties: {
+                                    name: { type: "string", description: "Название Feature" },
+                                    description: { type: "string", description: "Описание Feature" },
+                                    stories: {
+                                        type: "array",
+                                        items: {
+                                            type: "object",
+                                            properties: {
+                                                name: { type: "string", description: "Название Story (пользовательская история)" },
+                                                requirements: {
+                                                    type: "array",
+                                                    items: { type: "string" },
+                                                    description: "Номера требований (например, ['3.1', '3.2'])"
+                                                },
+                                                description: { type: "string", description: "Описание Story" }
+                                            },
+                                            required: ["name", "requirements"]
+                                        }
+                                    }
+                                },
+                                required: ["name", "stories"]
+                            }
+                        }
+                    },
+                    required: ["features"]
+                }
+            }
+        }
+    ];
+
+    try {
+        const response = await callWithBackoff(
+            OPENROUTER_URL,
+            [{ role: "user", content: prompt }],
+            config.openRouterAiKey,
+            {
+                model: "anthropic/claude-3.5-sonnet",
+                temperature: 0,
+                max_tokens: 16000,  // ✅ Увеличено с 10000 до 16000 для более полной структуры
+                tools: tools
+            }
+        );
+
+        const structure = extractToolArgs(response, 'submit_requirements_structure');
+
+        // Валидация
+        if (!structure.features || !Array.isArray(structure.features) || structure.features.length === 0) {
+            throw new Error('[extractRequirementsStructure] Не удалось извлечь структуру: отсутствует массив features');
+        }
+
+        for (const feature of structure.features) {
+            if (!feature.name || !feature.stories || !Array.isArray(feature.stories) || feature.stories.length === 0) {
+                throw new Error(`[extractRequirementsStructure] Невалидная Feature: ${JSON.stringify(feature)}`);
+            }
+        }
+
+        const totalStories = structure.features.reduce((sum, f) => sum + f.stories.length, 0);
+        console.log(`[extractRequirementsStructure] ✅ Извлечено: ${structure.features.length} Feature(s), ${totalStories} Stories`);
+
+        return structure;
+    } catch (error) {
+        console.error('[extractRequirementsStructure] Ошибка:', error.message);
+        // Fallback: создаем базовую структуру
+        console.warn('[extractRequirementsStructure] Использую fallback: создаю базовую структуру');
+        return {
+            features: [{
+                name: "Основная функциональность",
+                description: "Автоматически извлеченная функциональность",
+                stories: [{
+                    name: "Базовый сценарий",
+                    requirements: [],
+                    description: "Базовый сценарий для генерации модели"
+                }]
+            }]
+        };
+    }
+}
+
+// ✅ ФАЗА 2: ПОСТРОЕНИЕ ПРОМПТА С ЗАДАННОЙ СТРУКТУРОЙ
+/**
+ * Строит промпт для генерации тестовой модели с заданной структурой Feature → Story
+ * @param {RequirementsStructure} reqStructure - Извлечённая структура requirements
+ * @param {string} fullRequirementsText - Полный текст requirements
+ * @returns {string} - Промпт для LLM
+ */
+function buildTestModelPrompt(reqStructure, fullRequirementsText) {
+    const featuresList = reqStructure.features.map((feature, fIdx) => {
+        const storiesList = feature.stories.map((st, sIdx) =>
+            `${sIdx + 1}. "${st.name}" (требования: ${st.requirements.join(', ')})`
+        ).join('\n');
+
+        return `
+Feature ${fIdx + 1}: "${feature.name}"
+${feature.description ? `Описание: ${feature.description}` : ''}
+Stories (обязательные ${feature.stories.length} шт):
+${storiesList}`;
+    }).join('\n\n');
+
+    return `
+📋 ЗАДАНИЕ: Создай детальную тестовую модель на основе ЗАДАННОЙ структуры Feature → Story.
+
+🚨 КРИТИЧНО: Features и Stories УЖЕ ОПРЕДЕЛЕНЫ! НЕ создавай новые Feature или Story!
+
+СТРУКТУРА (ОБЯЗАТЕЛЬНАЯ):
+
+${featuresList}
+
+REQUIREMENTS (полный текст):
+${fullRequirementsText}
+
+ТВОЯ ЗАДАЧА:
+
+Для КАЖДОЙ Story из списка выше:
+
+1. Извлеки Scenarios (пользовательские действия) из соответствующих требований
+2. Для каждого Scenario определи Code (поведение системы: frontend + backend)
+
+ПРАВИЛА SCENARIOS:
+
+- Scenarios = пользовательские действия, начинаются с глагола: "Нажать", "Выбрать", "Ввести", "Открыть"
+- НЕ создавай отдельный Scenario для каждого поля формы
+- Объединяй логически связанные действия: "Заполнить форму" вместо "Ввести поле X", "Ввести поле Y", "Ввести поле Z"
+- Оптимально: 3-5 Scenarios на Story (НЕ более 7!)
+
+ПРАВИЛА CODE:
+
+- Code = поведение системы (frontend/backend)
+- Frontend: "Отобразить элемент X", "Заполнить список из параметра Y", "Скрыть поле Z"
+- Backend: "GET /api/endpoint", "POST /api/endpoint с параметрами X", "Вернуть параметр Y"
+- ❌ НЕ используй: "Обработать действие:", "Реализовать логику:", "Выполнить обработку:"
+- ❌ НЕ используй префиксы: "API:", "UI:", "Frontend:", "Backend:"
+
+ФОРМАТ ВЫВОДА (JSON):
+[
+  {
+    "id": "uuid",
+    "text": "${reqStructure.features[0].name}",
+    "stories": [
+      {
+        "id": "uuid",
+        "text": "Название Story из списка выше",
+        "scenarios": [
+          {
+            "id": "uuid",
+            "text": "1. Действие пользователя",
+            "codes": [
+              {"id": "uuid", "text": "Поведение системы", "type": "frontend|backend|integration"}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]
+
+ВЫЗОВИ TOOL submit_test_model с этим JSON.
+`.trim();
+}
+
+// ✅ ФАЗА 3: ВАЛИДАЦИЯ МОДЕЛИ
+/**
+ * Валидирует сгенерированную тестовую модель
+ * @param {Array} model - Тестовая модель Feature → Story → Scenario → Code
+ * @param {RequirementsStructure} reqStructure - Извлечённая структура requirements
+ * @returns {ValidationReport}
+ */
+function validateTestModel(model, reqStructure) {
+    const report = {
+        valid: true,
+        errors: [],
+        warnings: [],
+        coverage: {
+            expected: reqStructure.features.reduce((sum, f) => sum + f.stories.length, 0),
+            actual: 0,
+            missing: []
+        }
+    };
+
+    function normalizeText(text) {
+        return String(text || '').toLowerCase()
+            .replace(/\s+/g, ' ')
+            .replace(/[^\w\s]/g, '')
+            .trim();
+    }
+
+    // ✅ Проверка 1: Количество Feature соответствует ожидаемому
+    const expectedFeaturesCount = reqStructure.features.length;
+    if (model.length !== expectedFeaturesCount) {
+        report.errors.push(`Ожидается ${expectedFeaturesCount} Feature(s), но сгенерировано ${model.length}`);
+        report.valid = false;
+    }
+
+    // ✅ Проверка 2: Все Stories покрыты для каждой Feature
+    for (let fIdx = 0; fIdx < reqStructure.features.length && fIdx < model.length; fIdx++) {
+        const expectedFeature = reqStructure.features[fIdx];
+        const generatedFeature = model[fIdx];
+
+        // Проверка соответствия названия Feature
+        const expectedFeatureName = normalizeText(expectedFeature.name);
+        const generatedFeatureName = normalizeText(generatedFeature.text || '');
+        if (!generatedFeatureName.includes(expectedFeatureName.split(' - ')[0]) &&
+            !expectedFeatureName.includes(generatedFeatureName.split(' - ')[0])) {
+            report.warnings.push(`Feature "${generatedFeature.text}" может не соответствовать заданной "${expectedFeature.name}"`);
+        }
+
+        // Проверка покрытия Stories
+        const generatedStories = new Set((generatedFeature.stories || []).map(s => normalizeText(s.text)));
+        const expectedStories = expectedFeature.stories;
+
+        for (const expectedStory of expectedStories) {
+            const normalized = normalizeText(expectedStory.name);
+            let found = false;
+
+            for (const genStory of generatedStories) {
+                // Проверяем совпадение по ключевым словам
+                const keywords = normalized.split(/\s+/).filter(w => w.length > 3);
+                const matches = keywords.filter(kw => genStory.includes(kw));
+
+                if (matches.length >= Math.ceil(keywords.length * 0.6)) {
+                    found = true;
+                    report.coverage.actual++;
+                    break;
+                }
+            }
+
+            if (!found) {
+                report.coverage.missing.push(expectedStory.name);
+                report.errors.push(`Story "${expectedStory.name}" отсутствует в Feature "${generatedFeature.text}"`);
+                report.valid = false;
+            }
+        }
+
+        // ✅ Проверка 3: Scenarios не слишком детализированы
+        for (const story of generatedFeature.stories || []) {
+            if (story.scenarios && story.scenarios.length > 7) {
+                report.warnings.push(`Story "${story.text}" содержит ${story.scenarios.length} Scenarios (рекомендуется 3-5). Возможно, слишком детализировано.`);
+            }
+        }
+
+        // ✅ Проверка 4: Code содержат корректные формулировки
+        const invalidPhrases = ['обработать действие', 'реализовать логику', 'выполнить обработку'];
+
+        for (const story of generatedFeature.stories || []) {
+            for (const scenario of story.scenarios || []) {
+                for (const code of scenario.codes || []) {
+                    const codeText = normalizeText(code.text || '');
+
+                    for (const phrase of invalidPhrases) {
+                        if (codeText.includes(phrase)) {
+                            report.warnings.push(`Code "${code.text}" содержит некорректную формулировку "${phrase}"`);
+                        }
+                    }
+                }
+            }
+        }
+
+        // ✅ Проверка 5: Дубликаты Story
+        const storyTexts = (generatedFeature.stories || []).map(s => normalizeText(s.text));
+        const storyDuplicates = storyTexts.filter((text, index) => storyTexts.indexOf(text) !== index);
+
+        if (storyDuplicates.length > 0) {
+            report.errors.push(`Обнаружены дубликаты Story в Feature "${generatedFeature.text}": ${[...new Set(storyDuplicates)].join(', ')}`);
+            report.valid = false;
+        }
+    }
+
+    console.log(`[validateTestModel] Результат валидации:`);
+    console.log(`  - Valid: ${report.valid}`);
+    console.log(`  - Coverage: ${report.coverage.actual}/${report.coverage.expected} (${Math.round(report.coverage.actual / report.coverage.expected * 100)}%)`);
+    console.log(`  - Errors: ${report.errors.length}`);
+    console.log(`  - Warnings: ${report.warnings.length}`);
+
+    return report;
+}
+
+// ✅ ФАЗА 4: ПОСТОБРАБОТКА МОДЕЛИ
+/**
+ * Постобработка модели: очистка Code от некорректных формулировок
+ * @param {Array} model - Тестовая модель
+ * @returns {Array} - Очищенная модель
+ */
+function postProcessModel(model) {
+    console.log('[postProcessModel] Начинаю постобработку модели...');
+    let cleanedCount = 0;
+
+    for (const feature of model) {
+        for (const story of feature.stories || []) {
+            for (const scenario of story.scenarios || []) {
+                for (const code of scenario.codes || []) {
+                    const originalText = code.text || '';
+
+                    // ✅ Удаляем "Обработать действие:"
+                    if (code.text && code.text.includes('Обработать действие:')) {
+                        code.text = code.text.replace(/Обработать действие:\s*/i, '').trim();
+                        cleanedCount++;
+                        console.log(`[postProcessModel] Очищен Code: "${code.text}"`);
+                    }
+
+                    // ✅ Удаляем "Реализовать логику:"
+                    if (code.text && code.text.includes('Реализовать логику:')) {
+                        code.text = code.text.replace(/Реализовать логику:\s*/i, '').trim();
+                        cleanedCount++;
+                        console.log(`[postProcessModel] Очищен Code: "${code.text}"`);
+                    }
+
+                    // ✅ Удаляем "Выполнить обработку:"
+                    if (code.text && code.text.includes('Выполнить обработку:')) {
+                        code.text = code.text.replace(/Выполнить обработку:\s*/i, '').trim();
+                        cleanedCount++;
+                        console.log(`[postProcessModel] Очищен Code: "${code.text}"`);
+                    }
+
+                    // ✅ Проверяем тип Code
+                    if (!code.type && code.text) {
+                        // Определяем тип автоматически
+                        if (code.text.match(/^(GET|POST|PUT|DELETE|PATCH)\s+\//)) {
+                            code.type = 'backend';
+                        } else if (code.text.match(/^(Отобразить|Заполнить|Скрыть|Показать|Активировать|Деактивировать)/i)) {
+                            code.type = 'frontend';
+                        } else {
+                            code.type = 'integration';
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    console.log(`[postProcessModel] ✅ Очищено ${cleanedCount} Code(s)`);
+    return model;
+}
+
+// ✅ НОВАЯ ФУНКЦИЯ: Дедупликация Scenarios между разными Stories
+/**
+ * Удаляет дубликаты Scenarios между разными Stories в одной Feature
+ * @param {Array} model - Тестовая модель
+ * @returns {Array} - Модель без дубликатов Scenarios между Stories
+ */
+function deduplicateScenariosAcrossStories(model) {
+    console.log('[deduplicateScenariosAcrossStories] Начинаю дедупликацию Scenarios между Stories...');
+    let removedCount = 0;
+
+    const normalizeScenarioText = (text) => {
+        // Убираем номер в начале ("1. " -> "")
+        return String(text || '').trim().replace(/^\d+\.\s*/, '').toLowerCase();
+    };
+
+    for (const feature of model || []) {
+        const allScenarios = new Map(); // normalizedText -> { storyIndex, scenario }
+
+        // Собираем все Scenarios из всех Stories в Feature
+        for (let storyIdx = 0; storyIdx < (feature.stories || []).length; storyIdx++) {
+            const story = feature.stories[storyIdx];
+            for (const scenario of (story.scenarios || [])) {
+                const normalized = normalizeScenarioText(scenario.text);
+                if (!allScenarios.has(normalized)) {
+                    allScenarios.set(normalized, []);
+                }
+                allScenarios.get(normalized).push({ storyIdx, scenario });
+            }
+        }
+
+        // Находим дубликаты (Scenarios, которые встречаются в нескольких Stories)
+        const duplicates = [];
+        for (const [normalizedText, occurrences] of allScenarios.entries()) {
+            if (occurrences.length > 1) {
+                // Проверяем, что это действительно разные Stories
+                const uniqueStoryIndices = new Set(occurrences.map(o => o.storyIdx));
+                if (uniqueStoryIndices.size > 1) {
+                    duplicates.push({ normalizedText, occurrences });
+                }
+            }
+        }
+
+        // Удаляем дубликаты, оставляя только в первой Story
+        for (const { normalizedText, occurrences } of duplicates) {
+            // Сортируем по индексу Story (оставляем в первой)
+            occurrences.sort((a, b) => a.storyIdx - b.storyIdx);
+            const firstOccurrence = occurrences[0];
+            const duplicatesToRemove = occurrences.slice(1);
+
+            for (const { storyIdx, scenario } of duplicatesToRemove) {
+                const story = feature.stories[storyIdx];
+                const scenarioIndex = story.scenarios.findIndex(s => 
+                    normalizeScenarioText(s.text) === normalizedText
+                );
+                if (scenarioIndex !== -1) {
+                    story.scenarios.splice(scenarioIndex, 1);
+                    removedCount++;
+                    console.log(`[deduplicateScenariosAcrossStories] Удален дубликат Scenario "${scenario.text}" из Story "${story.text}" (оставлен в Story "${feature.stories[firstOccurrence.storyIdx].text}")`);
+                }
+            }
+        }
+    }
+
+    console.log(`[deduplicateScenariosAcrossStories] ✅ Удалено ${removedCount} дубликатов Scenarios между Stories`);
+    return model;
+}
+
+/**
+ * Перегенерирует избыточно детализированные Scenarios через LLM
+ * @param {Object} story - Story с избыточно детализированными Scenarios
+ * @param {Array} scenarios - Массив Scenarios
+ * @param {string} requirements - Требования
+ * @returns {Promise<Array>} - Перегенерированные Scenarios
+ */
+async function regenerateOverDetailedScenarios(story, scenarios, requirements) {
+    if (scenarios.length <= 5) return scenarios; // Нормальная детализация
+    
+    console.warn(`[regenerateOverDetailedScenarios] Story "${story.text}" содержит ${scenarios.length} Scenarios (рекомендуется 3-5), перегенерируем...`);
+    
+    // Собираем все Code из всех Scenarios для контекста
+    const allCodes = scenarios.flatMap(sc => (sc.codes || []).map(code => ({
+        scenario: sc.text,
+        code: code.text,
+        type: code.type
+    })));
+    
+    const escalationPrompt = `
+🚨 ПРОБЛЕМА: Story "${story.text}" содержит ${scenarios.length} Scenarios (рекомендуется 3-5).
+
+СЛИШКОМ ДЕТАЛИЗИРОВАННЫЕ SCENARIOS:
+
+${scenarios.map((sc, idx) => `${idx + 1}. ${sc.text}${(sc.codes || []).length > 0 ? `\n   Codes: ${(sc.codes || []).map(c => c.text).join(', ')}` : ''}`).join('\n\n')}
+
+ЗАДАНИЕ:
+Объедини эти Scenarios в 3-5 логически завершённых действий пользователя.
+
+ПРАВИЛА:
+- Объединяй связанные действия в один Scenario
+- Пример: "Выбрать чек-бокс" + "Нажать кнопку" → "Создать документ с выбранным чек-боксом"
+- НЕ создавай отдельный Scenario для каждого клика/поля
+- Сохраняй все Code из объединённых Scenarios
+
+REQUIREMENTS:
+${requirements.substring(0, 3000)}
+
+Формат ответа:
+{
+  "scenarios": [
+    {
+      "id": "${scenarios[0]?.id || uuidv4()}",
+      "text": "1. Объединённое действие...",
+      "codes": [
+        {
+          "id": "${scenarios[0]?.codes?.[0]?.id || uuidv4()}",
+          "text": "Отобразить...",
+          "type": "frontend"
+        }
+      ]
+    }
+  ]
+}
+
+ВЫЗОВИ TOOL submit_regenerated_scenarios с этим JSON.
+`.trim();
+    
+    const tools = [{
+        type: "function",
+        function: {
+            name: "submit_regenerated_scenarios",
+            description: "Отправить перегенерированные Scenarios для Story",
+            parameters: {
+                type: "object",
+                properties: {
+                    scenarios: {
+                        type: "array",
+                        items: {
+                            type: "object",
+                            properties: {
+                                id: { type: "string" },
+                                text: { type: "string" },
+                                codes: {
+                                    type: "array",
+                                    items: {
+                                        type: "object",
+                                        properties: {
+                                            id: { type: "string" },
+                                            text: { type: "string" },
+                                            type: { type: "string", enum: ["frontend", "backend", "integration"] }
+                                        },
+                                        required: ["id", "text", "type"]
+                                    }
+                                }
+                            },
+                            required: ["id", "text", "codes"]
+                        }
+                    }
+                },
+                required: ["scenarios"]
+            }
+        }
+    }];
+    
+    try {
+        const response = await callWithCloudRuFallback(
+            OPENROUTER_URL,
+            [{ role: "user", content: escalationPrompt }],
+            config.openRouterAiKey,
+            {
+                tools: tools,
+                temperature: 0,
+                max_tokens: 16000
+            }
+        );
+        
+        let regenerated = null;
+        
+        // Пробуем извлечь из tool_call
+        const toolCall = response.choices?.[0]?.message?.tool_calls?.[0];
+        if (toolCall && toolCall.function && toolCall.function.arguments) {
+            try {
+                const args = JSON.parse(toolCall.function.arguments);
+                if (args.scenarios && Array.isArray(args.scenarios)) {
+                    regenerated = args.scenarios;
+                }
+            } catch (parseErr) {
+                console.error(`[regenerateOverDetailedScenarios] Ошибка парсинга tool_call:`, parseErr.message);
+            }
+        }
+        
+        // Если нет tool_call, пробуем извлечь из content
+        if (!regenerated) {
+            const content = response.choices?.[0]?.message?.content || '';
+            if (content.trim()) {
+                try {
+                    const jsonMatch = content.match(/\{[\s\S]*"scenarios"[\s\S]*\}/);
+                    if (jsonMatch) {
+                        const parsed = JSON5.parse(jsonMatch[0]);
+                        if (parsed.scenarios && Array.isArray(parsed.scenarios)) {
+                            regenerated = parsed.scenarios;
+                        }
+                    }
+                } catch (parseErr) {
+                    console.error(`[regenerateOverDetailedScenarios] Ошибка парсинга content:`, parseErr.message);
+                }
+            }
+        }
+        
+        if (!regenerated || regenerated.length === 0) {
+            console.error('[regenerateOverDetailedScenarios] LLM не вернула перегенерированные Scenarios');
+            return scenarios; // Фолбэк на старые Scenarios
+        }
+        
+        if (regenerated.length > scenarios.length) {
+            console.error(`[regenerateOverDetailedScenarios] LLM создала ЕЩЁ БОЛЬШЕ Scenarios (${regenerated.length} > ${scenarios.length}), используем fallback`);
+            return scenarios;
+        }
+        
+        console.log(`[regenerateOverDetailedScenarios] ✅ Объединено ${scenarios.length} → ${regenerated.length} Scenarios`);
+        return regenerated;
+    } catch (error) {
+        console.error(`[regenerateOverDetailedScenarios] Ошибка при перегенерации:`, error.message);
+        return scenarios; // Фолбэк на старые Scenarios
+    }
+}
+
+// ✅ НОВАЯ ФУНКЦИЯ: Объединение избыточно детализированных Scenarios
+/**
+ * Объединяет избыточно детализированные Scenarios (8+ в 3-4 логические группы)
+ * @param {Array} model - Тестовая модель
+ * @returns {Array} - Модель с объединенными Scenarios
+ */
+function mergeDetailedScenarios(model) {
+    console.log('[mergeDetailedScenarios] Начинаю объединение детализированных Scenarios...');
+    let mergedCount = 0;
+
+    const normalizeAction = (text) => {
+        // Извлекаем основное действие из Scenario
+        const normalized = String(text || '').trim().replace(/^\d+\.\s*/, '').toLowerCase();
+        // Определяем тип действия
+        if (normalized.includes('открыть') || normalized.includes('перейти')) {
+            return 'navigation';
+        } else if (normalized.includes('выбрать') || normalized.includes('снять') || normalized.includes('чек-бокс')) {
+            return 'checkbox';
+        } else if (normalized.includes('нажать') || normalized.includes('кнопк')) {
+            return 'button';
+        } else if (normalized.includes('редактирова') || normalized.includes('просмотр')) {
+            return 'view_edit';
+        } else if (normalized.includes('ввести') || normalized.includes('заполнить')) {
+            return 'input';
+        }
+        return 'other';
+    };
+
+    for (const feature of model || []) {
+        for (const story of (feature.stories || [])) {
+            const scenarios = story.scenarios || [];
+            
+            // Объединяем только если Scenarios > 7
+            if (scenarios.length <= 7) {
+                continue;
+            }
+
+            console.log(`[mergeDetailedScenarios] Story "${story.text}" содержит ${scenarios.length} Scenarios, объединяю...`);
+
+            // Группируем Scenarios по типу действия
+            const groups = new Map();
+            for (const scenario of scenarios) {
+                const actionType = normalizeAction(scenario.text);
+                if (!groups.has(actionType)) {
+                    groups.set(actionType, []);
+                }
+                groups.get(actionType).push(scenario);
+            }
+
+            // Объединяем группы в логические Scenarios
+            const mergedScenarios = [];
+            let scenarioNumber = 1;
+
+            // Группа 1: Навигация (открытие страниц) - объединяем в один
+            if (groups.has('navigation')) {
+                const navScenarios = groups.get('navigation');
+                const allCodes = navScenarios.flatMap(s => s.codes || []);
+                const uniqueCodes = [];
+                const seenCodes = new Set();
+                for (const code of allCodes) {
+                    const codeKey = String(code.text || '').trim();
+                    if (!seenCodes.has(codeKey)) {
+                        seenCodes.add(codeKey);
+                        uniqueCodes.push(code);
+                    }
+                }
+                mergedScenarios.push({
+                    id: navScenarios[0].id || uuidv4(),
+                    text: `${scenarioNumber}. Открыть страницу`,
+                    codes: uniqueCodes
+                });
+                scenarioNumber++;
+                mergedCount += navScenarios.length - 1;
+            }
+
+            // Группа 2: Работа с чек-боксом - объединяем в один
+            if (groups.has('checkbox')) {
+                const checkboxScenarios = groups.get('checkbox');
+                const allCodes = checkboxScenarios.flatMap(s => s.codes || []);
+                const uniqueCodes = [];
+                const seenCodes = new Set();
+                for (const code of allCodes) {
+                    const codeKey = String(code.text || '').trim();
+                    if (!seenCodes.has(codeKey)) {
+                        seenCodes.add(codeKey);
+                        uniqueCodes.push(code);
+                    }
+                }
+                mergedScenarios.push({
+                    id: checkboxScenarios[0].id || uuidv4(),
+                    text: `${scenarioNumber}. Работа с чек-боксом`,
+                    codes: uniqueCodes
+                });
+                scenarioNumber++;
+                mergedCount += checkboxScenarios.length - 1;
+            }
+
+            // Группа 3: Кнопки - объединяем в один
+            if (groups.has('button')) {
+                const buttonScenarios = groups.get('button');
+                const allCodes = buttonScenarios.flatMap(s => s.codes || []);
+                const uniqueCodes = [];
+                const seenCodes = new Set();
+                for (const code of allCodes) {
+                    const codeKey = String(code.text || '').trim();
+                    if (!seenCodes.has(codeKey)) {
+                        seenCodes.add(codeKey);
+                        uniqueCodes.push(code);
+                    }
+                }
+                mergedScenarios.push({
+                    id: buttonScenarios[0].id || uuidv4(),
+                    text: `${scenarioNumber}. Нажать кнопку`,
+                    codes: uniqueCodes
+                });
+                scenarioNumber++;
+                mergedCount += buttonScenarios.length - 1;
+            }
+
+            // Группа 4: Просмотр/редактирование - объединяем в один
+            if (groups.has('view_edit')) {
+                const viewEditScenarios = groups.get('view_edit');
+                const allCodes = viewEditScenarios.flatMap(s => s.codes || []);
+                const uniqueCodes = [];
+                const seenCodes = new Set();
+                for (const code of allCodes) {
+                    const codeKey = String(code.text || '').trim();
+                    if (!seenCodes.has(codeKey)) {
+                        seenCodes.add(codeKey);
+                        uniqueCodes.push(code);
+                    }
+                }
+                mergedScenarios.push({
+                    id: viewEditScenarios[0].id || uuidv4(),
+                    text: `${scenarioNumber}. Просмотр/редактирование документа`,
+                    codes: uniqueCodes
+                });
+                scenarioNumber++;
+                mergedCount += viewEditScenarios.length - 1;
+            }
+
+            // Остальные Scenarios добавляем как есть
+            for (const [actionType, scenarios] of groups.entries()) {
+                if (!['navigation', 'checkbox', 'button', 'view_edit'].includes(actionType)) {
+                    for (const scenario of scenarios) {
+                        scenario.text = scenario.text.replace(/^\d+\.\s*/, `${scenarioNumber}. `);
+                        mergedScenarios.push(scenario);
+                        scenarioNumber++;
+                    }
+                }
+            }
+
+            story.scenarios = mergedScenarios;
+            console.log(`[mergeDetailedScenarios] ✅ Story "${story.text}": ${scenarios.length} → ${mergedScenarios.length} Scenarios`);
+        }
+    }
+
+    console.log(`[mergeDetailedScenarios] ✅ Объединено ${mergedCount} избыточно детализированных Scenarios`);
+    return model;
+}
+
+// ✅ НОВАЯ ФУНКЦИЯ: Обогащение backend Code Expected Result
+/**
+ * Добавляет Expected Result в backend Code, если его нет
+ * @param {Array} model - Тестовая модель
+ * @returns {Array} - Модель с обогащенными backend Code
+ */
+function enrichBackendCodesWithExpectedResult(model) {
+    console.log('[enrichBackendCodesWithExpectedResult] Начинаю обогащение backend Code Expected Result...');
+    let enrichedCount = 0;
+
+    for (const feature of model || []) {
+        for (const story of (feature.stories || [])) {
+            for (const scenario of (story.scenarios || [])) {
+                for (const code of (scenario.codes || [])) {
+                    // Проверяем только backend Code
+                    if (code.type !== 'backend' && code.type !== 'integration') {
+                        continue;
+                    }
+
+                    const codeText = String(code.text || '').trim();
+                    
+                    // Пропускаем, если уже есть Expected Result
+                    if (codeText.includes('вернуть') || 
+                        codeText.includes('ответ') || 
+                        codeText.includes('статус') ||
+                        codeText.includes('200') ||
+                        codeText.includes('400') ||
+                        codeText.includes('500')) {
+                        continue;
+                    }
+
+                    // Определяем Expected Result на основе HTTP-метода
+                    let expectedResult = '';
+                    
+                    if (codeText.match(/^(GET|POST|PUT|DELETE|PATCH)\s+\//i)) {
+                        const method = codeText.match(/^(GET|POST|PUT|DELETE|PATCH)/i)?.[1] || '';
+                        
+                        // Для POST/PUT - ожидаем 200 OK
+                        if (method.match(/^(POST|PUT)$/i)) {
+                            expectedResult = ', вернуть 200 OK';
+                        }
+                        // Для GET - ожидаем 200 с данными
+                        else if (method.match(/^GET$/i)) {
+                            expectedResult = ', вернуть 200 OK с данными';
+                        }
+                        // Для DELETE - ожидаем 200 или 204
+                        else if (method.match(/^DELETE$/i)) {
+                            expectedResult = ', вернуть 200 OK или 204 No Content';
+                        }
+                    }
+
+                    // Если нашли Expected Result - добавляем
+                    if (expectedResult) {
+                        code.text = codeText + expectedResult;
+                        enrichedCount++;
+                        console.log(`[enrichBackendCodesWithExpectedResult] Обогащен Code: "${code.text}"`);
+                    }
+                }
+            }
+        }
+    }
+
+    console.log(`[enrichBackendCodesWithExpectedResult] ✅ Обогащено ${enrichedCount} backend Code`);
+    return model;
+}
+
+// ✅ ФАЗА 5: COVERAGE REPORT
+/**
+ * Генерирует отчёт о покрытии requirements
+ * @param {Array} model - Тестовая модель
+ * @param {RequirementsStructure} reqStructure - Структура requirements
+ * @returns {CoverageReport}
+ */
+function generateCoverageReport(model, reqStructure) {
+    console.log('[generateCoverageReport] Генерирую отчёт о покрытии...');
+
+    function normalizeText(text) {
+        return String(text || '').toLowerCase()
+            .replace(/\s+/g, ' ')
+            .replace(/[^\w\s]/g, '')
+            .trim();
+    }
+
+    const report = {
+        total: 0,
+        covered: 0,
+        missing: [],
+        details: [],
+        coveragePercent: 0
+    };
+
+    // Собираем все Stories из всех Features
+    const allExpectedStories = [];
+    for (const feature of reqStructure.features) {
+        for (const story of feature.stories) {
+            allExpectedStories.push({
+                featureName: feature.name,
+                storyName: story.name,
+                requirements: story.requirements
+            });
+            report.total++;
+        }
+    }
+
+    // Проверяем покрытие для каждой Feature
+    for (let fIdx = 0; fIdx < reqStructure.features.length && fIdx < model.length; fIdx++) {
+        const expectedFeature = reqStructure.features[fIdx];
+        const generatedFeature = model[fIdx];
+        const generatedStories = (generatedFeature.stories || []).map(s => ({
+            text: s.text,
+            scenariosCount: (s.scenarios || []).length
+        }));
+
+        for (const expectedStory of expectedFeature.stories) {
+            const normalized = normalizeText(expectedStory.name);
+            let found = null;
+
+            for (const genStory of generatedStories) {
+                const keywords = normalized.split(/\s+/).filter(w => w.length > 3);
+                const matches = keywords.filter(kw => normalizeText(genStory.text).includes(kw));
+
+                if (matches.length >= Math.ceil(keywords.length * 0.6)) {
+                    found = genStory;
+                    report.covered++;
+                    break;
+                }
+            }
+
+            if (found) {
+                report.details.push({
+                    requirement: expectedStory.requirements.join(', '),
+                    feature: expectedFeature.name,
+                    story: expectedStory.name,
+                    status: 'covered',
+                    scenariosCount: found.scenariosCount
+                });
+            } else {
+                report.missing.push(expectedStory.name);
+                report.details.push({
+                    requirement: expectedStory.requirements.join(', '),
+                    feature: expectedFeature.name,
+                    story: expectedStory.name,
+                    status: 'missing'
+                });
+            }
+        }
+    }
+
+    report.coveragePercent = report.total > 0 ? Math.round((report.covered / report.total) * 100) : 0;
+    console.log(`[generateCoverageReport] Coverage: ${report.covered}/${report.total} (${report.coveragePercent}%)`);
+
+    if (report.missing.length > 0) {
+        console.warn(`[generateCoverageReport] Не покрыто ${report.missing.length} Stories:`);
+        report.missing.forEach(story => console.warn(`  ❌ ${story}`));
+    }
+
+    return report;
+}
+
+/**
+ * Рассчитывает покрытие requirements тестовой моделью
+ * @param {Array} model - Тестовая модель (массив Feature)
+ * @param {string} requirementsText - Текст requirements из Confluence
+ * @param {Object} [reqStructure] - Структура requirements (опционально, для более точного расчета)
+ * @returns {Object} - Отчёт о покрытии requirements
+ */
+function calculateRequirementsCoverage(model, requirementsText, reqStructure = null) {
+    const extractRequirementNumbers = (text) => {
+        // Используем тот же regex, что и в checkRequirementsCoverage
+        const sectionPattern = /(?:^#{1,3}\s*|^|\b)(\d+\.\d+(?:\.\d+)*?)(?:\s|$|\.|,)/gm;
+        const matches = [];
+        let match;
+        while ((match = sectionPattern.exec(text)) !== null) {
+            matches.push(match[1]);
+        }
+
+        // Если не нашли - пробуем альтернативный паттерн
+        if (matches.length === 0) {
+            const altPattern = /\b(\d+\.\d+(?:\.\d+)*)\b/g;
+            while ((match = altPattern.exec(text)) !== null) {
+                matches.push(match[1]);
+            }
+        }
+
+        return [...new Set(matches)];
+    };
+
+    // ✅ УЛУЧШЕНО: Используем reqStructure если доступен (более точный расчет)
+    let allRequirements = [];
+    if (reqStructure && reqStructure.features) {
+        // Извлекаем номера требований из reqStructure
+        for (const feature of reqStructure.features) {
+            for (const story of feature.stories || []) {
+                if (Array.isArray(story.requirements)) {
+                    allRequirements.push(...story.requirements);
+                }
+            }
+        }
+        allRequirements = [...new Set(allRequirements)];
+    } else {
+        // Fallback: извлекаем из текста requirements
+        allRequirements = extractRequirementNumbers(requirementsText);
+    }
+
+    const coveredRequirements = new Set();
+
+    // ✅ УЛУЧШЕНО: Ищем номера требований в Codes (более надежно, чем в тексте Story)
+    for (const feature of model) {
+        for (const story of (feature.stories || [])) {
+            // Собираем все тексты из Codes для этой Story
+            const allCodeTexts = [];
+            for (const scenario of (story.scenarios || [])) {
+                for (const code of (scenario.codes || [])) {
+                    if (code.text) {
+                        allCodeTexts.push(code.text);
+                    }
+                }
+            }
+            const storyAndCodesText = story.text + ' ' + allCodeTexts.join(' ');
+
+            // Ищем номера требований в тексте Story и Codes
+            for (const reqNum of allRequirements) {
+                if (storyAndCodesText.includes(reqNum)) {
+                    coveredRequirements.add(reqNum);
+                }
+            }
+        }
+    }
+
+    const missing = allRequirements.filter(req => !coveredRequirements.has(req));
+
+    return {
+        total: allRequirements.length,
+        covered: coveredRequirements.size,
+        coveragePercent: allRequirements.length > 0
+            ? Math.round((coveredRequirements.size / allRequirements.length) * 100)
+            : 0,
+        missing: missing
+    };
+}
+
+/**
+ * Рассчитывает покрытие Scenarios тест-кейсами
+ * @param {Array} testCases - Массив тест-кейсов
+ * @param {Array} model - Тестовая модель (массив Feature)
+ * @returns {Object} - Отчёт о покрытии scenarios
+ */
+function calculateTestCasesCoverage(testCases, model) {
+    const normalizeText = (text) => String(text || '').toLowerCase().trim();
+
+    const allScenarios = [];
+    for (const feature of model) {
+        for (const story of (feature.stories || [])) {
+            for (const scenario of (story.scenarios || [])) {
+                allScenarios.push({
+                    feature: feature.text,
+                    story: story.text,
+                    scenario: scenario.text
+                });
+            }
+        }
+    }
+
+    const coveredScenarios = new Set();
+    for (const testCase of testCases) {
+        if (testCase.scenario) {
+            coveredScenarios.add(normalizeText(testCase.scenario));
+        }
+    }
+
+    const missing = [];
+    for (const sc of allScenarios) {
+        if (!coveredScenarios.has(normalizeText(sc.scenario))) {
+            missing.push(sc);
+        }
+    }
+
+    return {
+        total: allScenarios.length,
+        covered: allScenarios.length - missing.length,
+        coveragePercent: allScenarios.length > 0
+            ? Math.round(((allScenarios.length - missing.length) / allScenarios.length) * 100)
+            : 0,
+        missing: missing
+    };
+}
+
+// ✅ ФУНКЦИЯ ФОРМАТИРОВАНИЯ EXPECTED RESULT
+/**
+ * Форматирует Expected Result с ключевыми словами
+ * @param {string} expected - Исходный Expected
+ * @param {string} layer - Тип теста (E2E, Integration frontend, Integration backend)
+ * @returns {string} - Форматированный Expected
+ */
+function formatExpectedResult(expected, layer) {
+    if (!expected || typeof expected !== 'string') return expected;
+    let formatted = expected;
+
+    // ✅ Frontend ключевые слова
+    if (layer === 'Integration frontend Tests' || layer === 'E2E Tests') {
+        const frontendKeywords = [
+            { pattern: /отображается\s+(поле|элемент|кнопка|страница|модальное окно|список)/gi, replacement: '**Отобразить** $1' },
+            { pattern: /заполняется\s+(поле)/gi, replacement: '**Заполнить** $1' },
+            { pattern: /скрывается\s+(поле|элемент)/gi, replacement: '**Скрыть** $1' },
+            { pattern: /становится\s+(активной|доступной)/gi, replacement: '**Сделать** $1' }
+        ];
+
+        for (const { pattern, replacement } of frontendKeywords) {
+            formatted = formatted.replace(pattern, replacement);
+        }
+    }
+
+    // ✅ Backend ключевые слова
+    if (layer === 'Integration backend Tests') {
+        const backendKeywords = [
+            { pattern: /возвращается\s+ответ\s+(\d+)/gi, replacement: '**Вернуть** ответ $1' },
+            { pattern: /передаётся\s+параметр/gi, replacement: '**Передать** параметр' },
+            { pattern: /подменяется\s+статус\s+код/gi, replacement: '**Подменить** статус код' },
+            { pattern: /сохраняется\s+запись/gi, replacement: '**Сохранить** запись' }
+        ];
+
+        for (const { pattern, replacement } of backendKeywords) {
+            formatted = formatted.replace(pattern, replacement);
+        }
+    }
+
+    // ✅ Удаляем абстрактные формулировки (предупреждаем, но не заменяем)
+    const abstractPhrases = [
+        'система работает корректно',
+        'операция выполнена успешно',
+        'данные переданы корректно'
+    ];
+
+    for (const phrase of abstractPhrases) {
+        if (formatted.toLowerCase().includes(phrase)) {
+            console.warn(`[formatExpectedResult] ⚠️ Обнаружена абстрактная формулировка: "${phrase}" в "${formatted}"`);
+        }
+    }
+
+    return formatted;
+}
+
+/**
+ * Извлекает проблемные Scenarios с некорректными Code
+ * @param {Array} model - Тестовая модель
+ * @param {Array} issues - Список структурных проблем
+ * @returns {Array} - Массив { feature, story, scenario, problematicCodes, issue }
+ */
+function extractProblematicScenarios(model, issues) {
+    const problematic = [];
+    
+    function normalizeText(text) {
+        return String(text || '').toLowerCase()
+            .replace(/\s+/g, ' ')
+            .replace(/[^\w\s]/g, '')
+            .trim();
+    }
+    
+    for (const issue of issues) {
+        // Парсим ошибку: "Code "Установить..." содержит пользовательское действие (Feature → Story → Scenario)"
+        const match = issue.match(/Code "([^"]+)" содержит пользовательское действие \(([^→]+)→([^→]+)→([^)]+)\)/);
+        
+        if (!match) continue;
+        
+        const [, codeText, featureName, storyName, scenarioName] = match;
+        
+        // Ищем этот Scenario в модели
+        for (const feature of model) {
+            if (!normalizeText(feature.text).includes(normalizeText(featureName.trim()))) continue;
+            
+            for (const story of (feature.stories || [])) {
+                if (!normalizeText(story.text).includes(normalizeText(storyName.trim()))) continue;
+                
+                for (const scenario of (story.scenarios || [])) {
+                    if (!normalizeText(scenario.text).includes(normalizeText(scenarioName.trim()))) continue;
+                    
+                    // Нашли проблемный Scenario
+                    const problematicCodes = (scenario.codes || []).filter(code => 
+                        normalizeText(code.text).includes(normalizeText(codeText))
+                    );
+                    
+                    if (problematicCodes.length > 0) {
+                        problematic.push({
+                            feature,
+                            story,
+                            scenario,
+                            problematicCodes,
+                            issue
+                        });
+                    }
+                }
+            }
+        }
+    }
+    
+    return problematic;
+}
+
+/**
+ * Перегенерирует проблемные Scenarios с escalation prompt
+ * @param {Array} problematicScenarios - Проблемные Scenarios
+ * @param {string} requirements - Требования
+ * @returns {Promise<Array>} - Исправленные Scenarios [{ scenario, fixedCodes }]
+ */
+async function regenerateProblematicScenarios(problematicScenarios, requirements) {
+    console.log(`[regenerateProblematicScenarios] Перегенерирую ${problematicScenarios.length} проблемных Scenarios...`);
+    
+    const fixed = [];
+    
+    for (const item of problematicScenarios) {
+        const { feature, story, scenario, problematicCodes, issue } = item;
+        
+        // Escalation prompt
+        const escalationPrompt = `
+🚨 КРИТИЧЕСКАЯ ОШИБКА В ПРЕДЫДУЩЕЙ ГЕНЕРАЦИИ!
+
+ПРОБЛЕМА:
+${issue}
+
+ПРОБЛЕМНЫЕ CODE:
+${problematicCodes.map(c => `- "${c.text}" (type: ${c.type || 'не указан'})`).join('\n')}
+
+🚨 ПРАВИЛО: Code = ПОВЕДЕНИЕ СИСТЕМЫ, НЕ действие пользователя!
+
+❌ НЕПРАВИЛЬНО (действия пользователя):
+- "Установить чек-бокс..."
+- "Выбрать значение..."
+- "Нажать кнопку..."
+- "Ввести текст..."
+- "Заполнить поле..."
+- "Снять выбор с чек-бокса..."
+
+✅ ПРАВИЛЬНО (поведение системы):
+- "Отобразить чек-бокс 'УНК в другом банке' доступным для редактирования и не выбранным"
+- "Установить значение поля 'Примечание' в 'Контракт стоит на учете в другом Банке'"
+- "Обработать нажатие кнопки 'Подписать' и вызвать POST /rest/stateful/corp/curr/inquiry_181"
+- "Заполнить поле 'Сумма' из параметра deal.amount"
+- "Сбросить значение поля 'Примечание'"
+- "Отобразить поле 'Ожидаемый срок репатриации' как обязательное для заполнения"
+
+КОНТЕКСТ:
+Feature: "${feature.text}"
+Story: "${story.text}"
+Scenario: "${scenario.text}"
+
+REQUIREMENTS (релевантный фрагмент):
+${requirements.substring(0, 3000)}
+
+ЗАДАНИЕ:
+Перегенерируй ТОЛЬКО Code для этого Scenario, ИСПРАВИВ ошибки.
+
+Code должны описывать ПОВЕДЕНИЕ СИСТЕМЫ (что система ДЕЛАЕТ), НЕ действия пользователя.
+
+Формат ответа:
+{
+  "codes": [
+    {
+      "id": "${scenario.codes[0]?.id || uuidv4()}",
+      "text": "Отобразить чек-бокс 'УНК в другом банке' доступным для редактирования и не выбранным",
+      "type": "frontend"
+    }
+  ]
+}
+
+ВЫЗОВИ TOOL submit_fixed_codes с этим JSON.
+`.trim();
+        
+        const tools = [{
+            type: "function",
+            function: {
+                name: "submit_fixed_codes",
+                description: "Отправить исправленные Code для Scenario",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        codes: {
+                            type: "array",
+                            items: {
+                                type: "object",
+                                properties: {
+                                    id: { type: "string" },
+                                    text: { type: "string" },
+                                    type: { type: "string", enum: ["frontend", "backend", "integration"] }
+                                },
+                                required: ["id", "text", "type"]
+                            }
+                        }
+                    },
+                    required: ["codes"]
+                }
+            }
+        }];
+        
+        try {
+            const response = await callWithCloudRuFallback(
+                OPENROUTER_URL,
+                [{ role: "user", content: escalationPrompt }],
+                config.openRouterAiKey,
+                {
+                    tools: tools,
+                    temperature: 0,
+                    max_tokens: 4000
+                }
+            );
+            
+            let fixedCodes = null;
+            
+            // Пробуем извлечь из tool_call
+            const toolCall = response.choices?.[0]?.message?.tool_calls?.[0];
+            if (toolCall && toolCall.function && toolCall.function.arguments) {
+                try {
+                    const args = JSON.parse(toolCall.function.arguments);
+                    if (args.codes && Array.isArray(args.codes)) {
+                        fixedCodes = args.codes;
+                    }
+                } catch (parseErr) {
+                    console.error(`[regenerateProblematicScenarios] Ошибка парсинга tool_call:`, parseErr.message);
+                }
+            }
+            
+            // Если нет tool_call, пробуем извлечь из content
+            if (!fixedCodes) {
+                const content = response.choices?.[0]?.message?.content || '';
+                if (content.trim()) {
+                    try {
+                        // Пробуем найти JSON в content
+                        const jsonMatch = content.match(/\{[\s\S]*"codes"[\s\S]*\}/);
+                        if (jsonMatch) {
+                            const parsed = JSON5.parse(jsonMatch[0]);
+                            if (parsed.codes && Array.isArray(parsed.codes)) {
+                                fixedCodes = parsed.codes;
+                            }
+                        }
+                    } catch (parseErr) {
+                        console.error(`[regenerateProblematicScenarios] Ошибка парсинга content:`, parseErr.message);
+                    }
+                }
+            }
+            
+            if (!fixedCodes || fixedCodes.length === 0) {
+                console.error(`[regenerateProblematicScenarios] LLM не вернула исправленные Code для Scenario "${scenario.text}"`);
+                continue;
+            }
+            
+            // ✅ УЛУЧШЕНИЕ: Применяем автоматическое исправление через normalizeCodeText
+            const autoFixedCodes = fixedCodes.map(code => ({
+                ...code,
+                text: normalizeCodeText(code.text)
+            }));
+            
+            // Проверяем, что исправленные Code не содержат пользовательских действий
+            const stillProblematic = autoFixedCodes.filter(code => 
+                USER_ACTION_REGEX.test(code.text)
+            );
+            
+            if (stillProblematic.length > 0) {
+                console.warn(`[regenerateProblematicScenarios] ⚠️ После автоматического исправления остались проблемные Code:`);
+                stillProblematic.forEach(c => console.warn(`  - ${c.text}`));
+                // Не прерываем - применяем исправленные Code, даже если они не идеальны
+                // Финальная проверка будет применена позже с автоматическим исправлением
+            }
+            
+            // Сохраняем исправленные Code (с автоматическим исправлением)
+            fixed.push({
+                scenario,
+                fixedCodes: autoFixedCodes
+            });
+            
+            console.log(`[regenerateProblematicScenarios] ✅ Scenario "${scenario.text}" исправлен:`);
+            fixedCodes.forEach(c => console.log(`  - ${c.text}`));
+        } catch (error) {
+            console.error(`[regenerateProblematicScenarios] Ошибка при перегенерации Scenario "${scenario.text}":`, error);
+        }
+    }
+    
+    return fixed;
+}
+
 async function generateTestModelAsync(taskId, inputData) {
+    const startTime = Date.now();
+    let regenerationCount = 0;
+    let escalationCount = 0;
+    
     try {
         await db('generation_tasks').where('id', taskId).update({
             status: 'processing',
@@ -2164,42 +4139,68 @@ async function generateTestModelAsync(taskId, inputData) {
             throw new Error('Нужно передать requirements (строка/массив), либо text, либо pageId');
         }
 
+        const sourceRegistry = createContextSourceRegistry();
+        const { register: registerSource, safeTrim, deriveTitleFromContent } = sourceRegistry;
+
         // 0) Если pageId передан — подтягиваем основную страницу и прямые ссылки
         let autoPages = [];
         let baseRequirement = '';
+        const formatMention = (mention) => {
+            if (!mention) return '';
+            return mention
+                .replace(/\r?\n/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, 200);
+        };
         if (pageId) {
             if (!bearerToken) {
                 throw new Error('bearerToken обязателен для загрузки страницы Confluence');
             }
-            
+
             // Проверяем формат bearerToken
             if (typeof bearerToken !== 'string' || !bearerToken.trim()) {
                 throw new Error('bearerToken должен быть непустой строкой');
             }
-            
+
             console.log(`[generate-test-model-async] Загружаем страницу Confluence pageId=${pageId}...`);
             console.log(`[generate-test-model-async] bearerToken длина: ${bearerToken.length}, первые 20 символов: ${bearerToken.substring(0, 20)}...`);
-            
+
             try {
-                const { markdown } = await fetchConfluencePage(bearerToken.trim(), pageId, { inlineTextAttachments: true });
+                const { markdown, title: mainTitle } = await fetchConfluencePage(bearerToken.trim(), pageId, { inlineTextAttachments: true });
                 baseRequirement = markdown || '';
                 console.log(`[generate-test-model-async] ✅ Страница загружена, размер: ${baseRequirement.length} символов`);
-                
+
                 if (!baseRequirement || !baseRequirement.trim()) {
                     throw new Error(`Страница Confluence pageId=${pageId} загружена, но содержимое пустое`);
                 }
-                
+
                 // Логируем первые 200 символов для проверки
                 console.log(`[generate-test-model-async] Первые 200 символов контента: ${baseRequirement.substring(0, 200)}...`);
-                
-                // Извлекаем ссылки на другие страницы
-                const ids = new Set(Array.from(String(markdown || '').matchAll(/pageId=(\d{4,})/g)).map(m => m[1]));
+
+                registerSource({
+                    id: `page-${pageId}`,
+                    title: deriveTitleFromContent(baseRequirement, mainTitle || `Confluence page ${pageId}`, pageId),
+                    description: 'Основное требование (полный текст)',
+                    type: 'requirement',
+                    pageId: String(pageId),
+                    content: baseRequirement
+                });
+
+                // Извлекаем ссылки на другие страницы - улучшенная логика
+                const ids = new Set();
+                // 1. Извлекаем pageId= из markdown
+                Array.from(String(markdown || '').matchAll(/pageId=(\d{4,})/g)).forEach(m => ids.add(m[1]));
+                // 2. Извлекаем pageId из обычных URL вида https://confluence.../pages/viewpage.action?pageId=123456
+                Array.from(String(markdown || '').matchAll(/viewpage\.action\?pageId=(\d{4,})/gi)).forEach(m => ids.add(m[1]));
+                // 3. Извлекаем pageId из коротких ссылок вида /pages/123456
+                Array.from(String(markdown || '').matchAll(/\/pages\/(\d{4,})/g)).forEach(m => ids.add(m[1]));
                 ids.delete(String(pageId));
-                console.log(`[generate-test-model-async] Найдено ${ids.size} ссылок на другие страницы`);
-                
+                console.log(`[generate-test-model-async] Найдено ${ids.size} ссылок на другие страницы: [${Array.from(ids).join(', ')}]`);
+
                 for (const lid of ids) {
                     try {
-                        const { markdown: md } = await fetchConfluencePage(bearerToken, lid, { inlineTextAttachments: true });
+                        const { markdown: md, title: linkedTitle } = await fetchConfluencePage(bearerToken, lid, { inlineTextAttachments: true });
                         const lines = String(markdown || '').split(/\n/);
                         const refIdx = lines.findIndex(l => l.includes(`pageId=${lid}`));
                         let mention = '';
@@ -2208,13 +4209,22 @@ async function generateTestModelAsync(taskId, inputData) {
                             const end = Math.min(lines.length, refIdx + 3);
                             mention = lines.slice(start, end).join('\n').trim();
                         }
-                        const relevant = extractRelevantSections(md, mention, { maxSections: 8, maxChars: 50000 });
+                        const relevant = extractRelevantSections(md, mention, { maxSections: 15, maxChars: 100000 }); // Увеличено для полного контекста
                         autoPages.push([
                             `### Контекст по ссылке из основной статьи (pageId=${lid})`,
                             mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${lid})`,
                             '',
                             relevant
                         ].join('\n'));
+
+                        registerSource({
+                            id: `page-${lid}`,
+                            title: deriveTitleFromContent(md, linkedTitle || `Связанная страница ${lid}`, lid),
+                            description: mention ? `Упоминание: ${formatMention(mention)}` : 'Контекст из связанной страницы',
+                            type: 'confluence',
+                            pageId: String(lid),
+                            content: md
+                        });
                     } catch (linkErr) {
                         console.warn(`[generate-test-model-async] Не удалось загрузить связанную страницу pageId=${lid}:`, linkErr.message);
                     }
@@ -2225,51 +4235,178 @@ async function generateTestModelAsync(taskId, inputData) {
             }
         }
 
-        // Приводим к строке требований, предварительно прогнав через contextRefiner
+        const requestContextText = normalizeContextInput(context);
+        if (requestContextText) {
+            registerSource({
+                id: 'user-context',
+                title: 'Дополнительный контекст из запроса',
+                description: contextInstruction ? String(contextInstruction) : 'Контекст, переданный вместе с задачей',
+                type: 'user',
+                content: requestContextText
+            });
+        }
+
+        if (glossary && typeof glossary === 'string' && glossary.trim()) {
+            registerSource({
+                id: 'user-glossary',
+                title: 'Глоссарий из запроса',
+                description: 'Глоссарий, предоставленный пользователем',
+                type: 'glossary',
+                content: glossary
+            });
+        }
+
+        // Приводим к строке требований
         let reqStringForModel = '';
-        
+
         // Если pageId был передан, но загрузка не удалась - выбрасываем ошибку
         if (pageId && !baseRequirement) {
             throw new Error(`Не удалось загрузить страницу Confluence pageId=${pageId}. Проверьте bearerToken и доступ к странице.`);
         }
-        
-        // Если requirements пустой массив, но есть pageId - используем загруженный контент
-        const requirementsToUse = (Array.isArray(requirements) && requirements.length > 0) 
-            ? requirements 
-            : (requirements ? [requirements] : undefined);
-        
-        try {
-            const { refinedText, refinedArray } = await contextRefiner({
-                requirements: requirementsToUse,
-                text: baseRequirement || text,
-                glossary,
-                context,
-                contextInstruction,
-                contextPageIds: undefined,
-                glossaryPageId: undefined,
-                bearerToken: bearerToken, // ✅ ИСПРАВЛЕНО: передаем bearerToken
-                contextPages: autoPages
-            });
-            reqStringForModel = refinedText || (refinedArray?.join('\n\n') ?? '');
-        } catch (e) {
-            console.warn('[generate-test-model-async] contextRefiner warning:', e.message);
-            // Fallback: используем загруженный контент или переданный text
-            reqStringForModel = baseRequirement || (typeof requirements === 'string' ? requirements : (Array.isArray(requirements) && requirements.length > 0 ? requirements.join('\n\n') : (text || '')));
+
+        const requirementsPool = [];
+
+        if (Array.isArray(requirements) && requirements.length) {
+            requirementsPool.push(
+                requirements
+                    .map((item) => String(item || '').trim())
+                    .filter(Boolean)
+                    .join('\n\n---\n\n')
+            );
+        } else if (typeof requirements === 'string' && requirements.trim()) {
+            requirementsPool.push(requirements.trim());
         }
-        
+
+        if (baseRequirement && baseRequirement.trim()) {
+            requirementsPool.push(baseRequirement.trim());
+        } else if (text && String(text).trim()) {
+            requirementsPool.push(String(text).trim());
+        }
+
+        reqStringForModel = requirementsPool.filter(Boolean).join('\n\n---\n\n');
+
+        if (!reqStringForModel) {
+            try {
+                const { refinedText, refinedArray } = await contextRefiner({
+                    requirements,
+                    text,
+                    glossary,
+                    context,
+                    contextInstruction,
+                    contextPageIds: undefined,
+                    glossaryPageId: undefined,
+                    bearerToken,
+                    contextPages: autoPages
+                });
+                console.log(`[generate-test-model-async] contextRefiner fallback: refinedText.length=${(refinedText || '').length}, refinedArray.length=${refinedArray?.length || 0}`);
+                reqStringForModel = refinedText || (refinedArray?.join('\n\n') ?? '');
+            } catch (e) {
+                console.warn('[generate-test-model-async] contextRefiner fallback failed:', e.message);
+                reqStringForModel = baseRequirement || (typeof requirements === 'string'
+                    ? requirements
+                    : (Array.isArray(requirements) && requirements.length > 0 ? requirements.join('\n\n') : (text || '')));
+            }
+        }
+
         // Если после всех попыток reqStringForModel пустой - это ошибка
         if (!reqStringForModel || !reqStringForModel.trim()) {
             throw new Error('Не удалось получить текст требований. Проверьте параметры: pageId, requirements, text.');
         }
-        
+
         // Логируем размер и начало требований для проверки
         console.log(`[generate-test-model-async] ✅ Требования подготовлены, размер: ${reqStringForModel.length} символов`);
         console.log(`[generate-test-model-async] Первые 500 символов требований: ${reqStringForModel.substring(0, 500)}...`);
-        
+
         // Проверяем, что требования не содержат только примеры из промпта
         if (reqStringForModel.length < 100) {
             console.warn(`[generate-test-model-async] ⚠️ ВНИМАНИЕ: Требования очень короткие (${reqStringForModel.length} символов). Возможно, контент не загружен.`);
         }
+
+        // ✅ ФАЗА 1: ПРЕПРОЦЕССИНГ REQUIREMENTS - Извлечение структуры Feature → Story
+        console.log('[generateTestModelAsync] Фаза 1: Извлечение структуры requirements');
+        await db('generation_tasks').where('id', taskId).update({
+            progress: 10,
+            updated_at: new Date()
+        });
+
+        let reqStructure;
+        try {
+            reqStructure = await extractRequirementsStructure(reqStringForModel);
+            await db('generation_tasks').where('id', taskId).update({
+                progress: 20,
+                updated_at: new Date()
+            });
+        } catch (error) {
+            console.error('[generateTestModelAsync] Ошибка при извлечении структуры:', error.message);
+            // Продолжаем с fallback структурой
+            reqStructure = {
+                features: [{
+                    name: "Основная функциональность",
+                    description: "Автоматически извлеченная функциональность",
+                    stories: [{
+                        name: "Базовый сценарий",
+                        requirements: [],
+                        description: "Базовый сценарий для генерации модели"
+                    }]
+                }]
+            };
+        }
+
+        if (reqStringForModel) {
+            registerSource({
+                id: pageId ? `sanitized-requirement-${pageId}` : 'primary-requirement',
+                title: pageId ? 'Требование после сборки (основная страница)' : 'Основное требование',
+                description: 'Текст требований, подготовленный для генерации модели',
+                type: 'requirement',
+                pageId: pageId ? String(pageId) : null,
+                content: reqStringForModel
+            });
+        }
+
+        const contextFetcher = bearerToken
+            ? async (requestedPageId) => {
+                try {
+                    if (requestedPageId == null) return '';
+                    const requestedIdStr = String(requestedPageId);
+                    if (pageId && String(pageId) === requestedIdStr && baseRequirement) {
+                        return baseRequirement;
+                    }
+                    const { markdown } = await fetchConfluencePage(bearerToken, requestedIdStr, { inlineTextAttachments: true });
+                    return markdown || '';
+                } catch (err) {
+                    console.warn(`[interactive-context] Не удалось загрузить страницу pageId=${requestedPageId}: ${err.message}`);
+                    return '';
+                }
+            }
+            : null;
+
+        const contextToolset = createContextToolset({
+            sources: sourceRegistry.getSources(),
+            fetcher: contextFetcher,
+            defaultChunk: 8000  // ✅ Увеличено для MiniMax-M2 (204K контекст)
+        });
+
+        const interactiveTools = Array.isArray(contextToolset.tools) ? contextToolset.tools : [];
+        const contextToolHandlers = contextToolset.handlers || {};
+
+        let contextSourcesSummary = contextToolset.summary || '';
+        if (contextSourcesSummary) {
+            const summaryLines = contextSourcesSummary.split('\n').filter(Boolean);
+            if (summaryLines.length > 15) {
+                const hiddenCount = summaryLines.length - 15;
+                contextSourcesSummary = `${summaryLines.slice(0, 15).join('\n')}\n- ... еще ${hiddenCount} источников`;
+            }
+        }
+
+        const interactiveInstructionBlock = interactiveTools.length
+            ? `Если тебе нужен дополнительный контекст, используй инструменты:
+- list_context_sources() — посмотреть список источников
+- fetch_context_chunk({ "sourceId": "...", "offset": 0, "limit": 4000 }) — получить нужный фрагмент текста
+
+Доступные источники:
+${contextSourcesSummary || '—'}
+`
+            : 'Дополнительные контекстные источники не предоставлены. Работай только с текстом требований.';
 
         // Функция чанкования больших требований
         function chunkTextBySize(text, maxChars = 120000) {
@@ -2403,424 +4540,100 @@ async function generateTestModelAsync(taskId, inputData) {
         }
         */
 
+        // ✅ Загружаем пример тестовой модели
+        const testModelExample = JSON.parse(readFileSync(join(__dirname, 'config', 'examples', 'test-model-example.json'), 'utf-8'));
+
         const SYSTEM_PROMPT = `
-🚨 КРИТИЧЕСКИ ВАЖНО: ПОЛНОЕ ПОКРЫТИЕ ПОЛЬЗОВАТЕЛЬСКИХ ПУТЕЙ! 🚨
-Ты создаёшь тестовую модель на основе требований, но ОБЯЗАТЕЛЬНО покрываешь ВСЕ пользовательские пути.
-ОБЯЗАТЕЛЬНО: создавать элементы модели для ВСЕХ функций, упомянутых в требованиях.
-ОБЯЗАТЕЛЬНО: покрывать все способы выполнения операций (если упоминается "несколько способов").
-ОБЯЗАТЕЛЬНО: включать все условия и ветвления (если есть "если... то...").
-ОБЯЗАТЕЛЬНО: создавать отдельные элементы для каждого варианта пользовательского действия.
-ЗАПРЕЩЕНО: пропускать функции из требований только потому, что они не детально описаны.
-ЗАПРЕЩЕНО: объединять разные способы/варианты в один элемент модели.
-        
+Ты — SDET, генерирующий тестовую модель на основе requirements.
 
-🚨 КРИТИЧЕСКИ ВАЖНО: УНИКАЛЬНЫЕ ID ДЛЯ КАЖДОГО ЭЛЕМЕНТА! 🚨
-ОБЯЗАТЕЛЬНО: каждому элементу модели (feature, story, scenario, code) присваивай уникальный ID в формате UUID v4.
-ОБЯЗАТЕЛЬНО: используй поле "id" для каждого элемента модели.
-ОБЯЗАТЕЛЬНО: сохраняй структуру с ID для стабильности модели.
-Формат ID — UUID v4. Примеры 's1…', 'sc…' запрещены.
-ЗАПРЕЩЕНО: создавать элементы без уникального ID!
-        
+═══════════════════════════════════════════════════════════════
+🏗️ СТРУКТУРА ТЕСТОВОЙ МОДЕЛИ
+═══════════════════════════════════════════════════════════════
 
-🚨 КРИТИЧЕСКИ ВАЖНО: ГЕНЕРАЦИЯ UUID v4! 🚨
-ИСПОЛЬЗУЙ ТОЛЬКО ВАЛИДНЫЕ UUID v4 в формате: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
-Где x — любая hex цифра (0-9, a-f), y — одна из цифр 8, 9, a, b.
-ПРИМЕРЫ ПРАВИЛЬНЫХ UUID: "550e8400-e29b-41d4-a716-446655440000", "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
-ПРИМЕРЫ НЕПРАВИЛЬНЫХ UUID: "g7h8i9...", "s1...", "sc1..." - ЗАПРЕЩЕНО!
+Feature → Story → Scenario → Code
 
-        
-        🚨 КРИТИЧЕСКИ ВАЖНО: СОЗДАВАЙ STORIES ДЛЯ ВСЕХ РАЗДЕЛОВ! 🚨
-ОБЯЗАТЕЛЬНО: Просканируй ВСЕ требования и создай Story для КАЖДОГО найденного раздела!
-ЗАПРЕЩЕНО: Останавливаться на одной Story - создавай Story для ВСЕХ разделов!
-ЗАПРЕЩЕНО: Объединять разные разделы в одну Story!
+**Feature** — высокоуровневая функциональность ("Безбумажный офис", "Платежи")
 
-ПРАВИЛО: Каждый раздел требований = отдельная Story!
-ПРАВИЛО: Если в требованиях есть несколько разделов (например, X.X.1, X.X.2, X.X.3) - создай Story для КАЖДОГО!
-
-🚨 КРИТИЧЕСКИ ВАЖНО: ЗАПРЕТ НА BACKEND API КАК STORIES! 🚨
-СТРОГО ЗАПРЕЩЕНО создавать Stories для:
-- Разделов с названиями "Получение...", "Смена...", "Запрос...", "API..."
-- Backend API-методов (GET/POST/PUT/DELETE /rest/...)
-- Технических операций без пользовательского контекста
-- Операций с данными без UI-действия пользователя
-
-ПРАВИЛО: Backend API = это Code внутри UI Story!
-ПРИМЕРЫ НЕПРАВИЛЬНОГО (НЕ ДЕЛАТЬ):
-❌ Story: "Получение настроек отображения продуктов" (requirement: 6.1)
-❌ Story: "Получение списка кредитов" (requirement: 6.2)
-❌ Story: "Смена наименования продукта" (requirement: 6.3)
-
-ПРИМЕРЫ ПРАВИЛЬНОГО:
-✅ Story: "Отображение кредита на главной странице" → Code: "GET /rest/stateful/corp/credit?sync_credits=true"
-✅ Story: "Редактирование названия кредита" → Code: "PUT /rest/stateful/corp/product/change_alias"
-✅ Story: "Просмотр графика платежей" → Code: "GET /rest/stateful/corp/payment_schedule?account_id={credit.id}"
-
-АЛГОРИТМ ПРОВЕРКИ:
-1. Если раздел описывает API-метод БЕЗ пользовательского действия → это Code, НЕ Story!
-2. Если раздел начинается с "Получение", "Запрос", "Смена" (без "Пользователь получает") → это Code!
-3. Если раздел описывает UI-функцию с пользовательским действием → это Story!
-
-🚨 ПРИМЕР: Если в требованиях есть разделы 2.2.1, 2.2.2, 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7, 2.2.8 - создай Story для КАЖДОГО! 🚨
-
-ПРИМЕРЫ ОБЯЗАТЕЛЬНОГО ПОЛЯ requirement:
-Feature: { text: "Название фичи", requirement: "X.X" }
-Story: { text: "Название функции 1", requirement: "X.X.1" }
-Story: { text: "Название функции 2", requirement: "X.X.2" }
-Story: { text: "Название функции 3", requirement: "X.X.3" }
-Story: { text: "Название функции 4", requirement: "X.X.4" }
-Story: { text: "Название функции 5", requirement: "X.X.5" }
-Story: { text: "Название функции 6", requirement: "X.X.6" }
-Story: { text: "Название функции 7", requirement: "X.X.7" }
-Story: { text: "Название функции 8", requirement: "X.X.8" }
-Scenario: { text: "Конкретный сценарий", requirement: "X.X.1" }
-Code: { text: "Системная реакция", requirement: "X.X.1" }
-
-ЗАПРЕЩЕНО: Создавать элементы БЕЗ поля requirement!
-ЗАПРЕЩЕНО: Использовать некорректные форматы requirement!
-ЗАПРЕЩЕНО: Создавать только одну Story для всего документа!
-ЗАПРЕЩЕНО: Останавливаться на первом найденном разделе!
-        
-        ПРАВИЛО ИЗВЛЕЧЕНИЯ ТРЕБОВАНИЙ:
-        1. Ищи нумерованные разделы в формате X.X, X.X.X, X.X.X.X (например, 2.2, 2.2.7, 3.1.4)
-        2. Заголовок раздела = название Story
-        3. Номер раздела = значение поля "requirement"
-        4. Содержимое раздела = основа для Scenarios и Codes
-        
-        ПРИМЕРЫ ПРАВИЛЬНОГО ИЗВЛЕЧЕНИЯ:
-        Если в требованиях:
-          "### X.X.X Название функции"
-        Создавай:
-          Story: {
-            text: "Название функции",
-            requirement: "X.X.X",
-            scenarios: [...]
-          }
-        
-        Если в требованиях:
-          "## X.X Валидация полей
-           Система должна проверять..."
-        Создавай:
-          Story: {
-            text: "Валидация полей формы", 
-            requirement: "4.3",
-            scenarios: [...]
-          }
-        
-        Если в требованиях:
-          "**3.2.1** Обработка ошибок"
-        Создавай:
-          Story: {
-            text: "Обработка ошибок",
-            requirement: "3.2.1",
-            scenarios: [...]
-          }
-        
-        ФОРМАТЫ НУМЕРАЦИИ В ТРЕБОВАНИЯХ:
-        - "### 2.2.7 Название" → requirement: "2.2.7"
-        - "**3.4.1** Название" → requirement: "3.4.1"
-        - "4.5 Название раздела" → requirement: "4.5"
-        - "п. 2.2.7 Название" → requirement: "2.2.7"
-        - "Раздел 2.2.8: Название" → requirement: "2.2.8"
-        
-        Каждый узел (Feature/Story/Scenario/Code) обязан иметь requirement; если в требовании указан точный подпункт — использовать его.
-ЗАПРЕЩЕНО: создавать элементы модели без привязки к требованиям!
-        ЗАПРЕЩЕНО: использовать случайные ID типа "req-12345" - только реальные номера требований из документа!
-        ЗАПРЕЩЕНО: пропускать разделы требований!
-        
-        
-        🚨 КРИТИЧЕСКИ ВАЖНО: ПОЛНОЕ ПОКРЫТИЕ ВСЕХ РАЗДЕЛОВ ТРЕБОВАНИЙ! 🚨
-        ОБЯЗАТЕЛЬНО: Создать Story для КАЖДОГО нумерованного раздела требований!
-        ОБЯЗАТЕЛЬНО: Проверить что ни один раздел не пропущен!
-        
-        АЛГОРИТМ ПРОВЕРКИ ПОЛНОТЫ:
-        1. Просканируй ВСЕ требования от начала до конца
-        2. Найди ВСЕ нумерованные разделы (X.X, X.X.X, X.X.X.X)
-        3. Для КАЖДОГО раздела создай соответствующую Story с полем requirement
-        4. Если раздел содержит "несколько способов" → создай отдельные Scenarios для каждого
-        5. Если раздел содержит условия "если... то..." → создай Scenarios для всех вариантов
-        6. Если упоминаются различные doc_type или типы операций → создай отдельные Scenarios для каждого
-        
-        РАЗДЕЛЫ, КОТОРЫЕ ЧАСТО ПРОПУСКАЮТ (ОБРАТИ ОСОБОЕ ВНИМАНИЕ!):
-        - Разделы про "повтор операций" (обычно в конце документа)
-        - Разделы про "обработку ошибок"
-        - Разделы про "edge cases"
-        - Разделы про "производительность"
-        - Разделы с многочисленными вариантами (doc_type, типы операций)
-        
-        ПРОВЕРКА ПЕРЕД ЗАВЕРШЕНИЕМ:
-        Перед отправкой модели задай себе вопрос:
-        "Покрыл ли я ВСЕ нумерованные разделы из требований?"
-        "Создал ли я отдельные Scenarios для каждого варианта/способа/типа?"
-        Если нет → ВЕРНИСЬ и создай недостающие Stories и Scenarios!
-        
-        
-        🚨 КРИТИЧЕСКИ ВАЖНО: СТРОГОЕ СООТВЕТСТВИЕ СЛОЕВ ТЕСТИРОВАНИЯ! 🚨
-        ВАЖНО: Это соответствие применяется ТОЛЬКО при генерации тест-кейсов, НЕ при генерации модели!
-        При генерации тестовой модели НЕ нужно указывать layer - это делается автоматически при генерации тест-кейсов.
-        
-        СПРАВОЧНАЯ ИНФОРМАЦИЯ (для понимания, но не для генерации модели):
-        - Story уровень → layer: "E2E Tests" (полные пользовательские сценарии)
-        - Scenario уровень → layer: "Integration frontend/backend Tests" (взаимодействие компонентов)
-        - Code уровень → layer: "Unit frontend/backend Tests" (отдельные функции)
-        
-
-🚨 КРИТИЧЕСКИ ВАЖНО: ИЗБЕГАНИЕ ДУБЛИРОВАНИЯ! 🚨
-ЗАПРЕЩЕНО: создавать дублирующиеся элементы модели с похожими названиями!
-ЗАПРЕЩЕНО: создавать элементы с разными формулировками одного и того же действия!
-ПРИМЕРЫ ДУБЛИРОВАНИЯ (НЕ ДЕЛАТЬ):
-- "Платежи по реквизитам" и "Платеж по реквизитам"
-- "Переводы" и "Перевод"
-- "Платежи по QR-коду" и "Платеж по QR-коду"
-- "Авторизация" и "Авторизация пользователя" (если это одно и то же)
-ОБЯЗАТЕЛЬНО: использовать единообразные формулировки для одинаковых функций!
-ОБЯЗАТЕЛЬНО: проверять что элемент с похожим названием уже не создан!
-        
-
-Ты — выдающийся QA-архитектор с исключительным талантом к синтезу и декомпозиции. Твоя главная сила — видеть за разрозненными требованиями целостную картину и ценность для пользователя.
-        
-
-## 1. Цель
-Создать иерархическую тестовую модель (Feature → Story → Scenario → Code) на основе предоставленных требований.
-
-Технологический стек проекта: фронтенд — Angular (TypeScript), бэкенд — .NET/C#. Если требование явно про UI — интерпретируй как Angular; если про API/сервер — как .NET. Ничего не выдумывай сверх текста.
-        
-
-## 2. Ключевой принцип декомпозиции (САМОЕ ВАЖНОЕ!)
-- **Сначала Синтез, потом Анализ.** Прочитай ВСЕ требования. Твоя первая задача — определить **ВСЕ пользовательские потоки (Story)**, которые упомянуты в требованиях.
-        
-        ## 2.1 Полное покрытие всех функций
-- Если в требованиях **упоминается любая функция** — **обязательно создавай** соответствующий элемент модели.
-- Если упоминается **"несколько способов"** — создавай **отдельные элементы** для каждого способа.
-- Если есть **условия "если... то..."** — создавай элементы для **всех вариантов**.
-- Если упоминается **API-метод** — создавай соответствующий элемент модели.
-        - Если упоминаются **различные типы операций** (doc_type, типы документов, категории) — создавай отдельные Scenarios для каждого типа.
-- Модель должна отражать **ВСЕ** функции из требований, даже если они описаны кратко.
-
-
-## 3. Структура дерева (строго соблюдать)
-— **Feature (Фича):** Большой независимый блок продукта.
-        — **Story:** **Единый бизнес-поток/раздел требований (например, X.X.X Авторизация, X.X.X Повтор операций).**
-        — **Scenario:** **Конкретный способ выполнения в рамках Story (логин/пароль, PIN, FaceID, конкретный doc_type и т.д.).** Для каждого способа — отдельный Scenario.
-        — **Code:** **Системные реакции (включая HTTP-запросы), упорядоченные по таймингу.** **Не использовать** слово «Проверка».
-        
-
-🚨 КРИТИЧЕСКИ ВАЖНО: РАЗДЕЛЕНИЕ ПОЛЬЗОВАТЕЛЬСКИХ ДЕЙСТВИЙ И СИСТЕМНЫХ РЕАКЦИЙ! 🚨
-— **Scenario = ТОЛЬКО действия пользователя:** "Ввести данные", "Нажать кнопку", "Выбрать опцию", "Открыть страницу", "Перейти", "Сканировать", "Сфокусироваться", "Снять фокус", "Загрузить файл"
-— **Code = ТОЛЬКО реакции системы:** "Рассчитать ставку", "Отобразить поля", "Сохранить данные", "Вызвать метод", "Инициализировать", "Не вызывать", "POST /api/endpoint", "GET /api/endpoint"
-— **ЗАПРЕЩЕНО:** В Scenario писать системные реакции ("Рассчитать", "Отобразить", "Сохранить", "Вызвать метод")
-— **ЗАПРЕЩЕНО:** В Code писать пользовательские действия ("Ввести", "Нажать", "Выбрать", "Открыть", "Перейти")
-        
-
-🚨 КРИТИЧЕСКИ ВАЖНО: ПРАВИЛЬНАЯ СТРУКТУРА SCENARIO → CODE! 🚨
-Если в Code.text есть пользовательские действия (Ввести, Нажать, Открыть, Перейти) — ВЫНЕСИ их в отдельные Scenario!
-Каждый пользовательский шаг должен быть отдельным Scenario с соответствующими Code (системными реакциями).
-        
-ПРИМЕР ПРАВИЛЬНОЙ СТРУКТУРЫ:
-- Scenario: "Ввести платёжные реквизиты" → Code: "Вызвать метод getReport()"
-- Scenario: "Нажать кнопку «Продолжить»" → Code: "POST /rest/stateful/.../create/sdk"
-        
-        НЕПРАВИЛЬНО: 
-        - Code: "Ввести БИК, Р/С, ИНН" (это Scenario!)
-        - Code: "Нажать кнопку «Продолжить»" (это Scenario!)
-        
-
-🚨 КРИТИЧЕСКИ ВАЖНО: ФОРМАЛЬНЫЕ ВЕРБ-ГЕЙТЫ! 🚨
-**ОБЯЗАТЕЛЬНАЯ ПРОВЕРКА ДЛЯ КАЖДОЙ ГЕНЕРАЦИИ:**
-        * Scenario.text **начинается** с: Открыть|Перейти|Выбрать|Ввести|Нажать|Сканировать|Сфокусироваться|Снять фокус|Загрузить|Повторить
-        * Code.text **запрещено** начинать этими глаголами; допустимо: Инициализировать|Отобразить|Рассчитать|Сохранить|Вызвать метод|Получить ответ|Не вызывать|Передать данные
-**Если правило не выполняется — ПЕРЕРАЗЛОЖИТЬ** (перенести текст либо в Scenario, либо в Code).
-        
-
-🚨 КРИТИЧЕСКИ ВАЖНО: ТАЙМИНГ И ПОРЯДОК РЕАКЦИЙ! 🚨
-Соблюдай тайминг из требований. Если сказано «сбор начинается после вызова запроса, а отправка — после ответа 200/202», то в узлах Code отрази это в указанном порядке: выполнить запрос → запустить сбор → отправить после требуемого статуса.
-
-Если требования предписывают follow-up запрос перед отчётом, добавь отдельный Code для follow-up запроса и гейт 'передачу/getReport()' на его успешный статус.
-
-Примеры ПРАВИЛЬНОГО разделения:
-— **Scenario:** "Ввести параметры кредита" → **Code:** "Рассчитать процентную ставку"
-— **Scenario:** "Нажать кнопку 'Продолжить'" → **Code:** "Отобразить поля залогового обеспечения"
-— **Scenario:** "Выбрать тип залога" → **Code:** "Автоматически заполнить данные залогодателей"
-        
-
-🚨 КРИТИЧЕСКИ ВАЖНО: АНАЛИЗ ТРЕБОВАНИЙ НА ПРЕДМЕТ РАЗДЕЛЕНИЯ! 🚨
-При анализе требований ОБЯЗАТЕЛЬНО разделяй:
-1. **Что делает ПОЛЬЗОВАТЕЛЬ** (вводит, нажимает, выбирает) → это Scenario
-2. **Что делает СИСТЕМА** (рассчитывает, отображает, сохраняет) → это Code
-
-Если в требованиях написано "Система отображает поля" → это Code, НЕ Scenario!
-Если в требованиях написано "Пользователь вводит данные" → это Scenario, НЕ Code!
-
-Примеры анализа требований:
-❌ НЕПРАВИЛЬНО: "Рассчитать процентную ставку на основе параметров" → Scenario
-✅ ПРАВИЛЬНО: "Рассчитать процентную ставку на основе параметров" → Code
-
-❌ НЕПРАВИЛЬНО: "Отобразить чекбоксы обеспечения" → Scenario  
-✅ ПРАВИЛЬНО: "Отобразить чекбоксы обеспечения" → Code
-
-❌ НЕПРАВИЛЬНО: "Автоматически проставить отметку о залоговом обеспечении" → Scenario
-✅ ПРАВИЛЬНО: "Автоматически проставить отметку о залоговом обеспечении" → Code
-
-✅ ПРАВИЛЬНО: "Ввести параметры кредита" → Scenario
-✅ ПРАВИЛЬНО: "Нажать кнопку 'Продолжить'" → Scenario
-✅ ПРАВИЛЬНО: "Выбрать тип залога" → Scenario
-        
-
-## 3.1. Правила Детализации (ПРИОРИТЕТ!)
-- **Если в требованиях есть раздел "Пользовательские сценарии" (или похожий по смыслу), используй его как главный источник для декомпозиции.**
-        - **Каждый пронумерованный шаг пользователя из этих сценариев должен стать отдельным Scenario в тестовой модели.**
-        - **Описание реакции системы на действие пользователя — это Code.**
-- **ОБЯЗАТЕЛЬНО: Если в требованиях упоминается "несколько способов" — создавай отдельные Scenario для каждого способа.**
-- **ОБЯЗАТЕЛЬНО: Если есть условия "если... то..." — создавай отдельные Scenario для каждого варианта.**
-- **ОБЯЗАТЕЛЬНО: Если упоминается API-метод — создавай соответствующий Code (НЕ Story!).**
-        - **ОБЯЗАТЕЛЬНО: Если упоминаются различные типы операций (doc_type, категории, типы документов) — создавай отдельные Scenario для КАЖДОГО типа.**
-- **ОБЯЗАТЕЛЬНО: Покрывать ВСЕ функции из требований, даже если они описаны кратко.**
-- **ОБЯЗАТЕЛЬНО: Если в требованиях упоминается обработка ошибок, пустых данных, null-значений, условия "если...то..." — создавай отдельные Scenarios для КАЖДОГО случая!**
-
-🚨 КРИТИЧЕСКИ ВАЖНО: НЕГАТИВНЫЕ СЦЕНАРИИ И УСЛОВИЯ! 🚨
-ОБЯЗАТЕЛЬНО: Если в требованиях есть условия "если...то...", обработка ошибок, пустых данных, null-значений — создавай отдельные Scenarios для КАЖДОГО варианта!
-
-ПРИМЕРЫ УСЛОВИЙ ИЗ ТРЕБОВАНИЙ:
-- "Если errorCode присутствует → отобразить ошибку" → Scenario: "Обработать ошибку при загрузке данных"
-- "Если массив кредитов пустой [] → скрыть блок" → Scenario: "Обработать отсутствие кредитов"
-- "Если поля null → не отображать" → Scenario: "Обработать отсутствие данных в поле"
-- "Если doc_type=payment → вызвать метод X" → Scenario: "Повторить платеж с doc_type=payment"
-- "Если doc_type=payment_counter → вызвать метод Y" → Scenario: "Повторить платеж с doc_type=payment_counter"
-
-ЗАПРЕЩЕНО: Пропускать негативные сценарии и условия из требований!
-ОБЯЗАТЕЛЬНО: Для каждого условия создавай отдельный Scenario!
-        
-
-## 3.2. Обязательные Stories для полного покрытия
-        - **Story создаётся для каждого раздела требований/бизнес-потока (напр., 2.2.1, 2.2.2, 2.2.7, 2.2.8…).**
-- **Каждый способ в рамках потока — отдельный Scenario, а не отдельная Story.**
-        - **ОБЯЗАТЕЛЬНО создавай Story для каждого нумерованного раздела требований**
-- **ОБЯЗАТЕЛЬНО создавай Story для каждого типа операций** (авторизация, платежи, переводы, QR-коды, повтор операций, разворот из трея)
-- **ОБЯЗАТЕЛЬНО создавай Story для каждого условия** (если есть разные условия — создавай отдельные Stories)
-        
-
-## 3.3. Чек-лист полноты модели (ОБЯЗАТЕЛЬНО ПРОВЕРИТЬ!)
-Перед завершением генерации модели ОБЯЗАТЕЛЬНО проверь:
-        - ✅ Создана ли Story для каждого нумерованного раздела требований?
-- ✅ Создана ли Story для каждого типа операций (авторизация, платежи, переводы, QR-коды, повтор операций, разворот из трея)?
-        - ✅ Создан ли Scenario для каждого способа выполнения операций?
-        - ✅ Создан ли Scenario для каждого типа документа/операции (если упоминаются doc_type)?
-        - ✅ Создан ли Scenario для каждого условия или ветвления?
-- ✅ Покрыты ли все упомянутые в требованиях функции?
-- ✅ Созданы ли отдельные Scenario для каждого способа/варианта?
-- ✅ Созданы ли Code для всех API-методов?
-        - ✅ Нет ли пропущенных функций из требований?
-
-        
-        ## 3.4. Принцип Абстракции Данных и Реализации (ВЫСШИЙ ПРИОРИТЕТ!)
-- **Не вставляй конкретные данные из примеров** (значения, названия, тексты ошибок) в итоговую модель.
-- **Не вставляй детали технической реализации.**
-- Твоя задача — распознать КОНКРЕТНЫЕ ПРИМЕРЫ в требованиях, но в итоговой модели заменить их на **АБСТРАКТНЫЕ ОПИСАНИЯ ДЕЙСТВИЙ И РЕАКЦИЙ.**
-- Сосредоточься на связке **"действие пользователя (Scenario) -> видимая реакция системы (Code)"**. Модель должна быть независима от конкретной технологии.
-
-🚨 КРИТИЧЕСКИ ВАЖНО: АБСТРАКЦИЯ ОТОБРАЖЕНИЯ ПОЛЕЙ UI! 🚨
-ЗАПРЕЩЕНО: Создавать отдельные Codes для каждого отображаемого поля UI!
-ПРАВИЛЬНО: Объединять отображение полей в один Code "Отобразить [название блока/компонента]"
-
-ПРИМЕРЫ НЕПРАВИЛЬНОГО (НЕ ДЕЛАТЬ):
-❌ Code: "Отобразить пользовательское наименование кредита из параметра credit.alias"
-❌ Code: "Отобразить номер кредитного договора из параметра credit.creditInformation.contractNum"
-❌ Code: "Отобразить дату кредитного договора из параметра credit.creditInformation.contractDate"
-❌ Code: "Отобразить сумму кредита из параметра credit.creditInformation.amount"
-
-ПРИМЕРЫ ПРАВИЛЬНОГО:
-✅ Code: "Отобразить информацию о кредите на карточке"
-✅ Code: "Отобразить блок 'Основное' с данными договора"
-✅ Code: "Отобразить блок 'Очередной платёж' с суммой и датой"
-
-ПРАВИЛО: Один UI-блок = один Code, НЕ несколько Codes для каждого поля!
-
-        
-        ## 3.5. При недостатке информации — минимализм
-- Если информации в требованиях недостаточно для создания подробного сценария, создай максимально общий и абстрактный элемент.
-- Не расширяй модель за счёт непроверенных деталей.
-- Предпочти короче и точнее, чем длиннее и с выдумками.
-
-- **Примеры абстракции данных:**
-  - НЕПРАВИЛЬНО: "Выбрать программу '27 LADA FREE'"
-  - **ПРАВИЛЬНО:** "Выбрать значение, соответствующее условию зависимости"
-
-- **Примеры абстракции реализации:**
-          - НЕПРАВИЛЬНО (деталь): Scenario: "Отправить GET-запрос на /api/users"
-          - **ПРАВИЛЬНО (действие):** Scenario: "Запросить список пользователей"
+**Story** — пользовательская история внутри Feature, описывает ЧТО хочет получить пользователь:
+  ✅ "Регистрация в ББО" - пользователь хочет зарегистрироваться
+  ✅ "QR-коды для физических лиц" - пользователь хочет работать с QR-кодами
+  ✅ "Перевод между счетами" - пользователь хочет перевести деньги
+  ❌ "Реализация кнопки создания QR-кода" - это техническое описание, НЕ пользовательская история!
+  ❌ "API метод получения данных" - это техническое описание, НЕ пользовательская история!
+  ❌ "Чек-бокс УНК в другом банке" - это описание контрола, НЕ пользовательская история!
   
-          - НЕПРАВИЛЬНО (деталь): Code: "Загрузить данные из кэша"
-          - **ПРАВИЛЬНО (реакция):** Code: "Отобразить список пользователей"
-        
+  🚨 ПРАВИЛО: Story = ценность для пользователя, НЕ техническая реализация!
 
-## 4. Формат вывода (обязательно)
-Выход — **ТОЛЬКО** чистый JSON-массив без комментариев и markdown.
-        ВАЖНО: Каждый элемент модели ОБЯЗАТЕЛЬНО должен содержать уникальный ID в формате UUID v4!
-        ВАЖНО: Каждый элемент модели ОБЯЗАТЕЛЬНО должен содержать requirement для связи с требованиями!
+**Scenario** — конкретное действие пользователя, ВСЕГДА начинается с номера и глагола:
+  ✅ "1. Нажать на кнопку 'Безбумажный офис'"
+  ✅ "2. Выбрать чекбокс 'УНК в другом банке'"
+  ✅ "3. Ввести ОТП-код в модальное окно"
+
+**Code** — поведение системы (Frontend + Backend + Integration) после действия пользователя:
+  ✅ Frontend: "Отобразить модальное окно ОТП", "Показать лоадер на кнопке", "Скрыть поле 'Примечание'"
+  ✅ Backend: "POST /confirm/code/check", "GET /info/v2", "PUT /nopaper/user"
+  ✅ Методы: "Вызвать метод auth()", "Выполнить verificate()"
+  ✅ Интеграции: "Отправить push-уведомление", "Сохранить в БД", "Записать лог операции"
+
+═══════════════════════════════════════════════════════════════
+📚 ЭТАЛОННЫЙ ПРИМЕР (ИСПОЛЬЗУЙ КАК ШАБЛОН!)
+═══════════════════════════════════════════════════════════════
 
 \`\`\`json
+${JSON.stringify(testModelExample, null, 2)}
+\`\`\`
+
+🚨 АНАЛИЗИРУЙ ПРИМЕР ПЕРЕД ГЕНЕРАЦИЕЙ:
+1. Feature: "Безбумажный офис" - БИЗНЕС-ПОТРЕБНОСТЬ, НЕТ поля requirement
+2. Story: "Регистрация в ББО" - ПОЛЬЗОВАТЕЛЬСКАЯ ИСТОРИЯ, НЕТ поля requirement
+3. Scenario: "1. Нажать на кнопку..." - ДЕЙСТВИЕ ПОЛЬЗОВАТЕЛЯ с номером, НЕТ поля requirement
+4. Code: массив с Frontend + Backend вместе, НЕТ поля requirement, НЕТ префиксов "API:", "UI:"
+
+═══════════════════════════════════════════════════════════════
+🚨 КРИТИЧЕСКИЕ ПРАВИЛА ДЛЯ CODE
+═══════════════════════════════════════════════════════════════
+
+1. Code описывает ЧТО ДЕЛАЕТ СИСТЕМА, а НЕ что делает пользователь
+   ✅ "Отобразить страницу 'Письмо отправлено'"
+   ❌ "Пользователь видит страницу" (это Step в тест-кейсе)
+
+2. Code может содержать НЕСКОЛЬКО действий Frontend + Backend ВМЕСТЕ
+   ✅ Scenario "4. Нажать на кнопку 'Подтвердить'":
+       codes: [
+         "Показать лоадер на кнопке",      // Frontend
+         "PUT /nopaper/user",               // Backend
+         "Отобразить модальное окно ОТП",  // Frontend
+         "Отправить push 'Требуется код'"  // Integration
+       ]
+
+3. Code НЕ содержит префиксов "API:", "UI:", "Frontend:", "Backend:"
+   ✅ "POST /confirm/code/check"
+   ❌ "API: POST /confirm/code/check"
+
+4. Code извлекается ТОЛЬКО из requirements (НЕ выдумывай!)
+   ✅ Если в requirements написано "вызвать метод auth()" → добавляй "Вызвать метод auth()"
+   ❌ Если нет информации о push-уведомлении → НЕ добавляй его
+
+═══════════════════════════════════════════════════════════════
+📋 ФОРМАТ ВЫХОДНОЙ МОДЕЛИ
+═══════════════════════════════════════════════════════════════
+
 [
   {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-            "text": "Отправка отчёта при использовании SDK Bi_Zone",
-            "requirement": "2.2",
+    "id": "uuid",
+    "text": "Feature name",
     "stories": [
       {
-        "id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
-                "text": "Отправка отчёта при открытии страницы платежа по реквизитам",
-                "requirement": "2.2.5",
+        "id": "uuid",
+        "text": "Story name",
         "scenarios": [
           {
-            "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-                    "text": "Ввести платёжные реквизиты на статичной форме",
-                    "requirement": "2.2.5",
+            "id": "uuid",
+            "text": "N. Действие пользователя",
             "codes": [
-              { 
-                "id": "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
-                        "text": "Вызвать метод getReport()",
-                        "requirement": "2.2.5"
-              }
-            ]
-          },
-          {
-            "id": "6ba7b812-9dad-11d1-80b4-00c04fd430c8",
-            "text": "Нажать кнопку «Продолжить»",
-                    "requirement": "2.2.5",
-            "codes": [
-              { 
-                "id": "6ba7b813-9dad-11d1-80b4-00c04fd430c8",
-                "text": "Передать собранные данные через POST /rest/stateful/personal/kuban/client/create/sdk",
-                        "requirement": "2.2.5"
-                      }
-                    ]
-                  }
-                ]
-              },
               {
-                "id": "7ca7b810-9dad-11d1-80b4-00c04fd430c9",
-                "text": "Повтор платежей из истории/шаблона/финального экрана",
-                "requirement": "2.2.7",
-                "scenarios": [
-                  {
-                    "id": "8da7b810-9dad-11d1-80b4-00c04fd430d0",
-                    "text": "Повторить платеж с doc_type=payment",
-                    "requirement": "2.2.7",
-                    "codes": [
-                      { 
-                        "id": "9ea7b811-9dad-11d1-80b4-00c04fd430d1",
-                        "text": "Вызвать метод getReport()",
-                        "requirement": "2.2.7"
-                      }
-                    ]
-                  },
-                  {
-                    "id": "afa7b812-9dad-11d1-80b4-00c04fd430d2",
-                    "text": "Повторить платеж с doc_type=payment_counter",
-                    "requirement": "2.2.7",
-                    "codes": [
-                      { 
-                        "id": "bga7b813-9dad-11d1-80b4-00c04fd430d3",
-                        "text": "Вызвать метод getReport()",
-                        "requirement": "2.2.7"
+                "id": "uuid",
+                "text": "Поведение системы (Frontend/Backend/Integration)"
               }
             ]
           }
@@ -2829,62 +4642,101 @@ Code: { text: "Системная реакция", requirement: "X.X.1" }
     ]
   }
 ]
-\`\`\`
-        
 
-## 5. Входные данные: Требования к продукту
+ВАЖНО:
+- НЕТ поля "requirement" НА ВСЕХ УРОВНЯХ!
+- Code = массив объектов с id + text
+- Scenario.text ВСЕГДА начинается с номера "N."
+- Code.text = конкретное поведение системы БЕЗ префиксов
+
+═══════════════════════════════════════════════════════════════
+📚 ПРИМЕРЫ ПРАВИЛЬНОГО CODE
+═══════════════════════════════════════════════════════════════
+
+ПРИМЕР 1: Scenario с Frontend + Backend вместе
+Scenario: "4. Нажать на кнопку 'Подтвердить'"
+codes: [
+  {"id": "...", "text": "Показать лоадер на кнопке 'Подтвердить'"},
+  {"id": "...", "text": "PUT /nopaper/user"},
+  {"id": "...", "text": "Отобразить модальное окно ОТП"},
+  {"id": "...", "text": "Отправить push-уведомление 'Требуется ввод кода'"}
+]
+
+ПРИМЕР 2: Scenario с цепочкой методов
+Scenario: "6. Нажать на кнопку 'Продолжить'"
+codes: [
+  {"id": "...", "text": "GET /stateful/personal/kuban/noPaper/secretCodeAsync"},
+  {"id": "...", "text": "Вызвать метод auth()"},
+  {"id": "...", "text": "Вызвать метод verificate()"},
+  {"id": "...", "text": "Вызвать метод getKeyAcceptanceAct()"},
+  {"id": "...", "text": "Отобразить страницу с актом признания ключа"}
+]
+
+ПРИМЕР 3: Scenario с условной логикой
+Scenario: "1. Нажать на кнопку 'Безбумажный офис'"
+codes: [
+  {"id": "...", "text": "GET /stateful/personal/kuban/client/info/v2"},
+  {"id": "...", "text": "Отобразить страницу 'Электронная почта не найдена' или 'Письмо отправлено'"}
+]
+
+═══════════════════════════════════════════════════════════════
+❌ ПРИМЕРЫ НЕПРАВИЛЬНОГО CODE
+═══════════════════════════════════════════════════════════════
+
+ОШИБКА 1: Префиксы в Code.text
+❌ "API: POST /confirm/code/check"
+✅ "POST /confirm/code/check"
+
+ОШИБКА 2: Действие пользователя в Code
+❌ "Пользователь видит модальное окно"
+✅ "Отобразить модальное окно ОТП"
+
+ОШИБКА 3: Наличие поля requirement
+❌ {"text": "GET /info/v2", "requirement": "2.2.1"}
+✅ {"text": "GET /info/v2"}
+
+ОШИБКА 4: Scenario без номера
+❌ "Нажать на кнопку 'Подтвердить'"
+✅ "4. Нажать на кнопку 'Подтвердить'"
+
+═══════════════════════════════════════════════════════════════
+🛡️ ЗАПРЕТЫ
+═══════════════════════════════════════════════════════════════
+
+❌ НЕ добавляй поле "requirement" в Feature/Story/Scenario/Code
+❌ НЕ используй префиксы "API:", "UI:", "Frontend:", "Backend:" в Code.text
+❌ НЕ выдумывай Code, которого нет в requirements
+❌ НЕ смешивай действия пользователя (Step) с поведением системы (Code)
+❌ НЕ создавай Story как описание контрола ("Чек-бокс X", "Поле Y", "Кнопка Z")
+❌ НЕ создавай Story как техническое название ("API метод...", "Реализация...", "Доработка...")
+❌ НЕ создавай Story как техническую формулировку ("Реализация кнопки...", "Создание формы...", "Добавление поля...")
+
+✅ ПРАВИЛЬНО: Story описывает бизнес-ценность для пользователя
+  ✅ "QR-коды для физических лиц" (пользователь хочет работать с QR-кодами)
+  ✅ "Оплата по QR-коду" (пользователь хочет оплатить через QR)
+  ✅ "Регистрация в ББО" (пользователь хочет зарегистрироваться)
+  
+❌ НЕПРАВИЛЬНО: Story описывает техническую реализацию
+  ❌ "Реализация кнопки создания QR-кода" → правильно: "QR-коды для физических лиц"
+  ❌ "API метод получения данных" → правильно: "Получение данных о счетах"
+  ❌ "Доработка формы оплаты" → правильно: "Оплата по QR-коду"
+
+**ТРЕБОВАНИЯ:**
 ${reqStringForModel}
-        
 
-## 6. Задание
-
-🚨 ПЕРЕД ГЕНЕРАЦИЕЙ МОДЕЛИ - ВЫПОЛНИ ОБЯЗАТЕЛЬНЫЙ АНАЛИЗ! 🚨
-
-ШАГ 1: АНАЛИЗ ТРЕБОВАНИЙ
-1. Выпиши ВСЕ нумерованные разделы из требований (X, X.X, X.X.X, X.X.X.X)
-2. Для каждого раздела определи: это UI-функция или Backend API?
-3. Если Backend API (начинается с "Получение", "Запрос", "Смена", содержит GET/POST/PUT/DELETE) → НЕ создавай Story, добавь как Code в соответствующую UI Story
-4. Выпиши все условия "если...то...", обработку ошибок, пустых данных, null-значений
-5. Для каждого условия создай отдельный Scenario
-
-ШАГ 2: ГЕНЕРАЦИЯ МОДЕЛИ
-Основываясь на **принципах декомпозиции (п.2), детализации (п.3.1) и абстракции (п.3.4)**, проанализируй требования и сгенерируй тестовую модель в формате JSON. 
-
-КРИТИЧЕСКИ ВАЖНО:
-1. Извлеки ВСЕ нумерованные разделы из требований
-2. Для КАЖДОГО UI-раздела создай Story с соответствующим полем requirement
-3. НЕ создавай Stories для Backend API - это должны быть Codes!
-4. Если в разделе упоминаются различные типы/способы/варианты - создай отдельные Scenarios для каждого
-5. Для каждого условия "если...то..." создай отдельный Scenario
-6. Объединяй отображение полей UI в один Code, НЕ создавай отдельные Codes для каждого поля
-7. Убедись что ни один раздел не пропущен!
-
-🚨 ПОСЛЕ ГЕНЕРАЦИИ - ОБЯЗАТЕЛЬНАЯ ВАЛИДАЦИЯ! 🚨
-
-ПРОВЕРЬ ПЕРЕД ОТПРАВКОЙ:
-1. ✅ Проверь что ВСЕ разделы из требований покрыты Stories (кроме Backend API)
-2. ✅ Проверь что НЕТ Stories для Backend API (это должны быть Codes!)
-3. ✅ Проверь что есть Scenarios для негативных случаев (ошибки, пустые данные, null)
-4. ✅ Проверь что есть Scenarios для всех условий "если...то..."
-5. ✅ Проверь что НЕТ избыточной детализации Codes (один Code для UI-блока, не для каждого поля)
-6. ✅ Проверь что НЕТ дублирования (одинаковые Stories с разными requirement)
-7. ✅ Проверь что все элементы имеют UUID v4 и поле requirement
-
-ЕСЛИ ХОТЬ ОДИН ПУНКТ НЕ ВЫПОЛНЕН - ПЕРЕДЕЛАЙ МОДЕЛЬ!
-
-Ответ — **только** чистый JSON. Обязательно тестовая модель только на русском языке.
-
-        СТРОГОЕ ПРАВИЛО ДЛЯ HTTP-ЭНДПОИНТОВ: узлы Code, описывающие HTTP‑запросы (GET|POST|PUT|PATCH|DELETE "/..."), добавляй ТОЛЬКО если метод и путь явно указаны в тексте требований. Если в требованиях нет однозначного упоминания такого запроса — не добавляй его и не придумывай.
+Ответ — **только** чистый JSON-массив без комментариев, как в примере выше.
 `.trim();
 
 
         // === ЧАНКОВАНИЕ БОЛЬШИХ ТРЕБОВАНИЙ ===
         const reqChunks = chunkTextBySize(reqStringForModel, 120000);
         const totalSize = reqStringForModel.length;
-        
+
         console.log(`[generate-test-model-async] Требования разбиты на ${reqChunks.length} чанк(ов), общий размер: ${totalSize} символов`);
 
         const partialModels = [];
+
+        const MAX_MODEL_ATTEMPTS_PER_CHUNK = 5; // ✅ Увеличено с 3 до 5 для более качественной генерации
 
         // === ГЕНЕРАЦИЯ ДЛЯ КАЖДОГО ЧАНКА ===
         for (let chunkIdx = 0; chunkIdx < reqChunks.length; chunkIdx++) {
@@ -2904,7 +4756,65 @@ ${reqStringForModel}
             }
 
             // Модифицируем промпт для чанков
-            let userPrompt = reqChunk;
+            let userPrompt = `
+📋 ЗАДАНИЕ: Создай тестовую модель Feature → Story → Scenario → Code
+
+REQUIREMENTS:
+${reqChunk}
+
+ПРАВИЛА ГЕНЕРАЦИИ:
+
+1. СТРУКТУРА
+   - Feature: высокоуровневая функциональность
+   - Story: пользовательская история
+   - Scenario: действие пользователя (ВСЕГДА начинается с "N. Глагол...")
+   - Code: поведение системы после действия
+
+2. CODE = ПОВЕДЕНИЕ СИСТЕМЫ
+   Извлекай из requirements:
+   - HTTP-методы: "GET /api/endpoint", "POST /confirm/code/check"
+   - UI-поведение: "Отобразить модальное окно", "Показать лоадер"
+   - Методы: "Вызвать метод auth()", "Выполнить verificate()"
+   - Интеграции: "Отправить push-уведомление", "Сохранить в БД"
+
+3. ОДИН SCENARIO → НЕСКОЛЬКО CODE
+   Scenario "4. Нажать на кнопку 'Подтвердить'":
+   codes: [
+     "Показать лоадер на кнопке 'Подтвердить'",
+     "PUT /nopaper/user",
+     "Отобразить модальное окно ОТП",
+     "Отправить push 'Требуется ввод кода'"
+   ]
+
+4. ЗАПРЕТЫ
+   ❌ НЕТ поля "requirement"
+   ❌ НЕТ префиксов "API:", "UI:" в Code.text
+   ❌ НЕ выдумывай Code, которого нет в requirements
+
+ФОРМАТ:
+[
+  {
+    "id": "uuid",
+    "text": "Feature",
+    "stories": [
+      {
+        "id": "uuid",
+        "text": "Story",
+        "scenarios": [
+          {
+            "id": "uuid",
+            "text": "N. Действие пользователя",
+            "codes": [
+              {"id": "uuid", "text": "Поведение системы"}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]
+`.trim();
+
             if (reqChunks.length > 1) {
                 userPrompt = `ВНИМАНИЕ: Это часть ${chunkIdx + 1} из ${reqChunks.length} от общего документа требований.
 
@@ -2912,135 +4822,457 @@ ${reqStringForModel}
                 
                 ТЫ ВИДИШЬ ТОЛЬКО ЧАСТЬ ДОКУМЕНТА, поэтому:
                 
-                1. **ИЗВЛЕКАЙ ВСЕ РАЗДЕЛЫ**: Найди ВСЕ нумерованные разделы в ЭТОЙ части (формат X.X, X.X.X)
-                2. **СОЗДАВАЙ STORIES**: Для КАЖДОГО найденного раздела создай Story с полем requirement = "номер раздела"
-                3. **НЕ ПРОПУСКАЙ**: Даже если раздел кажется неполным или обрывается на середине - всё равно создай Story
-                4. **НЕПОЛНЫЕ SCENARIOS**: Если видишь действия пользователя без реакций системы → создай Scenario с пустым массивом codes
-                5. **НЕПОЛНЫЕ CODES**: Если видишь описания системных реакций без контекста → создай Code в том Scenario, который есть
-                
-                ПРИМЕРЫ ИЗВЛЕЧЕНИЯ requirement ИЗ ЭТОГО ЧАНКА:
-                - Если видишь "### X.X.X Название функции" → Story { text: "Название функции", requirement: "X.X.X" }
-                - Если видишь "**X.X** Валидация" → Story { text: "Валидация", requirement: "X.X" }
-                - Если видишь "X.X Название раздела" → Story { text: "Название раздела", requirement: "X.X" }
-                - Если видишь "п. X.X.X" или "Раздел X.X.X:" → извлеки номер и создай Story
-                - Если видишь "## X.X.X.X Подраздел" → Story { text: "Подраздел", requirement: "X.X.X.X" }
-                - Если раздел обрывается на середине → всё равно создай Story с requirement и той информацией, что есть
-                
-                ВАЖНО: Все чанки будут объединены автоматически, поэтому:
-                - НЕ беспокойся о дублях - они будут удалены
-                - НЕ пытайся угадать что в других чанках - работай только с тем, что видишь
-                - ГЛАВНОЕ - не пропусти ни одного нумерованного раздела в ЭТОЙ части!
-                
-                ПРОВЕРКА ПЕРЕД ОТПРАВКОЙ:
-                Просканировал ли ты ВЕСЬ этот чанк от начала до конца?
-                Нашел ли ты ВСЕ нумерованные разделы (X.X, X.X.X)?
-                Создал ли ты Story с requirement для КАЖДОГО раздела?
+1. **ИЗВЛЕКАЙ ВСЕ РАЗДЕЛЫ**: Найди ВСЕ нумерованные разделы в ЭТОЙ части (формат X.X, X.X.X)
+2. **СОЗДАВАЙ STORIES**: Для КАЖДОГО найденного раздела создай Story (БЕЗ поля requirement!)
+3. **НЕ ПРОПУСКАЙ**: Даже если раздел кажется неполным или обрывается на середине - всё равно создай Story
+4. **НЕПОЛНЫЕ SCENARIOS**: Если видишь действия пользователя без реакций системы → создай Scenario с пустым массивом codes
+5. **НЕПОЛНЫЕ CODES**: Если видишь описания системных реакций без контекста → создай Code в том Scenario, который есть
 
+ВАЖНО: Все чанки будут объединены автоматически, поэтому:
+- НЕ беспокойся о дублях - они будут удалены
+- НЕ пытайся угадать что в других чанках - работай только с тем, что видишь
+- ГЛАВНОЕ - не пропусти ни одного нумерованного раздела в ЭТОЙ части!
+
+ПРОВЕРКА ПЕРЕД ОТПРАВКОЙ:
+- Просканировал ли ты ВЕСЬ этот чанк от начала до конца?
+- Нашел ли ты ВСЕ нумерованные разделы (X.X, X.X.X)?
+- Создал ли ты Story для КАЖДОГО раздела (БЕЗ поля requirement)?
+
+${interactiveInstructionBlock}
+
+ТРЕБОВАНИЯ ДЛЯ АНАЛИЗА:
 ${reqChunk}`;
 
             } else {
                 // Для одного чанка - явно просим генерировать ПОЛНУЮ модель
                 userPrompt = `🚨 КРИТИЧЕСКИ ВАЖНО: ГЕНЕРИРУЙ ПОЛНУЮ ТЕСТОВУЮ МОДЕЛЬ! 🚨
 
-ОБЯЗАТЕЛЬНО: Проанализируй ВСЕ требования и создай ПОЛНУЮ тестовую модель со ВСЕМИ функциями!
+📋 ЗАДАНИЕ: Создай ПОЛНУЮ тестовую модель Feature → Story → Scenario → Code
 
-ПРАВИЛА ГЕНЕРАЦИИ ПОЛНОЙ МОДЕЛИ:
-1. **НАЙДИ ВСЕ РАЗДЕЛЫ**: Просканируй весь документ и найди ВСЕ нумерованные разделы (X.X, X.X.X, X.X.X.X)
-2. **СОЗДАЙ STORIES ДЛЯ КАЖДОГО**: Для КАЖДОГО найденного раздела создай отдельную Story с requirement = "номер раздела"
-3. **НЕ ОСТАНАВЛИВАЙСЯ**: НЕ создавай только одну Story - создавай Story для КАЖДОГО раздела!
-4. **НЕ ОБЪЕДИНЯЙ**: Не объединяй разные разделы в одну Story - каждый раздел = отдельная Story
-5. **ПОКРОЙ ВСЕ ФУНКЦИИ**: Если в требованиях упоминается несколько функций - создай Stories для ВСЕХ
-6. **ДЕТАЛИЗИРУЙ**: Для каждой Story создай Scenarios и Codes согласно содержимому раздела
+REQUIREMENTS:
+${reqChunk}
 
-🚨 ПРИМЕР: Если в требованиях есть разделы 2.2.1, 2.2.2, 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7, 2.2.8 - создай Story для КАЖДОГО! 🚨
+🚨 ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:
 
-ПРИМЕРЫ ИЗВЛЕЧЕНИЯ requirement:
-- "### X.X.1 Название функции" → Story { text: "Название функции", requirement: "X.X.1" }
-- "## X.X Валидация полей" → Story { text: "Валидация полей", requirement: "X.X" }
-- "X.X.2 Повтор операций" → Story { text: "Повтор операций", requirement: "X.X.2" }
-- "### X.X.3 Платежи" → Story { text: "Платежи", requirement: "X.X.3" }
-- "### X.X.4 Переводы" → Story { text: "Переводы", requirement: "X.X.4" }
-- "### X.X.5 Авторизация" → Story { text: "Авторизация", requirement: "X.X.5" }
-- "### X.X.6 Валидация" → Story { text: "Валидация", requirement: "X.X.6" }
-- "### X.X.7 Повтор платежей" → Story { text: "Повтор платежей", requirement: "X.X.7" }
-- "### X.X.8 Повтор переводов" → Story { text: "Повтор переводов", requirement: "X.X.8" }
+1. ПОЛНОТА МОДЕЛИ:
+   - Прочитай ВЕСЬ документ от начала до конца
+   - Найди ВСЕ нумерованные разделы (X.X, X.X.X, X.X.X.X)
+   - Создай Story для КАЖДОГО раздела (НЕ пропускай ни одного!)
+   - Каждая Story должна содержать ВСЕ Scenarios из этого раздела
+   - Каждый Scenario должен содержать ВСЕ Codes (системные реакции)
+   - НЕ останавливайся на одной Story - создавай Story для КАЖДОГО раздела!
 
-🚨 ВАЖНО: НЕ ОСТАНАВЛИВАЙСЯ НА ОДНОЙ STORY! 🚨
-Если в требованиях есть несколько разделов - создай Story для КАЖДОГО!
+2. STORY = ПОЛЬЗОВАТЕЛЬСКАЯ ИСТОРИЯ:
+   ✅ ПРАВИЛЬНО: "Регистрация в ББО", "QR-коды для физических лиц", "Оплата по QR-коду", "Создание функциональной ссылки"
+   ❌ НЕПРАВИЛЬНО: "Реализация кнопки...", "Вкладка X", "Фильтр Y", "Контрол Z", "Действие X"
+   ❌ НЕПРАВИЛЬНО: "Описание контрола...", "Добавить кнопку...", "Реализовать фильтр..."
+   
+   Story должна описывать ЧТО хочет получить пользователь, а НЕ техническую реализацию!
 
-ЗАПРЕЩЕНО: Создавать только одну Story для всего документа!
-ОБЯЗАТЕЛЬНО: Создавать отдельные Stories для каждого раздела требований!
-ОБЯЗАТЕЛЬНО: Продолжать создавать Stories пока не покроешь ВСЕ разделы!
-ЗАПРЕЩЕНО: Останавливаться на первом найденном разделе!
+3. SCENARIO = ДЕЙСТВИЕ ПОЛЬЗОВАТЕЛЯ:
+   - ВСЕГДА начинается с "N. Глагол..." (где N - номер)
+   ✅ "1. Нажать на кнопку 'Создать QR-код'"
+   ✅ "2. Выбрать тип QR-кода"
+   ❌ "Нажать на кнопку" (без номера)
+   ❌ "Проверить поле" (проверка не действие пользователя)
+
+4. CODE = ПОВЕДЕНИЕ СИСТЕМЫ:
+   ✅ "GET /rest/stateful/...", "POST /api/endpoint"
+   ✅ "Отобразить страницу...", "Показать лоадер..."
+   ✅ "Вызвать метод auth()"
+   ❌ "Заполнить поле", "Ввести значение", "Нажать кнопку" (это действия пользователя!)
+
+5. ЗАПРЕТЫ:
+   ❌ НЕТ поля "requirement" на всех уровнях
+   ❌ НЕТ префиксов "API:", "UI:" в Code.text
+   ❌ НЕ выдумывай Code, которого нет в requirements
+   ❌ НЕ создавай Story как техническую формулировку
+
+ПРОВЕРКА ПЕРЕД ОТПРАВКОЙ:
+- ✅ Прочитал ли ты ВЕСЬ документ от начала до конца?
+- ✅ Нашел ли ты ВСЕ нумерованные разделы?
+- ✅ Создал ли ты Story для КАЖДОГО раздела?
+- ✅ Удалил ли ты все технические формулировки из Story?
+- ✅ Убедился ли ты, что Story описывает ценность для пользователя?
+
+${interactiveInstructionBlock}
 
 ТРЕБОВАНИЯ ДЛЯ АНАЛИЗА:
 ${reqChunk}`;
             }
 
-            const tools = [buildSubmitModelTool()];
-            const ai = await callWithCloudRuFallback(
-                OPENROUTER_URL,
-                [
-                    { role: 'system', content: SYSTEM_PROMPT },
-                    { role: 'user', content: userPrompt }
-                ],
-                config.openRouterAiKey,
-                {
-                    tools,
-                    // tool_choice убран для Cloud.ru совместимости
-                    temperature: 0,
-                    top_p: 0.9,
-                    max_tokens: 80000,
-                    extra: { transforms: 'middle-out' }
-                }
-            );
+            const baseUserPrompt = userPrompt;
+            let escalationPrompt = '';
+            let validatedChunkModel = null;
 
-            // 1) Пытаемся забрать tool-call
-            let args = extractToolArgs(ai, "submit_test_model");
-            let partialModel;
+            for (let attempt = 0; attempt < MAX_MODEL_ATTEMPTS_PER_CHUNK; attempt++) {
+                const attemptUserPrompt = escalationPrompt
+                    ? `${baseUserPrompt}\n\n${escalationPrompt}`.trim()
+                    : baseUserPrompt;
 
-            if (args && Array.isArray(args.model)) {
-                partialModel = args.model;
-            } else {
-                // 2) Фолбэк: из content вырезаем массив
-                let content = ai.choices?.[0]?.message?.content?.trim();
-                if (!content) {
-                    console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}: AI не вернул результата`);
-                    continue;
-                }
-
-                const firstBracket = content.indexOf('[');
-                const lastBracket = content.lastIndexOf(']');
-                if (firstBracket === -1 || lastBracket === -1) {
-                    console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}: Не найден JSON-массив`);
-                    continue;
-                }
-                let jsonText = content.slice(firstBracket, lastBracket + 1);
-                jsonText = jsonText.replace(/"(\s*)"code":/g, '", "code":');
-
+                let ai;
                 try {
-                    let parsed = JSON5.parse(jsonText);
-                    // если плоская структура — поднимем
-                    const isFlat = parsed.length > 0 && parsed[0].hasOwnProperty('Feature');
-                    partialModel = isFlat ? transformToHierarchy(parsed) : parsed;
-                } catch (parseErr) {
-                    console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}: Ошибка парсинга JSON:`, parseErr.message);
-                    continue;
+                    const combinedTools = [...interactiveTools, buildSubmitModelTool()];
+                    const interactiveResult = await runInteractiveLLM({
+                        initialMessages: [
+                            { role: 'system', content: SYSTEM_PROMPT },
+                            { role: 'user', content: attemptUserPrompt }
+                        ],
+                        tools: combinedTools,
+                        toolHandlers: contextToolHandlers,
+                        finalToolNames: ['submit_test_model'],
+                        maxIterations: 8,  // ✅ Уменьшено с 12 до 8 (достаточно для сбора контекста + генерации)
+                        modelOptions: {
+                            temperature: 0,
+                            top_p: 0.9,
+                            max_tokens: 150000,  // ✅ Увеличено с 50000 до 150000 для предотвращения обрезания JSON (модель поддерживает до 180K токенов)
+                            extra: { transforms: 'middle-out' }
+                        }
+                    });
+                    ai = interactiveResult.response;
+                } catch (interactiveError) {
+                    console.warn(`[generate-test-model-async] interactive context loop failed (chunk ${chunkIdx + 1}, attempt ${attempt + 1}): ${interactiveError.message}. Переходим к fallback без инструментов.`);
+                    ai = await callWithCloudRuFallback(
+                        OPENROUTER_URL,
+                        [
+                            { role: 'system', content: SYSTEM_PROMPT },
+                            { role: 'user', content: attemptUserPrompt }
+                        ],
+                        config.openRouterAiKey,
+                        {
+                            tools: [buildSubmitModelTool()],
+                            temperature: 0,
+                            top_p: 0.9,
+                            max_tokens: 150000,  // ✅ Увеличено с 50000 до 150000 для предотвращения обрезания JSON (модель поддерживает до 180K токенов)
+                            extra: { transforms: 'middle-out' }
+                        }
+                    );
                 }
+
+                let args = extractToolArgs(ai, "submit_test_model");
+                let partialModel;
+
+                if (args) {
+                    console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: args получены, ключи:`, Object.keys(args));
+                    if (args.model) {
+                        console.log(`[generate-test-model-async] args.model тип:`, typeof args.model, 'является массивом:', Array.isArray(args.model));
+                    } else {
+                        console.warn(`[generate-test-model-async] args.model отсутствует в args`);
+                    }
+                } else {
+                    console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: args не получены`);
+                }
+
+                if (args && args.model) {
+                    // Если model - это массив, используем его напрямую
+                    if (Array.isArray(args.model)) {
+                        partialModel = args.model;
+                    }
+                    // Если model - это объект с полем items (массив), используем items
+                    else if (typeof args.model === 'object' && args.model !== null && Array.isArray(args.model.items)) {
+                        console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: args.model содержит items, используем args.model.items`);
+                        partialModel = args.model.items;
+                    }
+                    // Если model - это строка (JSON), парсим её
+                    else if (typeof args.model === 'string') {
+                        console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: args.model - строка длиной ${args.model.length} символов`);
+                        console.log(`[generate-test-model-async] Первые 200 символов: ${args.model.substring(0, 200)}`);
+                        console.log(`[generate-test-model-async] Последние 200 символов: ${args.model.substring(Math.max(0, args.model.length - 200))}`);
+
+                        try {
+                            const parsed = JSON5.parse(args.model);
+                            if (Array.isArray(parsed)) {
+                                partialModel = parsed;
+                            } else if (parsed && Array.isArray(parsed.items)) {
+                                console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: распарсенный JSON содержит items, используем parsed.items`);
+                                partialModel = parsed.items;
+                            } else {
+                                console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: args.model не является массивом после парсинга, тип:`, typeof parsed);
+                                partialModel = null;
+                            }
+                        } catch (parseErr) {
+                            console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: Ошибка парсинга args.model как JSON:`, parseErr.message);
+
+                            // ✅ Улучшенная попытка восстановить обрезанный JSON
+                            if (parseErr.message.includes('invalid end of input') || parseErr.message.includes('Unexpected end')) {
+                                console.warn(`[generate-test-model-async] ⚠️ JSON обрезан на ${args.model.length} символах. Попытка восстановления...`);
+                                let fixedJson = args.model.trim();
+
+                                // Стратегия 1: Подсчитываем открывающие и закрывающие скобки
+                                const openBrackets = (fixedJson.match(/\[/g) || []).length;
+                                const closeBrackets = (fixedJson.match(/\]/g) || []).length;
+                                const openBraces = (fixedJson.match(/\{/g) || []).length;
+                                const closeBraces = (fixedJson.match(/\}/g) || []).length;
+
+                                // Стратегия 2: Находим последний валидный объект Feature
+                                // Ищем паттерн "stories": [...] и закрываем его правильно
+                                const lastValidFeatureMatch = fixedJson.match(/\{\s*"id"\s*:[\s\S]*?"stories"\s*:\s*\[[\s\S]*?\](?:\s*,\s*"scenarios"\s*:\s*\[)?/g);
+                                
+                                let recovered = false;
+                                
+                                // Попытка 1: Простое добавление закрывающих скобок
+                                if (openBrackets > closeBrackets || openBraces > closeBraces) {
+                                    let tempJson = fixedJson;
+                                    if (openBrackets > closeBrackets) {
+                                        tempJson += ']'.repeat(openBrackets - closeBrackets);
+                                    }
+                                    if (openBraces > closeBraces) {
+                                        tempJson += '}'.repeat(openBraces - closeBraces);
+                                    }
+                                    
+                                    try {
+                                        const parsed = JSON5.parse(tempJson);
+                                        if (Array.isArray(parsed) && parsed.length > 0) {
+                                            console.log(`[generate-test-model-async] ✅ Успешно восстановлен JSON простым методом (добавлено ${openBrackets - closeBrackets} ] и ${openBraces - closeBraces} })`);
+                                            partialModel = parsed;
+                                            recovered = true;
+                                        }
+                                    } catch (e) {
+                                        // Продолжаем к следующей стратегии
+                                    }
+                                }
+                                
+                                // Попытка 2: Извлечение последних валидных Feature объектов
+                                if (!recovered) {
+                                    try {
+                                        // Ищем все полные объекты Feature до места обрезания
+                                        const featurePattern = /\{\s*"id"\s*:[\s\S]*?"stories"\s*:[\s\S]*?\}/g;
+                                        const features = [];
+                                        let match;
+                                        while ((match = featurePattern.exec(fixedJson)) !== null) {
+                                            try {
+                                                const feature = JSON5.parse(match[0]);
+                                                if (feature && feature.id && feature.text && Array.isArray(feature.stories)) {
+                                                    features.push(feature);
+                                                }
+                                            } catch (e) {
+                                                // Пропускаем невалидный объект
+                                            }
+                                        }
+                                        
+                                        if (features.length > 0) {
+                                            console.log(`[generate-test-model-async] ✅ Восстановлено ${features.length} валидных Feature из обрезанного JSON`);
+                                            partialModel = features;
+                                            recovered = true;
+                                        }
+                                    } catch (e) {
+                                        // Продолжаем
+                                    }
+                                }
+                                
+                                if (!recovered) {
+                                    console.error(`[generate-test-model-async] ❌ Не удалось восстановить обрезанный JSON. Требуется повторная генерация с увеличенным max_tokens.`);
+                                    partialModel = null;
+                                }
+                            } else {
+                                partialModel = null;
+                            }
+                        }
+                    } else {
+                        console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: args.model имеет неожиданный тип:`, typeof args.model, 'значение:', args.model);
+                        partialModel = null;
+                    }
+                }
+
+                if (!partialModel) {
+                    let content = ai.choices?.[0]?.message?.content?.trim();
+                    if (!content) {
+                        console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: AI не вернул результата`);
+                        if (attempt < MAX_MODEL_ATTEMPTS_PER_CHUNK - 1) {
+                            escalationPrompt = `
+🚨 Предыдущая попытка вернула пустой ответ.
+Немедленно вызови функцию submit_test_model и верни ПОЛНУЮ модель (Feature→Story→Scenario→Code) в одном JSON-массиве.`.trim();
+                            continue;
+                        }
+                        throw new Error(`Не удалось получить модель для чанка ${chunkIdx + 1}: Cloud.ru вернул пустой ответ`);
+                    }
+
+                    // Улучшенное извлечение JSON из content
+                    let jsonText = null;
+
+                    // Сначала пробуем найти JSON в markdown блоках
+                    const jsonBlockMatch = content.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/);
+                    if (jsonBlockMatch) {
+                        jsonText = jsonBlockMatch[1];
+                    } else {
+                        // Ищем JSON-массив вручную
+                        const firstBracket = content.indexOf('[');
+                        const lastBracket = content.lastIndexOf(']');
+                        if (firstBracket === -1 || lastBracket === -1 || lastBracket <= firstBracket) {
+                            console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: Не найден JSON-массив`);
+                            if (attempt < MAX_MODEL_ATTEMPTS_PER_CHUNK - 1) {
+                                escalationPrompt = `
+🚨 Ответ не содержит JSON-массива.
+Верни результат через submit_test_model с корректной структурой Feature→Story→Scenario→Code, как в идеальном примере.`.trim();
+                                continue;
+                            }
+                            throw new Error(`Не удалось извлечь JSON-модель для чанка ${chunkIdx + 1}`);
+                        }
+                        jsonText = content.slice(firstBracket, lastBracket + 1);
+                    }
+
+                    // Очистка JSON
+                    jsonText = jsonText.trim();
+                    jsonText = jsonText.replace(/"(\s*)"code":/g, '", "code":');
+
+                    // Убираем trailing commas
+                    jsonText = jsonText.replace(/,(\s*[}\]])/g, '$1');
+
+                    // Убираем все после последней закрывающей скобки массива
+                    const lastValidBracket = jsonText.lastIndexOf(']');
+                    if (lastValidBracket > 0 && lastValidBracket < jsonText.length - 1) {
+                        jsonText = jsonText.substring(0, lastValidBracket + 1);
+                    }
+
+                    try {
+                        let parsed = JSON5.parse(jsonText);
+                        const isFlat = parsed.length > 0 && parsed[0].hasOwnProperty('Feature');
+                        partialModel = isFlat ? transformToHierarchy(parsed) : parsed;
+                    } catch (parseErr) {
+                        console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: Ошибка парсинга JSON:`, parseErr.message);
+                        console.warn(`[generate-test-model-async] JSON текст (первые 500 символов):`, jsonText.substring(0, 500));
+                        console.warn(`[generate-test-model-async] JSON текст (последние 500 символов):`, jsonText.substring(Math.max(0, jsonText.length - 500)));
+
+                        // Попытка исправить JSON: находим последний валидный объект
+                        try {
+                            // Ищем все валидные объекты Feature до ошибки
+                            const featureMatches = jsonText.match(/\{\s*"id"[\s\S]*?"stories"[\s\S]*?\}/g);
+                            if (featureMatches && featureMatches.length > 0) {
+                                const validFeatures = [];
+                                for (const match of featureMatches) {
+                                    try {
+                                        const feature = JSON5.parse(match);
+                                        validFeatures.push(feature);
+                                    } catch (e) {
+                                        // Пропускаем невалидный объект
+                                    }
+                                }
+                                if (validFeatures.length > 0) {
+                                    console.warn(`[generate-test-model-async] Извлечено ${validFeatures.length} валидных Feature из обрезанного JSON`);
+                                    partialModel = validFeatures;
+                                } else {
+                                    throw parseErr; // Если не удалось извлечь, пробрасываем исходную ошибку
+                                }
+                            } else {
+                                throw parseErr;
+                            }
+                        } catch (recoveryErr) {
+                            if (attempt < MAX_MODEL_ATTEMPTS_PER_CHUNK - 1) {
+                                escalationPrompt = `
+🚨 Ошибка парсинга JSON: ${parseErr.message}
+Сформируй корректный JSON-массив и верни его через submit_test_model.
+Структура строго по эталону: Feature → Story → Scenario → Code.
+Убедись, что JSON валидный и не содержит синтаксических ошибок.`.trim();
+                                continue;
+                            }
+                            throw new Error(`Ошибка парсинга JSON модели для чанка ${chunkIdx + 1}: ${parseErr.message}`);
+                        }
+                    }
+                }
+
+                if (!Array.isArray(partialModel) || partialModel.length === 0) {
+                    console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: модель пуста или не массив`);
+                    if (attempt < MAX_MODEL_ATTEMPTS_PER_CHUNK - 1) {
+                        escalationPrompt = `
+🚨 Модель пуста.
+Создай полную иерархию Feature→Story→Scenario→Code в соответствии с требованиями.`.trim();
+                        continue;
+                    }
+                    throw new Error(`Получена пустая модель для чанка ${chunkIdx + 1}`);
+                }
+
+                const normalizedPartial = normalizeModelStructure(partialModel);
+                const repairedPartial = repairModelStructure(normalizedPartial);
+                const structureIssues = detectModelStructureIssues(repairedPartial, `chunk-${chunkIdx + 1}`);
+
+                if (structureIssues.length) {
+                    console.warn(`[generate-test-model-async] Структурные ошибки (chunk ${chunkIdx + 1}, attempt ${attempt + 1}):`, structureIssues);
+
+                    // ✅ АВТОМАТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Исправляем Code с пользовательскими действиями
+                    const codeIssues = structureIssues.filter(issue => issue.includes('Code') && issue.includes('пользовательское действие'));
+                    if (codeIssues.length > 0) {
+                        console.log(`[generate-test-model-async] Автоматически исправляю ${codeIssues.length} Code с пользовательскими действиями...`);
+                        // Применяем автоматическое исправление Code
+                        const autoFixedModel = autoFixCodeWithUserActions(repairedPartial);
+                        const fixedIssues = detectModelStructureIssues(autoFixedModel, `chunk-${chunkIdx + 1}`);
+                        if (fixedIssues.length < structureIssues.length) {
+                            console.log(`[generate-test-model-async] ✅ Автоматическое исправление помогло: ${structureIssues.length} → ${fixedIssues.length} ошибок`);
+                            repairedPartial = autoFixedModel;
+                            if (fixedIssues.length === 0) {
+                                validatedChunkModel = repairedPartial;
+                                break;
+                            }
+                            // Обновляем список ошибок для следующей попытки
+                            structureIssues = fixedIssues;
+                        } else {
+                            console.warn(`[generate-test-model-async] ⚠️ Автоматическое исправление не помогло, осталось ${fixedIssues.length} ошибок`);
+                        }
+                    }
+
+                    if (attempt < MAX_MODEL_ATTEMPTS_PER_CHUNK - 1) {
+                        // ✅ Формируем детальный escalation prompt для всех типов проблем
+                        const featureIssues = structureIssues.filter(issue => issue.includes('Feature'));
+                        const storyIssues = structureIssues.filter(issue => issue.includes('Story'));
+                        const scenarioIssues = structureIssues.filter(issue => issue.includes('Scenario'));
+                        const codeIssues = structureIssues.filter(issue => issue.includes('Code'));
+
+                        let escalationDetails = [];
+
+                        if (featureIssues.length > 0) {
+                            escalationDetails.push(`\n🚨 ПРОБЛЕМЫ С FEATURE:\n${featureIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}\n\nПРАВИЛО: Feature = БИЗНЕС-ПОТРЕБНОСТЬ для пользователя\n✅ "Безбумажный офис", "Платежи", "QR-коды для физических лиц"\n❌ "Реализация...", "Доработка...", "API метод..."`);
+                        }
+
+                        if (storyIssues.length > 0) {
+                            escalationDetails.push(`\n🚨 ПРОБЛЕМЫ С STORY:\n${storyIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}\n\nПРАВИЛО: Story = ПОЛЬЗОВАТЕЛЬСКАЯ ИСТОРИЯ (что хочет получить пользователь)\n✅ "Регистрация в ББО", "QR-коды для физических лиц", "Оплата по QR-коду"\n❌ "Реализация кнопки...", "API метод...", "Чек-бокс X", "Вкладка X", "Контрол X"\n\n🚨 КРИТИЧНО: Story НЕ должна описывать техническую реализацию или UI-контролы!`);
+                        }
+
+                        if (scenarioIssues.length > 0) {
+                            escalationDetails.push(`\n🚨 ПРОБЛЕМЫ С SCENARIO:\n${scenarioIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}\n\nПРАВИЛО: Scenario = ДЕЙСТВИЕ ПОЛЬЗОВАТЕЛЯ, ВСЕГДА начинается с "N. Глагол..."\n✅ "1. Нажать на кнопку 'Безбумажный офис'", "2. Выбрать чекбокс 'УНК в другом банке'"\n❌ "Нажать на кнопку" (без номера), "Проверить поле" (проверка не действие)`);
+                        }
+
+                        if (codeIssues.length > 0) {
+                            escalationDetails.push(`\n🚨 ПРОБЛЕМЫ С CODE:\n${codeIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}\n\nПРАВИЛО: Code = ПОВЕДЕНИЕ СИСТЕМЫ после действия пользователя\n✅ "GET /stateful/...", "Отобразить страницу...", "Вызвать метод auth()"\n❌ "Заполнить поле", "Ввести значение", "Нажать кнопку" (это действия пользователя!)`);
+                        }
+
+                        escalationPrompt = `
+🚨 КРИТИЧЕСКАЯ ОШИБКА: Структура модели нарушена! Попытка ${attempt + 1}/${MAX_MODEL_ATTEMPTS_PER_CHUNK}
+
+Следуй ПРИМЕРУ выше (см. пример тестовой модели):
+
+КРИТИЧЕСКИ ВАЖНО - ИСПОЛЬЗУЙ ПРИМЕР КАК ЭТАЛОН:
+- Feature = БИЗНЕС-ПОТРЕБНОСТЬ (как в примере: "Безбумажный офис")
+- Story = ПОЛЬЗОВАТЕЛЬСКАЯ ИСТОРИЯ (как в примере: "Регистрация в ББО")
+- Scenario = ДЕЙСТВИЕ ПОЛЬЗОВАТЕЛЯ (как в примере: "Нажать на кнопку \"Безбумажный офис\"")
+- Code = РЕАКЦИЯ СИСТЕМЫ (как в примере: "GET /stateful/...", "Отобразить страницу...")
+
+${escalationDetails.join('\n')}
+
+🚨 ОБЯЗАТЕЛЬНО:
+1. Перечитай ВЕСЬ чанк requirements от начала до конца
+2. Найди ВСЕ нумерованные разделы (X.X, X.X.X)
+3. Создай Story для КАЖДОГО раздела (НЕ пропускай!)
+4. Удали все технические формулировки из Story
+5. Убедись, что Story описывает ценность для пользователя, а не техническую реализацию
+
+Перегенерируй модель СТРОГО по примеру выше и верни через submit_test_model.`.trim();
+                        continue;
+                    }
+
+                    // После всех попыток - принимаем модель с предупреждением
+                    console.warn(`[generate-test-model-async] ⚠️ Принимаю модель с ${structureIssues.length} структурными ошибками после ${MAX_MODEL_ATTEMPTS_PER_CHUNK} попыток`);
+                    validatedChunkModel = repairedPartial;
+                    break;
+                }
+
+                validatedChunkModel = repairedPartial;
+                break;
             }
 
-            if (partialModel && Array.isArray(partialModel) && partialModel.length > 0) {
-                partialModels.push(partialModel);
-
-                // Подробная статистика по чанку
-                let totalStories = 0, totalScenarios = 0, totalCodes = 0;
-                let scenariosWithoutCodes = 0;
-
-                for (const feature of partialModel) {
-                    // Убрано детальное логирование структуры чанков
-                }
-                // Убрано избыточное логирование статистики чанков
+            if (!validatedChunkModel) {
+                throw new Error(`Не удалось получить валидную модель для чанка ${chunkIdx + 1} после ${MAX_MODEL_ATTEMPTS_PER_CHUNK} попыток`);
             }
+
+            partialModels.push(validatedChunkModel);
         }
 
         // Объединяем все частичные модели
@@ -3070,12 +5302,110 @@ ${reqChunk}`;
             console.log('[generate-test-model-async] Создана fallback модель');
         }
 
-        // Просто объединяем массивы моделей без слияния по тексту
-        // Каждый элемент теперь имеет уникальный ID
-        let mergedModel = [];
+        // ✅ ОБЪЕДИНЯЕМ МОДЕЛИ С ДЕДУПЛИКАЦИЕЙ Feature
+        // Объединяем Feature с одинаковым текстом, добавляя их Stories
+        const featureMap = new Map(); // text → feature
+
         for (const partialModel of partialModels) {
-            mergedModel = mergedModel.concat(partialModel);
+            for (const feature of partialModel) {
+                const featureText = String(feature?.text || '').trim();
+
+                if (!featureText) {
+                    console.warn(`[generate-test-model-async] ⚠️ Пропущен Feature без текста`);
+                    continue;
+                }
+
+                if (featureMap.has(featureText)) {
+                    // Объединяем Stories существующего Feature с новым
+                    const existingFeature = featureMap.get(featureText);
+                    const existingStoryTexts = new Set(
+                        (existingFeature.stories || []).map(s => String(s?.text || '').trim())
+                    );
+
+                    // ✅ ФИЛЬТРАЦИЯ: Удаляем технические Story перед добавлением
+                    const TECHNICAL_STORY_PATTERNS = [
+                        /^реализовать/i,
+                        /^добавить\s+(контрол|кнопку|поле|вкладку|фильтр)/i,
+                        /^описание\s+(контрола|кнопки|поля|вкладки)/i,
+                        /^(контрол|кнопка|поле|вкладка|фильтр)\s+/i,
+                        /^вкладка\s+"/i,
+                        /^фильтр\s+"/i,
+                        /^действие\s+"/i
+                    ];
+
+                    // Добавляем только уникальные и НЕ технические Stories
+                    for (const story of (feature.stories || [])) {
+                        const storyText = String(story?.text || '').trim();
+
+                        if (!storyText) {
+                            console.warn(`[generate-test-model-async] ⚠️ Пропущена Story без текста в Feature "${featureText}"`);
+                            continue;
+                        }
+
+                        // Проверка на технические формулировки
+                        const isTechnical = TECHNICAL_STORY_PATTERNS.some(pattern => pattern.test(storyText));
+                        if (isTechnical) {
+                            console.warn(`[generate-test-model-async] ⚠️ Пропущена техническая Story "${storyText}" в Feature "${featureText}"`);
+                            continue;
+                        }
+
+                        if (!existingStoryTexts.has(storyText)) {
+                            existingFeature.stories.push(story);
+                            existingStoryTexts.add(storyText);
+                            console.log(`[generate-test-model-async] ✅ Добавлена Story "${storyText}" к Feature "${featureText}"`);
+                        } else {
+                            console.warn(`[generate-test-model-async] ⚠️ Пропущена дублирующая Story "${storyText}" в Feature "${featureText}"`);
+                        }
+                    }
+                } else {
+                    // ✅ ФИЛЬТРАЦИЯ: Удаляем технические Story перед созданием нового Feature
+                    const TECHNICAL_STORY_PATTERNS = [
+                        /^реализовать/i,
+                        /^добавить\s+(контрол|кнопку|поле|вкладку|фильтр)/i,
+                        /^описание\s+(контрола|кнопки|поля|вкладки)/i,
+                        /^(контрол|кнопка|поле|вкладка|фильтр)\s+/i,
+                        /^вкладка\s+"/i,
+                        /^фильтр\s+"/i,
+                        /^действие\s+"/i
+                    ];
+
+                    const filteredStories = (feature.stories || []).filter(story => {
+                        const storyText = String(story?.text || '').trim();
+                        if (!storyText) {
+                            console.warn(`[generate-test-model-async] ⚠️ Пропущена Story без текста в Feature "${featureText}"`);
+                            return false;
+                        }
+                        const isTechnical = TECHNICAL_STORY_PATTERNS.some(pattern => pattern.test(storyText));
+                        if (isTechnical) {
+                            console.warn(`[generate-test-model-async] ⚠️ Пропущена техническая Story "${storyText}" в Feature "${featureText}"`);
+                            return false;
+                        }
+                        return true;
+                    });
+
+                    // ✅ ГАРАНТИРУЕМ УНИКАЛЬНОСТЬ ID: Проверяем, что ID не используется в других Feature
+                    let featureId = feature.id || uuidv4();
+                    const existingIds = new Set(Array.from(featureMap.values()).map(f => f.id));
+                    if (existingIds.has(featureId)) {
+                        console.warn(`[generate-test-model-async] ⚠️ Обнаружен дублирующийся ID Feature "${featureId}", генерирую новый...`);
+                        featureId = uuidv4();
+                    }
+
+                    // Создаем новый Feature только с валидными Stories
+                    featureMap.set(featureText, {
+                        id: featureId,
+                        text: featureText,
+                        stories: filteredStories
+                    });
+                    console.log(`[generate-test-model-async] ✅ Создан новый Feature "${featureText}" (ID: ${featureId}) с ${filteredStories.length} валидными Stories`);
+                }
+            }
         }
+
+        // Преобразуем Map в массив
+        let mergedModel = Array.from(featureMap.values());
+
+        console.log(`[generate-test-model-async] Объединено ${partialModels.length} чанков → ${mergedModel.length} уникальных Features`);
 
         // Подробная статистика по слиянию
         if (partialModels.length > 1) {
@@ -3103,28 +5433,57 @@ ${reqChunk}`;
             console.log(`[generate-test-model-async] MERGED: ${partialModels.length} чанков → ${totalFeatures} Features, ${totalStories} Stories, ${totalScenarios} Scenarios (БЕЗ codes: ${scenariosWithoutCodesAfterMerge}), ${totalCodes} Codes`);
         }
 
-        // Добавляем уникальные ID к каждому элементу модели
+        // ✅ Добавляем уникальные ID к каждому элементу модели (БЕЗ requirement!)
+        // ✅ ГАРАНТИРУЕМ УНИКАЛЬНОСТЬ ВСЕХ ID
         const addUniqueIds = (model) => {
-            return (model || []).map(feature => ({
-                id: feature.id || uuidv4(),
-                text: feature.text,
-                requirement: feature.requirement || extractRequirementFromText(feature.text),
-                stories: (feature.stories || []).map(story => ({
-                    id: story.id || uuidv4(),
-                    text: story.text,
-                    requirement: story.requirement || extractRequirementFromText(story.text),
-                    scenarios: (story.scenarios || []).map(scenario => ({
-                        id: scenario.id || uuidv4(),
-                        text: scenario.text,
-                        requirement: scenario.requirement || extractRequirementFromText(scenario.text),
-                        codes: (scenario.codes || []).map(code => ({
-                            id: code.id || uuidv4(),
-                            text: code.text,
-                            requirement: code.requirement || extractRequirementFromText(code.text)
-                        }))
-                    }))
-                }))
-            }));
+            const usedIds = new Set();
+
+            const generateUniqueId = () => {
+                let newId = uuidv4();
+                while (usedIds.has(newId)) {
+                    newId = uuidv4();
+                }
+                usedIds.add(newId);
+                return newId;
+            };
+
+            return (model || []).map(feature => {
+                const featureId = feature.id && !usedIds.has(feature.id) ? feature.id : generateUniqueId();
+
+                return {
+                    id: featureId,
+                    text: feature.text,
+                    // ❌ УДАЛЕНО: requirement - это поле не используется в тестовой модели
+                    stories: (feature.stories || []).map(story => {
+                        const storyId = story.id && !usedIds.has(story.id) ? story.id : generateUniqueId();
+
+                        return {
+                            id: storyId,
+                            text: story.text,
+                            // ❌ УДАЛЕНО: requirement - это поле не используется в тестовой модели
+                            scenarios: (story.scenarios || []).map(scenario => {
+                                const scenarioId = scenario.id && !usedIds.has(scenario.id) ? scenario.id : generateUniqueId();
+
+                                return {
+                                    id: scenarioId,
+                                    text: scenario.text,
+                                    // ❌ УДАЛЕНО: requirement - это поле не используется в тестовой модели
+                                    codes: (scenario.codes || []).map(code => {
+                                        const codeId = code.id && !usedIds.has(code.id) ? code.id : generateUniqueId();
+
+                                        return {
+                                            id: codeId,
+                                            text: code.text,
+                                            type: code.type || 'integration' // ✅ Сохраняем type для Code
+                                            // ❌ УДАЛЕНО: requirement - это поле не используется в тестовой модели
+                                        };
+                                    })
+                                };
+                            })
+                        };
+                    })
+                };
+            });
         };
 
         // Функция извлечения requirement из текста элемента
@@ -3144,73 +5503,365 @@ ${reqChunk}`;
         }
 
         const finalModel = addUniqueIds(mergedModel);
+        const repairedFinalModel = repairModelStructure(finalModel);
 
-        // === ВАЛИДАЦИЯ ПОСЛЕ ГЕНЕРАЦИИ МОДЕЛИ ===
-        console.log(`[generate-test-model-async] Валидация сгенерированной модели...`);
+        // ✅ ФАЗА 3: ВАЛИДАЦИЯ МОДЕЛИ
+        console.log('[generateTestModelAsync] Фаза 3: Валидация модели');
+        let validationReport = null;
+        if (reqStructure && reqStructure.features && reqStructure.features.length > 0) {
+            validationReport = validateTestModel(repairedFinalModel, reqStructure);
 
-        // Проверка наличия requirement у всех элементов
-        const elementsWithoutRequirement = [];
-        const elementsWithInvalidRequirement = [];
+            if (!validationReport.valid) {
+                console.error('[generateTestModelAsync] Модель НЕ прошла валидацию:');
+                validationReport.errors.forEach(err => console.error(`  ❌ ${err}`));
 
-        // Паттерн для валидного requirement: X.X, X.X.X, X.X.X.X и т.д.
-        const validRequirementPattern = /^\d+(\.\d+)+$/;
+                // Сохраняем ошибки в БД, но продолжаем генерацию
+                // Примечание: metadata не сохраняем, так как столбец отсутствует в БД
+                await db('generation_tasks').where('id', taskId).update({
+                    updated_at: new Date()
+                });
 
-        finalModel.forEach(feature => {
-            if (!feature.requirement) {
-                elementsWithoutRequirement.push(`Feature: ${feature.text}`);
-            } else if (!validRequirementPattern.test(feature.requirement)) {
-                elementsWithInvalidRequirement.push(`Feature: ${feature.text} (${feature.requirement}) - неверный формат, ожидается X.X или X.X.X`);
+                // Не бросаем ошибку, но логируем предупреждение
+                console.warn('[generateTestModelAsync] ⚠️ Модель не прошла валидацию, но продолжаем генерацию');
             }
 
-            (feature.stories || []).forEach(story => {
-                if (!story.requirement) {
-                    elementsWithoutRequirement.push(`Story: ${story.text}`);
-                } else if (!validRequirementPattern.test(story.requirement)) {
-                    elementsWithInvalidRequirement.push(`Story: ${story.text} (${story.requirement}) - неверный формат, ожидается X.X или X.X.X`);
-                }
+            if (validationReport.warnings.length > 0) {
+                console.warn('[generateTestModelAsync] Предупреждения валидации:');
+                validationReport.warnings.forEach(warn => console.warn(`  ⚠️ ${warn}`));
+            }
+        }
 
-                (story.scenarios || []).forEach(scenario => {
-                    if (!scenario.requirement) {
-                        elementsWithoutRequirement.push(`Scenario: ${scenario.text}`);
-                    } else if (!validRequirementPattern.test(scenario.requirement)) {
-                        elementsWithInvalidRequirement.push(`Scenario: ${scenario.text} (${scenario.requirement}) - неверный формат, ожидается X.X или X.X.X`);
+        // ✅ ФАЗА 4: ПОСТОБРАБОТКА МОДЕЛИ
+        console.log('[generateTestModelAsync] Фаза 4: Постобработка модели');
+        let cleanedModel = postProcessModel(repairedFinalModel);
+
+        // ✅ НОВОЕ: Перегенерация избыточно детализированных Scenarios через LLM
+        console.log(`[generate-test-model-async] Проверяю избыточно детализированные Scenarios...`);
+        for (const feature of cleanedModel) {
+            for (const story of (feature.stories || [])) {
+                const scenarios = story.scenarios || [];
+                if (scenarios.length > 5) {
+                    console.log(`[generate-test-model-async] Story "${story.text}" содержит ${scenarios.length} Scenarios, перегенерируем через LLM...`);
+                    try {
+                        regenerationCount++;
+                        const regenerated = await regenerateOverDetailedScenarios(story, scenarios, reqStringForModel);
+                        if (regenerated && regenerated.length <= scenarios.length && regenerated.length > 0) {
+                            story.scenarios = regenerated;
+                            console.log(`[generate-test-model-async] ✅ Story "${story.text}": ${scenarios.length} → ${regenerated.length} Scenarios`);
+                        }
+                    } catch (error) {
+                        console.error(`[generate-test-model-async] Ошибка при перегенерации Scenarios для Story "${story.text}":`, error.message);
+                    }
+                }
+            }
+        }
+
+        // ✅ НОВОЕ: Дедупликация Scenarios между Stories
+        cleanedModel = deduplicateScenariosAcrossStories(cleanedModel);
+
+        // ✅ НОВОЕ: Объединение избыточно детализированных Scenarios (fallback эвристика)
+        cleanedModel = mergeDetailedScenarios(cleanedModel);
+
+        // ✅ НОВОЕ: Обогащение backend Code Expected Result
+        cleanedModel = enrichBackendCodesWithExpectedResult(cleanedModel);
+
+        // === ВАЛИДАЦИЯ И ОЧИСТКА МОДЕЛИ ===
+        console.log(`[generate-test-model-async] Валидация и очистка сгенерированной модели...`);
+        cleanedModel = validateAndCleanModel(cleanedModel);
+
+        // ✅ ФАЗА 5: COVERAGE REPORT
+        console.log('[generateTestModelAsync] Фаза 5: Генерация Coverage Report');
+        let coverageReportData = null;
+        if (reqStructure && reqStructure.features && reqStructure.features.length > 0) {
+            coverageReportData = generateCoverageReport(cleanedModel, reqStructure);
+
+            // ✅ НОВОЕ: Рассчитываем покрытие requirements
+            if (reqStringForModel) {
+                const reqCoverage = calculateRequirementsCoverage(cleanedModel, reqStringForModel, reqStructure);
+                console.log(`[Coverage] Requirements: ${reqCoverage.covered}/${reqCoverage.total} (${reqCoverage.coveragePercent}%)`);
+                if (reqCoverage.missing.length > 0) {
+                    console.warn(`[Coverage] Не покрыто ${reqCoverage.missing.length} requirements: ${reqCoverage.missing.slice(0, 10).join(', ')}${reqCoverage.missing.length > 10 ? '...' : ''}`);
+                }
+                coverageReportData.requirementsCoverage = reqCoverage;
+            }
+
+            // Сохраняем в БД
+            // Примечание: metadata не сохраняем, так как столбец отсутствует в БД
+            await db('generation_tasks').where('id', taskId).update({
+                progress: 60,
+                updated_at: new Date()
+            });
+
+            // Проверяем Coverage
+            if (coverageReportData.coveragePercent < 90) {
+                console.warn(`[generateTestModelAsync] ⚠️ Coverage ниже 90%: ${coverageReportData.coveragePercent}%`);
+                console.warn(`[generateTestModelAsync] Не покрыто ${coverageReportData.missing.length} Stories:`);
+                coverageReportData.missing.forEach(story => console.warn(`  ❌ ${story}`));
+            } else {
+                console.log(`[generateTestModelAsync] ✅ Coverage: ${coverageReportData.coveragePercent}%`);
+            }
+        }
+
+        const finalStructureIssues = detectModelStructureIssues(cleanedModel, 'final');
+        if (finalStructureIssues.length) {
+            console.warn(`[generate-test-model-async] ⚠️ Обнаружены структурные проблемы в финальной модели:`, finalStructureIssues);
+
+            // ✅ ПОВТОРНАЯ ГЕНЕРАЦИЯ с уточняющим промптом для проблемных Story
+            const storyIssues = finalStructureIssues.filter(issue =>
+                issue.includes('Story') && (issue.includes('техническую формулировку') || issue.includes('описание контрола'))
+            );
+
+            if (storyIssues.length > 0 && reqStringForModel && SYSTEM_PROMPT) {
+                console.log(`[generate-test-model-async] 🔄 Попытка повторной генерации с исправлением ${storyIssues.length} проблемных Story...`);
+
+                // Формируем уточняющий промпт для исправления Story
+                const escalationPrompt = `
+🚨 КРИТИЧЕСКАЯ ОШИБКА: Обнаружены Story с техническими формулировками вместо пользовательских историй!
+
+ПРОБЛЕМНЫЕ Story:
+${storyIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}
+
+ПРАВИЛА ДЛЯ ИСПРАВЛЕНИЯ:
+- Story должна описывать ЧТО хочет получить пользователь, а НЕ техническую реализацию
+- ❌ "Реализация кнопки создания QR-кода" → ✅ "QR-коды для физических лиц"
+- ❌ "API метод получения данных" → ✅ "Получение данных о счетах"
+- ❌ "Чек-бокс УНК в другом банке" → ✅ "Работа с УНК в другом банке"
+
+ПЕРЕГЕНЕРИРУЙ модель, исправив все проблемные Story на пользовательские истории!
+`.trim();
+
+                try {
+                    const reqChunks = chunkTextBySize(reqStringForModel, 120000);
+                    const fixedModel = [];
+
+                    for (let chunkIdx = 0; chunkIdx < reqChunks.length; chunkIdx++) {
+                        const chunkReq = reqChunks[chunkIdx];
+                        // Формируем userPrompt для чанка (как в основном цикле генерации)
+                        const chunkUserPrompt = `📋 ЗАДАНИЕ: Создай тестовую модель Feature → Story → Scenario → Code
+
+REQUIREMENTS:
+${chunkReq}
+
+ПРАВИЛА ГЕНЕРАЦИИ:
+1. СТРУКТУРА
+   - Feature: высокоуровневая функциональность
+   - Story: пользовательская история (НЕ техническая реализация!)
+   - Scenario: действие пользователя (ВСЕГДА начинается с "N. Глагол...")
+   - Code: поведение системы после действия
+
+2. CODE = ПОВЕДЕНИЕ СИСТЕМЫ
+   Извлекай из requirements:
+   - HTTP-методы: "GET /api/endpoint", "POST /confirm/code/check"
+   - UI-поведение: "Отобразить модальное окно", "Показать лоадер"
+   - Методы: "Вызвать метод auth()", "Выполнить verificate()"
+   - Интеграции: "Отправить push-уведомление", "Сохранить в БД"
+
+3. ОДИН SCENARIO → НЕСКОЛЬКО CODE
+   Scenario "4. Нажать на кнопку 'Подтвердить'":
+   codes: [
+     "Показать лоадер на кнопке 'Подтвердить'",
+     "PUT /nopaper/user",
+     "Отобразить модальное окно ОТП",
+     "Отправить push 'Требуется ввод кода'"
+   ]
+
+4. ЗАПРЕТЫ
+   ❌ НЕТ поля "requirement"
+   ❌ НЕТ префиксов "API:", "UI:" в Code.text
+   ❌ НЕ выдумывай Code, которого нет в requirements
+   ❌ НЕ создавай Story как техническую формулировку!
+
+${escalationPrompt}`;
+
+                        const retryCombinedTools = [...interactiveTools, buildSubmitModelTool()];
+                        const interactiveResult = await runInteractiveLLM({
+                            initialMessages: [
+                                { role: 'system', content: SYSTEM_PROMPT },
+                                { role: 'user', content: chunkUserPrompt }
+                            ],
+                            tools: retryCombinedTools,
+                            toolHandlers: contextToolHandlers,
+                            finalToolNames: ['submit_test_model'],
+                            maxIterations: 8,
+                            modelOptions: {
+                                temperature: 0,
+                                top_p: 0.9,
+                                max_tokens: 150000,  // ✅ Увеличено с 50000 до 150000 для предотвращения обрезания JSON
+                                extra: { transforms: 'middle-out' }
+                            }
+                        });
+
+                        const fixedAi = interactiveResult.response;
+                        const fixedArgs = extractToolArgs(fixedAi, "submit_test_model");
+
+                        if (fixedArgs && fixedArgs.model) {
+                            let fixedPartialModel = null;
+                            if (Array.isArray(fixedArgs.model)) {
+                                fixedPartialModel = fixedArgs.model;
+                            } else if (typeof fixedArgs.model === 'string') {
+                                try {
+                                    const parsed = JSON5.parse(fixedArgs.model);
+                                    fixedPartialModel = Array.isArray(parsed) ? parsed : (parsed?.items || null);
+                                } catch (e) {
+                                    console.warn(`[generate-test-model-async] Ошибка парсинга исправленной модели:`, e.message);
+                                }
+                            }
+
+                            if (fixedPartialModel && Array.isArray(fixedPartialModel)) {
+                                fixedModel.push(...fixedPartialModel);
+                            }
+                        }
                     }
 
-                    (scenario.codes || []).forEach(code => {
-                        if (!code.requirement) {
-                            elementsWithoutRequirement.push(`Code: ${code.text}`);
-                        } else if (!validRequirementPattern.test(code.requirement)) {
-                            elementsWithInvalidRequirement.push(`Code: ${code.text} (${code.requirement}) - неверный формат, ожидается X.X или X.X.X`);
+                    if (fixedModel.length > 0) {
+                        const fixedCleanedModel = validateAndCleanModel(fixedModel);
+                        const fixedIssues = detectModelStructureIssues(fixedCleanedModel, 'fixed');
+
+                        if (fixedIssues.length < finalStructureIssues.length) {
+                            console.log(`[generate-test-model-async] ✅ Повторная генерация помогла: ${finalStructureIssues.length} → ${fixedIssues.length} ошибок`);
+                            cleanedModel = fixedCleanedModel;
+
+                            if (fixedIssues.length === 0) {
+                                console.log(`[generate-test-model-async] ✅ Все проблемы исправлены!`);
+                            } else {
+                                console.warn(`[generate-test-model-async] ⚠️ Остались проблемы:`, fixedIssues);
+                            }
+                        } else {
+                            console.warn(`[generate-test-model-async] ⚠️ Повторная генерация не помогла, используем исходную модель с предупреждениями`);
                         }
-                    });
-                });
-            });
-        });
-
-        // Убрано избыточное логирование валидации
-
-        // Проверка покрытия критических требований
-        const criticalRequirements = ['2.2.7', '2.2.8'];
-        const coveredRequirements = new Set();
-
-        finalModel.forEach(feature => {
-            if (feature.requirement && criticalRequirements.includes(feature.requirement)) {
-                coveredRequirements.add(feature.requirement);
-            }
-            (feature.stories || []).forEach(story => {
-                if (story.requirement && criticalRequirements.includes(story.requirement)) {
-                    coveredRequirements.add(story.requirement);
+                    } else {
+                        console.warn(`[generate-test-model-async] ⚠️ Не удалось получить исправленную модель, используем исходную с предупреждениями`);
+                    }
+                } catch (retryError) {
+                    console.error(`[generate-test-model-async] Ошибка при повторной генерации:`, retryError.message);
+                    console.warn(`[generate-test-model-async] Используем исходную модель с предупреждениями`);
                 }
-            });
-        });
+            }
 
-        const missingCriticalRequirements = criticalRequirements.filter(req => !coveredRequirements.has(req));
-        // Убрано логирование критических требований
+            // Если после повторной генерации проблемы остались, пытаемся перегенерировать проблемные Code
+            const remainingIssues = detectModelStructureIssues(cleanedModel, 'final-after-retry');
+            const criticalIssues = remainingIssues.filter(issue =>
+                !issue.includes('Story') || (!issue.includes('техническую формулировку') && !issue.includes('описание контрола'))
+            );
+
+            // ✅ НОВОЕ: Перегенерация проблемных Code с пользовательскими действиями
+            const codeIssues = criticalIssues.filter(issue => 
+                issue.includes('Code') && issue.includes('пользовательское действие')
+            );
+
+            if (codeIssues.length > 0) {
+                escalationCount++;
+                console.warn(`[generate-test-model-async] ⚠️ Обнаружены структурные проблемы с Code, запускаем перегенерацию:`);
+                codeIssues.forEach(issue => console.warn(`  - ${issue}`));
+
+                // Извлекаем проблемные Scenarios
+                const problematicScenarios = extractProblematicScenarios(cleanedModel, codeIssues);
+
+                if (problematicScenarios.length === 0) {
+                    console.error(`[generate-test-model-async] ❌ Не удалось идентифицировать проблемные Scenarios: ${codeIssues.join(', ')}`);
+                    throw new Error(`Сгенерированная модель нарушает структуру Code: ${codeIssues.join('; ')}`);
+                }
+
+                // Перегенерируем проблемные Scenarios
+                const fixedScenarios = await regenerateProblematicScenarios(problematicScenarios, reqStringForModel);
+
+                if (fixedScenarios.length === 0) {
+                    console.error(`[generate-test-model-async] ❌ Не удалось перегенерировать проблемные Scenarios: ${codeIssues.join(', ')}`);
+                    throw new Error(`Не удалось исправить структурные проблемы Code: ${codeIssues.join('; ')}`);
+                }
+
+                // Заменяем старые Code на исправленные
+                for (const { scenario, fixedCodes } of fixedScenarios) {
+                    scenario.codes = fixedCodes;
+                    console.log(`[generate-test-model-async] ✅ Scenario "${scenario.text}" обновлён с ${fixedCodes.length} исправленными Code`);
+                }
+
+                // ✅ УЛУЧШЕНИЕ: Применяем финальное автоматическое исправление через autoFixCodeWithUserActions
+                console.log(`[generate-test-model-async] Применяю финальное автоматическое исправление Code...`);
+                cleanedModel = autoFixCodeWithUserActions(cleanedModel);
+                
+                // Повторная валидация
+                const remainingIssuesAfterFix = detectModelStructureIssues(cleanedModel, 'final-after-code-regeneration');
+                const stillCriticalIssues = remainingIssuesAfterFix.filter(issue =>
+                    !issue.includes('Story') || (!issue.includes('техническую формулировку') && !issue.includes('описание контрола'))
+                );
+
+                if (stillCriticalIssues.length > 0) {
+                    console.warn(`[generate-test-model-async] ⚠️ После перегенерации и автоматического исправления остались проблемы:`);
+                    stillCriticalIssues.forEach(issue => console.warn(`  - ${issue}`));
+                    
+                    // ✅ УЛУЧШЕНИЕ: Вместо выброса ошибки - применяем более агрессивное исправление
+                    console.log(`[generate-test-model-async] Применяю дополнительное исправление через normalizeCodeText...`);
+                    for (const feature of cleanedModel) {
+                        for (const story of (feature.stories || [])) {
+                            for (const scenario of (story.scenarios || [])) {
+                                for (const code of (scenario.codes || [])) {
+                                    const originalText = code.text;
+                                    code.text = normalizeCodeText(code.text);
+                                    if (originalText !== code.text) {
+                                        console.log(`[generate-test-model-async] Автоматически исправлен Code: "${originalText}" → "${code.text}"`);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Финальная проверка
+                    const finalIssues = detectModelStructureIssues(cleanedModel, 'final-after-all-fixes');
+                    const finalCriticalIssues = finalIssues.filter(issue =>
+                        !issue.includes('Story') || (!issue.includes('техническую формулировку') && !issue.includes('описание контрола'))
+                    );
+                    
+                    if (finalCriticalIssues.length > 0) {
+                        console.error(`[generate-test-model-async] ❌ После всех исправлений остались критические проблемы:`);
+                        finalCriticalIssues.forEach(issue => console.error(`  - ${issue}`));
+                        // Выбрасываем ошибку только если остались действительно критические проблемы
+                        throw new Error(`Не удалось исправить структурные проблемы: ${finalCriticalIssues.join('; ')}`);
+                    } else {
+                        console.log(`[generate-test-model-async] ✅ Все структурные проблемы Code исправлены через перегенерацию и автоматическое исправление`);
+                    }
+                } else {
+                    console.log(`[generate-test-model-async] ✅ Все структурные проблемы Code исправлены через перегенерацию`);
+                }
+            } else if (criticalIssues.length > 0) {
+                // Если есть другие критичные проблемы (не Code), выбрасываем ошибку
+                throw new Error(`Сгенерированная модель нарушает структуру Scenario/Code: ${criticalIssues.join('; ')}`);
+            } else if (remainingIssues.length > 0) {
+                console.warn(`[generate-test-model-async] ⚠️ Модель содержит некритичные проблемы Story, продолжаем:`, remainingIssues);
+            }
+        }
+
+        // ✅ НОВОЕ: Собираем метрики
+        const scenariosCount = cleanedModel.reduce((acc, f) => 
+            acc + (f.stories || []).reduce((acc2, s) => acc2 + (s.scenarios || []).length, 0), 0
+        );
+        const codesCount = cleanedModel.reduce((acc, f) => 
+            acc + (f.stories || []).reduce((acc2, s) => 
+                acc2 + (s.scenarios || []).reduce((acc3, sc) => acc3 + (sc.codes || []).length, 0), 0
+            ), 0
+        );
+        
+        // Получаем coverage report если он был рассчитан (используем уже рассчитанные данные)
+        const reqCoverage = coverageReportData?.requirementsCoverage || { coveragePercent: 0 };
+        const finalCoverageReport = coverageReportData || { coveragePercent: 0 };
+        
+        const metrics = {
+            duration: Date.now() - startTime,
+            requirementsCoverage: reqCoverage.coveragePercent || 0,
+            storiesCoverage: finalCoverageReport.coveragePercent || 0,
+            scenariosCount,
+            codesCount,
+            regenerations: regenerationCount,
+            escalations: escalationCount
+        };
+        
+        console.log(`[generateTestModelAsync] 📊 Метрики:`, metrics);
 
         await db('generation_tasks').where('id', taskId).update({
             status: 'completed',
             progress: 100,
-            result: { testModel: finalModel },
+            result: { testModel: cleanedModel },
+            metrics: JSON.stringify(metrics),
             completed_at: new Date(),
             updated_at: new Date()
         });
@@ -3365,8 +6016,10 @@ app.post('/api/create-test-cases', async (req, res) => {
         // 3) Подгружаем существующие проектные теги (чтобы потом создавать новые, если их нет)
         const projectTags = await suggestTags(projectId);
 
-        const created = [];
-        for (const c of cases) {
+        // ✅ НОВОЕ: Асинхронный batch update для Allure с ограничением параллелизма
+        const limit = pLimit(10); // Не более 10 параллельных запросов
+        
+        const creationPromises = cases.map(c => limit(async () => {
             // 4) Создаём TC
             const tc = await createTestCaseAllure({ projectId, name: c.title });
             const testCaseId = tc.id;
@@ -3490,12 +6143,12 @@ app.post('/api/create-test-cases', async (req, res) => {
                 try {
                     // Получаем текущий тест-кейс
                     const currentTC = await fetchWithAuth(`${config.baseUrl}/testcase/${testCaseId}`).then(r => r.json());
-                    
+
                     // Формируем массив параметров (только имена, без значений)
                     const parametersForApi = c.parameters
                         .filter(p => p.name && p.name.trim())
                         .map(p => ({ name: p.name.trim() }));
-                    
+
                     if (parametersForApi.length > 0) {
                         // Обновляем тест-кейс с параметрами
                         await fetchWithAuth(
@@ -3520,7 +6173,7 @@ app.post('/api/create-test-cases', async (req, res) => {
                         // То есть массив массивов параметров, а не массив объектов с полем parameters
                         const examplesForApi = c.examples
                             .filter(ex => ex.parameters && Array.isArray(ex.parameters))
-                            .map(example => 
+                            .map(example =>
                                 example.parameters
                                     .filter(p => p.name && p.value !== undefined && p.value !== '')
                                     .map(p => ({
@@ -3529,7 +6182,7 @@ app.post('/api/create-test-cases', async (req, res) => {
                                     }))
                             )
                             .filter(exParams => exParams.length > 0);
-                        
+
                         if (examplesForApi.length > 0) {
                             await createTestCaseExamples(testCaseId, examplesForApi);
                             console.log(`[create-test-cases] Добавлено ${examplesForApi.length} примеров для ТК ${testCaseId}`);
@@ -3544,8 +6197,10 @@ app.post('/api/create-test-cases', async (req, res) => {
                 }
             }
 
-            created.push({ id: testCaseId });
-        }
+            return { id: testCaseId };
+        }));
+
+        const created = await Promise.all(creationPromises);
 
         res.json({ success: true, created });
     } catch (err) {
@@ -3554,8 +6209,312 @@ app.post('/api/create-test-cases', async (req, res) => {
     }
 });
 
+/**
+ * Автоматически параметризует похожие тесты, объединяя их в один параметризованный тест
+ * @param {Array} testCases - массив тест-кейсов
+ * @returns {Array} - массив тест-кейсов с параметризацией
+ */
+function autoParameterizeSimilarTests(testCases) {
+    if (!Array.isArray(testCases) || testCases.length === 0) return testCases;
 
+    const processed = new Set();
+    const result = [];
 
+    for (let i = 0; i < testCases.length; i++) {
+        if (processed.has(i)) continue;
+
+        const current = testCases[i];
+        const similar = [current];
+
+        // Ищем похожие тесты
+        for (let j = i + 1; j < testCases.length; j++) {
+            if (processed.has(j)) continue;
+
+            const candidate = testCases[j];
+
+            // Проверяем, похожи ли тесты
+            if (areTestsSimilar(current, candidate)) {
+                similar.push(candidate);
+                processed.add(j);
+            }
+        }
+
+        // Если нашли похожие (2+), параметризуем
+        if (similar.length >= 2) {
+            const parameterized = mergeSimilarTests(similar);
+            if (parameterized) {
+                result.push(parameterized);
+                processed.add(i);
+                continue;
+            }
+        }
+
+        // Если не параметризовали, добавляем как есть
+        if (!processed.has(i)) {
+            result.push(current);
+            processed.add(i);
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Проверяет, похожи ли два теста (одинаковая логика, разные значения)
+ */
+function areTestsSimilar(test1, test2) {
+    // Должны быть одинаковые: layer, feature, story, scenario, steps (структура)
+    if (test1.layer !== test2.layer) return false;
+    if (test1.feature !== test2.feature) return false;
+    if (test1.story !== test2.story) return false;
+    if (test1.scenario !== test2.scenario) return false;
+
+    // Steps должны быть структурно похожи (одинаковое количество и структура)
+    const steps1 = JSON.stringify(test1.steps || []);
+    const steps2 = JSON.stringify(test2.steps || []);
+    if (steps1 !== steps2) {
+        // Допускаем небольшие различия в формулировках, но структура должна быть похожа
+        const steps1Normalized = normalizeStepsForComparison(steps1);
+        const steps2Normalized = normalizeStepsForComparison(steps2);
+        if (steps1Normalized !== steps2Normalized) {
+            // Дополнительная проверка: возможно, отличаются только числовые значения
+            const steps1Numbers = steps1Normalized.replace(/[^0-9]/g, '');
+            const steps2Numbers = steps2Normalized.replace(/[^0-9]/g, '');
+            // Если после нормализации остались только числовые различия - считаем похожими
+            if (steps1Numbers !== steps2Numbers) {
+                // Проверяем, что это не структурные различия
+                const steps1Words = steps1Normalized.split(/\s+/).filter(w => w.length > 2);
+                const steps2Words = steps2Normalized.split(/\s+/).filter(w => w.length > 2);
+                const commonWords = steps1Words.filter(w => steps2Words.includes(w));
+                // Если менее 70% общих слов - это разные тесты
+                if (commonWords.length / Math.max(steps1Words.length, steps2Words.length) < 0.7) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    // Expected должен быть структурно похож (различаться только значениями)
+    const expected1 = String(test1.expected || '').toLowerCase();
+    const expected2 = String(test2.expected || '').toLowerCase();
+
+    // Если expected полностью идентичен - не параметризуем (это дубликат)
+    if (expected1 === expected2) return false;
+
+    // Проверяем, что различия только в значениях, а не в структуре
+    const diff = findValueDifferences(test1, test2);
+    return diff.length > 0;
+}
+
+/**
+ * Нормализует steps для сравнения (убирает конкретные значения)
+ */
+function normalizeStepsForComparison(steps) {
+    return steps
+        .replace(/\d+-значный/g, 'N-значный')
+        .replace(/\d+/g, 'N')
+        .replace(/10|12/g, 'N')
+        .toLowerCase();
+}
+
+/**
+ * Находит различия в значениях между тестами
+ */
+function findValueDifferences(test1, test2) {
+    const diffs = [];
+
+    // Ищем различия в title
+    const title1 = String(test1.title || '').toLowerCase();
+    const title2 = String(test2.title || '').toLowerCase();
+
+    // Паттерны для поиска различий
+    const patterns = [
+        { regex: /(\d+)-значный/g, name: 'Размер ИНН' },
+        { regex: /(\d+)/g, name: 'Числовое значение' },
+        { regex: /(10|12)/g, name: 'Размер ИНН' },
+        { regex: /(код ответа|статус|status)\s*[:\-]?\s*(\d+)/gi, name: 'Код ответа' },
+        { regex: /(тип|type)\s*[:\-]?\s*([a-z_]+)/gi, name: 'Тип' }
+    ];
+
+    // Извлекаем значения из title
+    for (const pattern of patterns) {
+        const matches1 = title1.match(pattern.regex);
+        const matches2 = title2.match(pattern.regex);
+
+        if (matches1 && matches2 && matches1.length === matches2.length) {
+            const values1 = matches1.map(m => extractValue(m));
+            const values2 = matches2.map(m => extractValue(m));
+
+            if (values1.some(v => !values2.includes(v)) || values2.some(v => !values1.includes(v))) {
+                diffs.push({
+                    name: pattern.name,
+                    values: [...new Set([...values1, ...values2])]
+                });
+            }
+        }
+    }
+
+    // Специальная обработка для "10-значный" vs "12-значный"
+    if ((title1.includes('10-значный') && title2.includes('12-значный')) ||
+        (title1.includes('12-значный') && title2.includes('10-значный'))) {
+        diffs.push({
+            name: 'Размер ИНН',
+            values: ['10-значный', '12-значный']
+        });
+    }
+
+    // Специальная обработка для "контрольного числа" с разными размерами ИНН
+    if (title1.includes('контрольн') && title2.includes('контрольн')) {
+        if ((title1.includes('10') && title2.includes('12')) ||
+            (title1.includes('12') && title2.includes('10'))) {
+            diffs.push({
+                name: 'Размер ИНН',
+                values: ['10-значный', '12-значный']
+            });
+        }
+    }
+
+    // Специальная обработка для HTTP-кодов в expected
+    const expected1 = String(test1.expected || '');
+    const expected2 = String(test2.expected || '');
+
+    const codeMatches1 = expected1.match(/\b(200|400|401|403|404|500|503|504)\b/g);
+    const codeMatches2 = expected2.match(/\b(200|400|401|403|404|500|503|504)\b/g);
+
+    if (codeMatches1 && codeMatches2) {
+        const codes1 = [...new Set(codeMatches1)];
+        const codes2 = [...new Set(codeMatches2)];
+        if (codes1.length > 0 && codes2.length > 0 && !codes1.every(c => codes2.includes(c))) {
+            diffs.push({
+                name: 'Код ответа',
+                values: [...new Set([...codes1, ...codes2])]
+            });
+        }
+    }
+
+    return diffs;
+}
+
+/**
+ * Извлекает значение из строки
+ */
+function extractValue(str) {
+    const match = str.match(/(\d+)/);
+    return match ? match[1] : str.trim();
+}
+
+/**
+ * Объединяет похожие тесты в один параметризованный
+ */
+function mergeSimilarTests(similarTests) {
+    if (similarTests.length < 2) return null;
+
+    const base = similarTests[0];
+    const diffs = [];
+
+    // Собираем все различия
+    for (let i = 1; i < similarTests.length; i++) {
+        const diff = findValueDifferences(base, similarTests[i]);
+        diffs.push(...diff);
+    }
+
+    // Группируем различия по имени
+    const paramMap = new Map();
+    for (const diff of diffs) {
+        if (!paramMap.has(diff.name)) {
+            paramMap.set(diff.name, new Set());
+        }
+        diff.values.forEach(v => paramMap.get(diff.name).add(v));
+    }
+
+    // Если нет различий для параметризации - не объединяем
+    if (paramMap.size === 0) return null;
+
+    // Формируем параметры
+    const parameters = Array.from(paramMap.entries()).map(([name, values]) => ({
+        name: name,
+        values: Array.from(values).sort()
+    }));
+
+    // Формируем examples на основе исходных тестов
+    const examples = similarTests.map(test => {
+        const exampleParams = [];
+        for (const param of parameters) {
+            // Извлекаем значение параметра из теста
+            const value = extractParameterValue(test, param.name);
+            if (value) {
+                exampleParams.push({ name: param.name, value: value });
+            }
+        }
+        return { parameters: exampleParams };
+    }).filter(ex => ex.parameters.length > 0);
+
+    // Обновляем title, убирая конкретные значения
+    let newTitle = base.title || '';
+    for (const param of parameters) {
+        // Убираем конкретные значения из title
+        param.values.forEach(val => {
+            newTitle = newTitle.replace(new RegExp(val, 'gi'), `{${param.name}}`);
+        });
+    }
+    // Если title стал слишком общим, используем базовый с пометкой
+    if (newTitle.includes('{') && newTitle.split('{').length > 2) {
+        newTitle = base.title?.replace(/\d+-значный|10|12|\d+/g, 'N').replace(/для\s+\w+/g, '') || base.title || 'Параметризованный тест';
+    }
+
+    // Обновляем expected, делая его более общим
+    let newExpected = base.expected || '';
+    for (const param of parameters) {
+        param.values.forEach(val => {
+            newExpected = newExpected.replace(new RegExp(val, 'gi'), `{${param.name}}`);
+        });
+    }
+
+    return {
+        ...base,
+        title: newTitle,
+        expected: newExpected,
+        parameters: parameters,
+        examples: examples.length > 0 ? examples : undefined
+    };
+}
+
+/**
+ * Извлекает значение параметра из теста
+ */
+function extractParameterValue(test, paramName) {
+    const title = String(test.title || '').toLowerCase();
+    const expected = String(test.expected || '').toLowerCase();
+    const steps = (test.steps || []).join(' ').toLowerCase();
+    const allText = `${title} ${expected} ${steps}`;
+
+    if (paramName === 'Размер ИНН') {
+        if (allText.includes('10-значный')) return '10-значный';
+        if (allText.includes('12-значный')) return '12-значный';
+        // Также проверяем упоминания "10" и "12" в контексте ИНН
+        if (allText.includes('10') && (allText.includes('инн') || allText.includes('контрольн'))) {
+            // Проверяем, что это не просто случайное число
+            if (allText.match(/10[^0-9]/) || allText.includes('10-значн')) return '10-значный';
+        }
+        if (allText.includes('12') && (allText.includes('инн') || allText.includes('контрольн'))) {
+            if (allText.match(/12[^0-9]/) || allText.includes('12-значн')) return '12-значный';
+        }
+    }
+
+    if (paramName === 'Код ответа') {
+        // Ищем в expected и steps
+        const match = allText.match(/\b(200|400|401|403|404|500|503|504)\b/);
+        if (match) return match[1];
+    }
+
+    // Общий поиск числовых значений
+    if (paramName.includes('значение') || paramName.includes('число')) {
+        const match = title.match(/(\d+)/);
+        if (match) return match[1];
+    }
+
+    return null;
+}
 
 async function generateTestCasesAsync(taskId, inputData) {
     // Объявляем переменную в начале функции
@@ -3590,8 +6549,6 @@ async function generateTestCasesAsync(taskId, inputData) {
             return { scenarioSet, codeTo, scenarioToParent, storyToFeature };
         }
 
-        // УНИВЕРСАЛЬНАЯ функция проверки покрытия требований
-        // ✅ УНИВЕРСАЛЬНАЯ функция поиска похожих требований
         function findSimilarRequirements(requiredIds, missingIds) {
             const similar = [];
 
@@ -3651,24 +6608,11 @@ async function generateTestCasesAsync(taskId, inputData) {
                 }
             }
 
-            // Собираем все requirement из тест-кейсов
+            // ❌ УДАЛЕНО: Сбор requirement из тест-кейсов - это поле не используется в тест-кейсах
+            // Покрытие требований теперь определяется через тестовую модель (Feature/Story/Scenario)
             const coveredIds = new Set();
-            for (const tc of testCases) {
-                if (tc.requirement) {
-                    coveredIds.add(tc.requirement);
 
-                    // ✅ ДОБАВЛЕНО: Также покрываем родительские разделы
-                    // Если requirement = "2.2.1", то покрываем также "2.2"
-                    const parts = tc.requirement.split('.');
-                    for (let i = 1; i < parts.length; i++) {
-                        const parentReq = parts.slice(0, i).join('.');
-                        if (parentReq) coveredIds.add(parentReq);
-                    }
-                }
-            }
-
-            console.log(`[checkRequirementsCoverage] Покрытые требования (с родительскими):`,
-                Array.from(coveredIds).sort());
+            console.log(`[checkRequirementsCoverage] Покрытие требований определяется через тестовую модель, не через поле requirement в тест-кейсах`);
 
             // Находим недостающие requirementId
             const missingRequirementIds = [];
@@ -3706,13 +6650,7 @@ async function generateTestCasesAsync(taskId, inputData) {
             }
 
             // Дополнительная отладка: покажем примеры тест-кейсов с полем requirement
-            const examplesWithRequirement = testCases.filter(tc => tc.requirement).slice(0, 3);
-            if (examplesWithRequirement.length > 0) {
-                console.log(`[checkRequirementsCoverage] Примеры тест-кейсов с полем requirement:`,
-                    examplesWithRequirement.map(tc => ({ title: tc.title, requirement: tc.requirement })));
-            } else {
-                console.log(`[checkRequirementsCoverage] ВНИМАНИЕ: Нет тест-кейсов с полем requirement!`);
-            }
+            // ❌ УДАЛЕНО: Проверка requirement в тест-кейсах - это поле не используется
 
             return {
                 coveragePercentage,
@@ -3722,6 +6660,144 @@ async function generateTestCasesAsync(taskId, inputData) {
                 coveredRequirementIds: Array.from(coveredIds),
                 similarRequirements  // ✅ Возвращаем для догенерации
             };
+        }
+
+        // ✅ ФУНКЦИЯ ВАЛИДАЦИИ ТЕСТ-КЕЙСОВ ПО СТАЙЛ-ГАЙДУ
+        function validateTestCasesByStyleGuide(testCases, styleGuidePrompt) {
+            const issues = [];
+
+            testCases.forEach((tc, idx) => {
+                const tcNum = idx + 1;
+                const title = tc.title || '';
+                const steps = Array.isArray(tc.steps) ? tc.steps : [];
+                const expected = tc.expected || '';
+                const layer = tc.layer || '';
+
+                // Проверка шагов
+                steps.forEach((step, stepIdx) => {
+                    const stepLower = String(step).toLowerCase();
+
+                    // Проверка на слово "Проверить" в шагах
+                    if (stepLower.includes('проверить') || stepLower.includes('проверка')) {
+                        issues.push(`Тест-кейс ${tcNum} "${title}": шаг ${stepIdx + 1} содержит "Проверить" - проверка должна быть в expected, а не в steps!`);
+                    }
+
+                    // Проверка форматирования ключевых слов и эндпоинтов
+                    if (step.includes('/') && !step.includes('**')) {
+                        // Эндпоинт без выделения
+                        const endpointMatch = step.match(/(\/[a-zA-Z0-9_\/-]+)/);
+                        if (endpointMatch) {
+                            issues.push(`Тест-кейс ${tcNum} "${title}": шаг ${stepIdx + 1} содержит эндпоинт без выделения - используй **${endpointMatch[1]}**`);
+                        }
+                    }
+                });
+
+                // Проверка ожидаемого результата
+                if (!expected || expected.trim().length === 0) {
+                    issues.push(`Тест-кейс ${tcNum} "${title}": отсутствует expected (обязательное поле!)`);
+                } else {
+                    const expectedLower = expected.toLowerCase();
+
+                    // Проверка на абстрактные формулировки
+                    const abstractPatterns = [
+                        /работает корректно/i,
+                        /операция выполнена/i,
+                        /данные переданы/i,
+                        /система работает/i,
+                        /всё правильно/i
+                    ];
+
+                    if (abstractPatterns.some(pattern => pattern.test(expected))) {
+                        issues.push(`Тест-кейс ${tcNum} "${title}": expected содержит абстрактную формулировку - нужен конкретный результат!`);
+                    }
+
+                    // Проверка форматирования ключевых слов
+                    const keyWords = ['подменить', 'отобразить', 'вернуть', 'заполнить', 'передать', 'сохранить'];
+                    const hasKeyWord = keyWords.some(kw => expectedLower.includes(kw));
+                    const hasFormattedKeyWord = keyWords.some(kw => expected.includes(`**${kw}`) || expected.includes(`**${kw.charAt(0).toUpperCase() + kw.slice(1)}`));
+
+                    if (hasKeyWord && !hasFormattedKeyWord) {
+                        issues.push(`Тест-кейс ${tcNum} "${title}": expected содержит ключевое слово без форматирования - используй **Ключевое слово**`);
+                    }
+
+                    // Проверка форматирования эндпоинтов в expected
+                    if (expected.includes('/') && !expected.includes('**')) {
+                        const endpointMatch = expected.match(/(\/[a-zA-Z0-9_\/-]+)/);
+                        if (endpointMatch) {
+                            issues.push(`Тест-кейс ${tcNum} "${title}": expected содержит эндпоинт без выделения - используй **${endpointMatch[1]}**`);
+                        }
+                    }
+                }
+
+                // Проверка типа теста
+                if (layer === 'Integration backend Tests') {
+                    // Backend тесты не должны содержать UI-действия
+                    const uiActions = steps.some(step =>
+                        /нажать|кликнуть|выбрать|заполнить|ввести/i.test(step) && !step.includes('Выполнить')
+                    );
+                    if (uiActions) {
+                        issues.push(`Тест-кейс ${tcNum} "${title}": Integration backend Tests содержит UI-действия - только "Выполнить POST/GET..."!`);
+                    }
+                }
+
+                if (layer === 'Integration frontend Tests') {
+                    // Frontend тесты не должны начинаться с авторизации
+                    if (steps.length > 0 && /авторизоваться|перейти в раздел|открыть приложение/i.test(steps[0])) {
+                        issues.push(`Тест-кейс ${tcNum} "${title}": Integration frontend Tests начинается с авторизации - начинай сразу с действия на компоненте!`);
+                    }
+
+                    // Frontend тесты не должны содержать "Выполнить POST/GET"
+                    if (steps.some(step => /выполнить\s+(post|get|put|delete|patch)/i.test(step))) {
+                        issues.push(`Тест-кейс ${tcNum} "${title}": Integration frontend Tests содержит Backend-запросы - только UI-действия!`);
+                    }
+                }
+
+                // Проверка параметризации
+                if (tc.parameters && Array.isArray(tc.parameters) && tc.parameters.length > 0) {
+                    // Проверяем использование параметров в steps и expected
+                    const hasParamsInSteps = steps.some(step => step.includes('{{'));
+                    const hasParamsInExpected = expected.includes('{{');
+
+                    if (!hasParamsInSteps && !hasParamsInExpected) {
+                        issues.push(`Тест-кейс ${tcNum} "${title}": есть parameters, но нет {{параметр}} в steps или expected!`);
+                    }
+
+                    // Проверяем наличие examples
+                    if (!tc.examples || !Array.isArray(tc.examples) || tc.examples.length === 0) {
+                        issues.push(`Тест-кейс ${tcNum} "${title}": есть parameters, но нет examples!`);
+                    }
+                }
+            });
+
+            return issues;
+        }
+
+        // ✅ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Поиск соответствующего чанка модели для тест-кейса
+        function findMatchingModelChunk(testCase, modelStructure) {
+            if (!testCase || !modelStructure) return null;
+
+            const feature = testCase.feature;
+            const story = testCase.story;
+            const scenario = testCase.scenario;
+
+            for (const f of modelStructure) {
+                if (f.text === feature) {
+                    for (const s of (f.stories || [])) {
+                        if (s.text === story) {
+                            // Возвращаем чанк с этой Story
+                            return [{
+                                text: feature,
+                                stories: [{
+                                    text: story,
+                                    scenarios: s.scenarios || []
+                                }]
+                            }];
+                        }
+                    }
+                }
+            }
+
+            return null;
         }
 
         function validateTestPyramid(testCases, modelStructure) {
@@ -3739,17 +6815,14 @@ async function generateTestCasesAsync(taskId, inputData) {
             const e2eCount = layerCounts['E2E Tests'] || 0;
             const integrationCount = (layerCounts['Integration frontend Tests'] || 0) +
                 (layerCounts['Integration backend Tests'] || 0);
-            const unitCount = (layerCounts['Unit frontend Tests'] || 0) +
-                (layerCounts['Unit backend Tests'] || 0);
-
-            const expectedE2E = Math.max(1, S);
-            const expectedE2EMax = expectedE2E + 3;
-            const expectedIntegrationMin = Sc * 2;
-            const expectedIntegrationMax = Sc * 4 + 5;
+            const expectedE2E = Math.max(1, Math.ceil(S * 0.5));
+            const expectedE2EMax = expectedE2E + 2;
+            const expectedIntegrationMin = Math.max(Sc, Sc * 2);
+            const expectedIntegrationMax = expectedIntegrationMin + 5;
 
             console.log(`[validateTestPyramid] Модель: Stories=${S}, Scenarios=${Sc}`);
-            console.log(`[validateTestPyramid] Ожидается: E2E=${expectedE2E}-${expectedE2EMax}, Integration=${expectedIntegrationMin}-${expectedIntegrationMax}, Unit=гибко`);
-            console.log(`[validateTestPyramid] Получено: E2E=${e2eCount}, Integration=${integrationCount}, Unit=${unitCount}`);
+            console.log(`[validateTestPyramid] Ожидается: E2E=${expectedE2E}-${expectedE2EMax}, Integration=${expectedIntegrationMin}-${expectedIntegrationMax}`);
+            console.log(`[validateTestPyramid] Получено: E2E=${e2eCount}, Integration=${integrationCount}`);
 
             const warnings = [];
 
@@ -3761,8 +6834,8 @@ async function generateTestCasesAsync(taskId, inputData) {
                 warnings.push(`⚠️ ПЕРЕКОС: Слишком много Integration тестов (${integrationCount} вместо ${expectedIntegrationMin}-${expectedIntegrationMax}). Возможны дубликаты для doc_type!`);
             }
 
-            if (e2eCount < Math.max(1, Math.floor(S * 0.7))) {
-                warnings.push(`⚠️ НЕДОСТАТОК: Мало E2E тестов (${e2eCount} вместо минимум ${Math.floor(S * 0.7)})`);
+            if (e2eCount < Math.max(1, Math.floor(S * 0.5))) {
+                warnings.push(`⚠️ НЕДОСТАТОК: Мало E2E тестов (${e2eCount} вместо минимум ${Math.floor(S * 0.5)})`);
             }
 
             if (warnings.length > 0) {
@@ -3880,8 +6953,7 @@ async function generateTestCasesAsync(taskId, inputData) {
                 🎯 КРИТИЧЕСКИ ВАЖНО: СТРУКТУРА ТЕСТОВ! 🎯
                 Для каждого requirement создай:
                 1. МИНИМУМ 1-2 E2E теста (пользовательские пути)
-                2. МИНИМУМ 2-3 Integration теста (API вызовы, негативные сценарии)
-                3. МИНИМУМ 1-2 Unit теста (методы, функции)
+                2. МИНИМУМ 2-3 Integration теста (UI + API, включая негативные сценарии)
                 
                 ${missingReq.description.includes('ОТЛИЧАЕТСЯ') ? `
                 🔍 ВАЖНО: Это требование могло быть пропущено потому что оно ПОХОЖЕ на другое.
@@ -3892,26 +6964,24 @@ async function generateTestCasesAsync(taskId, inputData) {
                 Тест-кейсы ДОЛЖНЫ быть привязаны к существующим элементам модели:
                 - E2E Tests: привязываются к Story уровню
                 - Integration Tests: привязываются к Scenario уровню  
-                - Unit Tests: привязываются к Code уровню
                 
                 Используй следующие элементы из модели:
                 ${JSON.stringify(missingReq.modelContext || {}, null, 2)}
 
                 🎯 СТРОГИЙ МАППИНГ УРОВНЕЙ:
                 - layer: "E2E Tests" → ОБЯЗАТЕЛЬНО указать feature + story + scenario (БЕЗ code)
-                - layer: "Integration frontend/backend Tests" → ОБЯЗАТЕЛЬНО указать feature + story + scenario (БЕЗ code)
-                - layer: "Unit frontend/backend Tests" → ОБЯЗАТЕЛЬНО указать feature + story + scenario + code
+                - layer: "Integration frontend/backend Tests" → ОБЯЗАТЕЛЬНО указать feature + story + scenario (дополнительно code, если требуется для API шага)
                 
                 🎯 ОБЯЗАТЕЛЬНЫЕ ПОЛЯ ДЛЯ КАЖДОГО ТЕСТ-КЕЙСА:
                 1. title - название (строка)
                 2. steps - массив шагов (МИНИМУМ 1 шаг!)
                 3. expected - ожидаемый результат (строка)
-                4. layer - слой тестирования (E2E/Integration/Unit)
+                4. layer - слой тестирования (E2E/Integration)
                 5. requirement - номер требования "${missingReq.requirementId}" (ОБЯЗАТЕЛЬНО!)
                 6. feature - название фичи из модели
                 7. story - название story из модели
-                8. scenario - название scenario (для Integration/Unit)
-                9. code - название code (только для Unit)
+                8. scenario - название scenario (для Integration и для E2E, если задано)
+                9. code - название code (если используется вызов API/метода)
                 10. priority - приоритет (High/Medium/Low)
                 11. tags - массив тегов
                 
@@ -3944,21 +7014,6 @@ async function generateTestCasesAsync(taskId, inputData) {
                   "tags": ["BE"]
                 }
                 
-                Unit тест:
-                {
-                  "title": "Метод getReport() вызывается при doc_type=payment",
-                  "steps": ["Вызвать getReport()"],
-                  "expected": "Метод возвращает массив данных",
-                  "layer": "Unit frontend Tests",
-                  "requirement": "${missingReq.requirementId}",
-                  "feature": "Название фичи",
-                  "story": "Повтор платежей",
-                  "scenario": "Повторить платеж с doc_type=payment",
-                  "code": "Вызвать метод getReport()",
-                  "priority": "Medium",
-                  "tags": ["FE"]
-                }
-                
                 Контекст требований:
 ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
@@ -3970,32 +7025,30 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 3. requirement ДОЛЖНО быть "${missingReq.requirementId}"
                 4. МИНИМУМ 1-2 E2E теста на story
                 5. МИНИМУМ 2-3 Integration теста на scenario
-                6. МИНИМУМ 1-2 Unit теста на code
                 
-                Сгенерируй минимум 5-7 тест-кейсов на РАЗНЫХ уровнях (E2E, Integration frontend, Integration backend, Unit frontend, Unit backend).
+                Сгенерируй минимум 4-6 тест-кейсов на РАЗНЫХ уровнях (E2E, Integration frontend, Integration backend).
                 ОБЯЗАТЕЛЬНО: Каждый тест-кейс должен иметь requirement: "${missingReq.requirementId}"!
                 
 Ответ — ТОЛЬКО чистый JSON-массив без Markdown.
 `.trim();
 
 
-                const tools = [buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios)];
-                const ai = await callWithCloudRuFallback(
-                    OPENROUTER_URL,
-                    [
-                        { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
-                        { role: 'user', content: userPrompt }
-                    ],
-                    config.openRouterAiKey,
-                    {
-                        tools,
-                        // tool_choice убран для Cloud.ru совместимости
+                // ✅ ДОРАБОТКА 3: Передаём reqStructure в tool (если доступен)
+                // Примечание: metadata больше не сохраняется в БД, поэтому reqStructureForTool будет null
+                // Функция buildSubmitCasesToolStrict работает и без reqStructure
+                let reqStructureForTool = null;
+
+                const submissionTool = buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios, reqStructureForTool);
+                const ai = await runTestCaseLLM({
+                    userPrompt,
+                    submissionTool,
+                    modelOverrides: {
                         temperature: 0,
                         top_p: 1,
-                        max_tokens: 64000,
+                        max_tokens: 50000,  // ✅ Уменьшено с 64000 до 50000 для учета лимита контекста модели (196608 токенов)
                         extra: { transforms: 'middle-out' }
                     }
-                );
+                });
 
                 // ✅ НОВАЯ ЛОГИКА: Обрабатываем ВСЕ tool_calls как в genForChunk
                 const toolCalls = ai.choices?.[0]?.message?.tool_calls;
@@ -4068,6 +7121,9 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                         let finalCases = fixAgainstModel(sanitizedCases, modelIndex);
                         console.log(`[gapFillRequirements-ASYNC] После fixAgainstModel: ${finalCases.length} кейсов`);
 
+                        // Заменяем упоминания параметров в шагах на формат {{Название параметра}} для Allure TestOps
+                        finalCases = injectParameterPlaceholders(finalCases);
+
                         allGapCases.push(...finalCases);
                         continue;
                     }
@@ -4102,89 +7158,12 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 const precondition = (tc.precondition || '').toLowerCase();
                 let correctedLayer = tc.layer || '';
 
-                // =============================================================
-                // ПРАВИЛО 1: Integration → Unit (ТОЛЬКО изолированные методы)
-                // =============================================================
-                if (correctedLayer.includes('Integration')) {
-
-                    // Unit = проверка ВОЗВРАЩАЕМОГО ЗНАЧЕНИЯ метода в ИЗОЛЯЦИИ
-                    const isIsolatedMethod =
-                        (title.includes('метод') && title.includes('возвращает')) ||
-                        (title.includes('функция') && title.includes('возвращает')) ||
-                        (title.includes('getreport()') && title.includes('возвращает')) ||
-                        expected.includes('метод вернул') ||
-                        expected.includes('функция вернула');
-
-                    // Проверяем наличие ВЗАИМОДЕЙСТВИЯ (если есть → остаётся Integration!)
-                    const hasInteraction =
-                        title.includes('после') ||
-                        title.includes('при') ||
-                        title.includes('во время') ||
-                        title.includes('вызов метода после') ||
-                        title.includes('вызов метода при') ||
-                        title.includes('авторизаци') ||
-                        title.includes('инициализ') ||
-                        steps.includes('post /') ||
-                        steps.includes('get /') ||
-                        steps.includes('вызвать post') ||
-                        steps.includes('вызвать get') ||
-                        steps.includes('дождаться') ||
-                        steps.includes('выполнить post') ||
-                        steps.includes('выполнить get') ||
-                        steps.includes('открыть') ||
-                        steps.includes('нажать') ||
-                        expected.includes('вызван после') ||
-                        expected.includes('вызван при');
-
-                    // ПРАВИЛО: Изолированный метод БЕЗ взаимодействия → Unit
-                    if (isIsolatedMethod && !hasInteraction) {
-                        correctedLayer = correctedLayer.includes('frontend')
-                            ? 'Unit frontend Tests'
-                            : 'Unit backend Tests';
-                        console.log(`[fixAgainstModel] Integration → Unit (изолированный метод): ${tc.title}`);
-                    }
-
-                    // ПРАВИЛО: Есть взаимодействие → остаётся Integration
-                    if (hasInteraction) {
-                        console.log(`[fixAgainstModel] ✓ Остаётся Integration (взаимодействие): ${tc.title}`);
-                    }
-                }
-
-                // =============================================================
-                // ПРАВИЛО 2: Unit → Integration (если проверяется взаимодействие)
-                // =============================================================
+                // Unit-слои в новой политике не используются, поэтому любое упоминание переводим в Integration.
                 if (correctedLayer.includes('Unit')) {
-                    const isIntegrationTest =
-                        // UI-состояния (Component Tests)
-                        expected.includes('отображается') ||
-                        expected.includes('отображена') ||
-                        expected.includes('доступен') ||
-                        expected.includes('доступна') ||
-                        expected.includes('активна') ||
-                        expected.includes('форма заполнена') ||
-                        // API-ответы
-                        (expected.includes('статус') && expected.includes('ответ')) ||
-                        expected.includes('возвращает 200') ||
-                        expected.includes('возвращает 404') ||
-                        expected.includes('возвращает 401') ||
-                        expected.includes('возвращает 500') ||
-                        // UI-действия
-                        steps.includes('открыть') ||
-                        steps.includes('выбрать') ||
-                        steps.includes('нажать') ||
-                        steps.includes('ввести') ||
-                        // API-вызовы
-                        steps.includes('выполнить post') ||
-                        steps.includes('выполнить get') ||
-                        steps.includes('вызвать post') ||
-                        steps.includes('вызвать get');
-
-                    if (isIntegrationTest) {
-                        correctedLayer = correctedLayer.includes('frontend')
-                            ? 'Integration frontend Tests'
-                            : 'Integration backend Tests';
-                        console.log(`[fixAgainstModel] Unit → Integration (взаимодействие): ${tc.title}`);
-                    }
+                    correctedLayer = correctedLayer.includes('frontend')
+                        ? 'Integration frontend Tests'
+                        : 'Integration backend Tests';
+                    console.log(`[fixAgainstModel] Приведение layer с Unit к Integration: ${tc.title}`);
                 }
 
                 // =============================================================
@@ -4257,14 +7236,121 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             });
         }
 
+        /**
+         * Заменяет упоминания параметров в шагах на формат {{Название параметра}} для Allure TestOps
+         */
+        function injectParameterPlaceholders(testCases) {
+            let totalReplacements = 0;
 
+            const result = testCases.map(tc => {
+                // Если нет параметров, возвращаем как есть
+                if (!Array.isArray(tc.parameters) || tc.parameters.length === 0) {
+                    return tc;
+                }
+
+                // Собираем все названия параметров
+                const parameterNames = tc.parameters
+                    .map(p => p.name)
+                    .filter(Boolean);
+
+                if (parameterNames.length === 0) {
+                    return tc;
+                }
+
+                // Обрабатываем шаги
+                const processedSteps = (tc.steps || []).map(step => {
+                    if (typeof step !== 'string') {
+                        return step;
+                    }
+
+                    let processedStep = step;
+                    let stepModified = false;
+
+                    // Для каждого параметра ищем его упоминания в шаге
+                    parameterNames.forEach(paramName => {
+                        // Проверяем, не использован ли уже формат {{Название параметра}}
+                        if (processedStep.includes(`{{${paramName}}}`)) {
+                            return; // Уже в правильном формате
+                        }
+
+                        // Различные варианты упоминания параметра (в порядке приоритета)
+                        const patterns = [
+                            // 1. "из параметра X", "параметр X", "X из параметров", "из таблицы параметров X"
+                            {
+                                pattern: new RegExp(`(?:из\\s+(?:таблицы\\s+)?)?параметра?\\s+["']?${escapeRegex(paramName)}["']?`, 'gi'),
+                                replacement: `{{${paramName}}}`
+                            },
+                            {
+                                pattern: new RegExp(`["']?${escapeRegex(paramName)}["']?\\s+(?:из\\s+(?:таблицы\\s+)?)?параметра?`, 'gi'),
+                                replacement: `{{${paramName}}}`
+                            },
+                            // 2. Упоминание в скобках: "(X)", "[X]", "{X}"
+                            {
+                                pattern: new RegExp(`\\(["']?${escapeRegex(paramName)}["']?\\)`, 'gi'),
+                                replacement: `{{${paramName}}}`
+                            },
+                            {
+                                pattern: new RegExp(`\\["'?${escapeRegex(paramName)}["']?\\]`, 'gi'),
+                                replacement: `{{${paramName}}}`
+                            },
+                            // 3. Прямое упоминание в контексте "поля X", "значение X", "X из" (только если название достаточно уникальное)
+                            {
+                                pattern: new RegExp(`(?:поля|значение|значения|параметр)\\s+["']?${escapeRegex(paramName)}["']?`, 'gi'),
+                                replacement: (match) => {
+                                    // Сохраняем контекст, заменяя только название параметра
+                                    return match.replace(new RegExp(escapeRegex(paramName), 'gi'), `{{${paramName}}}`);
+                                }
+                            }
+                        ];
+
+                        // Пробуем заменить по паттернам (в порядке приоритета)
+                        for (const { pattern, replacement } of patterns) {
+                            if (pattern.test(processedStep)) {
+                                const beforeReplace = processedStep;
+                                if (typeof replacement === 'function') {
+                                    processedStep = processedStep.replace(pattern, replacement);
+                                } else {
+                                    processedStep = processedStep.replace(pattern, replacement);
+                                }
+
+                                if (beforeReplace !== processedStep) {
+                                    stepModified = true;
+                                    totalReplacements++;
+                                }
+                                break; // Заменяем только один раз на параметр
+                            }
+                        }
+                    });
+
+                    return processedStep;
+                });
+
+                return {
+                    ...tc,
+                    steps: processedSteps
+                };
+            });
+
+            if (totalReplacements > 0) {
+                console.log(`[injectParameterPlaceholders] Заменено ${totalReplacements} упоминаний параметров на формат {{Название параметра}}`);
+            }
+
+            return result;
+        }
+
+        /**
+         * Экранирует специальные символы для использования в регулярных выражениях
+         */
+        function escapeRegex(str) {
+            return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
 
         const sanitize = (arr) => {
             console.log(`[sanitize] Обрабатываем ${arr?.length || 0} кейсов`);
             const ALLOWED_LAYERS = new Set([
                 "E2E Tests",
-                "Integration frontend Tests", "Integration backend Tests",
-                "Unit frontend Tests", "Unit backend Tests"
+                "Integration frontend Tests",
+                "Integration backend Tests"
             ]);
             const trimText = (s, n = 1200) => String(s ?? '').trim().slice(0, n);
             const allowedCodeSet = new Set(allowedCodes);
@@ -4290,44 +7376,207 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             }
 
             function getLogicSignature(testCase) {
-                return `${testCase.layer || ''}::${normalizeText(testCase.story)}::${normalizeText(testCase.scenario)}::${normalizeText(testCase.title)}::${(testCase.steps || []).map(s => normalizeText(s)).join('|')}::${normalizeText(testCase.expected)}`;
+                // ✅ ИСПРАВЛЕНО: учитываем parameters в сигнатуре
+                const paramsSignature = (testCase.parameters || [])
+                    .map(p => `${p.name}:${(p.values || []).sort().join(',')}`)
+                    .sort()
+                    .join('|');
+
+                return `${testCase.layer || ''}::${normalizeText(testCase.story)}::${normalizeText(testCase.scenario)}::${normalizeText(testCase.title)}::${(testCase.steps || []).map(s => normalizeText(s)).join('|')}::${normalizeText(testCase.expected)}::PARAMS[${paramsSignature}]`;
+            }
+
+            // ✅ ДОРАБОТКА 1: Функция валидации привязки к модели
+            /**
+             * Проверяет, что feature/story/scenario существуют в модели
+             * @param {Object} testCase - Тест-кейс для проверки
+             * @param {Array} modelStructure - Структура тестовой модели
+             * @returns {Object} - { valid, errors, correctedFeature, correctedStory, correctedScenario }
+             */
+            function validateModelBinding(testCase, modelStructure) {
+                const errors = [];
+                let correctedFeature = testCase.feature;
+                let correctedStory = testCase.story;
+                let correctedScenario = testCase.scenario;
+
+                if (!modelStructure || !Array.isArray(modelStructure) || modelStructure.length === 0) {
+                    return {
+                        valid: false,
+                        errors: ['Модель не предоставлена или пуста'],
+                        correctedFeature,
+                        correctedStory,
+                        correctedScenario
+                    };
+                }
+
+                // Проверяем feature
+                const featureExists = modelStructure.some(f =>
+                    normalizeText(f.text) === normalizeText(testCase.feature)
+                );
+
+                if (!featureExists && testCase.feature) {
+                    errors.push(`Feature "${testCase.feature}" не найдена в модели`);
+
+                    // Пытаемся найти похожую
+                    const similarFeature = modelStructure.find(f => {
+                        const keywords = normalizeText(testCase.feature).split(/\s+/).filter(w => w.length > 3);
+                        return keywords.some(kw => normalizeText(f.text).includes(kw));
+                    });
+
+                    if (similarFeature) {
+                        correctedFeature = similarFeature.text;
+                        console.log(`[validateModelBinding] Исправлено: "${testCase.feature}" → "${correctedFeature}"`);
+                    } else {
+                        // Если не нашли похожую - используем первую из модели
+                        correctedFeature = modelStructure[0].text;
+                        console.warn(`[validateModelBinding] ⚠️ Feature "${testCase.feature}" не найдена, используем "${correctedFeature}"`);
+                    }
+                }
+
+                // Проверяем story
+                let storyExists = false;
+                let foundFeature = null;
+
+                for (const feature of modelStructure) {
+                    if (normalizeText(feature.text) === normalizeText(correctedFeature)) {
+                        foundFeature = feature;
+                        const foundStory = (feature.stories || []).find(s =>
+                            normalizeText(s.text) === normalizeText(testCase.story)
+                        );
+                        if (foundStory) {
+                            storyExists = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!storyExists && testCase.story) {
+                    errors.push(`Story "${testCase.story}" не найдена в Feature "${correctedFeature}"`);
+
+                    // Пытаемся найти похожую в найденной Feature
+                    if (foundFeature) {
+                        const similarStory = (foundFeature.stories || []).find(s => {
+                            const keywords = normalizeText(testCase.story).split(/\s+/).filter(w => w.length > 3);
+                            return keywords.some(kw => normalizeText(s.text).includes(kw));
+                        });
+
+                        if (similarStory) {
+                            correctedStory = similarStory.text;
+                            console.log(`[validateModelBinding] Исправлено: "${testCase.story}" → "${correctedStory}"`);
+                        } else if (foundFeature.stories && foundFeature.stories.length > 0) {
+                            // Если не нашли похожую - используем первую Story из Feature
+                            correctedStory = foundFeature.stories[0].text;
+                            console.warn(`[validateModelBinding] ⚠️ Story "${testCase.story}" не найдена, используем "${correctedStory}"`);
+                        }
+                    }
+                }
+
+                // Проверяем scenario (только для Integration тестов)
+                if (testCase.layer?.includes('Integration') && testCase.scenario) {
+                    let scenarioExists = false;
+
+                    for (const feature of modelStructure) {
+                        if (normalizeText(feature.text) !== normalizeText(correctedFeature)) continue;
+
+                        for (const story of (feature.stories || [])) {
+                            if (normalizeText(story.text) !== normalizeText(correctedStory)) continue;
+
+                            const foundScenario = (story.scenarios || []).find(sc =>
+                                normalizeText(sc.text) === normalizeText(testCase.scenario)
+                            );
+                            if (foundScenario) {
+                                scenarioExists = true;
+                                break;
+                            }
+                        }
+                        if (scenarioExists) break;
+                    }
+
+                    if (!scenarioExists) {
+                        errors.push(`Scenario "${testCase.scenario}" не найден в Story "${correctedStory}"`);
+                        // Не исправляем scenario автоматически - это критичная ошибка
+                    }
+                }
+
+                return {
+                    valid: errors.length === 0,
+                    errors,
+                    correctedFeature,
+                    correctedStory,
+                    correctedScenario
+                };
             }
 
             return (arr || [])
                 .filter(x => x && typeof x === 'object')
                 .map(x => {
+                    // ✅ ДОРАБОТКА 1: Валидация привязки к модели
+                    const validationResult = validateModelBinding(x, modelStructure);
+
+                    if (!validationResult.valid) {
+                        console.warn(`[sanitize] ⚠️ Тест-кейс не привязан к модели: "${x.title || 'untitled'}"`);
+                        validationResult.errors.forEach(err => console.warn(`  - ${err}`));
+                        // Не отфильтровываем сразу - исправим значения и проверим позже
+                    }
+                    // ✅ ИСПРАВЛЕНО: удаляем поле requirement
+                    delete x.requirement;
+
+                    // ✅ ИСПРАВЛЕНО: форматируем Expected с ключевыми словами
+                    let expected = take(x.expected || x.expectedResult, 800);
+                    if (expected && typeof expected === 'string') {
+                        expected = formatExpectedResult(expected, x.layer);
+                    }
+
+                    // ✅ ИСПРАВЛЕНО: очищаем Steps от слова "Проверить"
+                    let steps = Array.isArray(x.steps) ? x.steps.map(s => trimText(s, 600)).slice(0, 40) : [];
+                    steps = steps.map(step => {
+                        if (typeof step === 'string' && step.toLowerCase().startsWith('проверить')) {
+                            console.warn(`[sanitize] ⚠️ Шаг начинается с "Проверить": "${step}"`);
+                            // Переносим в Expected
+                            if (!expected) {
+                                expected = step.replace(/^проверить,?\s*/i, '');
+                            }
+                            return null; // Удаляем из Steps
+                        }
+                        return step;
+                    }).filter(Boolean);
+
                     console.log(`[sanitize] Обрабатываем кейс:`, {
                         title: x.title,
                         layer: x.layer,
-                        hasSteps: !!x.steps,
-                        stepsLength: x.steps?.length,
-                        hasExpected: !!x.expected,
-                        expectedLength: x.expected?.length
+                        hasSteps: !!steps.length,
+                        stepsLength: steps.length,
+                        hasExpected: !!expected,
+                        expectedLength: expected?.length
                     });
-                    const steps = Array.isArray(x.steps) ? x.steps.map(s => trimText(s, 600)).slice(0, 40) : [];
+
                     const tags = Array.isArray(x.tags) ? Array.from(new Set(x.tags.map(t => String(t).trim()).filter(Boolean))) : [];
                     const layer = ALLOWED_LAYERS.has(x.layer) ? x.layer : null;
 
                     const codeRaw = trimText(x.code, 200);
                     const code = allowedCodeSet.has(codeRaw) ? codeRaw : undefined;
 
+                    // ✅ Используем исправленные значения из валидации
+                    const finalFeature = validationResult.correctedFeature || extractTextFromModel(modelStructure, 'feature', take(x.feature, 200));
+                    const finalStory = validationResult.correctedStory || extractTextFromModel(modelStructure, 'story', take(x.story, 200));
+                    const finalScenario = validationResult.correctedScenario || extractTextFromModel(modelStructure, 'scenario', take(x.scenario, 200));
+
                     return {
                         title: take(x.title, 200),
                         description: take(x.description, 800),
                         precondition: take(x.precondition, 800),
                         steps,
-                        expected: take(x.expected || x.expectedResult, 800),
+                        expected,
                         tags,
                         layer,
-                        feature: extractTextFromModel(modelStructure, 'feature', take(x.feature, 200)),
-                        story: extractTextFromModel(modelStructure, 'story', take(x.story, 200)),
-                        scenario: extractTextFromModel(modelStructure, 'scenario', take(x.scenario, 200)),
+                        feature: finalFeature,
+                        story: finalStory,
+                        scenario: finalScenario,
                         code: extractTextFromModel(modelStructure, 'code', code),
                         priority: take(x.priority, 50),
                         version: take(x.version, 50),
                         links: Array.isArray(x.links) ? x.links.slice(0, 10) : [],
                         jiraIssue: take(x.jiraIssue, 100),
-                        requirement: take(x.requirement, 50),  // 🚨 ДОБАВЛЕНО!
+                        // ❌ УДАЛЕНО: requirement - не используется в тест-кейсах
                         parameters: Array.isArray(x.parameters) ? x.parameters.map(p => ({
                             name: take(p.name, 100),
                             values: Array.isArray(p.values) ? p.values.map(v => take(v, 500)).filter(Boolean) : []
@@ -4337,11 +7586,26 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                                 name: take(p.name, 100),
                                 value: take(p.value, 500)
                             })).filter(p => p.name && p.value) : []
-                        })).filter(ex => ex.parameters.length > 0) : []
+                        })).filter(ex => ex.parameters.length > 0) : [],
+                        // ✅ Сохраняем информацию о валидации для последующей фильтрации
+                        _validationErrors: validationResult.errors
                     };
                 })
                 .filter(x => {
                     if (!x.title || !x.steps?.length || !x.expected || !x.layer) return false;
+
+                    // ✅ ДОРАБОТКА 1: Фильтруем тесты с критичными ошибками валидации
+                    if (x._validationErrors && x._validationErrors.length > 0) {
+                        // Если есть ошибки валидации и они критичные (scenario не найден для Integration) - отфильтровываем
+                        const criticalErrors = x._validationErrors.filter(err =>
+                            err.includes('Scenario') && x.layer?.includes('Integration')
+                        );
+                        if (criticalErrors.length > 0) {
+                            console.warn(`[sanitize] ❌ Отклонён тест-кейс с критичными ошибками: "${x.title}"`);
+                            criticalErrors.forEach(err => console.warn(`  - ${err}`));
+                            return false;
+                        }
+                    }
 
                     const normalized = normalizeText(x.title);
                     if (seenTitles.has(normalized)) {
@@ -4357,6 +7621,13 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                     }
                     seenLogic.set(signature, x.title);
                     return true;
+                })
+                .map(x => {
+                    // Удаляем служебное поле _validationErrors перед возвратом
+                    if (x._validationErrors) {
+                        delete x._validationErrors;
+                    }
+                    return x;
                 });
         };
 
@@ -4366,10 +7637,69 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken
         } = inputData;
 
-        const modelStructure = normalizeModelStructure(rawModel);
+        // ✅ Создаем глубокую копию modelStructure чтобы не модифицировать оригинал
+        const rawModelCopy = JSON.parse(JSON.stringify(rawModel));
+        const modelStructure = normalizeModelStructure(rawModelCopy);
 
         if ((!Array.isArray(requirements) && typeof requirements !== 'string') || !modelStructure) {
             throw new Error('requirements и modelStructure обязательны');
+        }
+
+        // ✅ Убеждаемся, что все Code имеют поле type
+        for (const feature of modelStructure || []) {
+            for (const story of feature.stories || []) {
+                for (const scenario of story.scenarios || []) {
+                    for (const code of scenario.codes || []) {
+                        if (!code.type && code.text) {
+                            code.type = detectCodeType(code.text);
+                        }
+                    }
+                }
+            }
+        }
+
+        const sourceRegistry = createContextSourceRegistry();
+        const { register: registerSource, safeTrim, deriveTitleFromContent } = sourceRegistry;
+
+        if (Array.isArray(requirements) && requirements.length) {
+            const rawCombined = requirements.map((item) => String(item || '').trim()).filter(Boolean).join('\n\n---\n\n');
+            if (safeTrim(rawCombined)) {
+                registerSource({
+                    id: 'raw-requirements',
+                    title: 'Исходные требования',
+                    description: 'Массив требований из запроса',
+                    type: 'requirement',
+                    content: rawCombined
+                });
+            }
+        } else if (typeof requirements === 'string' && safeTrim(requirements)) {
+            registerSource({
+                id: 'raw-requirements',
+                title: 'Исходные требования',
+                description: 'Требование, переданное в запросе',
+                type: 'requirement',
+                content: requirements
+            });
+        }
+
+        if (safeTrim(text)) {
+            registerSource({
+                id: 'text-requirement',
+                title: 'Дополнительный текст требования',
+                description: 'Поле text из запроса',
+                type: 'requirement',
+                content: text
+            });
+        }
+
+        if (safeTrim(glossary)) {
+            registerSource({
+                id: 'raw-glossary',
+                title: 'Глоссарий из запроса',
+                description: 'Глоссарий, предоставленный пользователем',
+                type: 'glossary',
+                content: glossary
+            });
         }
 
         function buildRequirementToStoryMapping(modelStructure) {
@@ -4458,13 +7788,21 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         if (pageId) {
             try {
                 if (!bearerToken) throw new Error('bearerToken is required for Confluence');
-                const { markdown } = await fetchConfluencePage(bearerToken, pageId, { inlineTextAttachments: true });
+                const { markdown, title: mainTitle } = await fetchConfluencePage(bearerToken, pageId, { inlineTextAttachments: true });
                 baseRequirement = markdown || '';
                 const ids = new Set(Array.from(String(markdown || '').matchAll(/pageId=(\d{4,})/g)).map(m => m[1]));
                 ids.delete(String(pageId));
+                registerSource({
+                    id: `page-${pageId}`,
+                    title: deriveTitleFromContent(baseRequirement, mainTitle || `Confluence page ${pageId}`, pageId),
+                    description: 'Основное требование (полный текст)',
+                    type: 'requirement',
+                    pageId: String(pageId),
+                    content: baseRequirement
+                });
                 for (const lid of ids) {
                     try {
-                        const { markdown: md } = await fetchConfluencePage(bearerToken, lid, { inlineTextAttachments: true });
+                        const { markdown: md, title: linkedTitle } = await fetchConfluencePage(bearerToken, lid, { inlineTextAttachments: true });
                         const lines = String(markdown || '').split(/\n/);
                         const refIdx = lines.findIndex(l => l.includes(`pageId=${lid}`));
                         let mention = '';
@@ -4473,18 +7811,37 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                             const end = Math.min(lines.length, refIdx + 3);
                             mention = lines.slice(start, end).join('\n').trim();
                         }
-                        const relevant = extractRelevantSections(md, mention, { maxSections: 8, maxChars: 50000 });
+                        const relevant = extractRelevantSections(md, mention, { maxSections: 15, maxChars: 100000 }); // Увеличено для полного контекста
                         autoPages.push([
                             `### Контекст по ссылке из основной статьи (pageId=${lid})`,
                             mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${lid})`,
                             '',
                             relevant
                         ].join('\n'));
+                        registerSource({
+                            id: `page-${lid}`,
+                            title: deriveTitleFromContent(md, linkedTitle || `Связанная страница ${lid}`, lid),
+                            description: mention ? `Упоминание: ${formatMention(mention)}` : 'Контекст из связанной страницы',
+                            type: 'confluence',
+                            pageId: String(lid),
+                            content: md
+                        });
                     } catch { }
                 }
             } catch (e) {
                 console.warn('[generate-test-cases-async] auto-context fetch failed:', e.message);
             }
+        }
+
+        const requestContextText = normalizeContextInput(context);
+        if (requestContextText) {
+            registerSource({
+                id: 'user-context',
+                title: 'Дополнительный контекст из запроса',
+                description: contextInstruction ? String(contextInstruction) : 'Контекст, переданный вместе с задачей',
+                type: 'context',
+                content: requestContextText
+            });
         }
 
         try {
@@ -4506,6 +7863,18 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             refinedReqs = Array.isArray(requirements) ? requirements : (requirements ? [requirements] : []);
         }
 
+        const combinedRefinedRequirements = refinedReqs.filter((segment) => safeTrim(segment)).join('\n\n---\n\n');
+        if (safeTrim(combinedRefinedRequirements)) {
+            registerSource({
+                id: pageId ? `refined-requirements-${pageId}` : 'refined-requirements',
+                title: 'Требования после обработки',
+                description: 'Выжимка требований для генерации тест-кейсов',
+                type: 'requirement',
+                pageId: pageId ? String(pageId) : null,
+                content: combinedRefinedRequirements
+            });
+        }
+
         // Глобальный список допустимых code (по всей модели) — нужен sanitize()
         const allowedCodes = Array.from(new Set(
             (modelStructure || []).flatMap(f =>
@@ -4516,6 +7885,45 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 )
             )
         ));
+
+        const contextFetcher = bearerToken
+            ? async (requestedPageId) => {
+                try {
+                    if (requestedPageId == null) return '';
+                    const requestedIdStr = String(requestedPageId);
+                    const existing = sourceRegistry.sources.find((src) => src.pageId === requestedIdStr && src.content);
+                    if (existing) return existing.content;
+                    const { markdown } = await fetchConfluencePage(bearerToken, requestedIdStr, { inlineTextAttachments: true });
+                    return markdown || '';
+                } catch (err) {
+                    console.warn(`[generate-test-cases] Не удалось загрузить страницу pageId=${requestedPageId}: ${err.message}`);
+                    return '';
+                }
+            }
+            : null;
+
+        const contextToolset = createContextToolset({
+            sources: sourceRegistry.getSources(),
+            fetcher: contextFetcher,
+            defaultChunk: 8000  // ✅ Увеличено для MiniMax-M2 (204K контекст)
+        });
+        const interactiveTools = Array.isArray(contextToolset.tools) ? contextToolset.tools : [];
+        const contextToolHandlers = contextToolset.handlers || {};
+
+        let toolSummary = contextToolset.summary || '';
+        if (toolSummary) {
+            const lines = toolSummary.split('\n').filter(Boolean);
+            if (lines.length > 15) {
+                const hiddenCount = lines.length - 15;
+                toolSummary = `${lines.slice(0, 15).join('\n')}\n- ... ещё ${hiddenCount} источников`;
+            }
+        } else {
+            toolSummary = '—';
+        }
+
+        const toolInstruction = interactiveTools.length
+            ? `**Как работать с дополнительным контекстом:**\n- Вызови \`list_context_sources()\`, чтобы увидеть доступные источники (требования, контекст и связанные страницы из Confluence)\n- Используй \`fetch_context_chunk({ "sourceId": "...", "offset": 0, "limit": 4000 })\`, чтобы читать нужные фрагменты\n- При необходимости продолжай чтение, увеличивая \`offset\`\n\n**Доступные источники:**\n${toolSummary}\n`
+            : '**Как работать с дополнительным контекстом:**\nДополнительные источники не предоставлены. Генерируй тест-кейсы, опираясь на текст требований.\n';
 
         // ====== УЛУЧШЕНИЕ: Функция-обертка для контроля таймаутов ======
         async function withTimeout(promise, ms, operationName = 'AI call') {
@@ -4528,52 +7936,39 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return Promise.race([promise, timeout]);
         }
 
-        function splitByStories(modelStructure) {
+        // ✅ ОПТИМИЗИРОВАННАЯ ВЕРСИЯ: ONE-PASS вместо TWO-PASS
+        function splitByStoriesOptimized(modelStructure) {
             const chunks = [];
-            const MAX_SCENARIOS_PER_CHUNK = 3;
+            const MAX_SCENARIOS = 5; // увеличено для меньшего числа вызовов
 
             for (const feature of modelStructure) {
                 for (const story of feature.stories) {
                     const scenarios = story.scenarios || [];
 
-                    // ✅ ВСЕГДА создаём мастер-chunk (даже для маленьких Story)
-                    const masterChunk = [{
-                        text: feature.text,
-                        stories: [{
-                            text: story.text,
-                            scenarios: scenarios,  // ВСЕ Scenarios
-                            _isMasterChunk: true
-                        }]
-                    }];
-                    chunks.push(masterChunk);
-
-                    // Создаём детальные chunk'и ТОЛЬКО если Scenarios > 3
-                    if (scenarios.length > MAX_SCENARIOS_PER_CHUNK) {
-                        for (let i = 0; i < scenarios.length; i += MAX_SCENARIOS_PER_CHUNK) {
-                            const scenariosBatch = scenarios.slice(i, i + MAX_SCENARIOS_PER_CHUNK);
-
-                            const detailChunk = [{
-                                text: feature.text,
-                                stories: [{
-                                    text: story.text,
-                                    scenarios: scenariosBatch,
-                                    _isDetailChunk: true
-                                }]
-                            }];
-
-                            chunks.push(detailChunk);
-                        }
-                    } else {
-                        // ✅ Для маленьких Story тоже создаём детальный chunk
-                        const detailChunk = [{
+                    // Одна Story → Один чанк с ПОЛНЫМ контекстом
+                    if (scenarios.length <= MAX_SCENARIOS) {
+                        chunks.push([{
                             text: feature.text,
                             stories: [{
                                 text: story.text,
-                                scenarios: scenarios,
-                                _isDetailChunk: true
+                                scenarios: scenarios, // ВСЕ сценарии
+                                _mode: 'FULL' // флаг для промпта
                             }]
-                        }];
-                        chunks.push(detailChunk);
+                        }]);
+                    } else {
+                        // Большая Story → делим на батчи, но БЕЗ мастер-чанка
+                        for (let i = 0; i < scenarios.length; i += MAX_SCENARIOS) {
+                            const batch = scenarios.slice(i, i + MAX_SCENARIOS);
+                            chunks.push([{
+                                text: feature.text,
+                                stories: [{
+                                    text: story.text,
+                                    scenarios: batch,
+                                    _mode: 'BATCH',
+                                    _batchInfo: `${Math.floor(i / MAX_SCENARIOS) + 1} из ${Math.ceil(scenarios.length / MAX_SCENARIOS)}`
+                                }]
+                            }]);
+                        }
                     }
                 }
             }
@@ -4581,6 +7976,80 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return chunks;
         }
 
+
+        // ✅ ФИЛЬТРАЦИЯ ТРЕБОВАНИЙ ПО РЕЛЕВАНТНОСТИ
+        function filterRelevantRequirements(requirements, chunk) {
+            const feature = chunk[0].text.toLowerCase();
+            const story = chunk[0].stories[0].text.toLowerCase();
+            const scenarios = chunk[0].stories[0].scenarios.map(s => s.text.toLowerCase());
+
+            const keywords = new Set([
+                ...feature.split(/\s+/),
+                ...story.split(/\s+/),
+                ...scenarios.flatMap(s => s.split(/\s+/))
+            ].filter(w => w.length > 3)); // только слова > 3 символов
+
+            return requirements.filter(req => {
+                const reqLower = req.toLowerCase();
+                return Array.from(keywords).some(kw => reqLower.includes(kw));
+            }).slice(0, 20); // максимум 20 релевантных требований
+        }
+
+        // ✅ КОРОТКИЙ КОНТЕКСТНО-ЗАВИСИМЫЙ ПРОМПТ
+        function buildContextPrompt(chunk, existingE2E = []) {
+            const mode = chunk[0].stories[0]._mode;
+            const feature = chunk[0].text;
+            const story = chunk[0].stories[0].text;
+            const scenarios = chunk[0].stories[0].scenarios;
+
+            if (mode === 'FULL') {
+                return `
+🎯 ЗАДАЧА: Генерация E2E + Integration для Story "${story}"
+
+КОНТЕКСТ:
+- Feature: "${feature}"
+- Story: "${story}" (${scenarios.length} Scenarios)
+
+ЗАДАНИЕ:
+1. Создай 1-2 E2E теста (сквозной путь пользователя через Story)
+2. Создай 2-3 Integration теста для КАЖДОГО Scenario (UI + API, позитив + негатив)
+
+ПРИМЕР E2E:
+{
+  "title": "Полный цикл авторизации и отправки отчёта BiZone",
+  "layer": "E2E Tests",
+  "feature": "${feature}",
+  "story": "${story}",
+  "scenario": "${scenarios[0]?.text || 'Основной сценарий'}",
+  "steps": ["Открыть приложение", "Авторизоваться", "Проверить отправку отчёта"],
+  "expected": "SDK инициализирован, POST /create/sdk вызван с кодом 204"
+}
+
+ПРИМЕР Integration (SDK-специфичный!):
+{
+  "title": "SDK BiZone начинает сбор данных при открытии формы авторизации",
+  "layer": "Integration frontend Tests",
+  "feature": "${feature}",
+  "story": "${story}",
+  "scenario": "${scenarios[0]?.text}",
+  "expected": "SDK инициализирован, DeviceModel и AppKey собраны"
+}
+
+❌ ЗАПРЕЩЕНО: общие UI-тесты БЕЗ контекста "${feature}"
+`.trim();
+            }
+
+            // Для BATCH-режима
+            return `
+🎯 ЗАДАЧА: Integration тесты для ${scenarios.length} Scenarios (батч ${chunk[0].stories[0]._batchInfo})
+
+E2E УЖЕ ЕСТЬ:
+${existingE2E.map(t => `- ${t.title}`).join('\n')}
+
+ЗАДАНИЕ: Создай 2-3 Integration теста для КАЖДОГО Scenario
+❌ НЕ дублируй E2E-логику!
+`.trim();
+        }
 
         function collectAllowedCodes(modelChunk) {
             const set = new Set();
@@ -4611,18 +8080,14 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         }
 
         function auditCoverage(model, cases) {
-            // Минимумы: 1 E2E на Story, 3 Integration на Scenario, 2 Unit на Code
+            // Минимумы: 1 E2E на Story, 2-3 Integration на Scenario
             const needE2EByStory = new Map();
             const needSc = new Map(); // scenario -> remaining Integration
-            const needCd = new Map(); // code -> remaining Unit
 
             for (const f of model) for (const st of (f.stories || [])) {
                 needE2EByStory.set(st.text, 1);
                 for (const sc of (st.scenarios || [])) {
                     needSc.set(sc.text, 3);
-                    for (const cd of (sc.codes || [])) {
-                        needCd.set(cd.text, 2);
-                    }
                 }
             }
 
@@ -4636,30 +8101,25 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                     const rest = needSc.get(tc.scenario);
                     if (rest != null) needSc.set(tc.scenario, Math.max(0, rest - 1));
                 }
-                if (layer.startsWith('Unit') && tc.code) {
-                    const rest = needCd.get(tc.code);
-                    if (rest != null) needCd.set(tc.code, Math.max(0, rest - 1));
-                }
             }
 
             const missingE2E = [...needE2EByStory].filter(([, n]) => n > 0).map(([story, need]) => ({ story, need }));
             const missingSc = [...needSc].filter(([, n]) => n > 0).map(([scenario, need]) => ({ scenario, need }));
-            const missingCd = [...needCd].filter(([, n]) => n > 0).map(([code, need]) => ({ code, need }));
 
-            return { missingE2E, missingSc, missingCd };
+            return { missingE2E, missingSc };
         }
 
         // Догенерация только недостающего покрытия
         async function gapFill(model, reqs, missing, systemPrompt) {
-            const { missingE2E, missingSc, missingCd } = missing;
-            if (!missingE2E.length && !missingSc.length && !missingCd.length) return [];
+            const { missingE2E, missingSc } = missing;
+            if (!missingE2E.length && !missingSc.length) return [];
 
             // Собрать минимальный chunk только с нужными story/scenario/code
             const featureText = (model[0] && model[0].text) || 'Feature';
             const chunk = [{ text: featureText, stories: [] }];
             const needStories = new Set(missingE2E.map(x => x.story));
             const needScens = new Set(missingSc.map(x => x.scenario));
-            const needCodes = new Set(missingCd.map(x => x.code));
+            const needCodes = new Set();
 
             for (const f of model) for (const st of (f.stories || [])) {
                 const keepStory = needStories.has(st.text)
@@ -4670,10 +8130,10 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 if (!keepStory) continue;
 
                 const scenarios = (st.scenarios || []).filter(sc =>
-                    needScens.has(sc.text) || (sc.codes || []).some(cd => needCodes.has(cd.text))
+                    needScens.has(sc.text)
                 ).map(sc => ({
                     ...sc,
-                    codes: (sc.codes || []).filter(cd => needCodes.has(cd.text))
+                    codes: sc.codes || []
                 }));
 
                 chunk[0].stories.push({ text: st.text, scenarios });
@@ -4684,10 +8144,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
             const mustLines = [
                 ...missingE2E.map(m => `E2E для story "${m.story}" ×${m.need}`),
-                ...missingSc.map(m => `Integration для scenario "${m.scenario}" ×${m.need}`),
-                ...missingCd.map(m => `Unit для code "${m.code}" ×${m.need}`),
+                ...missingSc.map(m => `Integration для scenario "${m.scenario}" ×${m.need}`)
             ];
-
             const userPrompt = `
 Сгенерируй ТОЛЬКО недостающее покрытие для следующего куска модели.
 Модель (кусок):
@@ -4699,29 +8157,20 @@ ${mustLines.map(l => `- ${l}`).join('\n')}
 Требования:
 ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
-ДОПУСТИМЫЕ ЗНАЧЕНИЯ ДЛЯ "code":
-${allowedForChunk.map(c => `- ${c}`).join('\n')}
-
 Ответ — ТОЛЬКО чистый JSON-массив без Markdown.
 `.trim();
 
-            const tools = [buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios)];
-            const ai = await callWithCloudRuFallback(
-                OPENROUTER_URL,
-                [
-                    { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
-                    { role: 'user', content: userPrompt }
-                ],
-                config.openRouterAiKey,
-                {
-                    tools,
-                    // tool_choice убран для Cloud.ru совместимости
+            const submissionTool = buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios);
+            const ai = await runTestCaseLLM({
+                userPrompt,
+                submissionTool,
+                modelOverrides: {
                     temperature: 0.25,
                     top_p: 0.9,
                     max_tokens: 40000,
                     extra: { transforms: 'middle-out' }
                 }
-            );
+            });
 
             const args = extractToolArgs(ai, "submit_cases");
             if (args && Array.isArray(args.cases)) return args.cases;
@@ -4807,979 +8256,304 @@ ${allowedForChunk.map(c => `- ${c}`).join('\n')}
             return chunks.length > 0 ? chunks : [[]];
         }
 
-        // ====== ПРОМПТЫ (из синхронной версии) ======
+
         const BASE_SYSTEM_PROMPT = `
-Ты — скрупулёзный SDET (Software Development Engineer in Test), создающий атомарные и исчерпывающие тест-кейсы для импорта в Allure. На основе входной тест-модели (modelStructure) и требований сгенерируй JSON-массив тест-кейсов, НЕУКОСНИТЕЛЬНО следуя Style Guide ниже.
+Ты — SDET (Software Development Engineer in Test), генерирующий тест-кейсы на основе requirements в формате Allure TestOps.
 
-Технологический стек проекта: фронтенд — Angular (TypeScript), бэкенд — .NET/C#. Если требования явно описывают поведение клиента, трактуй его для Angular; если описывают серверное поведение/API — трактуй для .NET. Никогда не додумывай детали вне текста.
+═══════════════════════════════════════════════════════════════
+🎯 ТИПЫ ТЕСТОВ (ТЕСТОВЫЕ СЛОИ)
+═══════════════════════════════════════════════════════════════
 
-🚨 КРИТИЧЕСКИ ВАЖНО: ЗАПРЕТ НА ДУБЛИКАТЫ! 🚨
-ЗАПРЕЩЕНО создавать тесты с похожими названиями или одинаковой логикой!
-Если видишь похожие названия — это ДУБЛИКАТ! Создавай ОДИН обобщённый тест!
+**E2E Tests** — сквозные пользовательские сценарии через UI или API от начала до конца (например: авторизация → создание платежа → подписание → отправка).
 
-# 1) Принцип "Один Пример из Требований -> Один Тест-Кейс" (КРАТКО И СТРОГО)
-Ты создаёшь тест-кейсы исключительно на основе абсолютно явных и конкретных примеров из текста требований. Никаких домыслов, предположений или недосказанностей в шагах и expected результатах быть не должно.
+**Integration frontend Tests** — атомарные тесты взаимодействия Frontend-компонент с UI, начиная с инициализации изолированной компоненты БЕЗ предварительных пользовательских шагов.
 
-Алгоритм твоих действий:
-1.  Возьми один узел из \`modelStructure\` (например, \`Scenario: "Ввести недопустимое значение..."\`).
-2.  Тщательно просканируй ВЕСЬ текст требований и найди ТОЛЬКО те примеры, которые явно и текстуально соответствуют этому узлу.
-3.  Для каждого такого примера сгенерируй ровно один, атомарный тест-кейс.
-4.  Строго запрещено объединять разные примеры в один кейс или творить новые примеры.
-5.  Все поля \`title\`, \`steps\` и \`expected\` должны содержать лишь ДОСЛОВНЫЕ данные или тексты, встречающиеся в требованиях. Запрещено добавлять или интерпретировать дополнительную информацию.
-6.  Если для узла отсутствуют явные примеры в требованиях — не создавай тест-кейса вовсе.
-7.  При сложной логике описывай ожидаемый результат ровно так, как он изложен в соответствующем примере, ни больше, ни меньше.
+  - Проверяется ТОЛЬКО UI-поведение: отображение элементов, валидация полей, переходы между страницами
 
-Пример работы алгоритма:
-- **Абстрактный узел:** \`Scenario: "Проверить срабатывание валидации при конфликте условий"\`
-- **Требования содержат пример:** "Если настроены две зависимости с одинаковым условием для '27 LADA FREE', и в поле введено значение '10', то должна сработать последняя зависимость с текстом 'Срок кредита, не может быть <12 мес. и >84 мес.'"
-- **Твой результат (один тест-кейс):**
-  - \`title\`: "Проверка применения последней зависимости при конфликте условий для программы '27 LADA FREE'"
-  - \`steps\`: ["Выбрать значение '27 LADA FREE'", "Ввести значение '10'"]
-  - \`expected\`: "Система отображает текст ошибки 'Срок кредита, не может быть <12 мес. и >84 мес.'"
+  - Backend-запросы можно мокать (но НЕ указывать это явно в тест-кейсе)
 
-1.1) КРИТИЧЕСКИ ВАЖНО: НЕ ВЫДУМЫВАЙ ДЕТАЛИ!
-🚨 ЗАПРЕЩЕНО ДОДУМЫВАТЬ ТО, ЧЕГО НЕТ В REQUIREMENTS! 🚨
+  - Шаги НЕ включают действия типа "Авторизоваться", "Перейти в раздел X"
 
-НЕ придумывай API-методы:
-❌ Если в requirements сказано "GET /get_by_id" — пиши ТОЛЬКО его
-❌ НЕ добавляй "POST /validate", "GET /check_status", "DELETE /clear" и другие методы, которых нет в тексте
-✅ Используй ТОЛЬКО те API-endpoints, которые ЯВНО упомянуты в requirements
+  - Начинаются сразу с действия на компоненте: "Нажать на кнопку", "Выбрать чек-бокс", "Ввести в поле"
 
-НЕ придумывай HTTP-коды:
-❌ Если в requirements написано "при статусе 200" — НЕ добавляй 202, 204, 201
-✅ Тестируй ТОЛЬКО указанные коды + стандартные негативные (404, 500 для GET/POST)
-✅ Исключение: если requirements явно пишут "200 или 202" — тогда тестируй оба
+**Integration backend Tests** — атомарные тесты Backend API без UI.
 
-НЕ додумывай параметры запросов:
-❌ Если в requirements нет параметра user_id — НЕ пиши про него в тесте
-❌ Если упомянут только doc_type — НЕ добавляй session_token, api_key, request_id
-✅ Используй ТОЛЬКО те параметры, которые явно указаны в requirements
+  - Проверяется ТОЛЬКО вызов HTTP-запроса и валидация ответа/БД
 
-НЕ додумывай бизнес-логику:
-❌ НЕ пиши "система должна проверить права доступа", если этого нет в requirements
-❌ НЕ пиши "отображается сообщение об ошибке", если requirements не описывают его текст
-❌ НЕ пиши "данные сохраняются в БД", если requirements не упоминают сохранение
-✅ Описывай ТОЛЬКО ту логику, которая явно прописана в requirements
+  - Шаги НЕ включают UI-действия типа "Нажать на кнопку", "Заполнить форму"
 
-НЕ додумывай шаги:
-❌ НЕ добавляй шаги типа "Дождаться загрузки", "Проверить статус", если их нет в requirements
-❌ НЕ пиши "Ввести валидные данные" — укажи КОНКРЕТНЫЕ данные из requirements
-✅ Шаги = ТОЛЬКО действия пользователя/системы, явно описанные в requirements
-✅ Expected = ТОЛЬКО результаты, явно описанные в requirements
+  - Формат шага: "Выполнить POST /api/endpoint с параметрами X"
 
-Expected ОБЯЗАТЕЛЬНО должен быть КОНКРЕТНЫМ и ПРОВЕРЯЕМЫМ:
+  - Ожидаемый результат: статус-код ответа, структура JSON, изменения в БД
 
-Примеры НЕПРАВИЛЬНО (слишком общо):
-❌ "expected": "Система работает корректно"
-❌ "expected": "Платеж выполнен успешно"
-❌ "expected": "Данные переданы"
-❌ "expected": "Ошибка обработана"
+**Unit Tests** — заглушки для каждого Code из тестовой модели.
 
-Примеры ПРАВИЛЬНО (конкретно):
-✅ "expected": "Метод GET /get_by_id вызван с параметром doc_type=payment и вернул статус 200 с полями: id, amount, date"
-✅ "expected": "После ответа 200 от GET /get_by_id вызван метод getReport(), данные переданы через POST /create/sdk с кодом ответа 204"
-✅ "expected": "На экране отображено сообщение 'Платеж выполнен на сумму 100₽', баланс счёта уменьшен на 100₽"
+  - ОДИН unit тест на каждый Code
 
-ПРАВИЛО: Expected ДОЛЖЕН содержать:
+  - Title = просто дублирование названия Code (например, если Code = "GET /info/v2", то title = "GET /info/v2")
 
-HTTP-код ответа (для Integration/Unit backend Tests)
+  - Steps = пустой массив []
 
-Текст сообщения или название элемента UI (для E2E/Integration frontend Tests)
+  - Expected = дублирование названия Code
 
-Конкретное изменение данных (для E2E Tests)
+  - Layer = "Unit Tests"
 
-Факт вызова метода с указанием параметров (для Unit Tests)
+  - Поля: feature, story, scenario, code, title, steps, expected, layer, priority, version
 
-✅ ЧТО РАЗРЕШЕНО (стандартные практики тестирования):
+═══════════════════════════════════════════════════════════════
+📋 СТРУКТУРА ТЕСТОВ
+═══════════════════════════════════════════════════════════════
 
-Негативные сценарии с 404, 500 для ЛЮБОГО API-метода (это стандарт HTTP)
+## E2E Tests
+- Полный пользовательский путь от авторизации до результата
+- Steps: ["Авторизоваться", "Перейти на...", "Нажать...", "Заполнить...", "Сохранить"]
+- Expected: финальный результат для пользователя (экран/сообщение/изменение)
+- Поля: feature, story, title, steps, expected, tags, layer, priority, version, parameters, examples
+- ✅ Параметризация: ОБЯЗАТЕЛЬНА при наличии нескольких вариантов (типы карт, способы оплаты, статусы операций)
 
-Проверка обязательных полей: если requirements говорят "поле X обязательное" — тестируй его отсутствие
+## Integration Frontend Tests
+- Реакция UI на действия пользователя
+- Precondition: состояние экрана/модального окна
+- Steps: 1-3 UI-действия (БЕЗ системных глаголов типа "дождаться загрузки")
+- Expected: что отображается после действия (текст/кнопка/поле/ошибка)
+- Поля: feature, story, scenario, title, precondition, steps, expected, tags, layer, priority, version, parameters, examples
+- ✅ Параметризация: ОБЯЗАТЕЛЬНА при наличии нескольких вариантов (коды операций, типы документов, статусы)
 
-Граничные значения (BVA): ТОЛЬКО если requirements дают явные границы (например, "от 48 до 84 символов")
+## Integration Backend Tests
+- HTTP-вызовы и их ответы
+- Precondition: ТОЛЬКО техническое ("Сервер доступен", "БД готова"). ❌ НЕ "Пользователь ввёл..."
+- Steps: вызов API с параметрами ("Выполнить GET /api/endpoint с doc_type={{Тип документа}}")
+- Expected: статус + ключевые поля ("Получен ответ 200 с JSON: {id, amount, date}")
+- Поля: feature, story, scenario, title, precondition, steps, expected, tags, layer, priority, version, parameters, examples
+- ✅ Параметризация: ОБЯЗАТЕЛЬНА при наличии нескольких вариантов (HTTP-коды, типы запросов, параметры API)
+- 🚨 КРИТИЧНО: Integration backend Tests = ТОЛЬКО вызов HTTP-запроса и проверка ответа/БД. НЕ включай UI-действия!
 
-Timeout/network errors: ТОЛЬКО если requirements упоминают обработку сетевых ошибок
+## Unit Tests
+- Заглушки для каждого Code из тестовой модели
+- ОДИН unit тест на каждый Code
+- Title = дублирование названия Code
+- Steps = [] (пустой массив)
+- Expected = дублирование названия Code
+- Поля: feature, story, scenario, code, title, steps, expected, layer, priority, version
 
-ПРИНЦИП: Если сомневаешься — лучше НЕ добавляй тест, чем выдумывай детали!
+═══════════════════════════════════════════════════════════════
+⚙️ ФОРМАТ И ПРАВИЛА
+═══════════════════════════════════════════════════════════════
 
-🚨 КРИТИЧЕСКИ ВАЖНО: ЗАПРЕТ НА ОКРУЖЕНИЕ-СПЕЦИФИЧНЫЕ ТЕСТЫ! 🚨
-ЗАПРЕЩЕНО создавать отдельные тест-кейсы для разных платформ (iOS/Android/web) или окружений.
-Если логика различается между платформами — указывай это В ПРЕДУСЛОВИЯХ или ШАГАХ, но НЕ создавай отдельные тесты!
+### Название (title)
+- Информативное, уникальное: "Валидация поля 'ИНН' при некорректном контрольном числе"
+- ❌ НЕ "Проверка ИНН" или "Тест 1"
 
-Примеры НЕПРАВИЛЬНО:
-- "Инициализация SDK Bi_Zone при запуске приложения (на iOS)"
-- "Инициализация SDK Bi_Zone при запуске приложения (на Android)"
-- "Инициализация SDK Bi_Zone при запуске приложения (дублирующий вызов)"
+### Шаги (steps)
+- Один шаг = одно действие с глагола ("Ввести", "Нажать", "Выбрать", "Выполнить")
+- ❌ ЗАПРЕЩЕНО использовать слово "Проверить" в шагах! Проверка = Expected Result
+- ❌ ЗАПРЕЩЕНО додумывать: "Дождаться загрузки", "Проверить статус"
+- При параметризации используй {{Название параметра}}: "Ввести {{Размер ИНН}} ИНН"
+- ✅ Выделяй ключевые слова и эндпоинты в формате **Ключевое слово** или **/endpoint**
+- Примеры:
+  - "Выполнить POST **/document/create/income_type_code** с параметрами X"
+  - "**Подменить** статус код ответа запроса **/document/create/income_type_code** на 504"
 
-Пример ПРАВИЛЬНО:
+### Expected (ОБЯЗАТЕЛЬНО КОНКРЕТНЫЙ И ФОРМАТИРОВАННЫЙ!)
+❌ ЗАПРЕЩЕНО: "Система работает корректно", "Операция выполнена", "Данные переданы"
+✅ ПРАВИЛЬНО с форматированием ключевых слов:
+- Backend: "**Вернуть** ответ 200 с JSON: {id, type, amount}"
+- Backend: "**Подменить** статус код ответа запроса **/document/create/income_type_code** на 504"
+- Backend: "**Передать** параметр deal.dealMode=3 в запросе POST **/rest/stateful/corp/curr/inquiry_181**"
+- Backend: "**Сохранить** запись в БД с полями: id={{ID}}, status='created'"
+- Frontend: "**Отобразить** поле 'Ожидаемый срок репатриации' как обязательное для заполнения"
+- Frontend: "**Заполнить** поле 'Примечание' текстом 'Контракт стоит на учете в другом Банке'"
+- При параметризации: "**Отобразить** ошибку {{Выводимый текст ошибки}}"
+
+🚨 КЛЮЧЕВЫЕ СЛОВА ДЛЯ ФОРМАТИРОВАНИЯ:
+- **Подменить** — для мокирования/подмены ответов
+- **Отобразить** — для UI-элементов
+- **Заполнить** — для автозаполнения полей
+- **Передать** — для параметров в запросах
+- **Вернуть** — для HTTP-ответов
+- **Сохранить** — для изменений в БД
+
+✅ Выделяй эндпоинты и ключевые слова в формате **текст** (жирный)
+
+### Параметры (parameters) и Примеры (examples)
+🚨 КРИТИЧЕСКИ ВАЖНО: Параметризация применяется ко ВСЕМ типам тестов (E2E, Integration frontend, Integration backend)!
+
+ОБЯЗАТЕЛЬНО создавай при наличии в requirements:
+- Упоминаний "параметры", "таблица параметров", "столбец X"
+- Нескольких вариантов одной проверки ("10-значный И 12-значный ИНН")
+- 3+ варианта входных данных с одинаковой логикой
+- Нескольких типов карт/способов оплаты/статусов операций (для E2E)
+- Нескольких кодов операций/типов документов (для Integration)
+
+Формат:
+\`\`\`json
 {
-  "title": "Инициализация SDK Bi_Zone при запуске приложения",
-  "precondition": "Приложение установлено на устройстве (iOS/Android). При дублирующем вызове метода — повторная инициализация не происходит.",
-  "tags": ["M"]
-}
-
-ПРАВИЛО: Один функциональный сценарий = ОДИН тест-кейс. Различия в окружениях указывать в precondition!
-# 2) СЛОИ ТЕСТОВ
-
-E2E Tests:
-- Полный сквозной сценарий от начала до конца
-- Steps: Действия пользователя через UI
-- Expected: Финальный результат для пользователя
-- Layer: "E2E Tests"
-
-INTEGRATION FRONTEND TESTS (Component Tests):
-- Проверка UI-компонентов и их взаимодействия с API
-- Precondition: "Модальное окно появилось", "Открыта страница"
-- Steps: 1-2 UI-действия (открыть, выбрать, нажать)
-- Expected: "отображается алерт", "кнопка активна", "форма заполнена"
-- НЕ проверяем: Внутренние методы (getReport()), вызовы API
-- Проверяем: Видимость UI, состояния форм, переходы между экранами
-- ✅ Проверяем: UI-реакцию на API ответы (200 → алерт успеха)
-- Layer: "Integration frontend Tests"
-
-Примеры ПРАВИЛЬНЫХ Integration Frontend тестов:
-  ✅ "Форма перевода отображается после выбора типа операции"
-  ✅ "Кнопка 'Отправить' активна после заполнения всех полей"
-  ✅ "Страница платежа открывается после сканирования QR-кода"
-
-Примеры НЕПРАВИЛЬНЫХ (это Unit!):
-  ❌ "Метод getReport() вызван после авторизации"
-  ❌ "POST /create/sdk отправлен с данными SDK"
-
-INTEGRATION BACKEND TESTS (API Tests):
-- Проверка ТОЛЬКО серверных API endpoints
-- Precondition: Серверное ("Сервер доступен", "БД готова")
-- Steps: Вызов API с параметрами
-- Expected: Статус ответа (200, 404, 500), формат данных в ответе
-- НЕ проверяем: Внутреннюю логику, бизнес-правила
-- ❌ НЕ проверяем: UI, алерты, модальные окна, кнопки
-- ❌ НЕ используем: "отображается", "пользователь", "нажать"
-- Проверяем: HTTP-статусы, структуру ответа
-- Layer: "Integration backend Tests"
-
-
-🚨 КРИТИЧЕСКИ ВАЖНО ДЛЯ BACKEND ТЕСТОВ:
-
-ЗАПРЕЩЁННЫЕ precondition для backend:
-❌ "Пользователь ввёл..."
-❌ "Пользователь нажал..."
-❌ "Пользователь открыл..."
-❌ "Приложение запущено"
-❌ "SDK инициализирован"
-❌ Любое упоминание пользовательских действий
-
-ПРАВИЛЬНЫЕ precondition для backend:
-✅ "Сервер доступен"
-✅ "БД готова"
-✅ "API endpoint работает"
-✅ "Тестовые данные загружены"
-✅ ВООБЩЕ НЕ УКАЗЫВАТЬ precondition
-
-ЕСЛИ В PRECONDITION УПОМИНАЕТСЯ "ПОЛЬЗОВАТЕЛЬ" → ЭТО FRONTEND ТЕСТ!
-
-Примеры ПРАВИЛЬНЫХ Integration Backend тестов:
-  ✅ "API POST /oauth/te возвращает 200 при валидных данных"
-  ✅ "API GET /payment_data возвращает 404 при несуществующем ID"
-
-UNIT FRONTEND TESTS:
-- Проверка ОТДЕЛЬНЫХ методов/функций фронтенда
-- Steps: Вызов метода с параметрами
-- Expected: Возвращаемое значение метода
-- Проверяем: getReport(), валидация полей, форматирование данных
-- Layer: "Unit frontend Tests"
-
-Примеры ПРАВИЛЬНЫХ Unit Frontend тестов:
-  ✅ "Метод getReport() возвращает объект с полями DeviceModel, AppKey"
-  ✅ "Функция validateCardNumber() возвращает true для валидного номера"
-
-UNIT BACKEND TESTS:
-- Проверка ОТДЕЛЬНЫХ серверных функций/методов
-- Steps: Вызов функции с параметрами
-- Expected: Результат работы функции
-- Проверяем: Парсинг, валидация, бизнес-логика
-- Layer: "Unit backend Tests"
-
-КРИТИЧЕСКИ ВАЖНО - РАЗДЕЛЕНИЕ INTEGRATION И UNIT:
-
-Integration тесты (Component/API):
-  - Проверяют ВЗАИМОДЕЙСТВИЕ нескольких компонентов/модулей
-  - Frontend: UI-состояния, поведение компонентов
-  - Backend: API endpoints, статусы ответов
-
-Unit тесты:
-  - Проверяют ОТДЕЛЬНЫЕ методы/функции
-  - Frontend: getReport(), валидация, форматирование
-  - Backend: бизнес-логика, парсинг данных
-
-ЗАПРЕЩЕНО в Integration тестах:
-❌ Упоминать getReport() в Integration frontend
-❌ Упоминать "метод X вызван" в Integration frontend
-❌ Проверять внутренние методы в Integration
-❌ "Пользователь ввёл данные" в precondition для backend теста
-
-ОБЯЗАТЕЛЬНО в Integration тестах:
-✅ Frontend Integration: проверка UI-состояний ("отображается", "доступен", "активна")
-✅ Backend Integration: проверка API-статусов ("возвращает 200", "формат ответа")
-✅ Разделять проверку UI (Integration) и методов (Unit)
-✅ Создавать ОБА теста (frontend + backend) если требование описывает взаимодействие
-
-ПРАВИЛО ОПРЕДЕЛЕНИЯ СЛОЯ:
-- Integration Frontend: "отображается", "доступен", "активна", "форма заполнена"
-- Integration Backend: "возвращает статус", "формат ответа"
-- Unit Frontend: "метод возвращает", "функция валидирует"
-- Unit Backend: "функция парсит", "бизнес-правило применяется"
-
-
-## 2.2) Для слоя "Unit Tests" (Условный "Белый Ящик")
-- Ты **МОЖЕШЬ** описывать внутреннюю логику, но **ТОЛЬКО** если она основана на узле \`code\` из входной тестовой модели.
-- **Шаги (Steps):** Описывай подготовку данных (Arrange) и вызов действия (Act) в терминах, близких к узлу \`code\`.
-- **Результат (Expected):** Описывай проверку результата (Assert), соответствующую узлу \`code\`.
-- **Если узел \`code\` отсутствует в модели для данного сценария, ты ОБЯЗАН вернуться к принципу "Чёрного Ящика"** и описать Unit-тест в терминах "входные данные -> результат", не выдумывая названий функций.
-
-## 2.3) ПРИНЦИП МИНИМАЛЬНОГО ДЕЙСТВИЯ (При Неполных Требованиях)
-Это одно из ГЛАВНЫХ правил. Если требование описывает *состояние* элемента (например, "поле невалидно", "кнопка неактивна"), но НЕ описывает точное *действие* пользователя, которое вызывает это состояние, ТЫ ОБЯЗАН следовать этому принципу.
-
-**Принцип:** Сгенерируй тест, который проверяет состояние через самое **минимальное, локальное и очевидное действие**. ЗАПРЕЩЕНО додумывать сложные сценарии или действия с другими элементами управления (например, с кнопкой "Сохранить"), если они не упомянуты в требовании явно.
-
-**Пример 1: Валидация поля**
-- **Требование (неполное):** \`Валидация: "Поле 'Дата документа' обязательно для заполнения"\`
-- **Неправильно (додумывание):**
-  - Шаги: ["Нажать кнопку 'Сохранить'"]
-  - Ожидаемый результат: "Система отображает ошибку 'Поле... обязательно'"
-- **ПРАВИЛЬНО (Минимальное действие):**
-  - Шаги: ["Сфокусироваться на поле 'Дата документа'", "Снять фокус с поля, оставив его пустым"]
-  - Ожидаемый результат: "Под полем 'Дата документа' отображается ошибка 'Поле... обязательно'"
-
-**Пример 2: Состояние кнопки**
-- **Требование (неполное):** \`Кнопка "Сохранить" неактивна, пока не заполнены все обязательные поля.\`
-- **Неправильно (додумывание):**
-  - Шаги: ["Нажать на неактивную кнопку 'Сохранить'"]
-  - Ожидаемый результат: "Ничего не происходит" 
-  (Этот тест не проверяет условие)
-- **ПРАВИЛЬНО (Минимальное действие):**
-  - **Тест 1 (проверка начального состояния):**
-    - Предусловие: "Форма открыта, обязательные поля пусты"
-    - Шаги: [] (Действий нет, проверяем исходное состояние)
-    - Ожидаемый результат: "Кнопка 'Сохранить' отображается, но неактивна (disabled)"
-  - **Тест 2 (проверка изменения состояния):**
-    - Предусловие: "Форма открыта, обязательные поля пусты"
-    - Шаги: ["Заполнить все обязательные поля валидными данными"]
-    - Ожидаемый результат: "Кнопка 'Сохранить' становится активной"
-
-# 3) Allure Style Guide (сводка отдела)
-— 1 тест-кейс = 1 проверка или 1 пользовательский сценарий.  
-— Тест-кейсы независимы друг от друга.  
-— Название информативно и по возможности уникально («Загрузка нового справочника», а не «Проверка справочников»).  
-— Предусловия (если есть) — только то, что подготавливается вне тестируемого приложения профилем исполнителя (данные в БД, настройки, сиды, интеграции, состояние устройства и т.п.).  
-— Шаги:
-   • Один шаг = одно действие. Всегда с глагола («Открыть», «Ввести», «Нажать»).  
-   • Общие повторяющиеся блоки — оформлять как shared steps (концептуально; в JSON шаги всё равно плоские).  
-   • Сценарные тесты: начинать с полного пользовательского пути (обычно с авторизации).  
-   • Атомарные тесты: начинать с инициализации изолированного компонента/эндпоинта (без «навигации»).  
-— Ожидаемый результат (обязателен) отражает СУТЬ проверки/сценария, формулирован чётко и без условных «если… то…».  
-— Вложения/файлы/мок-данные добавляются при необходимости (при наличии макетов/данных).  
-— Ссылки: указывать Confluence/макеты, если есть.  
-— Jira: указать связанное задание (ключ).  
-— Версия:
-   • Версия по умолчанию — "stable" для новых кейсов.  
-   • При доработках — клонировать кейс и указать нужную версию.  
-- Приоритет:
-   • Приоритет определяй по матрице риска:
-   • Critical — деньги/безопасность/ПДн, потеря/коррупция данных, недоступность критичного сервиса.
-   • High — основной бизнес-флоу ломается для многих, неверные суммы/конвертации/комиссии, нарушения авторизации/ролей.
-   • Medium — валидации, контент, нефатальные деградации UX.
-   • Low — косметика/копирайт/микро-UX.
-   • По умолчанию: E2E ≥ High, Integration ≥ Medium, Unit ≥ Low, но повышай при наличии рисков выше.
-
-# 4) Теги (ОБЯЗАТЕЛЬНО)
-В массиве "tags" используй:
-— Платформа интерфейса: D (desktop), A (adaptive), M (mobile), PWA (если уместно). Если платформа из контекста неочевидна — ставь "D".  
-— Бэкенд-проверки: добавь "S" (для Integration backend Tests и любых API-ориентированных проверок).   
-Примеры наборов тегов:
-• FE E2E/Integration (десктоп): ["D"]  
-• BE Integration: ["S"] или ["D","S"] если тест затрагивает интерфейсно-зависимые артефакты  
-
-# 5) Выходной формат: СТРОГО ТОЛЬКО JSON-массив
-Используй ровно один из трёх шаблонов ниже в зависимости от "layer". Никаких комментариев/markdown.
-
-🚨 ПРАВИЛО ДЛЯ STEPS: ТОЛЬКО ИЗ REQUIREMENTS! 🚨
-
-ЗАПРЕЩЕНО додумывать шаги:
-❌ "Дождаться загрузки страницы" (если не указано в requirements)
-❌ "Проверить, что кнопка активна" (это проверка — идёт в expected, а не в steps)
-❌ "Ввести валидные данные" (укажи КОНКРЕТНЫЕ данные из requirements или используй placeholders типа <НОМЕР_КАРТЫ>)
-
-ПРАВИЛЬНЫЕ шаги (конкретные действия):
-✅ "Открыть страницу 'История операций'"
-✅ "Выбрать операцию с типом 'payment' из списка"
-✅ "Нажать кнопку 'Повторить'"
-✅ "Ввести сумму 1000₽ в поле 'Сумма платежа'"
-
-ПРАВИЛО:
-
-Steps описывают ДЕЙСТВИЯ пользователя или системы
-
-Проверки результата НЕ пишутся в steps — только в expected
-
-Если requirements описывают действие как "при открытии страницы вызывается API X" — это НЕ шаг, это автоматическое действие (пишем в expected)
-
-## Шаблон: "layer": "E2E Tests"
-{
-  "feature": "Название фичи из модели",
-  "story": "Название истории из модели",
-  "scenario": "Название сценария из модели",
-  "title": "Название, описывающее ВЕСЬ сценарий (например, 'Успешное создание виджета авторизованным пользователем')",
-  "steps": [
-    "Авторизоваться как 'user_role'",
-    "Перейти на страницу 'Название страницы'",
-    "Нажать кнопку 'Создать виджет'",
-    "Заполнить поле 'Название' валидным значением",
-    "Нажать кнопку 'Сохранить'"
-  ],
-  "expected": "Система отображает сообщение об успешном создании. Виджет появляется в общем списке.",
-  "tags": ["‹по матрице тегов›"],
-  "layer": "E2E Tests",
-  "priority": "‹по матрице риска›"
-}
-
-## Шаблон: "layer": "Integration frontend Tests" / "Integration backend Tests"
-{
-  "feature": "Название фичи из модели",
-  "story": "Название истории из модели",
-  "scenario": "ТОЧНОЕ название сценария из модели",
-  "title": "Конкретная проверка (например, 'Валидация поля «Имя» при вводе более 100 символов')",
-  "precondition": "Компонент/эндпоинт подготовлен. (Коротко по существу, без кода.)",
-  "steps": [
-    "Ввести в поле 'Имя' строку длиной 101 символ",
-    "Снять фокус с поля"
-  ],
-  "expected": "Под полем 'Имя' отображается текст ошибки 'Превышена максимальная длина'. Кнопка 'Сохранить' неактивна.",
-  "tags": ["‹по матрице тегов›"],
-  "layer": "Integration frontend Tests",
-  "priority": "‹по матрице риска›"
-}
-
-## Шаблон: "layer": "Unit frontend Tests" / "Unit backend Tests"
-{
-  "feature": "Название фичи из модели",
-  "story": "Название истории из модели",
-  "scenario": "Название сценария, к которому относится модуль",
-  "code": "ТОЛЬКО если совпадает с codes[].text из модели (иначе — не указывать)",
-  "title": "Кратко: что проверяем (описательно, без имён функций и синтаксиса)",
-  "precondition": "Arrange: подготовить входные данные/контекст (описательно, без программного синтаксиса).",
-  "steps": [
-    "Act: выполнить проверяемое действие в изоляции (описательно).",
-    "Act: передать подготовленные входные данные.",
-    "Act: получить результат."
-  ],
-  "expected": "Assert: результат соответствует ожидаемому (описательно, без кода и идентификаторов).",
-  "tags": ["Unit", "‹по матрице тегов›"],
-  "layer": "Unit frontend Tests",
-  "priority": "‹по матрице риска›"
-}
-Правила для Unit:
-— НЕ придумывать имена функций/классов и не использовать синтаксис языков.  
-— "code" заполняется СТРОГО из codes[].text, иначе это поле опускается.
-- Unit = чистая бизнес-логика: без рендера UI, без DOM, без "Открыть/Перейти/Кликнуть/Ввести", без авторизации и навигации, без HTTP/эндпоинтов.
-- Любая инициализация компонента, взаимодействие с формами/страницей/браузером = только "Integration frontend Tests".
-- Любой полноценный HTTP-вызов/контракт/статус-код = только "Integration backend Tests".
-- Для Unit обязательный AAA: Arrange в precondition, цепочка Act в steps, Assert в expected.
-
-Допустимые дополнительные поля (если есть во входе или явно уместны): 
-• "links": [{ "text": "...", "url": "..." }], • "jiraIssue": "ABC-123", • "version": "stable" (по умолчанию для новых), • "attachments": [...], • "parameters": "..." (использовать только если во входе явно заданы параметры; для DDT/Pairwise — но не выдумывать).
-
-🚨 КРИТИЧЕСКИ ВАЖНО: EXPECTED ДОЛЖЕН БЫТЬ ПРОВЕРЯЕМЫМ! 🚨
-
-ЗАПРЕЩЁННЫЕ формулировки (непроверяемые):
-❌ "Система работает корректно"
-❌ "Операция выполнена успешно"
-❌ "Данные обработаны"
-❌ "Ошибка отображена"
-❌ "Пользователь перенаправлен"
-
-ОБЯЗАТЕЛЬНЫЕ формулировки (конкретные и проверяемые):
-✅ "GET /get_by_id вернул статус 200 с JSON: {"id": "<ID>", "type": "payment", "amount": 1000}"
-✅ "На экране отображено сообщение 'Платеж №12345 выполнен', кнопка 'Повторить' активна"
-✅ "Метод getReport() вызван 1 раз, вернул массив из 5 элементов типа BiZoneData"
-✅ "POST /create/sdk вызван с телом {"bizone": {...}}, получен ответ 204 No Content"
-
-ПРАВИЛО: Expected ОБЯЗАТЕЛЬНО должен содержать минимум ОДИН из:
-
-HTTP-код и структура ответа (для backend)
-
-Текст элемента UI или название компонента (для frontend)
-
-Факт вызова метода с параметрами (для Unit)
-
-Конкретное изменение состояния (для E2E)
-
-# 6) Правила генерации набора тест-кейсов (СТРОГАЯ ПИРАМИДА)
-
-🚨 КРИТИЧЕСКИ ВАЖНО: СОБЛЮДАЙ ПИРАМИДУ ТЕСТИРОВАНИЯ! 🚨
-
-Для КАЖДОЙ Story:
-— РОВНО 2-3 E2E-тест на Happy Path (полный пользовательский путь)
-— ОПЦИОНАЛЬНО: 1-2 E2E на критичный Negative Path (только если есть явный негативный сценарий в требованиях)
-
-Для КАЖДОГО Scenario:
-— МИНИМУМ 2, МАКСИМУМ 6 Integration-теста:
-  • 2 позитивный (Happy Path)
-  • 1-2 негативных (ошибки API: 404, 500, timeout)
-  • 0-2 граничный (BVA, только если применимо)
-
-Для КАЖДОГО Code:
-— МИНИМУМ 1, МАКСИМУМ 2 Unit-теста:
-  • 1 позитивный (корректные входные данные)
-  • 0-1 негативный (ошибка обработки, если применимо)
-
-🚨 СТРОГИЕ ЗАПРЕТЫ:
-❌ Создавать больше 3 E2E тестов на Story
-❌ Создавать больше 6 Integration тестов на Scenario
-❌ Создавать больше 3 Unit тестов на Code
-❌ Дублировать тесты для разных значений параметров ( например doc_type, платформы, окружения)
-
-# 6.1) Параметризация вместо дубликатов
-
-🚨 КРИТИЧЕСКИ ВАЖНО: ИСПОЛЬЗОВАНИЕ ПАРАМЕТРИЗАЦИИ ВМЕСТО ДУБЛИКАТОВ! 🚨
-
-Если несколько тест-кейсов проверяют ОДНУ И ТУ ЖЕ логику с разными входными данными — создавай ОДИН ПАРАМЕТРИЗОВАННЫЙ тест!
-
-ПРАВИЛО ПАРАМЕТРИЗАЦИИ:
-1. Если логика теста ИДЕНТИЧНА, но меняются только входные данные → используй параметризацию
-2. Если меняется логика проверки или expected результат → создавай отдельные тесты
-3. Параметризация подходит для: HTTP-коды, типы документов, значения полей, варианты ответов API
-
-Пример НЕПРАВИЛЬНО (11 отдельных тестов):
-- "Метод GET /get_by_id с doc_type=payment"
-- "Метод GET /get_by_id с doc_type=payment_template"
-- "Метод GET /get_by_id с doc_type=doc_service"
-... (ещё 8 тестов с идентичной логикой)
-
-Пример ПРАВИЛЬНО (1 параметризованный тест):
-{
-  "title": "Метод GET /get_by_id возвращает корректные данные для всех типов документов",
-  "steps": [
-    "Выполнить GET /backend/rest/stateful/personal/template/get_by_id с параметром doc_type из таблицы параметров",
-    "Проверить структуру ответа"
-  ],
-  "expected": "Получен ответ 200 с валидными данными для типа документа из параметра 'Тип документа'",
   "parameters": [
-    {
-      "name": "Тип документа",
-      "values": ["payment", "payment_template", "doc_service", "payment_counter", "payment_counter_template", "doc_pay_transfer_rur_template", "doc_pay_selffree", "doc_pay_transfer_person", "doc_pay_p2p_kuban", "doc_pay_selfconv", "quick_pay"]
-    }
-  ]
-}
-
-Пример ПРАВИЛЬНО для HTTP-кодов (параметризация):
-{
-  "title": "Отображение ошибки при отправке запроса с подтверждением (!=200)",
-  "precondition": "Подменено тело ответа метода PUT /customer/profile/email/confirm на данные из параметров",
-  "steps": [
-    "Выполнить запрос PUT /customer/profile/email/confirm",
-    "Проверить ответ сервера"
-  ],
-  "expected": "Появляется модальное окно с ошибкой 'Операция не удалась' и текстом ошибки из параметра 'Выводимый текст ошибки', в зависимости от данных из параметров 'Код ответа' и 'Тело ответа'",
-  "parameters": [
-    { "name": "Код ответа", "values": ["200", "400", "401", "403", "404", "500", "503", "504"] },
-    { "name": "Тело ответа", "values": ["{ \"errorCode\": \"1007\", \"errorText\": \"...\" }", "пустое(или без errorCode и errorText)", "любое"] },
-    { "name": "Выводимый текст ошибки", "values": ["Введенные данные не найдены...", "Отсутствуют требуемые параметры.", "Ошибка обработки запроса...", "..."] }
+    { "name": "Размер ИНН", "values": ["10-значного", "12-значного"] },
+    { "name": "Код ответа", "values": ["200", "400", "404", "500"] }
   ],
   "examples": [
-    {
-      "parameters": [
-        { "name": "Код ответа", "value": "200" },
-        { "name": "Тело ответа", "value": "{ \"errorCode\": \"1007\", \"errorText\": \"Введенные данные не найдены...\" }" },
-        { "name": "Выводимый текст ошибки", "value": "Введенные данные не найдены..." }
-      ]
-    },
-    {
-      "parameters": [
-        { "name": "Код ответа", "value": "400" },
-        { "name": "Тело ответа", "value": "{ \"errorCode\": \"1007\", \"errorText\": \"Отсутствуют требуемые параметры\" }" },
-        { "name": "Выводимый текст ошибки", "value": "Отсутствуют требуемые параметры." }
-      ]
-    }
-    // ... остальные примеры
+    { "parameters": [
+      { "name": "Размер ИНН", "value": "10-значного" },
+      { "name": "Код ответа", "value": "200" }
+    ]}
   ]
 }
+\`\`\`
+
+### Теги (tags)
+- Платформа: D (desktop), A (adaptive), M (mobile), PWA
+- Backend: S (для API-тестов)
+- По умолчанию: ["M"] для мобильных, ["S"] для API
+- Примеры: ["D"], ["M","S"], ["D","A"]
+
+### Приоритет (priority)
+- Critical: деньги, безопасность, ПДн, потеря данных
+- High: основной бизнес-флоу, неверные суммы, авторизация
+- Medium: валидации, контент, UX-деградации
+- Low: косметика, копирайт
+- Правило: E2E ≥ High, Integration ≥ Medium
+
+═══════════════════════════════════════════════════════════════
+🛡️ ЗАПРЕТЫ (КРИТИЧНО!)
+═══════════════════════════════════════════════════════════════
+
+❌ НЕ додумывай API-методы/параметры/HTTP-коды вне requirements
+❌ НЕ создавай дубликаты для разных значений → ПАРАМЕТРИЗУЙ
+❌ НЕ создавай отдельные тесты для платформ (iOS/Android) → указывай в precondition
+❌ НЕ смешивай уровни: E2E НЕ содержит "scenario", Integration НЕ содержит "code"
+❌ НЕ используй абстрактный expected ("работает корректно")
+❌ Backend precondition: НЕ "Пользователь...", ТОЛЬКО техническое ("Сервер доступен")
+❌ НЕ добавляй поле "requirement" в тест-кейсы! Это поле используется ТОЛЬКО в тестовой модели (Feature/Story/Scenario/Code). В тест-кейсах requirement НЕ ДОЛЖНО быть! Модель часто ошибается при заполнении requirement, поэтому это поле полностью запрещено в тест-кейсах!
+❌ НЕ используй слово "Проверить" в steps! Проверка = Expected Result
+❌ НЕ смешивай UI-действия в Integration backend Tests ("Нажать на кнопку" → только "Выполнить POST")
+❌ НЕ смешивай Backend-запросы в Integration frontend Tests ("Выполнить POST" → только "Нажать на кнопку")
+❌ Integration backend Tests = ТОЛЬКО вызов HTTP-запроса и проверка ответа/БД, БЕЗ UI-действий!
+❌ Integration frontend Tests = ТОЛЬКО взаимодействие с UI, можно мокать запросы (но НЕ указывать это явно в тестах)!
+
+═══════════════════════════════════════════════════════════════
+🚨 КРИТИЧЕСКИ ВАЖНО: ПРИВЯЗКА К ТЕСТОВОЙ МОДЕЛИ
+═══════════════════════════════════════════════════════════════
+
+❌ ЗАПРЕЩЕНО создавать НОВЫЕ feature, story или scenario!
+✅ ОБЯЗАТЕЛЬНО используй ТОЛЬКО существующие значения из тестовой модели!
+
+ПРАВИЛА:
+1. feature — ДОЛЖНО быть ТОЧНО из списка допустимых значений (enum в tool)
+2. story — ДОЛЖНО быть ТОЧНО из списка допустимых значений (enum в tool)
+3. scenario — ДОЛЖНО быть ТОЧНО из списка допустимых значений (enum в tool, только для Integration тестов)
+4. code — ДОЛЖНО быть ТОЧНО из списка допустимых значений (enum в tool, только для Integration тестов)
+
+❌ НЕ выдумывай новые названия feature/story/scenario!
+❌ НЕ используй похожие, но не точные названия!
+✅ Используй ТОЛЬКО те значения, которые указаны в enum tool definition!
+
+Если tool предоставляет enum для feature/story/scenario — используй ТОЛЬКО эти значения!
+Если enum не предоставлен — используй ТОЧНОЕ название из modelStructure, которое было передано в контексте!
+
+═══════════════════════════════════════════════════════════════
+📤 ВЫХОДНОЙ ФОРМАТ (ТОЛЬКО JSON)
+═══════════════════════════════════════════════════════════════
+
+Возвращай массив JSON без markdown/комментариев:
+
+\`\`\`json
+[
+  {
+    "feature": "Название фичи из modelStructure",
+    "story": "Название story из modelStructure",
+    "scenario": "ТОЧНОЕ название scenario из modelStructure (только для Integration!)",
+    "title": "Уникальное название проверки",
+    "precondition": "Опционально для Integration",
+    "steps": [
+      "Шаг 1 с глагола",
+      "Ввести {{Параметр}} при параметризации"
+    ],
+    "expected": "Конкретный проверяемый результат",
+    "tags": ["M", "S"],
+    "layer": "E2E Tests | Integration frontend Tests | Integration backend Tests | Unit Tests",
+    "priority": "Critical | High | Medium | Low",
+    "version": "stable",
+    "parameters": [  // ✅ ОБЯЗАТЕЛЬНО для E2E и Integration при наличии нескольких вариантов!
+      { "name": "Название", "values": ["значение1", "значение2"] }
+    ],
+    "examples": [  // ✅ ОБЯЗАТЕЛЬНО для E2E и Integration при наличии parameters!
+      { "parameters": [{ "name": "Название", "value": "значение1" }] }
+    ],
+    "jiraIssue": "ABC-123",
+    "links": [{ "text": "Confluence", "url": "https://..." }]
+    // ❌ ОТСУТСТВУЕТ поле "requirement" - оно используется ТОЛЬКО в тестовой модели!
+  }
+]
+\`\`\`
+
+═══════════════════════════════════════════════════════════════
+✅ ЧЕК-ЛИСТ ПЕРЕД ОТПРАВКОЙ
+═══════════════════════════════════════════════════════════════
+
+1. Проанализировал requirements на паттерны параметризации?
+2. Нет дубликатов с одинаковой логикой?
+3. КАЖДЫЙ тест содержит steps (минимум 1) + expected?
+4. Expected конкретный и проверяемый?
+5. Использовал {{Параметр}} в steps/expected при параметризации?
+6. Теги соответствуют матрице (D/M/S)?
+7. "scenario" совпадает с modelStructure для Integration?
+8. НЕ додумывал детали вне requirements?
+
+═══════════════════════════════════════════════════════════════
+📚 ТЕХНИКИ ТЕСТ-ДИЗАЙНА
+═══════════════════════════════════════════════════════════════
+
+Применяй для Integration-тестов (после явных примеров из requirements):
+- BVA: мин-1, мин, макс, макс+1 для числовых диапазонов
+- Классы эквивалентности: валидный/невалидный/пустой/null
+- HTTP-коды: для каждого API добавляй негативные (404, 500, 504, timeout)
+- Жизненный цикл: создание → редактирование → удаление
+- 🚨 ВАЖНО: Создавай БОЛЬШЕ негативных тестов! Используй параметризацию для негативных сценариев
+
+═══════════════════════════════════════════════════════════════
+🎯 АЛГОРИТМ ГЕНЕРАЦИИ
+═══════════════════════════════════════════════════════════════
+
+ШАГ 1: АНАЛИЗ REQUIREMENTS
+- Прочитай ВСЕ требования
+- Найди паттерны параметризации (таблицы, "X И Y", несколько HTTP-кодов)
+- Определи узлы modelStructure
+
+ШАГ 2: ГЕНЕРАЦИЯ
+Для каждой Story:
+- 1-2 E2E теста (Happy Path + критичный негатив)
+- ✅ Если есть несколько вариантов (типы карт, способы оплаты, статусы операций) → ОДИН параметризованный E2E тест с parameters + examples
+
+Для каждого Scenario:
+- 4-8 Integration тестов:
+  • 2-3 позитивных (успешные сценарии)
+  • 2-3 негативных (ошибки валидации, 404/500, таймауты, неверные параметры)
+  • 1-2 граничных (BVA, граничные значения)
+- ✅ Если есть несколько вариантов (коды операций, типы документов, HTTP-коды) → ОДИН параметризованный Integration тест с parameters + examples
+- ✅ Используй параметризацию для негативных сценариев: "Вернуть ответ {{HTTP-код}} при невалидных данных"
+
+Для каждого Code:
+- 1 Unit тест (заглушка):
+  • title = название Code (дублирование)
+  • steps = [] (пустой массив)
+  • expected = название Code (дублирование)
+  • layer = "Unit Tests"
+
+ШАГ 3: ПРОВЕРКА
+- Нет дубликатов? → Параметризовал?
+- Expected конкретный?
+- {{Параметры}} в steps при параметризации?
+
+═══════════════════════════════════════════════════════════════
+
+🔑 ЗОЛОТЫЕ ПРАВИЛА:
+- Одна логика → ОДИН тест с параметризацией
+- Нет информации в requirements → НЕ додумывай
+- Expected = ВСЕГДА конкретный и проверяемый
+`;
 
-ФОРМАТ ПАРАМЕТРОВ В JSON:
-- "parameters": массив объектов { "name": "Название параметра", "values": ["значение1", "значение2", ...] }
-- "examples": массив объектов, каждый содержит "parameters": [{ "name": "...", "value": "..." }]
-
-КРИТЕРИИ ДЛЯ ПАРАМЕТРИЗАЦИИ:
-✅ Одинаковая логика шагов
-✅ Одинаковая структура expected (только значения меняются)
-✅ 3+ варианта входных данных
-✅ Все варианты проверяют одно и то же поведение
-
-❌ НЕ параметризуй если:
-- Разная логика проверки
-- Разные expected результаты (не просто разные значения)
-- Меньше 3 вариантов (лучше отдельные тесты)
-
-АЛЬТЕРНАТИВНЫЙ ПОДХОД (если есть критичные отличия):
-- Создай ОДИН параметризованный тест для всех стандартных случаев
-- Создай 1-2 отдельных теста ТОЛЬКО для случаев, где логика ОТЛИЧАЕТСЯ
-
-ПРАВИЛО: Одинаковая логика → ОДИН параметризованный тест. Разная логика → отдельные тесты.
-
-🚨 КОНКРЕТНЫЕ ПРИМЕРЫ ДУБЛИКАТОВ ДЛЯ ВАШЕГО ПРОЕКТА: 🚨
-
-❌ НЕПРАВИЛЬНО (дубликаты):
-- "Успешная отправка отчёта после авторизации по пин-коду"
-- "Отправка отчёта после авторизации по пин-коду" 
-- "Сбор и передача отчёта после успешной авторизации по пин-коду"
-- "Передача отчёта после авторизации по пин-коду"
-- "Инициализация SDK Bi_Zone при запуске приложения"
-- "Инициализация SDK Bi_Zone и передача отчёта после успешной авторизации"
-
-✅ ПРАВИЛЬНО (один обобщённый тест):
-{
-  "title": "Отправка отчёта после авторизации по пин-коду",
-  "precondition": "Пользователь авторизован по пин-коду, SDK Bi_Zone инициализирован",
-  "steps": [
-    "Авторизоваться по пин-коду",
-    "Дождаться инициализации SDK Bi_Zone",
-    "Выполнить сбор и передачу отчёта"
-  ],
-  "expected": "Отчёт успешно собран и передан через POST /create/sdk с кодом ответа 204"
-}
-
-🚨 ЗАПОМНИ: Если видишь похожие названия — это ДУБЛИКАТ! Создавай ОДИН тест!
-
-# 7) Техники тест-дизайна (обязательно применять, если применимо)
-— BVA: мин, макс, мин-1, макс+1.  
-— Классы эквивалентности: валидный/невалидный/пустой/null.  
-— Error-guessing: разумные «углы».
-
-# 7.1) Генерация неявных сценариев (Error Guessing & BVA)
-После того, как ты сгенерировал тест-кейсы для всех ЯВНЫХ примеров из требований, дополнительно примени техники тест-дизайна, чтобы покрыть следующие случаи, даже если они не описаны в тексте:
-- **Граничные значения:** Для каждого числового диапазона (например, '48-84') ОБЯЗАТЕЛЬНО создай отдельные Integration-тесты для значений min-1, min, max, max+1 (в данном примере: 47, 48, 84, 85).
-- **Жизненный цикл:** Если есть сценарии на создание, ОБЯЗАТЕЛЬНО добавь по одному Integration-тесту на **редактирование** и **удаление** существующей зависимости.
-- **Невалидные типы данных:** Для полей с числовым вводом добавь Integration-тест на ввод текстовой строки. Для текстовых полей — проверку на ввод пустой строки.
-
-🚨 ВАЖНО: ПРОВЕРКА КРИТИЧНЫХ HTTP-КОДОВ! 🚨
-При работе с API ОБЯЗАТЕЛЬНО проверяй граничные случаи:
-- Если требование указывает "при статусе 200" — создай тест на 404, 500
-- Если требование указывает "при статусе 200 или 202" — создай тесты на оба кода + негативные (404, 500)
-- Если требование указывает "если НЕ 200 — не передавать отчёт" — создай тесты на 400, 401, 404, 500
-
-Примеры критичных проверок:
-• POST /oauth/te вернул 200 → отчёт передаётся ✅
-• POST /oauth/te вернул 401 → отчёт НЕ передаётся ✅ (ОБЯЗАТЕЛЬНЫЙ негативный тест!)
-• POST /create/sdk вернул 500 → ошибка НЕ показывается пользователю ✅
-• GET /qrcode вернул 202 → отчёт передаётся ✅ (граничный случай!)
-
-# 8) Чек-лист перед выводом
-— Все кейсы независимы; по одному «смыслу» на кейс.  
-— В E2E есть «Авторизоваться…» и «Перейти на страницу…».  
-— Детальные проверки (валидации полей и т.п.) не просочились в E2E.  
-— "scenario" (для Integration/Unit) совпадает с моделью.  
-— Теги проставлены по правилам: D/A/M/PWA; "S" для бэкенда; номер требования — только если есть во входе.  
-— "version" = "stable" для новых кейсов (если не указано иное).  
-
-🚨 КРИТИЧЕСКИ ВАЖНО: УНИКАЛЬНОСТЬ НАЗВАНИЙ! 🚨
-КАЖДЫЙ тест-кейс ОБЯЗАТЕЛЬНО должен иметь УНИКАЛЬНОЕ название.
-ЗАПРЕЩЕНО создавать тесты с одинаковыми названиями для разных doc_type/параметров!
-Если логика теста одинаковая — создай ОДИН параметризованный тест.
-
-🚨 ДОПОЛНИТЕЛЬНЫЕ ЗАПРЕТЫ НА ДУБЛИКАТЫ:
-❌ ЗАПРЕЩЕНО создавать тесты с похожими названиями:
-- "Успешная отправка отчёта" + "Отправка отчёта после авторизации" = ДУБЛИКАТ!
-- "Сбор и передача отчёта" + "Передача отчёта после авторизации" = ДУБЛИКАТ!
-- "Инициализация SDK" + "Инициализация SDK Bi_Zone" = ДУБЛИКАТ!
-
-✅ ПРАВИЛЬНО: Один обобщённый тест вместо множества похожих:
-- "Отправка отчёта после авторизации по пин-коду" (вместо 3 отдельных тестов)
-- "Инициализация SDK Bi_Zone при запуске приложения" (вместо вариаций)
-
-ПРАВИЛО: Если тесты проверяют ОДНУ И ТУ ЖЕ логику — создавай ОДИН тест!
-
-Пример НЕПРАВИЛЬНО:
-- "Метод getReport() не вызывается при ошибке для payment"
-- "Метод getReport() не вызывается при ошибке для doc_service"  
-
-Пример ПРАВИЛЬНО:
-- "Метод getReport() не вызывается при ошибке GET /get_by_id" (один тест, параметризуй doc_type в precondition)
-
-🚨 СТРОГИЙ ЗАПРЕТ НА ДУБЛИКАТЫ НА УРОВНЕ ГЕНЕРАЦИИ! 🚨
-
-❌ ЗАПРЕЩЕНО создавать тесты с похожими названиями:
-- "Успешная отправка отчёта" + "Отправка отчёта после авторизации" = ДУБЛИКАТ!
-- "Сбор и передача отчёта" + "Передача отчёта после авторизации" = ДУБЛИКАТ!
-- "Инициализация SDK" + "Инициализация SDK Bi_Zone" = ДУБЛИКАТ!
-- "Успешная отправка отчёта после авторизации по пин-коду" (3 раза) = ДУБЛИКАТ!
-
-❌ ЗАПРЕЩЕНО создавать тесты с одинаковой логикой:
-- Если тест проверяет "отправку отчёта после авторизации" — создай ОДИН тест
-- Если тест проверяет "инициализацию SDK" — создай ОДИН тест
-- Если тест проверяет "сбор данных" — создай ОДИН тест
-
-✅ ОБЯЗАТЕЛЬНО перед генерацией каждого теста:
-1. Проверь: нет ли уже похожего теста в списке?
-2. Если есть — НЕ создавай новый, а расширь существующий
-3. Если логика отличается — создавай новый, но с УНИКАЛЬНЫМ названием
-
-🚨 ПРАВИЛО: ОДИН ФУНКЦИОНАЛЬНЫЙ СЦЕНАРИЙ = ОДИН ТЕСТ-КЕЙС! 🚨
-
-🚨 ФИНАЛЬНОЕ ОГРАНИЧЕНИЕ: МАКСИМУМ 8 ТЕСТ-КЕЙСОВ! 🚨
-Перед выводом пересмотри все тест-кейсы и оставь ТОЛЬКО самые критичные:
-1. Приоритет: деньги → безопасность → основной флоу → критичные API
-2. Если больше 8 кейсов - удали наименее важные
-3. Лучше 5 качественных тестов, чем 15 посредственных
-4. УБЕДИСЬ что все названия УНИКАЛЬНЫ!
-
-# 9) Формат ответа
-Выведи СТРОГО один JSON-массив кейсов без каких-либо комментариев, текста или Markdown.
-Ключ формируется после нормализации пробелов и регистра.
-Если ключ совпал — считать дубликатом и не добавлять второй раз.
-
-🚨 КРИТИЧЕСКИ ВАЖНО: ЗАПРЕТ НА PLACEHOLDER-КОДЫ! 🚨
-При неполной информации **оставляй \`codes: []\`**. **Запрещено** добавлять placeholder-коды без явных требований.
-Если в требованиях не указаны конкретные системные реакции — НЕ ДОДУМЫВАТЬ их.
-Пустой массив \`codes: []\` допустим и предпочтителен placeholder-кодам.
-
-Пример работы алгоритма:
-- **Абстрактный узел:** \`Scenario: "Проверить срабатывание валидации при конфликте условий"\`
-- **Требования содержат пример:** "Если настроены две зависимости с одинаковым условием для '27 LADA FREE', и в поле введено значение '10', то должна сработать последняя зависимость с текстом 'Срок кредита, не может быть <12 мес. и >84 мес.'"
-- **Твой результат (один тест-кейс):**
-  - \`title\`: "Применение последней зависимости при конфликте условий для программы '27 LADA FREE'"
-  - \`steps\`: ["Выбрать значение '27 LADA FREE'", "Ввести значение '10'"]
-  - \`expected\`: "Система отображает текст ошибки 'Срок кредита, не может быть <12 мес. и >84 мес.'"
-
-# 2) Пирамида тестирования — нерушимые правила
-1) Сдвигай проверки вниз: детальные проверки (валидации, границы, форматы) — в Integration/Unit, а не в E2E.
-2) E2E (C1) — только сквозные бизнес-сценарии:
-   • Чёрный ящик, имитация реального пользователя.
-   • ВСЕГДА начинаются шагами: «Авторизоваться…», «Перейти на страницу…».
-   • НЕЛЬЗЯ проверять сообщения отдельных полей и вводить невалидные данные полей — максимум 1–2 ключевых негативных сценария на уровне всего потока (например, «ошибка сервера при сохранении»).
-   • 🚨 КРИТИЧЕСКИ ВАЖНО: КАЖДАЯ Story ДОЛЖНА иметь минимум 1 E2E тест-кейс!
-   • 🚨 ЗАПРЕЩЕНО: Пропускать Stories без E2E покрытия!
-   • 🚨 ОБЯЗАТЕЛЬНО: Проверь что для КАЖДОЙ Story создан хотя бы один E2E тест!
-3) Integration (C2–C3) — взаимодействия компонент/эндпоинтов:
-   • В рамках одного компонента (FE) или одного API-вызова (BE), без навигации по страницам.
-   • Основная работа: классы эквивалентности, граничные значения (BVA), контракты API.
-   • 🚨 ВАЖНО: Integration тесты привязываются к Scenario, НЕ к Story!
-   • 🚨 Integration тесты НЕ должны содержать поле "story" без "scenario"!
-4) Unit (C4) — одна функция/метод, строгий AAA (Arrange-Act-Assert).
-   • 🚨 ВАЖНО: Unit тесты привязываются к Code, НЕ к Scenario или Story!
-   • 🚨 Unit тесты ОБЯЗАТЕЛЬНО должны содержать поле "code"!
-
-🚨 КРИТИЧЕСКИ ВАЖНО: КРИТЕРИИ ДЛЯ СЛОЁВ ПО СОДЕРЖИМОМУ EXPECTED! 🚨
-Если expected содержит HTTP-коды или контракты ответа — это Integration backend Tests.
-Если expected описывает UI-состояния/видимость контролов/дизабл — это FE (E2E или Integration frontend).
-Если expected описывает чистую бизнес-функцию (без UI/HTTP) — Unit.
-
-## 2.1) Для слоев "E2E Tests" и "Integration Tests" (Строгий "Чёрный Ящик")
-- **Действия (Steps):** Описывай только действия пользователя в интерфейсе (клик, ввод, скролл, навигация).
-- **Результат (Expected):** Описывай только видимые пользователю изменения в UI или ответы, определённые в API-контракте.
-- **ЗАПРЕЩЕНО:** Додумывать детали реализации, такие как вызовы внутренних функций, работа с базой данных, кэширование, или отправка HTTP-запросов.
-
-  - **Неправильно (гадание о реализации):** "Вызывается GET-запрос для фильтрации."
-  - **Правильно (наблюдаемый результат):** "В списке остаются только элементы, содержащие 'X'."
-
-  - **Неправильно:** "Нажать Enter для применения фильтра."
-  - **Правильно:** "Ввести в поле фильтра 'X'". Если нужно явно завершить действие — "Снять фокус с поля".
-
-## 2.2) Для слоя "Unit Tests" (Условный "Белый Ящик")
-- Ты **МОЖЕШЬ** описывать внутреннюю логику, но **ТОЛЬКО** если она основана на узле \`code\` из входной тестовой модели.
-- **Шаги (Steps):** Описывай подготовку данных (Arrange) и вызов действия (Act) в терминах, близких к узлу \`code\`.
-- **Результат (Expected):** Описывай проверку результата (Assert), соответствующую узлу \`code\`.
-- **Если узел \`code\` отсутствует в модели для данного сценария, ты ОБЯЗАН вернуться к принципу "Чёрного Ящика"** и описать Unit-тест в терминах "входные данные -> результат", не выдумывая названий функций.
-
-## 2.3) ПРИНЦИП МИНИМАЛЬНОГО ДЕЙСТВИЯ (При Неполных Требованиях)
-Это одно из ГЛАВНЫХ правил. Если требование описывает *состояние* элемента (например, "поле невалидно", "кнопка неактивна"), но НЕ описывает точное *действие* пользователя, которое вызывает это состояние, ТЫ ОБЯЗАН следовать этому принципу.
-
-**Принцип:** Сгенерируй тест, который проверяет состояние через самое **минимальное, локальное и очевидное действие**. ЗАПРЕЩЕНО додумывать сложные сценарии или действия с другими элементами управления (например, с кнопкой "Сохранить"), если они не упомянуты в требовании явно.
-
-🚨 КРИТИЧЕСКИ ВАЖНО: ПЛЕЙСХОЛДЕРЫ ВМЕСТО КОНКРЕТНЫХ ДАННЫХ! 🚨
-Используй плейсхолдеры вида <ВАЛИДНЫЙ_БИК>, <НЕВАЛИДНЫЙ_ИНН>, <QRC_ID>, <ДЕЙСТВИТЕЛЬНЫЙ_PIN> — никаких конкретных чисел/ФИО/дат. Конкретные значения не генерировать.
-
-**Пример 1: Валидация поля**
-- **Требование (неполное):** \`Валидация: "Поле 'Дата документа' обязательно для заполнения"\`
-- **Неправильно (додумывание):**
-  - Шаги: ["Нажать кнопку 'Сохранить'"]
-  - Ожидаемый результат: "Система отображает ошибку 'Поле... обязательно'"
-- **ПРАВИЛЬНО (Минимальное действие):**
-  - Шаги: ["Сфокусироваться на поле 'Дата документа'", "Снять фокус с поля, оставив его пустым"]
-  - Ожидаемый результат: "Под полем 'Дата документа' отображается ошибка 'Поле... обязательно'"
-
-**Пример 2: Состояние кнопки**
-- **Требование (неполное):** \`Кнопка "Сохранить" неактивна, пока не заполнены все обязательные поля.\`
-- **Неправильно (додумывание):**
-  - Шаги: ["Нажать на неактивную кнопку 'Сохранить'"]
-  - Ожидаемый результат: "Ничего не происходит" 
-  (Этот тест не проверяет условие)
-- **ПРАВИЛЬНО (Минимальное действие):**
-  - **Тест 1 (начальное состояние):**
-    - Предусловие: "Форма открыта, обязательные поля пусты"
-    - Шаги: [] (Действий нет, проверяем исходное состояние)
-    - Ожидаемый результат: "Кнопка 'Сохранить' отображается, но неактивна (disabled)"
-  - **Тест 2 (изменение состояния):**
-    - Предусловие: "Форма открыта, обязательные поля пусты"
-    - Шаги: ["Заполнить все обязательные поля валидными данными"]
-    - Ожидаемый результат: "Кнопка 'Сохранить' становится активной"
-
-# 3) Allure Style Guide (сводка отдела)
-— 1 тест-кейс = 1 проверка или 1 пользовательский сценарий.  
-— Тест-кейсы независимы друг от друга.  
-— Название информативно и по возможности уникально («Загрузка нового справочника», а не «Проверка справочников»).  
-— Предусловия (если есть) — только то, что подготавливается вне тестируемого приложения профилем исполнителя (данные в БД, настройки, сиды, интеграции, состояние устройства и т.п.).  
-— Шаги:
-   • Один шаг = одно действие. Всегда с глагола («Открыть», «Ввести», «Нажать»).  
-   • Общие повторяющиеся блоки — оформлять как shared steps (концептуально; в JSON шаги всё равно плоские).  
-   • Сценарные тесты: начинать с полного пользовательского пути (обычно с авторизации).  
-   • Атомарные тесты: начинать с инициализации изолированного компонента/эндпоинта (без «навигации»).  
-— Ожидаемый результат (обязателен) отражает СУТЬ проверки/сценария, формулирован чётко и без условных «если… то…».  
-— Вложения/файлы/мок-данные добавляются при необходимости (при наличии макетов/данных).  
-— Ссылки: указывать Confluence/макеты, если есть.  
-— Jira: указать связанное задание (ключ).  
-— Версия:
-   • Версия по умолчанию — "stable" для новых кейсов.  
-   • При доработках — клонировать кейс и указать нужную версию.  
-- Приоритет:
-   • Приоритет определяй по матрице риска:
-   • Critical — деньги/безопасность/ПДн, потеря/коррупция данных, недоступность критичного сервиса.
-   • High — основной бизнес-флоу ломается для многих, неверные суммы/конвертации/комиссии, нарушения авторизации/ролей.
-   • Medium — валидации, контент, нефатальные деградации UX.
-   • Low — косметика/копирайт/микро-UX.
-   • По умолчанию: E2E ≥ High, Integration ≥ Medium, Unit ≥ Low, но повышай при наличии рисков выше.
-
-# 4) Теги (ОБЯЗАТЕЛЬНО)
-В массиве "tags" используй:
-— Платформа интерфейса: D (desktop), A (adaptive), M (mobile), PWA (если уместно). Если платформа из контекста неочевидна — ставь "D".  
-— Бэкенд-проверки: добавь "S" (для Integration backend Tests и любых API-ориентированных проверок).   
-
-🚨 КРИТИЧЕСКИ ВАЖНО: ПОЛИТИКА ТЕГОВ ПО УМОЛЧАНИЮ! 🚨
-Если платформа в требованиях не указана — по умолчанию ставь ["M"] для мобильного приложения; для API-тестов всегда добавляй "S" (например, ["M","S"]).
-
-Примеры наборов тегов:
-• FE E2E/Integration (десктоп): ["D"]  
-• BE Integration: ["S"] или ["D","S"] если тест затрагивает интерфейсно-зависимые артефакты  
-
-# 5) Выходной формат: СТРОГО ТОЛЬКО JSON-массив
-Используй ровно один из трёх шаблонов ниже в зависимости от "layer". Никаких комментариев/markdown.
-
-🚨 ПРАВИЛО ДЛЯ STEPS: ТОЛЬКО ИЗ REQUIREMENTS! 🚨
-
-ЗАПРЕЩЕНО додумывать шаги:
-❌ "Дождаться загрузки страницы" (если не указано в requirements)
-❌ "Проверить, что кнопка активна" (это проверка — идёт в expected, а не в steps)
-❌ "Ввести валидные данные" (укажи КОНКРЕТНЫЕ данные из requirements или используй placeholders типа <НОМЕР_КАРТЫ>)
-
-ПРАВИЛЬНЫЕ шаги (конкретные действия):
-✅ "Открыть страницу 'История операций'"
-✅ "Выбрать операцию с типом 'payment' из списка"
-✅ "Нажать кнопку 'Повторить'"
-✅ "Ввести сумму 1000₽ в поле 'Сумма платежа'"
-
-ПРАВИЛО:
-
-Steps описывают ДЕЙСТВИЯ пользователя или системы
-
-Проверки результата НЕ пишутся в steps — только в expected
-
-Если requirements описывают действие как "при открытии страницы вызывается API X" — это НЕ шаг, это автоматическое действие (пишем в expected)
-
-## Шаблон: "layer": "E2E Tests"
-{
-  "feature": "ОБЯЗАТЕЛЬНО: Название фичи из модели",
-  "story": "ОБЯЗАТЕЛЬНО: Название истории из модели",
-  "title": "Название, описывающее ВЕСЬ сценарий (например, 'Успешное создание виджета авторизованным пользователем')",
-  "precondition": "Предварительные условия (опционально): состояние БД, настройки, интеграции, состояние устройства",
-  "steps": [
-    "Авторизоваться как 'user_role'",
-    "Перейти на страницу 'Название страницы'",
-    "Нажать кнопку 'Создать виджет'",
-    "Заполнить поле 'Название' валидным значением",
-    "Нажать кнопку 'Сохранить'"
-  ],
-  "expected": "Система отображает сообщение об успешном создании. Виджет появляется в общем списке.",
-  "tags": ["D", "M"],
-  "layer": "E2E Tests",
-  "priority": "High",
-  "version": "stable"
-  "requirement": "2.2.1",
-  "links": [
-    {
-      "text": "Требование из Confluence",
-      "url": "https://confluence.example.com/requirement"
-    }
-  ],
-  "attachments": [],
-  "parameters": [],
-  "examples": []
-}
-
-## Шаблон: "layer": "Integration frontend Tests" / "Integration backend Tests"
-{
-  "feature": "ОБЯЗАТЕЛЬНО: Название фичи из модели",
-  "story": "ОБЯЗАТЕЛЬНО: Название истории из модели",
-  "scenario": "ОБЯЗАТЕЛЬНО: ТОЧНОЕ название сценария из модели",
-  "title": "Конкретное действие (например, 'Валидация поля «Имя» при вводе более 100 символов')",
-  "precondition": "Компонент/эндпоинт подготовлен. Состояние БД, настройки, интеграции (коротко по существу, без кода).",
-  "steps": [
-    "Ввести в поле 'Имя' строку длиной 101 символ",
-    "Снять фокус с поля"
-  ],
-  "expected": "Под полем 'Имя' отображается текст ошибки 'Превышена максимальная длина'. Кнопка 'Сохранить' неактивна.",
-  "tags": ["D", "S"],
-  "layer": "Integration frontend Tests",
-  "priority": "Medium",
-  "version": "stable",
-  "jiraIssue": "ABC-123",
-  "requirement": "2.2.4",
-  "links": [
-    {
-      "text": "Требование из Confluence",
-      "url": "https://confluence.example.com/requirement"
-    }
-  ],
-  "attachments": [],
-  "parameters": [],
-  "examples": []
-}
-
-🚨 КРИТИЧЕСКИ ВАЖНО: ГЕЙТ ПО СТАТУС-КОДАМ ДЛЯ API! 🚨
-При наличии статуса-триггера в требованиях укажи его в expected (например: «Ответ 204 без тела», «Ответ 202, инициирован последующий шаг») и не проверяй дальнейшие эффекты до требуемого статуса.
-
-## Шаблон: "layer": "Unit frontend Tests" / "Unit backend Tests"
-{
-  "feature": "Название фичи из модели",
-  "story": "Название истории из модели",
-  "scenario": "ОБЯЗАТЕЛЬНО: Название сценария из модели, к которому относится код",
-  "code": "ОБЯЗАТЕЛЬНО: Точное название кода из codes[].text модели",
-  "title": "Кратко: что проверяем (описательно, без имён функций и синтаксиса)",
-  "precondition": "Arrange: подготовить входные данные/контекст (описательно, без программного синтаксиса).",
-  "steps": [
-    "Act: выполнить проверяемое действие в изоляции (описательно).",
-    "Act: передать подготовленные входные данные.",
-    "Act: получить результат."
-  ],
-  "expected": "Assert: результат соответствует ожидаемому (описательно, без кода и идентификаторов).",
-  "tags": ["Unit", "D"],
-  "layer": "Unit frontend Tests",
-  "priority": "Low",
-  "version": "stable",
-  "jiraIssue": "ABC-123",
-  "requirement": "4.1",
-  "links": [
-    {
-      "text": "Требование из Confluence",
-      "url": "https://confluence.example.com/requirement"
-    }
-  ],
-  "attachments": [],
-  "parameters": [],
-  "examples": []
-}
-Правила для Unit:
-— НЕ придумывать имена функций/классов и не использовать синтаксис языков.  
-— "scenario" ОБЯЗАТЕЛЬНО заполняется из названия сценария модели.
-— "code" ОБЯЗАТЕЛЬНО заполняется из codes[].text модели.
-- Unit = чистая бизнес-логика: без рендера UI, без DOM, без "Открыть/Перейти/Кликнуть/Ввести", без авторизации и навигации, без HTTP/эндпоинтов.
-- Любая инициализация компонента, взаимодействие с формами/страницей/браузером = только "Integration frontend Tests".
-- Любой полноценный HTTP-вызов/контракт/статус-код = только "Integration backend Tests".
-- Для Unit обязательный AAA: Arrange в precondition, цепочка Act в steps, Assert в expected.
-
-Допустимые дополнительные поля (если есть во входе или явно уместны): 
-• "links": [{ "text": "...", "url": "..." }] - ОБЯЗАТЕЛЬНО для ссылок на Confluence/макеты
-• "jiraIssue": "ABC-123" - ОБЯЗАТЕЛЬНО для связанных задач из Jira
-• "version": "stable" - ОБЯЗАТЕЛЬНО (по умолчанию "stable" для новых)
-• "attachments": [...] - ОПЦИОНАЛЬНО для файлов/скриншотов/видео
-• "parameters": [{ "name": "...", "values": [...] }] - ОПЦИОНАЛЬНО для параметризации (использовать когда логика идентична, но меняются входные данные)
-• "examples": [{ "parameters": [{ "name": "...", "value": "..." }] }] - ОПЦИОНАЛЬНО для конкретных примеров параметров
-• "precondition": "..." - ОПЦИОНАЛЬНО для предварительных условий
-
-# 6) Правила генерации набора тест-кейсов
-🚨 КРИТИЧЕСКИ ВАЖНО: СТРОГОЕ РАЗДЕЛЕНИЕ УРОВНЕЙ! 🚨
-
-Для КАЖДОЙ Story: 
-— ровно 1 Happy Path E2E (и 0–1 ключевой негатив на поток).
-— E2E тесты содержат ТОЛЬКО поля: feature, story, title, steps, expected, tags, layer, priority, version, jiraIssue, links
-— ЗАПРЕЩЕНО добавлять поля scenario или code в E2E тесты!
-— ЗАПРЕЩЕНО использовать одинаковые префиксы для всех Story! Используй конкретные названия: "Авторизация", "Платежи по категориям", "QR-оплата", "Повтор операций", "Разворот из трея"
-
-Для КАЖДОГО Scenario:
-— минимум 3 Integration-кейса (валидный, граничный/класс, негатив).
-— Integration тесты содержат ТОЛЬКО поля: feature, story, scenario, title, steps, expected, tags, layer, priority, version, jiraIssue, links
-— Поле "scenario" должно 1:1 совпадать с текстом узла.
-— ЗАПРЕЩЕНО добавлять поле code в Integration тесты!
-
-Для КАЖДОГО Code:
-— минимум 2 Unit-кейса.  
-— Unit тесты содержат ВСЕ поля: feature, story, scenario, code, title, steps, expected, tags, layer, priority, version, jiraIssue, links
-— "code" копировать из модели, если текст совпадает; иначе не указывать.
-
-# 7) Техники тест-дизайна (обязательно применять, если применимо)
-— BVA: мин, макс, мин-1, макс+1.  
-— Классы эквивалентности: валидный/невалидный/пустой/null.  
-— Error-guessing: разумные «углы».
-
-# 7.1) Генерация неявных сценариев (Error Guessing & BVA)
-После того, как ты сгенерировал тест-кейсы для всех ЯВНЫХ примеров из требований, дополнительно примени техники тест-дизайна, чтобы покрыть следующие случаи, даже если они не описаны в тексте:
-- **Граничные значения:** Для каждого числового диапазона (например, '48-84') ОБЯЗАТЕЛЬНО создай отдельные Integration-тесты для значений min-1, min, max, max+1 (в данном примере: 47, 48, 84, 85).
-- **Жизненный цикл:** Если есть сценарии на создание, ОБЯЗАТЕЛЬНО добавь по одному Integration-тесту на **редактирование** и **удаление** существующей зависимости.
-- **Невалидные типы данных:** Для полей с числовым вводом добавь Integration-тест на ввод текстовой строки. Для текстовых полей — проверку на ввод пустой строки.
-
-🚨 ВАЖНО: ПРОВЕРКА КРИТИЧНЫХ HTTP-КОДОВ! 🚨
-При работе с API ОБЯЗАТЕЛЬНО проверяй граничные случаи:
-- Если требование указывает "при статусе 200" — создай тест на 404, 500
-- Если требование указывает "при статусе 200 или 202" — создай тесты на оба кода + негативные (404, 500)
-- Если требование указывает "если НЕ 200 — не передавать отчёт" — создай тесты на 400, 401, 404, 500
-
-Примеры критичных проверок:
-• POST /oauth/te вернул 200 → отчёт передаётся ✅
-• POST /oauth/te вернул 401 → отчёт НЕ передаётся ✅ (ОБЯЗАТЕЛЬНЫЙ негативный тест!)
-• POST /create/sdk вернул 500 → ошибка НЕ показывается пользователю ✅
-• GET /qrcode вернул 202 → отчёт передаётся ✅ (граничный случай!)
-
-# 8) Чек-лист перед выводом
-🚨 КРИТИЧЕСКИ ВАЖНО: ПРОВЕРЬ КАЖДЫЙ ТЕСТ-КЕЙС! 🚨
-— КАЖДЫЙ тест-кейс ОБЯЗАТЕЛЬНО содержит массив "steps" с минимум 1 шагом!
-— КАЖДЫЙ тест-кейс ОБЯЗАТЕЛЬНО содержит поле "expected"!
-— Все кейсы независимы; по одному «смыслу» на кейс.  
-— В E2E есть «Авторизоваться…» и «Перейти на страницу…».  
-— Детальные проверки (валидации полей и т.п.) не просочились в E2E.  
-— "scenario" (для Integration/Unit) совпадает с моделью.  
-— Теги проставлены по правилам: D/A/M/PWA; "S" для бэкенда; номер требования — только если есть во входе.  
-— "version" = "stable" для новых кейсов (если не указано иное).
-
-🚨 КРИТИЧЕСКИ ВАЖНО: ЖЁСТКИЙ ФОРМАТ ДЛЯ EXPECTED! 🚨
-expected — одна фраза без «и/также». Если нужно несколько проверок — дроби на отдельные кейсы.
-
-🚨 КРИТИЧЕСКИ ВАЖНО ДЛЯ КАСТОМНЫХ ПОЛЕЙ! 🚨
-— ДЛЯ ВСЕХ ТЕСТОВ: "feature" ОБЯЗАТЕЛЬНО!
-— E2E Tests: ОБЯЗАТЕЛЬНО "feature" + "story" + "scenario" (БЕЗ code!)
-— Integration Tests: ОБЯЗАТЕЛЬНО "feature" + "story" + "scenario" (БЕЗ code!)  
-— Unit Tests: ОБЯЗАТЕЛЬНО "feature" + "story" + "scenario" + "code"
-— ЗАПРЕЩЕНО добавлять поля из других уровней!
-— НЕ ОСТАВЛЯЙ пустых кастомных полей - это критично для структуры!
-
-🚨 КРИТИЧЕСКИ ВАЖНО ДЛЯ НАЗВАНИЙ ТЕСТ-КЕЙСОВ! 🚨
-— ЗАПРЕЩЕНО использовать слово "Проверка" в названиях!
-— ЗАПРЕЩЕНО создавать названия длиннее 60 символов!
-— Используй глаголы действия: "Валидация", "Создание", "Удаление", "Отображение"
-— НЕ включай технические детали (URL, коды ошибок) в название - выноси в expected!
-— Примеры ХОРОШИХ названий: "Валидация поля при неверных данных", "Создание заявки с корректными данными", "Передача отчета после авторизации"
-— Примеры ПЛОХИХ названий: "Проверка валидации поля", "Отправка запроса POST /rest/stateful/personal/kuban/client/create/sdk с некорректным форматом данных при открытии страницы переводов"  
-
-🚨 КРИТИЧЕСКИ ВАЖНО: НАЗВАНИЯ E2E ТЕСТОВ! 🚨
-ЗАПРЕЩЕНО использовать в названиях E2E тестов: "Полный сценарий", "Е2Е сценарий", "End-to-End тест" — просто информативное название действия без лишних слов.  
-
-# 9) Формат ответа
-Выведи СТРОГО один JSON-массив кейсов без каких-либо комментариев, текста или Markdown.
-
-🚨 КРИТИЧЕСКИ ВАЖНО: ВАЛИДАЦИЯ СХЕМЫ ПЕРЕД ВЫВОДОМ! 🚨
-Перед выводом выполнить самопроверку: объект соответствует одному из шаблонов по обязательным полям; expected непустой; steps (минимум 1); feature всегда задан; для Integration — есть scenario; для Unit — есть scenario и code.
-
-🚨 КРИТИЧЕСКИ ВАЖНО: ДЕТЕРМИНИРОВАННЫЙ ПОРЯДОК ВЫВОДА! 🚨
-Сортируй кейсы по: feature → story → scenario (если есть) → layer (E2E, Integration, Unit) → title (lex). Это упрощает diff.
-
-ВАЖНО: Каждый тест-кейс ОБЯЗАТЕЛЬНО должен содержать поле "expected" с описанием ожидаемого результата. Без этого поля тест-кейс неполный и не может быть использован.
-`.trim();
+
 
         // Подсчитываем статистику модели для COVENANT
         const S = modelStructure.reduce((sum, f) => sum + (f.stories || []).length, 0);
@@ -5789,347 +8563,228 @@ expected — одна фраза без «и/также». Если нужно �
             sum + (f.stories || []).reduce((s, st) =>
                 s + (st.scenarios || []).reduce((sc, scn) => sc + (scn.codes?.length || 0), 0), 0), 0);
 
+        // ✅ УПРОЩЁННЫЙ COVENANT (статичный вместо динамического)
         const COVENANT = `
-        # 6.1 Ковенанта покрытия (двухпроходная генерация)
-        В модели: Stories=${S}, Scenarios=${Sc}, Codes=${C}.
-        
-        ПРОХОД 1 (E2E_ONLY):
-        - E2E: ${Math.max(1, Math.floor(S / 2))} тестов
-          • 1 сквозной E2E на Story (или 2 если есть критичные альтернативные пути)
-          • E2E = полный путь пользователя через ВСЕ Scenarios
-        
-        ПРОХОД 2 (INTEGRATION_UNIT) — С КОНТЕКСТОМ E2E:
-        - Integration: МИНИМУМ ${Sc * 2}, МАКСИМУМ ${Sc * 3} тестов
-          • 2-3 атомарных теста на КАЖДЫЙ Scenario
-          • НЕ дублируй E2E-логику! Фокус на технических деталях.
-          
-        - Unit: МИНИМУМ ${Math.floor(Sc * 0.7)}, МАКСИМУМ ${Sc * 2} тестов
-          • 1-2 изолированных теста на КАЖДЫЙ Code
-          • НЕ дублируй Integration-логику! Фокус на методах.
-        
-        ИТОГО: ${Math.max(1, Math.floor(S / 2)) + Sc * 2.5 + Sc} ± 30% тестов
-        
-        🚨 КРИТИЧЕСКИ ВАЖНО:
-        - E2E тесты НЕ привязаны к конкретному Scenario (только Story)
-        - Integration тесты привязаны к конкретному Scenario
-        - Unit тесты привязаны к конкретному Code
-        - Каждый слой НЕ дублирует предыдущий!
-        `.trim();
+ПРАВИЛА ПОКРЫТИЯ:
+- E2E: 1-2 теста на Story (основной путь + критичный негатив)
+- Integration: 2-3 теста на Scenario (позитив + негатив + граничные)
 
+ФОРМУЛА: 
+Total = (Stories × 1.5) + (Scenarios × 2.5) ± 30%
+
+ПРОВЕРКА перед submit_cases:
+□ Каждая Story имеет ≥1 E2E?
+□ Каждый Scenario имеет ≥2 Integration?
+□ Expected конкретный во всех тестах?
+`.trim();
+
+        const baseSystemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}`;
+        const baseCaseModelOptions = {
+            models: config.cloudruModels,
+            temperature: 0,
+            top_p: 1,
+            max_tokens: 64000,
+            extra: { transforms: 'middle-out' }
+        };
+
+        const composeUserPrompt = (corePrompt) => {
+            if (!toolInstruction) return corePrompt;
+            const trimmedInstruction = toolInstruction.endsWith('\n') ? toolInstruction : `${toolInstruction}\n`;
+            return `${trimmedInstruction}${corePrompt}`;
+        };
+
+        async function runTestCaseLLM({
+            systemPrompt = baseSystemPrompt,
+            userPrompt,
+            submissionTool,
+            modelOverrides = {}
+        }) {
+            const decoratedUserPrompt = composeUserPrompt(userPrompt);
+            const messages = [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: decoratedUserPrompt }
+            ];
+
+            const combinedTools = [...interactiveTools];
+            const finalToolNames = [];
+
+            if (submissionTool) {
+                combinedTools.push(submissionTool);
+                const toolName = submissionTool?.function?.name;
+                if (toolName) finalToolNames.push(toolName);
+            }
+
+            try {
+                const interactiveResult = await runInteractiveLLM({
+                    initialMessages: messages,
+                    tools: combinedTools,
+                    toolHandlers: contextToolHandlers,
+                    finalToolNames,
+                    modelOptions: { ...baseCaseModelOptions, ...modelOverrides }
+                });
+                return interactiveResult.response;
+            } catch (interactiveError) {
+                console.warn(`[generate-test-cases] interactive loop failed: ${interactiveError.message}`);
+                return await callWithCloudRuFallback(
+                    OPENROUTER_URL,
+                    messages,
+                    config.openRouterAiKey,
+                    {
+                        ...baseCaseModelOptions,
+                        ...modelOverrides,
+                        tools: combinedTools
+                    }
+                );
+            }
+        }
 
 
         // === tool-schema с жёстким enum для сценариев ===
-        const buildSubmitCasesToolStrict = (allowedCodes = [], allowedScenarios = []) => ({
-            type: "function",
-            function: {
-                name: "submit_cases",
-                description: "Верни итоговые тест-кейсы строго в массиве cases",
-                parameters: {
-                    type: "object",
-                    properties: {
-                        cases: {
-                            type: "array",
-                            items: {
-                                type: "object",
-                                properties: {
-                                    feature: { type: "string" },
-                                    story: { type: "string" },
-                                    scenario: allowedScenarios.length
-                                        ? { type: "string", enum: allowedScenarios }
-                                        : { type: "string" },
-                                    code: allowedCodes.length
-                                        ? { type: "string", enum: allowedCodes }
-                                        : { type: "string" },
-                                    title: { type: "string" },
-                                    precondition: { type: "string" },
-                                    steps: { type: "array", items: { type: "string" } },
-                                    expected: { type: "string" },
-                                    tags: { type: "array", items: { type: "string" } },
-                                    layer: {
-                                        type: "string", enum: [
-                                            "E2E Tests",
-                                            "Integration frontend Tests", "Integration backend Tests",
-                                            "Unit frontend Tests", "Unit backend Tests"
-                                        ]
-                                    },
-                                    priority: { type: "string", enum: ["Critical", "High", "Medium", "Low"] },
-                                    version: { type: "string" },
-                                    links: {
-                                        type: "array",
-                                        items: {
+        // ✅ ДОРАБОТКА 2: Обновлена функция для поддержки reqStructure
+        const buildSubmitCasesToolStrict = (allowedCodes = [], allowedScenarios = [], reqStructure = null) => {
+            // ✅ НОВОЕ: Извлекаем допустимые feature/story из reqStructure
+            let allowedFeatures = [];
+            let allowedStories = [];
+
+            if (reqStructure && reqStructure.features && reqStructure.features.length > 0) {
+                allowedFeatures = reqStructure.features.map(f => f.name);
+                allowedStories = reqStructure.features.flatMap(f => f.stories.map(s => s.name));
+            } else {
+                // Fallback: извлекаем из modelStructure
+                allowedFeatures = modelStructure.map(f => f.text);
+                allowedStories = modelStructure.flatMap(f => (f.stories || []).map(s => s.text));
+            }
+
+            return {
+                type: "function",
+                function: {
+                    name: "submit_cases",
+                    description: "Верни итоговые тест-кейсы строго в массиве cases",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            cases: {
+                                type: "array",
+                                items: {
+                                    type: "object",
+                                    properties: {
+                                        feature: allowedFeatures.length > 0
+                                            ? {
+                                                type: "string",
+                                                enum: allowedFeatures,
+                                                description: `Feature из модели. Допустимые значения: ${allowedFeatures.join(', ')}`
+                                            }
+                                            : { type: "string", description: "Название фичи из modelStructure" },
+                                        story: allowedStories.length > 0
+                                            ? {
+                                                type: "string",
+                                                enum: allowedStories,
+                                                description: `Story из модели. Допустимые значения: ${allowedStories.join(', ')}`
+                                            }
+                                            : { type: "string", description: "Название story из modelStructure" },
+                                        scenario: allowedScenarios.length
+                                            ? { type: "string", enum: allowedScenarios }
+                                            : { type: "string" },
+                                        code: allowedCodes.length
+                                            ? { type: "string", enum: allowedCodes }
+                                            : { type: "string" },
+                                        title: { type: "string" },
+                                        precondition: { type: "string" },
+                                        steps: { type: "array", items: { type: "string" } },
+                                        expected: { type: "string" },
+                                        tags: { type: "array", items: { type: "string" } },
+                                        layer: {
+                                            type: "string", enum: [
+                                                "E2E Tests",
+                                                "Integration frontend Tests",
+                                                "Integration backend Tests",
+                                                "Unit Tests"
+                                            ]
+                                        },
+                                        priority: { type: "string", enum: ["Critical", "High", "Medium", "Low"] },
+                                        version: { type: "string" },
+                                        links: {
+                                            type: "array",
+                                            items: {
+                                                type: "object",
+                                                properties: {
+                                                    text: { type: "string" },
+                                                    url: { type: "string" },
+                                                    type: { type: "string" }
+                                                }
+                                            }
+                                        },
+                                        jiraIssueOption: {
                                             type: "object",
                                             properties: {
-                                                text: { type: "string" },
-                                                url: { type: "string" },
-                                                type: { type: "string" }
+                                                value: { type: "string" },
+                                                integrationId: { type: "string" }
+                                            }
+                                        },
+                                        // ❌ УДАЛЕНО: requirement - это поле используется ТОЛЬКО в тестовой модели, НЕ в тест-кейсах!
+                                        parameters: {
+                                            type: "array",
+                                            description: "Массив параметров для параметризации теста",
+                                            items: {
+                                                type: "object",
+                                                properties: {
+                                                    name: { type: "string" },
+                                                    values: { type: "array", items: { type: "string" } }
+                                                },
+                                                required: ["name", "values"]
+                                            }
+                                        },
+                                        examples: {
+                                            type: "array",
+                                            description: "Массив примеров (конкретных комбинаций параметров)",
+                                            items: {
+                                                type: "object",
+                                                properties: {
+                                                    parameters: {
+                                                        type: "array",
+                                                        items: {
+                                                            type: "object",
+                                                            properties: {
+                                                                name: { type: "string" },
+                                                                value: { type: "string" }
+                                                            },
+                                                            required: ["name", "value"]
+                                                        }
+                                                    }
+                                                },
+                                                required: ["parameters"]
                                             }
                                         }
                                     },
-                                    jiraIssueOption: {
-                                        type: "object",
-                                        properties: {
-                                            value: { type: "string" },
-                                            integrationId: { type: "string" }
-                                        }
-                                    },
-                                    requirement: { type: "string", description: "Номер требования из ЧТЗ (например, '2.2.1', '4.1')" },
-                                    parameters: {
-                                        type: "array",
-                                        description: "Массив параметров для параметризации теста",
-                                        items: {
-                                            type: "object",
-                                            properties: {
-                                                name: { type: "string" },
-                                                values: { type: "array", items: { type: "string" } }
-                                            },
-                                            required: ["name", "values"]
-                                        }
-                                    },
-                                    examples: {
-                                        type: "array",
-                                        description: "Массив примеров (конкретных комбинаций параметров)",
-                                        items: {
-                                            type: "object",
-                                            properties: {
-                                                parameters: {
-                                                    type: "array",
-                                                    items: {
-                                                        type: "object",
-                                                        properties: {
-                                                            name: { type: "string" },
-                                                            value: { type: "string" }
-                                                        },
-                                                        required: ["name", "value"]
-                                                    }
-                                                }
-                                            },
-                                            required: ["parameters"]
-                                        }
-                                    }
-                                },
-                                required: ["title", "layer", "expected", "requirement"]
+                                    required: ["title", "layer", "expected"]  // ❌ УДАЛЕНО: requirement
+                                }
                             }
-                        }
-                    },
-                    required: ["cases"],
-                    additionalProperties: false
+                        },
+                        required: ["cases"],
+                        additionalProperties: false
+                    }
                 }
-            }
-        });
+            };
 
-        // ✅ ИСПРАВЛЕНИЕ: Убираем чанкование - используем ПОЛНУЮ модель
-        console.log(`[generate-test-cases] Используем ПОЛНУЮ модель без чанкования для точности`);
-        console.log(`[generate-test-cases] Требования: ${refinedReqs.join('').length} символов`);
-        console.log(`[generate-test-cases] Модель: ${modelStructure.length} фич`);
+            // ✅ ИСПРАВЛЕНИЕ: Убираем чанкование - используем ПОЛНУЮ модель
+            console.log(`[generate-test-cases] Используем ПОЛНУЮ модель без чанкования для точности`);
+            console.log(`[generate-test-cases] Требования: ${refinedReqs.join('').length} символов`);
+            console.log(`[generate-test-cases] Модель: ${modelStructure.length} фич`);
 
-        const totalOperations = 1; // Одна операция для всей модели
-        let completedOperations = 0;
+            const totalOperations = 1; // Одна операция для всей модели
+            let completedOperations = 0;
 
-        async function genForChunk(chunk, requirements, systemPrompt, mode, existingTests, modelStructure, allowedForChunk, allowedScenarios) {
-            // ✅ НОВОЕ: Формируем промпт в зависимости от режима
-            let modeSpecificPrompt = '';
+        }
 
-            if (mode === 'E2E_ONLY') {
-                const isMasterChunk = chunk[0].stories[0]._isMasterChunk === true;
-                const allScenariosCount = chunk[0].stories[0].scenarios?.length || 0;
-
-                modeSpecificPrompt = `
-🎯 РЕЖИМ: ГЕНЕРАЦИЯ E2E ТЕСТОВ (Story-level)
-
-${isMasterChunk ? `
-✅ ЭТО МАСТЕР-CHUNK: Содержит ВСЕ ${allScenariosCount} Scenarios для Story!
-
-ЗАДАНИЕ: Создай ОДИН СКВОЗНОЙ E2E тест, который проходит через основной путь Story.
-
-ПРАВИЛА ДЛЯ СКВОЗНОГО E2E:
-1. Один E2E тест = полный путь пользователя от начала до конца
-2. Выбери ОДИН ТИПИЧНЫЙ Scenario из списка (обычно первый или самый распространённый)
-3. Тест должен показать, как работает вся Story целиком
-4. НЕ создавай отдельные E2E для каждого Scenario (это задача Integration тестов!)
-5. Указывай: feature + story + scenario, БЕЗ code
-
-ПРИМЕР СКВОЗНОГО E2E:
-{
-  "title": "Полный цикл авторизации и отправки отчёта в мобильном приложении",
-  "layer": "E2E Tests",
-  "feature": "Интеграция SDK Bi_Zone",
-  "story": "Отправка отчёта после авторизации",
-  "scenario": "Авторизация по пин-коду",  // ← выбрали один типичный способ
-  "steps": [
-    "Открыть мобильное приложение",
-    "Авторизоваться (по пин-коду)",  // ← выбрали один типичный способ
-    "Дождаться загрузки главной страницы",
-    "Проверить, что отчёт автоматически отправлен"
-  ],
-  "expected": "Пользователь успешно авторизован, метод getReport() вызван 1 раз, данные переданы через POST /create/sdk с кодом 204, отчёт содержит: DeviceModel, AppKey, SDK_VERSION"
-}
-
-❌ НЕПРАВИЛЬНО (слишком много E2E):
-- Создавать отдельный E2E для "авторизации по пин-коду"
-- Создавать отдельный E2E для "авторизации по FaceID"
-- Создавать отдельный E2E для "авторизации по карте"
-→ Это задача Integration тестов!
-
-✅ ПРАВИЛЬНО: ОДИН сквозной E2E, который показывает всю Story целиком.
-` : `
-⚠️ ЭТО ОБЫЧНЫЙ CHUNK: Для маленькой Story (≤3 Scenarios).
-
-ЗАДАНИЕ: Создай 1-2 E2E теста для основных путей Story.
-`}
-`;
-            } else if (mode === 'INTEGRATION_UNIT') {
-                // Показываем модели, какие E2E тесты УЖЕ ЕСТЬ
-                const e2eContext = existingTests.length > 0
-                    ? `\n📋 УЖЕ СОЗДАНЫ E2E ТЕСТЫ:\n${existingTests.map(tc => `- ${tc.title}`).join('\n')}\n`
-                    : '';
-
-                modeSpecificPrompt = `
-                    🎯 РЕЖИМ: ГЕНЕРАЦИЯ INTEGRATION/UNIT ТЕСТОВ (Scenario/Code-level)
-                    
-                    ${e2eContext}
-                    
-                    ✅ E2E тесты УЖЕ ПОКРЫВАЮТ сквозные пути пользователя!
-                    ❌ НЕ дублируй E2E-логику в Integration/Unit тестах!
-                    
-                    ═══════════════════════════════════════════════════════════
-                    🚨 КРИТИЧЕСКИ ВАЖНО: ФОКУС НА КОНТЕКСТЕ FEATURE/STORY!
-                    ═══════════════════════════════════════════════════════════
-                    
-                    КОНТЕКСТ ТЕКУЩЕГО ТЕСТА:
-                  Feature: "${chunk.feature || 'Не указано'}"
-                  Story: "${chunk.story || 'Не указано'}"
-                  Scenario: "${chunk.scenario || 'Не указано'}"                
-                    
-                    ВАЖНО: Integration тесты должны проверять СПЕЦИФИКУ FEATURE/STORY!
-                    
-                    ЕСЛИ Feature = "Интеграция SDK Bi_Zone":
-                      - Frontend Integration: проверка инициализации SDK, сбора данных, подготовки отчёта
-                      - Backend Integration: проверка API POST /create/sdk с данными BiZone
-                      - НЕ проверяем: общую UI авторизации БЕЗ контекста SDK
-                    
-                    ПРИМЕРЫ ПРАВИЛЬНЫХ тестов ДЛЯ "Интеграция SDK Bi_Zone":
-                    
-                    ✅ ПРАВИЛЬНО (Frontend Integration - привязан к SDK):
-                    {
-                      "title": "SDK BiZone начинает сбор данных при открытии формы авторизации",
-                      "layer": "Integration frontend Tests",
-                      "feature": "Интеграция SDK Bi_Zone",
-                      "story": "Отправка отчёта после авторизации",
-                      "scenario": "Авторизоваться по пин-коду",
-                      "expected": "SDK инициализирован, начат сбор DeviceModel, AppKey, SDK_VERSION"
-                    }
-                    
-                    ✅ ПРАВИЛЬНО (Backend Integration - привязан к SDK):
-                    {
-                      "title": "API POST /create/sdk принимает массив BiZone данных после авторизации по пин-коду",
-                      "layer": "Integration backend Tests",
-                      "feature": "Интеграция SDK Bi_Zone",
-                      "story": "Отправка отчёта после авторизации",
-                      "scenario": "Авторизоваться по пин-коду",
-                      "steps": ["Выполнить POST /create/sdk с массивом данных BiZone"],
-                      "expected": "Статус 204, данные приняты"
-                    }
-                    
-                    ❌ НЕПРАВИЛЬНО (общий тест авторизации БЕЗ контекста SDK):
-                    {
-                      "title": "Форма авторизации отображается после запуска приложения", // ❌ НЕТ SDK!
-                      "layer": "Integration frontend Tests",
-                      "expected": "Форма отображается" // ❌ НЕТ SDK!
-                    }
-                    
-                    ❌ НЕПРАВИЛЬНО (общий тест UI БЕЗ контекста SDK):
-                    {
-                      "title": "Кнопка 'Войти' активируется после ввода пин-кода", // ❌ НЕТ SDK!
-                      "layer": "Integration frontend Tests"
-                    }
-                    
-                    ПРАВИЛО: Integration тест ОБЯЗАТЕЛЬНО должен проверять СПЕЦИФИКУ Feature/Story!
-                    Если Feature = "Интеграция SDK Bi_Zone" → тест ОБЯЗАТЕЛЬНО про SDK, getReport(), BiZone данные!
-                    
-                    ЗАДАНИЕ: 
-                    1. Для КАЖДОГО Scenario создай тесты, ПРИВЯЗАННЫЕ к Feature/Story
-                    2. Frontend Integration: проверка SDK, сбора данных, инициализации
-                    3. Backend Integration: проверка API /create/sdk с данными BiZone
-                    4. НЕ создавай общие UI-тесты БЕЗ контекста Feature!
-                    `;
-
-
-            }
-            const userPrompt = `
-            ${modeSpecificPrompt}
-            
-            Модель для генерации:
-            ${JSON.stringify(chunk, null, 2)}
-            
-            Требования:
-            ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
-            
-            ${COVENANT}
-            `.trim();
-
-
-            const tools = [buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios)];
-            const ai = await callWithCloudRuFallback(
-                OPENROUTER_URL,
-                [
-                    { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
-                    { role: 'user', content: userPrompt }
-                ],
-                config.openRouterAiKey,
-                {
-                    tools,
-                    // tool_choice убран для Cloud.ru совместимости
-                    temperature: 0,
-                    top_p: 1,
-                    max_tokens: 200000
-                }
-            );
-
-            // ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ ОТВЕТА CLOUD.RU
-            console.log(`[genForChunk] 🔍 Анализ ответа Cloud.ru:`);
-            console.log(`[genForChunk] Response structure:`, {
-                has_choices: !!ai.choices,
-                choices_length: ai.choices?.length,
-                has_message: !!ai.choices?.[0]?.message,
-                has_content: !!ai.choices?.[0]?.message?.content,
-                content_length: ai.choices?.[0]?.message?.content?.length || 0,
-                has_tool_calls: !!ai.choices?.[0]?.message?.tool_calls,
-                tool_calls_count: ai.choices?.[0]?.message?.tool_calls?.length || 0
-            });
-
-            // Если Cloud.ru вернул большой content но нет tool_calls - это нормально
-            const contentLength = ai.choices?.[0]?.message?.content?.length || 0;
-            const hasToolCalls = ai.choices?.[0]?.message?.tool_calls?.length > 0;
-
-            if (contentLength > 10000 && !hasToolCalls) {
-                console.log(`[genForChunk] Cloud.ru вернул большой content (${contentLength} символов) без tool_calls - используем fallback парсер`);
-            }
-
-            // Если есть tool_calls - логируем их
-            if (ai.choices?.[0]?.message?.tool_calls) {
-                console.log(`[genForChunk] 🛠️ Tool calls:`,
-                    ai.choices[0].message.tool_calls.map(tc => ({
-                        name: tc.function?.name,
-                        args_length: tc.function?.arguments?.length
-                    })));
-            }
-
-            // ✅ ИСПРАВЛЕНИЕ: Обрабатываем ВСЕ tool_calls, а не ищем одну функцию
-            const toolCalls = ai.choices?.[0]?.message?.tool_calls || [];
-            console.log(`[genForChunk] Обрабатываем ${toolCalls.length} tool_calls...`);
-
+        // ✅ ФУНКЦИЯ ИЗВЛЕЧЕНИЯ КЕЙСОВ ИЗ ОТВЕТА AI
+        function extractCasesFromResponse(ai) {
             const allTestCases = [];
 
-            // ✅ ПРОСТАЯ ОБРАБОТКА TOOL_CALLS БЕЗ UUID ЛОГИКИ
+            // 1. Пробуем извлечь из tool_calls
+            const toolCalls = ai.choices?.[0]?.message?.tool_calls || [];
             for (const toolCall of toolCalls) {
                 try {
                     const args = JSON.parse(toolCall.function.arguments);
-                    console.log(`[genForChunk] Tool ${toolCall.function.name}:`, {
-                        hasArgs: !!args,
-                        argsKeys: args ? Object.keys(args) : []
-                    });
-
-                    // ✅ ПРОСТАЯ ОБРАБОТКА: Берем поля напрямую из args.cases
                     if (args.cases && Array.isArray(args.cases)) {
                         for (const testCase of args.cases) {
                             allTestCases.push({
@@ -6144,7 +8799,7 @@ ${isMasterChunk ? `
                                 tags: testCase.tags || [],
                                 priority: testCase.priority || 'Medium',
                                 version: testCase.version || 'stable',
-                                requirement: testCase.requirement,
+                                // ❌ УДАЛЕНО: requirement - не используется в тест-кейсах
                                 precondition: testCase.precondition,
                                 links: testCase.links || [],
                                 jiraIssue: testCase.jiraIssueOption?.value,
@@ -6152,111 +8807,136 @@ ${isMasterChunk ? `
                                 examples: testCase.examples || []
                             });
                         }
-                        console.log(`[genForChunk] ✅ Добавлено ${args.cases.length} тест-кейсов через tool_call`);
                     }
-
                 } catch (parseErr) {
-                    console.error(`[genForChunk] ❌ Ошибка парсинга tool_call ${toolCall.function.name}:`, parseErr.message);
+                    console.error(`[extractCasesFromResponse] Ошибка парсинга tool_call:`, parseErr.message);
                 }
             }
 
-            console.log(`[genForChunk] Итого получено ${allTestCases.length} тест-кейсов`);
-
-            if (allTestCases.length > 0) {
-                console.log(`[genForChunk] ✅ УСПЕХ: Получено ${allTestCases.length} кейсов через tool_calls!`);
-
-                // ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Правильная обработка результатов AI
-                // 1) Извлекаем все codes из модели для sanitize
-                const allCodes = [];
-                for (const feature of (modelStructure || [])) {
-                    for (const story of (feature.stories || [])) {
-                        for (const scenario of (story.scenarios || [])) {
-                            for (const code of (scenario.codes || [])) {
-                                allCodes.push(code.text);
+            // 2. Если нет tool_calls, пробуем извлечь из content
+            if (allTestCases.length === 0) {
+                const content = ai.choices?.[0]?.message?.content || '';
+                if (content.trim()) {
+                    try {
+                        const rawJsonCandidate = extractJsonArray(content);
+                        if (rawJsonCandidate) {
+                            const jsonText = cleanupJsonText(rawJsonCandidate);
+                            const parsed = JSON5.parse(jsonText);
+                            if (Array.isArray(parsed)) {
+                                allTestCases.push(...parsed);
+                            } else if (parsed && Array.isArray(parsed.cases)) {
+                                allTestCases.push(...parsed.cases);
                             }
                         }
+                    } catch (e) {
+                        console.warn('[extractCasesFromResponse] Ошибка парсинга content:', e.message);
                     }
                 }
-
-                // 2) Санитизация
-                let sanitizedCases = sanitize(allTestCases, allCodes);
-                console.log(`[genForChunk] После sanitize: ${sanitizedCases.length} кейсов`);
-
-                // 3) Восстановление связей по модели
-                const modelIndex = buildModelIndex(modelStructure);
-                let finalCases = fixAgainstModel(sanitizedCases, modelIndex);
-                console.log(`[genForChunk] После fixAgainstModel: ${finalCases.length} кейсов`);
-
-                console.log(`[genForChunk] Первый финальный кейс:`, JSON.stringify(finalCases[0], null, 2));
-                return finalCases;
             }
 
-            console.warn(`[genForChunk] WARN: Не удалось обработать tool_calls. Попытка парсинга из content.`);
-            const content = ai.choices?.[0]?.message?.content || '';
-            if (!content.trim()) {
-                console.error('[genForChunk] CRITICAL: Ответ модели полностью пуст.');
-                return [];
-            }
+            return allTestCases;
+        }
+
+        // ✅ ОПТИМИЗИРОВАННАЯ ВЕРСИЯ: ONE-SHOT с fallback + Few-Shot Learning
+        async function genForChunkOptimized(chunk, requirements, existingE2E = [], modelStructure, reqStructure = null) {
+            const contextPrompt = buildContextPrompt(chunk, existingE2E);
+            const relevantReqs = filterRelevantRequirements(requirements, chunk);
+            const allowedForChunk = collectAllowedCodes(chunk);
+            const allowedScenarios = collectAllowedScenarios(chunk);
+
+            // ✅ Выбираем релевантные примеры для Few-Shot Learning
+            const mode = chunk[0].stories[0]._mode || 'FULL';
+            const examples = selectExamples(chunk, mode);
+            const examplesSection = buildExamplesSection(examples);
+
+            // ✅ Формируем system prompt с примерами
+            const systemPromptWithExamples = `
+${BASE_SYSTEM_PROMPT}
+
+${COVENANT}
+
+═══════════════════════════════════════════════════════════════
+📚 ЭТАЛОННЫЕ ПРИМЕРЫ (ИСПОЛЬЗУЙ КАК ШАБЛОНЫ!)
+═══════════════════════════════════════════════════════════════
+
+🚨 ПЕРЕД ГЕНЕРАЦИЕЙ - ИЗУЧИ ПРИМЕРЫ:
+1. Посмотри на структуру JSON в примерах
+2. Обрати внимание на формат параметризации (parameters + examples)
+3. Заметь использование {{параметр}} в steps и expected
+4. Проверь формат полей: feature, story, scenario, title, steps, expected, layer, priority, tags, version
+
+${examplesSection}
+
+🚨 КРИТИЧЕСКИ ВАЖНО:
+- Примеры = ЭТАЛОН, строго следуй их формату
+- Для параметризации ОБЯЗАТЕЛЬНО используй parameters + examples (как в примерах)
+- В steps и expected используй {{параметр}} для подстановки значений
+- Expected должен быть КОНКРЕТНЫМ (как в примерах)
+- Не создавай дубликаты - используй параметризацию!
+`.trim();
+
+            const userPrompt = `
+${contextPrompt}
+
+Требования (релевантные):
+${relevantReqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+
+Модель:
+${JSON.stringify(chunk, null, 2)}
+`.trim();
 
             try {
-                const rawJsonCandidate = extractJsonArray(content);
-                if (!rawJsonCandidate) {
-                    console.error('[genForChunk] CRITICAL: Не удалось извлечь JSON-массив из content.');
-                    console.log('--- RAW AI RESPONSE (genForChunk failed to parse) ---\n', content, '\n------------------------------------');
-                    return [];
-                }
-                try {
-                    const jsonText = cleanupJsonText(rawJsonCandidate);
-                    const parsed = JSON5.parse(jsonText);
-                    let result = Array.isArray(parsed) ? parsed : [];
-                    if (!result.length) {
-                        // одна попытка перегенерации с более строгими настройками
-                        try {
-                            const retry = await callWithCloudRuFallback(
-                                OPENROUTER_URL,
-                                [
-                                    { role: 'system', content: `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}` },
-                                    { role: 'user', content: userPrompt }
-                                ],
-                                config.openRouterAiKey,
-                                {
-                                    // повтор без tools: просим текстовый JSON вместо tool_call
-                                    // tools отключены, чтобы получить content
-                                    // models НЕ передаём - будут использованы значения по умолчанию
-                                    temperature: 0,
-                                    top_p: 1,
-                                    max_tokens: 64000
-                                }
-                            );
-                            const a2 = extractToolArgs(retry, 'submit_cases');
-                            if (a2 && Array.isArray(a2.cases) && a2.cases.length) return a2.cases;
-                        } catch { }
+                // Попытка 1: с tools
+                const ai = await runTestCaseLLM({
+                    systemPrompt: systemPromptWithExamples,
+                    userPrompt,
+                    submissionTool: buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios, reqStructure),
+                    modelOverrides: {
+                        temperature: 0,
+                        top_p: 1,
+                        max_tokens: 64000
                     }
-                    console.log(`[genForChunk] OK: Получено ${result.length} кейсов через фолбэк-парсер.`);
-                    return result;
-                } catch (e1) {
-                    console.warn('[genForChunk] JSON parse failed. Fallback. Error:', e1.message);
-                    const t = cleanupJsonText(rawJsonCandidate);
-                    const parsed = JSON5.parse(t);
-                    return Array.isArray(parsed) ? parsed : [];
+                });
+
+                let cases = extractCasesFromResponse(ai);
+                if (cases.length > 0) {
+                    console.log(`[genForChunkOptimized] ✅ Получено ${cases.length} кейсов через tool_call`);
+                    return cases;
                 }
-            } catch (parseError) {
-                console.error('[genForChunk] CRITICAL: Ошибка JSON5.parse при фолбэке:', parseError.message);
-                console.log('--- RAW AI RESPONSE (genForChunk JSON5 parse failed) ---\n', content, '\n-----------------------------------------');
+
+                // Fallback: без tools (текстовый JSON)
+                console.warn('[genForChunkOptimized] Tool call failed, retry without tools');
+                const retry = await callWithCloudRuFallback(
+                    OPENROUTER_URL,
+                    [
+                        { role: 'system', content: systemPromptWithExamples },
+                        { role: 'user', content: `${userPrompt}\n\n🚨 Верни ТОЛЬКО JSON-массив тест-кейсов БЕЗ markdown` }
+                    ],
+                    config.openRouterAiKey,
+                    { temperature: 0.3, max_tokens: 50000 }  // ✅ Уменьшено с 64000 до 50000
+                );
+
+                cases = extractCasesFromResponse(retry);
+                if (cases.length > 0) {
+                    console.log(`[genForChunkOptimized] ✅ Fallback: получено ${cases.length} кейсов`);
+                    return cases;
+                }
+
+                console.warn('[genForChunkOptimized] ⚠️ Обе попытки не вернули кейсов');
+                return [];
+
+            } catch (error) {
+                console.error('[genForChunkOptimized] Failed:', error.message);
                 return [];
             }
         }
 
-        // ====== ОСНОВНАЯ ЛОГИКА ГЕНЕРАЦИИ (из синхронной версии) ======
+        // ====== ОСНОВНАЯ ЛОГИКА ГЕНЕРАЦИИ (ONE-PASS ОПТИМИЗАЦИЯ) ======
         try {
-            // Разбиваем на story-чанки
-            const storyChunks = splitByStories(modelStructure);
-
-            // Не спамим API: free-модель часто с лимитом — гоняем последовательно
-            const genLimit = pLimit(1);
+            const storyChunks = splitByStoriesOptimized(modelStructure);
 
             // === Подготовка данных ===
-            console.log(`[generate-test-cases-async] Подготовлено ${storyChunks.length} chunks для генерации`);
+            console.log(`[generate-test-cases-async] Подготовлено ${storyChunks.length} chunks для генерации (ONE-PASS)`);
 
             // Обновляем progress после подготовки данных
             await db('generation_tasks').where('id', taskId).update({
@@ -6264,96 +8944,54 @@ ${isMasterChunk ? `
                 updated_at: new Date()
             });
 
-            // Генерация по кускам с таймаутами
-            // ✅ ПРОХОД 1: Генерация E2E тестов (ТОЛЬКО для мастер-chunk'ов)
-            console.log(`[generate-test-cases-async] === ПРОХОД 1: Генерация E2E тестов ===`);
-            const e2eTests = [];
-            const TIMEOUT_MS = 900000;
+            // ✅ ONE-PASS: Генерируем E2E + Integration за один проход
+            console.log(`[generate-test-cases-async] === ONE-PASS: Генерация E2E + Integration ===`);
+            let allCases = [];
+            const e2eTestsByStory = new Map(); // Для контекста в BATCH-режиме
 
-            // Фильтруем ТОЛЬКО мастер-chunk'и для E2E
-            const masterChunks = storyChunks.filter(chunk => chunk[0].stories[0]._isMasterChunk === true);
-            console.log(`[generate-test-cases-async] Найдено ${masterChunks.length} мастер-chunk'ов для E2E`);
-
-            for (let i = 0; i < masterChunks.length; i++) {
-                const chunk = masterChunks[i];
+            for (let i = 0; i < storyChunks.length; i++) {
+                const chunk = storyChunks[i];
                 const storyText = chunk[0].stories[0].text;
-                console.log(`[generate-test-cases-async] E2E для мастер chunk ${i + 1}/${masterChunks.length}: "${storyText}"`);
+                const mode = chunk[0].stories[0]._mode;
+                console.log(`[generate-test-cases-async] Chunk ${i + 1}/${storyChunks.length}: "${storyText}" (${mode})`);
+
+                // Для BATCH-режима используем контекст E2E из предыдущих FULL-чанков
+                const existingE2E = mode === 'BATCH'
+                    ? (e2eTestsByStory.get(storyText) || [])
+                    : [];
 
                 try {
-                    const result = await genForChunk(
+                    const result = await genForChunkOptimized(
                         chunk,
                         refinedReqs,
-                        BASE_SYSTEM_PROMPT,
-                        'E2E_ONLY',
-                        [],
-                        modelStructure,
-                        [], []
+                        existingE2E,
+                        modelStructure
                     );
-                    e2eTests.push(...result);
-                    console.log(`[generate-test-cases-async] Мастер chunk ${i + 1}: ${result.length} E2E тестов`);
+
+                    // Сохраняем E2E тесты для контекста
+                    const e2eFromResult = result.filter(tc => tc.layer === 'E2E Tests');
+                    if (e2eFromResult.length > 0) {
+                        const existing = e2eTestsByStory.get(storyText) || [];
+                        e2eTestsByStory.set(storyText, [...existing, ...e2eFromResult]);
+                    }
+
+                    allCases.push(...result);
+                    console.log(`[generate-test-cases-async] Chunk ${i + 1}: ${result.length} тестов (E2E: ${e2eFromResult.length}, Integration: ${result.length - e2eFromResult.length})`);
                 } catch (err) {
-                    console.error(`[generate-test-cases-async] Ошибка E2E для мастер chunk ${i + 1}:`, err);
+                    console.error(`[generate-test-cases-async] Ошибка для chunk ${i + 1}:`, err);
                 }
 
                 await db('generation_tasks').where('id', taskId).update({
-                    progress: Math.round((i + 1) / masterChunks.length * 50),
+                    progress: 10 + Math.round((i + 1) / storyChunks.length * 80),
                     updated_at: new Date()
                 });
             }
 
-            console.log(`[generate-test-cases-async] ПРОХОД 1 завершён: ${e2eTests.length} E2E тестов`);
-
-            // ✅ ПРОХОД 2: Генерация Integration/Unit тестов (ТОЛЬКО для детальных chunk'ов)
-            console.log(`[generate-test-cases-async] === ПРОХОД 2: Генерация Integration/Unit тестов ===`);
-            const integrationUnitTests = [];
-
-            // Фильтруем ТОЛЬКО детальные chunk'и или маленькие Story для Integration/Unit
-            const detailChunks = storyChunks.filter(chunk =>
-                chunk[0].stories[0]._isDetailChunk === true ||
-                (!chunk[0].stories[0]._isMasterChunk && !chunk[0].stories[0]._isDetailChunk)
-            );
-            console.log(`[generate-test-cases-async] Найдено ${detailChunks.length} детальных chunk'ов для Integration/Unit`);
-
-            for (let i = 0; i < detailChunks.length; i++) {
-                const chunk = detailChunks[i];
-                const chunkStoryText = chunk[0].stories[0].text;
-                console.log(`[generate-test-cases-async] Integration/Unit для chunk ${i + 1}/${detailChunks.length}: "${chunkStoryText}"`);
-
-                // Находим релевантные E2E тесты для контекста
-                const relevantE2ETests = e2eTests.filter(tc => tc.story === chunkStoryText);
-                console.log(`[generate-test-cases-async] Контекст: ${relevantE2ETests.length} E2E тестов`);
-
-                try {
-                    const result = await genForChunk(
-                        chunk,
-                        refinedReqs,
-                        BASE_SYSTEM_PROMPT,
-                        'INTEGRATION_UNIT',
-                        relevantE2ETests,
-                        modelStructure,
-                        [], []
-                    );
-                    integrationUnitTests.push(...result);
-                    console.log(`[generate-test-cases-async] Chunk ${i + 1}: ${result.length} Integration/Unit тестов`);
-                } catch (err) {
-                    console.error(`[generate-test-cases-async] Ошибка Integration/Unit для chunk ${i + 1}:`, err);
-                }
-
-                await db('generation_tasks').where('id', taskId).update({
-                    progress: 50 + Math.round((i + 1) / detailChunks.length * 50),
-                    updated_at: new Date()
-                });
-            }
-
-            console.log(`[generate-test-cases-async] ПРОХОД 2 завершён: ${integrationUnitTests.length} Integration/Unit тестов`);
-
-            // Объединяем все тесты
-            let allCases = [...e2eTests, ...integrationUnitTests];
-            console.log(`[generate-test-cases-async] Всего сгенерировано: ${allCases.length} тестов`);
+            console.log(`[generate-test-cases-async] ONE-PASS завершён: ${allCases.length} тестов`);
 
             // === sanitize → fixAgainstModel до аудита покрытия ===
             const idx = buildModelIndex(modelStructure);
-            allCases = sanitize(allCases);
+            allCases = sanitize(allCases, undefined, modelStructure);
 
             // Обновляем progress после sanitize
             await db('generation_tasks').where('id', taskId).update({
@@ -6362,6 +9000,9 @@ ${isMasterChunk ? `
             });
 
             allCases = fixAgainstModel(allCases, idx);
+
+            // Заменяем упоминания параметров в шагах на формат {{Название параметра}} для Allure TestOps
+            allCases = injectParameterPlaceholders(allCases);
 
             // ✅ НОВАЯ ВАЛИДАЦИЯ: Проверка пирамиды
             const pyramidValidation = validateTestPyramid(allCases, modelStructure);
@@ -6384,6 +9025,45 @@ ${isMasterChunk ? `
             }
             console.log('Требования для тест кейсов')
             console.log(refinedReqs)
+
+            // ✅ ДОРАБОТКА 5: Поствалидация после генерации
+            console.log('[generateTestCasesAsync] Поствалидация: проверка привязки к модели');
+            // Фильтруем тесты с критичными ошибками валидации (validateModelBinding уже вызван в sanitize)
+            const initialCount = allCases.length;
+            // Дополнительная проверка для Integration тестов с scenario
+            // Используем простую нормализацию строк для сравнения
+            const normalizeForComparison = (str) => (str || '').toLowerCase().trim().replace(/\s+/g, ' ');
+            allCases = allCases.filter(testCase => {
+                if (testCase.layer?.includes('Integration') && testCase.scenario) {
+                    // Проверяем, что scenario существует в модели
+                    let scenarioExists = false;
+                    for (const feature of modelStructure) {
+                        if (normalizeForComparison(feature.text) === normalizeForComparison(testCase.feature)) {
+                            for (const story of (feature.stories || [])) {
+                                if (normalizeForComparison(story.text) === normalizeForComparison(testCase.story)) {
+                                    const foundScenario = (story.scenarios || []).find(sc =>
+                                        normalizeForComparison(sc.text) === normalizeForComparison(testCase.scenario)
+                                    );
+                                    if (foundScenario) {
+                                        scenarioExists = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (scenarioExists) break;
+                        }
+                    }
+                    if (!scenarioExists) {
+                        console.warn(`[generateTestCasesAsync] ❌ Отклонён тест-кейс: scenario "${testCase.scenario}" не найден в модели: "${testCase.title}"`);
+                        return false;
+                    }
+                }
+                return true;
+            });
+
+            if (allCases.length < initialCount) {
+                console.log(`[generateTestCasesAsync] Поствалидация: отфильтровано ${initialCount - allCases.length} тест-кейсов с критичными ошибками`);
+            }
 
             // ОТКЛЮЧЕНО: Аудит покрытия и догенерация недостающего
             // const missing = auditCoverage(modelStructure, allCases);
@@ -6427,7 +9107,43 @@ ${isMasterChunk ? `
             throw error;
         }
 
-        console.log(`[generate-test-cases-async] Generated ${finalTestCases.length} cases`);
+        // Автоматическая параметризация похожих тестов
+        finalTestCases = autoParameterizeSimilarTests(finalTestCases);
+
+        // ✅ НОВОЕ: Автоматический PairWise для параметризованных тестов
+        console.log(`[generate-test-cases-async] Проверяю параметризованные тесты для автоматической генерации PairWise...`);
+        for (const testCase of finalTestCases) {
+            if (testCase.parameters && testCase.parameters.length > 0 && (!testCase.examples || testCase.examples.length === 0)) {
+                console.log(`[generate-test-cases-async] Генерирую PairWise для "${testCase.title}"`);
+                
+                try {
+                    const pairwiseExamples = await generatePairwiseExamples(testCase.parameters);
+                    if (pairwiseExamples && pairwiseExamples.length > 0) {
+                        testCase.examples = pairwiseExamples;
+                        console.log(`[generate-test-cases-async] ✅ Сгенерировано ${pairwiseExamples.length} PairWise examples для "${testCase.title}"`);
+                    }
+                } catch (error) {
+                    console.error(`[generate-test-cases-async] Ошибка генерации PairWise для "${testCase.title}": ${error.message}`);
+                }
+            }
+        }
+
+        console.log(`[generate-test-cases-async] Generated ${finalTestCases.length} cases (after auto-parameterization)`);
+
+        // ✅ НОВОЕ: Рассчитываем покрытие Scenarios тест-кейсами
+        if (modelStructure && finalTestCases.length > 0) {
+            const scenarioCoverage = calculateTestCasesCoverage(finalTestCases, modelStructure);
+            console.log(`[Coverage] Scenarios: ${scenarioCoverage.covered}/${scenarioCoverage.total} (${scenarioCoverage.coveragePercent}%)`);
+            if (scenarioCoverage.missing.length > 0) {
+                console.warn(`[Coverage] Не покрыто ${scenarioCoverage.missing.length} scenarios:`);
+                scenarioCoverage.missing.slice(0, 5).forEach(sc => {
+                    console.warn(`  ❌ ${sc.feature} → ${sc.story} → ${sc.scenario}`);
+                });
+                if (scenarioCoverage.missing.length > 5) {
+                    console.warn(`  ... и ещё ${scenarioCoverage.missing.length - 5} scenarios`);
+                }
+            }
+        }
         console.log(`[generate-test-cases-async] Layer distribution:`,
             finalTestCases.reduce((acc, tc) => {
                 acc[tc.layer] = (acc[tc.layer] || 0) + 1;
@@ -6450,15 +9166,6 @@ ${isMasterChunk ? `
         if (invalidE2E.length > 0) {
             console.warn(`[VALIDATION-ASYNC] Found ${invalidE2E.length} E2E tests without story:`,
                 invalidE2E.map(tc => tc.title));
-        }
-
-        // Проверить, что все Unit тесты имеют правильные code
-        const invalidUnit = finalTestCases.filter(tc =>
-            tc.layer?.startsWith('Unit') && !tc.code
-        );
-        if (invalidUnit.length > 0) {
-            console.warn(`[VALIDATION-ASYNC] Found ${invalidUnit.length} Unit tests without code:`,
-                invalidUnit.map(tc => tc.title));
         }
 
         // Проверить, что все тест-кейсы имеют обязательные поля
@@ -6528,25 +9235,118 @@ ${isMasterChunk ? `
             }
         }
 
-        // === ВАЛИДАЦИЯ REQUIREMENT В ТЕСТ-КЕЙСАХ ===
-        console.log('[generate-test-cases-async] Валидация requirement в тест-кейсах...');
+        // ❌ УДАЛЕНО: Валидация requirement - это поле не используется в тест-кейсах (только в тестовой модели)
 
-        const casesWithoutRequirement = finalTestCases.filter(tc => !tc.requirement);
-        const casesWithInvalidRequirement = finalTestCases.filter(tc =>
-            tc.requirement && !/^\d+(\.\d+)+$/.test(tc.requirement)
-        );
+        // ✅ ВАЛИДАЦИЯ ТЕСТ-КЕЙСОВ ПО СТАЙЛ-ГАЙДУ С АВТОМАТИЧЕСКОЙ ПЕРЕГЕНЕРАЦИЕЙ
+        console.log(`[generate-test-cases-async] Валидация тест-кейсов по стайл-гайду...`);
+        const styleGuideIssues = validateTestCasesByStyleGuide(finalTestCases, BASE_SYSTEM_PROMPT);
 
-        if (casesWithoutRequirement.length > 0) {
-            console.warn(`[generate-test-cases-async] ВНИМАНИЕ: ${casesWithoutRequirement.length} тест-кейсов без requirement:`,
-                casesWithoutRequirement.slice(0, 5).map(tc => tc.title));
+        if (styleGuideIssues.length > 0) {
+            console.warn(`[generate-test-cases-async] ⚠️ Обнаружено ${styleGuideIssues.length} нарушений стайл-гайда:`, styleGuideIssues);
+
+            // Группируем проблемы по типам для более точной перегенерации
+            const issuesByType = {
+                steps: styleGuideIssues.filter(issue => issue.includes('steps') || issue.includes('шаг')),
+                expected: styleGuideIssues.filter(issue => issue.includes('expected') || issue.includes('ожидаемый')),
+                layer: styleGuideIssues.filter(issue => issue.includes('layer') || issue.includes('Integration') || issue.includes('E2E')),
+                parameters: styleGuideIssues.filter(issue => issue.includes('parameter') || issue.includes('параметр')),
+                formatting: styleGuideIssues.filter(issue => issue.includes('формат') || issue.includes('**') || issue.includes('выделение'))
+            };
+
+            // Определяем проблемные тест-кейсы для перегенерации
+            const problematicCases = finalTestCases.filter((tc, idx) =>
+                styleGuideIssues.some(issue => issue.includes(`тест-кейс ${idx + 1}`) || issue.includes(`"${tc.title}"`))
+            );
+
+            if (problematicCases.length > 0 && refinedReqs && modelStructure) {
+                console.log(`[generate-test-cases-async] 🔄 Попытка перегенерации ${problematicCases.length} проблемных тест-кейсов...`);
+
+                try {
+                    // Формируем escalation prompt для перегенерации
+                    const escalationPrompt = `
+🚨 КРИТИЧЕСКАЯ ОШИБКА: Обнаружены нарушения стайл-гайда в тест-кейсах!
+
+ПРОБЛЕМЫ:
+${styleGuideIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}
+
+ПРАВИЛА ДЛЯ ИСПРАВЛЕНИЯ:
+${issuesByType.steps.length > 0 ? `\n🚨 ПРОБЛЕМЫ С ШАГАМИ (steps):\n- ❌ НЕ используй слово "Проверить" в шагах! Проверка = Expected Result\n- ✅ Шаги = действия: "Нажать", "Выбрать", "Ввести", "Выполнить"\n- ✅ Выделяй ключевые слова и эндпоинты: **Ключевое слово** или **/endpoint**\n` : ''}
+${issuesByType.expected.length > 0 ? `\n🚨 ПРОБЛЕМЫ С ОЖИДАЕМЫМ РЕЗУЛЬТАТОМ (expected):\n- ❌ НЕ используй абстрактные формулировки: "система работает корректно"\n- ✅ Используй ключевые слова с форматированием: **Отобразить**, **Вернуть**, **Подменить**, **Заполнить**, **Передать**, **Сохранить**\n- ✅ Выделяй эндпоинты: **/document/create/income_type_code**\n- ✅ Конкретный результат: "**Вернуть** ответ 200 с JSON: {id, type}"\n` : ''}
+${issuesByType.layer.length > 0 ? `\n🚨 ПРОБЛЕМЫ С ТИПОМ ТЕСТА (layer):\n- Integration backend Tests = ТОЛЬКО "Выполнить POST/GET..." БЕЗ UI-действий!\n- Integration frontend Tests = ТОЛЬКО "Нажать на кнопку..." БЕЗ предварительных шагов авторизации!\n- E2E Tests = полный путь с авторизацией\n` : ''}
+${issuesByType.parameters.length > 0 ? `\n🚨 ПРОБЛЕМЫ С ПАРАМЕТРИЗАЦИЕЙ:\n- ✅ Используй {{Название параметра}} в steps и expected\n- ✅ Если есть несколько вариантов → ОДИН параметризованный тест, НЕ дубликаты!\n` : ''}
+${issuesByType.formatting.length > 0 ? `\n🚨 ПРОБЛЕМЫ С ФОРМАТИРОВАНИЕМ:\n- ✅ Выделяй ключевые слова: **Подменить**, **Отобразить**, **Вернуть**\n- ✅ Выделяй эндпоинты: **/api/endpoint**\n` : ''}
+
+ПЕРЕГЕНЕРИРУЙ проблемные тест-кейсы согласно стайл-гайду выше!`.trim();
+
+                    // Перегенерируем проблемные тест-кейсы
+                    const fixedCases = [];
+                    const remainingCases = finalTestCases.filter(tc => !problematicCases.includes(tc));
+
+                    // Для каждого проблемного тест-кейса находим соответствующий чанк модели и перегенерируем
+                    for (const problematicCase of problematicCases.slice(0, 10)) { // Ограничиваем до 10 для производительности
+                        try {
+                            // Находим соответствующий чанк модели
+                            const matchingChunk = findMatchingModelChunk(problematicCase, modelStructure);
+
+                            if (matchingChunk) {
+                                const allowedCodes = collectAllowedCodes(matchingChunk);
+                                const allowedScenarios = collectAllowedScenarios(matchingChunk);
+
+                                const submissionTool = buildSubmitCasesToolStrict(allowedCodes, allowedScenarios);
+                                const retryPrompt = `${BASE_SYSTEM_PROMPT}\n\n${escalationPrompt}\n\nПРОБЛЕМНЫЙ ТЕСТ-КЕЙС ДЛЯ ИСПРАВЛЕНИЯ:\n${JSON.stringify(problematicCase, null, 2)}`;
+
+                                const retryAi = await runTestCaseLLM({
+                                    userPrompt: retryPrompt,
+                                    submissionTool,
+                                    modelOverrides: {
+                                        temperature: 0,
+                                        top_p: 1,
+                                        max_tokens: 50000,
+                                        extra: { transforms: 'middle-out' }
+                                    }
+                                });
+
+                                const retryArgs = extractToolArgs(retryAi, 'submit_cases');
+                                if (retryArgs && retryArgs.cases && retryArgs.cases.length > 0) {
+                                    fixedCases.push(...retryArgs.cases);
+                                    console.log(`[generate-test-cases-async] ✅ Перегенерирован тест-кейс: "${problematicCase.title}"`);
+                                } else {
+                                    console.warn(`[generate-test-cases-async] ⚠️ Не удалось перегенерировать: "${problematicCase.title}", оставляем исходный`);
+                                    fixedCases.push(problematicCase);
+                                }
+                            } else {
+                                console.warn(`[generate-test-cases-async] ⚠️ Не найден соответствующий чанк для: "${problematicCase.title}", оставляем исходный`);
+                                fixedCases.push(problematicCase);
+                            }
+                        } catch (retryErr) {
+                            console.error(`[generate-test-cases-async] Ошибка при перегенерации "${problematicCase.title}":`, retryErr.message);
+                            fixedCases.push(problematicCase); // Оставляем исходный при ошибке
+                        }
+                    }
+
+                    // Добавляем оставшиеся проблемные тест-кейсы (если их больше 10)
+                    if (problematicCases.length > 10) {
+                        fixedCases.push(...problematicCases.slice(10));
+                    }
+
+                    // Объединяем исправленные и оставшиеся тест-кейсы
+                    finalTestCases = [...remainingCases, ...fixedCases];
+
+                    // Повторная валидация
+                    const revalidationIssues = validateTestCasesByStyleGuide(finalTestCases, BASE_SYSTEM_PROMPT);
+                    if (revalidationIssues.length < styleGuideIssues.length) {
+                        console.log(`[generate-test-cases-async] ✅ Перегенерация помогла: ${styleGuideIssues.length} → ${revalidationIssues.length} проблем`);
+                    } else {
+                        console.warn(`[generate-test-cases-async] ⚠️ Перегенерация не помогла, осталось ${revalidationIssues.length} проблем`);
+                    }
+                } catch (retryError) {
+                    console.error(`[generate-test-cases-async] Ошибка при перегенерации тест-кейсов:`, retryError.message);
+                    console.warn(`[generate-test-cases-async] Используем исходные тест-кейсы с предупреждениями`);
+                }
+            }
+        } else {
+            console.log(`[generate-test-cases-async] ✅ Все тест-кейсы соответствуют стайл-гайду`);
         }
-
-        if (casesWithInvalidRequirement.length > 0) {
-            console.warn(`[generate-test-cases-async] ВНИМАНИЕ: ${casesWithInvalidRequirement.length} тест-кейсов с некорректным requirement:`,
-                casesWithInvalidRequirement.slice(0, 5).map(tc => ({ title: tc.title, requirement: tc.requirement })));
-        }
-
-        console.log(`[generate-test-cases-async] Валидация requirement завершена: ${finalTestCases.length - casesWithoutRequirement.length - casesWithInvalidRequirement.length}/${finalTestCases.length} валидных`);
 
         if (finalTestCases.length === 0) {
             console.warn('[generate-test-cases-async] Не получено ни одного тест-кейса, добавляем fallback');
