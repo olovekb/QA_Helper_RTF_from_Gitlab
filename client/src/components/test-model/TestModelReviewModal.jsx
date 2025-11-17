@@ -565,6 +565,160 @@ const flattenTreeToCases = (tree) => {
 };
 
 // --- UI COMPONENTS ---
+// Компонент для отображения diff изменений (как в git)
+const TestCaseDiffView = ({ diff, caseId, onApprove, onReject, hasPendingChanges }) => {
+    if (!diff || !hasPendingChanges) return null;
+    
+    const fieldLabels = {
+        title: 'Название',
+        precondition: 'Предварительное условие',
+        steps: 'Шаги',
+        expected: 'Ожидаемый результат',
+        layer: 'Тестовый слой',
+        scenario: 'Сценарий',
+        code: 'Code',
+        feature: 'Feature',
+        story: 'Story',
+        tags: 'Теги',
+        priority: 'Приоритет',
+        version: 'Версия'
+    };
+    
+    const formatValue = (value) => {
+        if (value === null || value === undefined) return '(пусто)';
+        if (Array.isArray(value)) {
+            if (value.length === 0) return '(пусто)';
+            return value.map((item, idx) => {
+                if (typeof item === 'string') return `${idx + 1}. ${item}`;
+                if (item?.text) return `${idx + 1}. [Общий шаг] ${item.text}`;
+                return `${idx + 1}. ${JSON.stringify(item)}`;
+            }).join('\n');
+        }
+        return String(value);
+    };
+    
+    return (
+        <div style={{
+            marginBottom: '16px',
+            padding: '12px',
+            backgroundColor: 'rgba(255, 193, 7, 0.1)',
+            border: '1px solid #ffc107',
+            borderRadius: '4px'
+        }}>
+            <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                marginBottom: '12px'
+            }}>
+                <h4 style={{ margin: 0, color: '#ffc107', fontSize: '14px', fontWeight: 'bold' }}>
+                    ✏️ Непринятые изменения ({Object.keys(diff).length} поле(й))
+                </h4>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                        onClick={() => onApprove(caseId)}
+                        style={{
+                            padding: '6px 12px',
+                            backgroundColor: '#28a745',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '12px',
+                            fontWeight: '500'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#218838'}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#28a745'}
+                    >
+                        ✓ Принять
+                    </button>
+                    <button
+                        onClick={() => onReject(caseId)}
+                        style={{
+                            padding: '6px 12px',
+                            backgroundColor: '#dc3545',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '12px',
+                            fontWeight: '500'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#c82333'}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#dc3545'}
+                    >
+                        ✗ Отклонить
+                    </button>
+                </div>
+            </div>
+            
+            {Object.entries(diff).map(([field, changes]) => (
+                <div key={field} style={{ marginBottom: '12px' }}>
+                    <div style={{ 
+                        fontSize: '12px', 
+                        fontWeight: 'bold', 
+                        color: '#ffc107',
+                        marginBottom: '4px'
+                    }}>
+                        {fieldLabels[field] || field}
+                    </div>
+                    <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: '8px',
+                        fontSize: '11px'
+                    }}>
+                        <div style={{
+                            padding: '8px',
+                            backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                            border: '1px solid #dc3545',
+                            borderRadius: '4px',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            maxHeight: '200px',
+                            overflow: 'auto'
+                        }}>
+                            <div style={{ 
+                                color: '#dc3545', 
+                                fontWeight: 'bold', 
+                                marginBottom: '4px',
+                                fontSize: '10px'
+                            }}>
+                                − Было:
+                            </div>
+                            <div style={{ color: '#c9d1d9' }}>
+                                {formatValue(changes.old)}
+                            </div>
+                        </div>
+                        <div style={{
+                            padding: '8px',
+                            backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                            border: '1px solid #28a745',
+                            borderRadius: '4px',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            maxHeight: '200px',
+                            overflow: 'auto'
+                        }}>
+                            <div style={{ 
+                                color: '#28a745', 
+                                fontWeight: 'bold', 
+                                marginBottom: '4px',
+                                fontSize: '10px'
+                            }}>
+                                + Стало:
+                            </div>
+                            <div style={{ color: '#c9d1d9' }}>
+                                {formatValue(changes.new)}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+};
+
 export function TestCaseCard({
     testCase,
     index,
@@ -573,6 +727,10 @@ export function TestCaseCard({
     projectId,
     jiraProject,
     jiraPat,
+    testCaseDiffs = new Map(),
+    pendingApprovals = new Set(),
+    onApproveCase,
+    onRejectCase,
 }) {
     const [sharedOptions, setSharedOptions] = useState([]);
 
@@ -638,8 +796,18 @@ export function TestCaseCard({
         }));
     };
 
+    const diff = testCaseDiffs.get(testCase.id);
+    const hasPendingChanges = pendingApprovals.has(testCase.id);
+    
     return (
         <div className="case-card">
+            <TestCaseDiffView 
+                diff={diff}
+                caseId={testCase.id}
+                onApprove={onApproveCase || (() => {})}
+                onReject={onRejectCase || (() => {})}
+                hasPendingChanges={hasPendingChanges}
+            />
             <div className="case-card-header">
                 <CaseIcon />
                 <span className="node-title" style={{ flex: 1, cursor: 'default' }}>
@@ -1727,7 +1895,9 @@ const SimpleTreeView = ({
     onAddNode,
     onDeleteNode,
     onRenameNode,
-    onDeleteCase
+    onDeleteCase,
+    testCaseDiffs = new Map(),
+    pendingApprovals = new Set()
 }) => {
     const [editingNode, setEditingNode] = useState(null);
     const [editValue, setEditValue] = useState('');
@@ -1770,6 +1940,10 @@ const SimpleTreeView = ({
         const isSelected = selectedCaseId === testCase.id;
         const displayTitle = testCase.title || 'Без названия';
         
+        // Проверяем, есть ли непринятые изменения для этого ТК
+        const hasPendingChanges = pendingApprovals.has(testCase.id);
+        const diff = testCaseDiffs.get(testCase.id);
+        
         return (
             <Draggable key={testCase.id} draggableId={`case-${testCase.id}`} index={index}>
                 {(provided, snapshot) => (
@@ -1784,7 +1958,12 @@ const SimpleTreeView = ({
                             padding: '4px 8px',
                             paddingLeft: `${8 + level * 20}px`,
                             cursor: snapshot.isDragging ? 'grabbing' : 'grab',
-                            backgroundColor: isSelected ? 'rgba(88, 166, 255, 0.15)' : 'transparent',
+                            backgroundColor: hasPendingChanges 
+                                ? 'rgba(255, 193, 7, 0.2)' // Жёлтый фон для непринятых изменений
+                                : isSelected 
+                                    ? 'rgba(88, 166, 255, 0.15)' 
+                                    : 'transparent',
+                            borderLeft: hasPendingChanges ? '3px solid #ffc107' : '3px solid transparent',
                             opacity: snapshot.isDragging ? 0.8 : 1,
                             ...provided.draggableProps.style
                         }}
@@ -1792,13 +1971,27 @@ const SimpleTreeView = ({
                         <div {...provided.dragHandleProps} style={{ marginRight: '8px', display: 'flex', alignItems: 'center', cursor: 'grab' }}>
                             <GreenCircleIcon />
                         </div>
+                        {hasPendingChanges && (
+                            <span 
+                                style={{ 
+                                    marginRight: '6px',
+                                    fontSize: '12px',
+                                    color: '#ffc107',
+                                    fontWeight: 'bold'
+                                }}
+                                title={`Непринятые изменения: ${Object.keys(diff || {}).length} поле(й)`}
+                            >
+                                ✏️
+                            </span>
+                        )}
                         <span 
                             className="test-tree-node-title" 
                             title={displayTitle}
                             style={{ 
                                 flex: 1,
                                 fontSize: '13px',
-                                color: '#c9d1d9'
+                                color: hasPendingChanges ? '#ffc107' : '#c9d1d9',
+                                fontWeight: hasPendingChanges ? '500' : 'normal'
                             }}
                         >
                             {displayTitle}
@@ -2655,6 +2848,13 @@ export default function TestModelReviewModal({
     const [showFixPanel, setShowFixPanel] = useState(false);
     const [history, setHistory] = useState([]);
     const MAX_HISTORY = 10;
+    
+    // Состояние для хранения diff'ов изменений: Map<caseId, diffObject>
+    // diffObject = { field: { old: value, new: value }, ... }
+    const [testCaseDiffs, setTestCaseDiffs] = useState(new Map());
+    
+    // Состояние для непринятых изменений: Set<caseId>
+    const [pendingApprovals, setPendingApprovals] = useState(new Set());
 
     // Функция для копирования ссылки в буфер обмена
     const copyToClipboard = (text) => {
@@ -3521,6 +3721,39 @@ export default function TestModelReviewModal({
     }, []);
 
 
+    // Функция для вычисления diff между старыми и новыми тест-кейсами
+    const calculateDiff = (oldCase, newCase) => {
+        const diff = {};
+        const fieldsToCompare = [
+            'title', 'precondition', 'steps', 'expected', 'layer', 
+            'scenario', 'code', 'feature', 'story', 'tags', 'priority', 'version'
+        ];
+        
+        fieldsToCompare.forEach(field => {
+            const oldValue = oldCase[field];
+            const newValue = newCase[field];
+            
+            // Нормализация для сравнения
+            const normalize = (val) => {
+                if (val === null || val === undefined) return '';
+                if (Array.isArray(val)) return JSON.stringify(val);
+                return String(val).trim();
+            };
+            
+            const oldNormalized = normalize(oldValue);
+            const newNormalized = normalize(newValue);
+            
+            if (oldNormalized !== newNormalized) {
+                diff[field] = {
+                    old: oldValue,
+                    new: newValue
+                };
+            }
+        });
+        
+        return Object.keys(diff).length > 0 ? diff : null;
+    };
+
     const handleFixTestCases = async () => {
         if (!fixPrompt.trim()) {
             alert('Введите описание доработок');
@@ -3530,6 +3763,9 @@ export default function TestModelReviewModal({
         setIsFixing(true);
         try {
             const rawCases = flattenTreeToCases(treeData);
+            
+            // Создаём Map для быстрого доступа к старым ТК по ID
+            const oldCasesMap = new Map(rawCases.map(c => [c.id, { ...c }]));
             
             const snapshot = {
                 id: `snapshot_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -3549,10 +3785,30 @@ export default function TestModelReviewModal({
             );
 
             if (resp.data && resp.data.fixedTestCases && Array.isArray(resp.data.fixedTestCases)) {
+                // Вычисляем diff'ы для всех изменённых ТК
+                const newDiffsMap = new Map();
+                const newPendingApprovals = new Set();
+                
+                resp.data.fixedTestCases.forEach(newCase => {
+                    const oldCase = oldCasesMap.get(newCase.id);
+                    if (oldCase) {
+                        const diff = calculateDiff(oldCase, newCase);
+                        if (diff) {
+                            newDiffsMap.set(newCase.id, diff);
+                            newPendingApprovals.add(newCase.id);
+                        }
+                    }
+                });
+                
+                // Обновляем состояния diff'ов и непринятых изменений
+                setTestCaseDiffs(newDiffsMap);
+                setPendingApprovals(newPendingApprovals);
+                
                 setHistory(prev => {
                     const next = [...prev, snapshot];
                     return next.slice(-MAX_HISTORY);
                 });
+                
                 // Обновляем treeData с исправленными ТК
                 const newTreeData = buildTreeFromCases(resp.data.fixedTestCases);
                 setTreeData(newTreeData);
@@ -3568,7 +3824,13 @@ export default function TestModelReviewModal({
                 // Очищаем промпт и закрываем панель
                 setFixPrompt('');
                 setShowFixPanel(false);
-                alert(`✅ Исправлено ${resp.data.fixedTestCases.length} тест-кейсов`);
+                
+                const changedCount = newDiffsMap.size;
+                if (changedCount > 0) {
+                    alert(`✅ Исправлено ${changedCount} тест-кейсов. Проверьте изменения и подтвердите их.`);
+                } else {
+                    alert(`✅ Обработано ${resp.data.fixedTestCases.length} тест-кейсов. Изменений не обнаружено.`);
+                }
             } else {
                 throw new Error('Сервер вернул некорректный ответ');
             }
@@ -3605,7 +3867,128 @@ export default function TestModelReviewModal({
         setTreeData(restoredTree);
         setSelectedCase(null);
         setHistory(prev => prev.slice(0, -1));
+        
+        // Очищаем diff'ы и непринятые изменения при откате
+        setTestCaseDiffs(new Map());
+        setPendingApprovals(new Set());
+        
         alert(`✅ Откат выполнен. Версия от ${new Date(lastSnapshot.timestamp).toLocaleString()} восстановлена.`);
+    };
+    
+    // Функция для принятия изменений для одного ТК
+    const handleApproveCase = (caseId) => {
+        setPendingApprovals(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(caseId);
+            return newSet;
+        });
+        
+        // Не удаляем diff, чтобы можно было посмотреть историю изменений
+        // Можно оставить или удалить в зависимости от требований
+    };
+    
+    // Функция для отклонения изменений для одного ТК (откатить к старому значению)
+    const handleRejectCase = (caseId) => {
+        if (!window.confirm('Отклонить изменения и вернуть предыдущее значение?')) {
+            return;
+        }
+        
+        const diff = testCaseDiffs.get(caseId);
+        if (!diff || history.length === 0) {
+            alert('Нет данных для отката');
+            return;
+        }
+        
+        // Находим старую версию ТК из истории
+        const lastSnapshot = history[history.length - 1];
+        const oldCase = lastSnapshot.cases.find(c => c.id === caseId);
+        if (!oldCase) {
+            alert('Не найдена старая версия тест-кейса');
+            return;
+        }
+        
+        // Восстанавливаем старую версию в treeData
+        setTreeData(prevTree => {
+            const newTree = JSON.parse(JSON.stringify(prevTree));
+            const allCases = flattenTreeToCases(newTree);
+            const caseIndex = allCases.findIndex(c => c.id === caseId);
+            if (caseIndex !== -1) {
+                allCases[caseIndex] = { ...oldCase };
+                const restoredTree = buildTreeFromCases(allCases);
+                
+                // Обновляем selectedCase если он был изменён
+                if (selectedCase?.id === caseId) {
+                    setSelectedCase(oldCase);
+                }
+                
+                return restoredTree;
+            }
+            return prevTree;
+        });
+        
+        // Удаляем diff и убираем из непринятых
+        setTestCaseDiffs(prev => {
+            const newMap = new Map(prev);
+            newMap.delete(caseId);
+            return newMap;
+        });
+        setPendingApprovals(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(caseId);
+            return newSet;
+        });
+        
+        alert('✅ Изменения отклонены, предыдущая версия восстановлена.');
+    };
+    
+    // Функция для принятия всех изменений
+    const handleApproveAll = () => {
+        if (pendingApprovals.size === 0) {
+            alert('Нет непринятых изменений');
+            return;
+        }
+        
+        const count = pendingApprovals.size;
+        if (!window.confirm(`Принять все изменения для ${count} тест-кейсов?`)) {
+            return;
+        }
+        
+        setPendingApprovals(new Set());
+        alert(`✅ Все изменения приняты для ${count} тест-кейсов.`);
+    };
+
+    // Функция для сохранения тест-кейсов как идеальных примеров
+    const handleSavePerfectExamples = async () => {
+        const rawCases = flattenTreeToCases(treeData);
+        
+        if (rawCases.length === 0) {
+            alert('Нет тест-кейсов для сохранения');
+            return;
+        }
+
+        if (!window.confirm(`Хотите добавить ${rawCases.length} тест-кейс(ов) в идеальный пример?\n\nДанное действие улучшит следующую генерацию тест-кейсов.`)) {
+            return;
+        }
+
+        try {
+            const resp = await axios.post(
+                `${config.serverUrl}/perfect-examples`,
+                {
+                    testCases: rawCases,
+                    projectId: projectId
+                },
+                { headers: { 'Content-Type': 'application/json' } }
+            );
+
+            if (resp.data && resp.data.success) {
+                alert(`✅ Сохранено ${resp.data.saved} идеальных примеров для улучшения генерации!`);
+            } else {
+                throw new Error('Сервер вернул некорректный ответ');
+            }
+        } catch (err) {
+            console.error('Ошибка при сохранении идеальных примеров:', err);
+            alert('Ошибка при сохранении: ' + (err.response?.data?.error || err.message));
+        }
     };
 
     const handleConfirm = async () => {
@@ -4053,13 +4436,57 @@ export default function TestModelReviewModal({
                                     <span style={{ opacity: 0.8 }}>Промпт: {history[history.length - 1].prompt}</span>
                                 )}
                             </div>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                {pendingApprovals.size > 0 && (
+                                    <button
+                                        className="button-primary"
+                                        onClick={handleApproveAll}
+                                        disabled={isFixing || isSending}
+                                        style={{ 
+                                            minWidth: '180px',
+                                            backgroundColor: '#28a745',
+                                            borderColor: '#28a745'
+                                        }}
+                                    >
+                                        ✓ Принять все ({pendingApprovals.size})
+                                    </button>
+                                )}
+                                <button
+                                    className="button-secondary"
+                                    onClick={handleUndoLastFix}
+                                    disabled={isFixing || isSending}
+                                    style={{ minWidth: '200px' }}
+                                >
+                                    ↩️ Откатить последнюю правку
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                    
+                    {pendingApprovals.size > 0 && !history.length && (
+                        <div style={{
+                            padding: '12px 24px',
+                            borderBottom: '1px solid var(--on-border-light, #bdd4ff36)',
+                            background: 'rgba(255, 193, 7, 0.1)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: '12px'
+                        }}>
+                            <div style={{ fontSize: '12px', color: '#ffc107' }}>
+                                <span style={{ fontWeight: 600 }}>⚠️ Непринятые изменения: {pendingApprovals.size} тест-кейс(ов)</span>
+                            </div>
                             <button
-                                className="button-secondary"
-                                onClick={handleUndoLastFix}
+                                className="button-primary"
+                                onClick={handleApproveAll}
                                 disabled={isFixing || isSending}
-                                style={{ minWidth: '200px' }}
+                                style={{ 
+                                    minWidth: '180px',
+                                    backgroundColor: '#28a745',
+                                    borderColor: '#28a745'
+                                }}
                             >
-                                ↩️ Откатить последнюю правку
+                                ✓ Принять все ({pendingApprovals.size})
                             </button>
                         </div>
                     )}
@@ -4087,6 +4514,8 @@ export default function TestModelReviewModal({
                                             onDeleteNode={handleDeleteNode}
                                             onRenameNode={handleRenameNode}
                                             onDeleteCase={handleDeleteCase}
+                                            testCaseDiffs={testCaseDiffs}
+                                            pendingApprovals={pendingApprovals}
                                         />
                                     </DragDropContext>
                                 </div>
@@ -4111,6 +4540,10 @@ export default function TestModelReviewModal({
                                         projectId={projectId}
                                         jiraProject={jiraProject}
                                         jiraPat={jiraPat}
+                                        testCaseDiffs={testCaseDiffs}
+                                        pendingApprovals={pendingApprovals}
+                                        onApproveCase={handleApproveCase}
+                                        onRejectCase={handleRejectCase}
                                     />
                                 ) : (
                                     <div style={{ 
@@ -4139,6 +4572,20 @@ export default function TestModelReviewModal({
                             style={{ marginRight: '8px' }}
                         >
                             Сгенерировать Xmind
+                        </button>
+                        <button
+                            className="button-secondary"
+                            onClick={handleSavePerfectExamples}
+                            disabled={isSending || isFixing || !Object.keys(treeData).length}
+                            style={{ 
+                                marginRight: '8px',
+                                backgroundColor: '#6c757d',
+                                borderColor: '#6c757d',
+                                color: 'white'
+                            }}
+                            title="Сохранить тест-кейсы как идеальные примеры для улучшения следующей генерации"
+                        >
+                        Добавить в идеальный пример
                         </button>
                         <button className="button-primary" onClick={handleConfirm} disabled={isSending || isFixing}>
                             Отправить в Allure

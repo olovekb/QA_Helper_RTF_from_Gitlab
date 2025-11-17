@@ -201,6 +201,13 @@ import { callWithCloudRuFallback } from './cloudruClient.mjs';
 import { createContextSourceRegistry, createContextToolset } from './contextToolset.mjs';
 import { runInteractiveLLM } from './interactiveLLM.mjs';
 import { selectExamples, buildExamplesSection } from './config/example-selector.js';
+import { 
+    savePerfectExamples, 
+    getPerfectExamples, 
+    getAllPerfectExamplesByLayer,
+    getPerfectExamplesStats,
+    deletePerfectExample
+} from './perfect-examples.mjs';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -6432,6 +6439,71 @@ app.post('/api/create-test-cases', async (req, res) => {
 });
 
 /**
+ * POST /api/perfect-examples
+ * Сохраняет тест-кейсы как идеальные примеры для улучшения генерации
+ */
+app.post('/api/perfect-examples', async (req, res) => {
+    const { testCases, projectId } = req.body;
+    
+    if (!Array.isArray(testCases) || testCases.length === 0) {
+        return res.status(400).json({ error: 'testCases (массив) обязателен и не должен быть пустым' });
+    }
+
+    console.log(`[perfect-examples] Сохранение ${testCases.length} тест-кейсов как идеальных примеров...`);
+
+    try {
+        const saved = await savePerfectExamples(testCases, projectId, db);
+        
+        console.log(`[perfect-examples] ✅ Сохранено ${saved.length} идеальных примеров`);
+        res.json({ 
+            success: true, 
+            saved: saved.length,
+            examples: saved,
+            message: `Сохранено ${saved.length} идеальных примеров для улучшения генерации`
+        });
+    } catch (err) {
+        console.error('[perfect-examples] ❌ Ошибка при сохранении идеальных примеров:', err);
+        res.status(500).json({ error: err.message, stack: err.stack });
+    }
+});
+
+/**
+ * GET /api/perfect-examples/stats
+ * Получает статистику по идеальным примерам
+ */
+app.get('/api/perfect-examples/stats', async (req, res) => {
+    const { projectId } = req.query;
+    
+    try {
+        const stats = await getPerfectExamplesStats(projectId, db);
+        res.json({ success: true, stats });
+    } catch (err) {
+        console.error('[perfect-examples/stats] ❌ Ошибка при получении статистики:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * DELETE /api/perfect-examples/:id
+ * Удаляет идеальный пример по ID
+ */
+app.delete('/api/perfect-examples/:id', async (req, res) => {
+    const { id } = req.params;
+    
+    try {
+        const deleted = await deletePerfectExample(id, db);
+        if (deleted) {
+            res.json({ success: true, message: 'Идеальный пример удалён' });
+        } else {
+            res.status(404).json({ error: 'Идеальный пример не найден' });
+        }
+    } catch (err) {
+        console.error('[perfect-examples/:id] ❌ Ошибка при удалении:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
  * POST /api/fix-test-cases
  * Исправляет тест-кейсы по промпту с использованием LLM и инструментов для запроса требований
  */
@@ -6534,10 +6606,57 @@ async function fixTestCasesAsync({ testCases, fixPrompt, projectId, bearerToken,
         ? `\n\n🛠️ ДОСТУПНЫЕ ИНСТРУМЕНТЫ ДЛЯ ЗАПРОСА ТРЕБОВАНИЙ:\n${toolSummary}\n\nЕсли нужно получить дополнительные требования для правильной правки тест-кейсов, используй эти инструменты.\n`
         : '';
 
-    // Шаг 4: Подготавливаем системный промпт для правки
-    // Читаем BASE_SYSTEM_PROMPT из файла или используем упрощенную версию
-    // BASE_SYSTEM_PROMPT определен внутри generateTestCasesAsync, поэтому используем упрощенную версию с ключевыми правилами
+    // Шаг 4: Загружаем идеальные примеры из БД для улучшения правки
+    let perfectExamples = null;
+    if (projectId) {
+        try {
+            perfectExamples = await getAllPerfectExamplesByLayer(projectId, db);
+            console.log(`[fixTestCasesAsync] Загружено идеальных примеров из БД для проекта ${projectId}:`, 
+                Object.keys(perfectExamples).map(l => `${l}: ${perfectExamples[l].length}`).join(', '));
+        } catch (err) {
+            console.warn(`[fixTestCasesAsync] Ошибка загрузки идеальных примеров из БД:`, err.message);
+            perfectExamples = null;
+        }
+    }
+
+    // Шаг 5: Подготавливаем системный промпт для правки
+    // ✅ ИСПОЛЬЗУЕМ ПОЛНЫЙ BASE_SYSTEM_PROMPT из generateTestCasesAsync для соблюдения всех правил стайл-гайда
+    // ⚠️ ВАЖНО: BASE_SYSTEM_PROMPT определён внутри generateTestCasesAsync, поэтому используем ссылку на его правила
+    // При исправлении СТРОГО следуй всем правилам из BASE_SYSTEM_PROMPT генерации (см. ниже)
     const BASE_SYSTEM_PROMPT_FIX = `Ты — SDET (Software Development Engineer in Test), исправляющий тест-кейсы согласно указанным доработкам.
+
+🚨🚨🚨 КРИТИЧЕСКИ ВАЖНО — ЧИТАЙ ВНИМАТЕЛЬНО! 🚨🚨🚨
+
+При исправлении тест-кейсов ты ДОЛЖЕН строго соблюдать ВСЕ правила стайл-гайда из основного промпта генерации!
+Эти правила идентичны правилам для генерации — ты должен работать с той же точностью и вниманием!
+
+❌ ЗАПРЕЩЕНО делать агрессивные правки:
+- НЕ меняй поля, которые НЕ указаны в промпте пользователя!
+- НЕ переписывай шаги, если они не требуют изменений!
+- НЕ меняй expected, если он корректен!
+- НЕ меняй структуру (feature, story, scenario), если она правильная!
+- НЕ удаляй параметры и примеры, если они не упомянуты в промпте!
+- НЕ меняй tags, priority, version без необходимости!
+
+✅ ДОЗВОЛЕНО исправлять ТОЛЬКО:
+- То, что явно указано в промпте пользователя
+- Те поля, которые требуют исправления согласно промпту (layer, precondition, title, scenario, теги)
+
+✅ ОБЯЗАТЕЛЬНО сохранять БЕЗ ИЗМЕНЕНИЙ:
+- id тест-кейса (КРИТИЧНО!)
+- feature, story (если не требуется изменение)
+- steps (если не требуют изменений согласно промпту)
+- expected (если корректен)
+- parameters, examples (если не упомянуты в промпте)
+- tags (кроме случаев, когда требуется добавить/изменить)
+- priority, version
+- links, jiraIssue
+
+═══════════════════════════════════════════════════════════════
+🎯 ТИПЫ ТЕСТОВ (ТЕСТОВЫЕ СЛОИ)
+═══════════════════════════════════════════════════════════════
+
+**E2E Tests** — сквозные пользовательские сценарии через UI или API от начала до конца (например: авторизация → создание платежа → подписание → отправка).
 
 ═══════════════════════════════════════════════════════════════
 🧠 МЕТОДОЛОГИЯ РАБОТЫ: CHAIN-OF-THOUGHT REASONING
@@ -6554,10 +6673,12 @@ async function fixTestCasesAsync({ testCases, fixPrompt, projectId, bearerToken,
 
 ШАГ 2: КЛАССИФИКАЦИЯ ПРОБЛЕМ
 Определи тип проблемы для каждого пункта:
-1. 🔀 ДЕКОМПОЗИЦИЯ: "слишком много E2E" → нужно перенести часть E2E в Integration frontend
-2. 🏷️ ПРЕДУСЛОВИЕ: "невалидно для E2E" → убрать технические precondition'ы из E2E тестов
+1. 🔀 ДЕКОМПОЗИЦИЯ: "слишком много E2E", "декомпозировать" → нужно перенести часть E2E в Integration frontend
+2. 🏷️ ПРЕДУСЛОВИЕ: "невалидно для E2E", "убери все предусловия" → убрать технические precondition'ы из E2E тестов
 3. 📝 НАЗВАНИЕ: "невалидно" или "переформулировать" → изменить title на пользовательский язык
-4. 🎯 КОЛИЧЕСТВО: "слишком много" → оставить только необходимое количество E2E
+4. 🎯 КОЛИЧЕСТВО: "слишком много", "оставить 1" → оставить только необходимое количество E2E
+5. 🏗️ СТРУКТУРА: "не имеет scenario хотя должен", "проверь структуру", "E2E только story", "Integration story и scenario" → проверить и исправить структуру (E2E без scenario, Integration с scenario)
+6. 🏷️ ТЕГИ: "тег должен быть M", "кроме бекенд тестов" → добавить/проверить теги (M для E2E и frontend, S для backend)
 
 ШАГ 3: ПЛАНИРОВАНИЕ ИСПРАВЛЕНИЙ
 Для каждого тест-кейса определи:
@@ -6597,9 +6718,12 @@ async function fixTestCasesAsync({ testCases, fixPrompt, projectId, bearerToken,
 - Уровень описания: C3 (components) - проверка компонентов
 - Метод: White Box - тестирование с доступом к внутреннему коду
 - Проверяет: Отдельные компоненты, API, микросервисы, UI-компоненты
-- ✅ Содержит scenario поле (Integration тесты привязаны к scenario)
+- ✅ Содержит scenario поле (Integration тесты привязаны к scenario) - ОБЯЗАТЕЛЬНО!
+- ✅ ОБЯЗАТЕЛЬНО указать и feature, и story, и scenario (Integration тесты не могут быть без scenario!)
 - ✅ Может содержать технические precondition'ы ("Сервер доступен", "БД готова")
 - ✅ Может проверять API, статус-коды, структуру ответов
+- ❌ НЕ должен содержать полный пользовательский путь (это для E2E)
+- ✅ Шаги должны описывать проверку компонента, а не полный сценарий пользователя
 
 ═══════════════════════════════════════════════════════════════
 📝 ПРАВИЛА ФОРМАТИРОВАНИЯ ТЕСТ-КЕЙСОВ
@@ -6624,6 +6748,19 @@ async function fixTestCasesAsync({ testCases, fixPrompt, projectId, bearerToken,
 - ❌ E2E: НЕ должен содержать технические precondition'ы типа "Сервер доступен", "БД готова"
 - ❌ НЕ конфликтует с шагами: если precondition содержит "авторизован", то шаг "Авторизоваться" должен быть удален или заменен на shared step
 
+### Структура тест-кейсов (КРИТИЧЕСКИ ВАЖНО!)
+- ✅ E2E Tests: ОБЯЗАТЕЛЬНО только feature + story (БЕЗ scenario! E2E тесты покрывают полный путь Story)
+- ✅ Integration Tests: ОБЯЗАТЕЛЬНО feature + story + scenario (Integration тесты привязаны к конкретному Scenario)
+- ❌ E2E Tests: НЕ должны иметь поле scenario (если есть — удали!)
+- ❌ Integration Tests: НЕ должны быть без scenario (если нет — добавь на основе title или запроси требования!)
+
+### Теги (tags) - ОБЯЗАТЕЛЬНО!
+- ✅ Все E2E тесты: ОБЯЗАТЕЛЬНО тег "M" (мобильное/UI тестирование)
+- ✅ Все Integration frontend Tests: ОБЯЗАТЕЛЬНО тег "M" (фронтенд компоненты)
+- ✅ Integration backend Tests: тег "S" (серверное тестирование) или без "M"
+- ✅ Unit frontend Tests: ОБЯЗАТЕЛЬНО тег "M" (фронтенд компоненты)
+- ❌ НЕ оставляй тесты без тега M (кроме backend тестов)!
+
 ═══════════════════════════════════════════════════════════════
 🔧 ИНСТРУКЦИИ ПО ИСПРАВЛЕНИЮ (ДЕТАЛЬНЫЕ)
 ═══════════════════════════════════════════════════════════════
@@ -6637,11 +6774,18 @@ async function fixTestCasesAsync({ testCases, fixPrompt, projectId, bearerToken,
 3. Остальные E2E преобразуй в Integration frontend Tests
 
 ДЕЙСТВИЯ:
-- Для оставляемых E2E: оставь layer = "E2E Tests", удали scenario если есть
+- Для оставляемых E2E: 
+  * Оставь layer = "E2E Tests"
+  * Удали scenario если есть (E2E НЕ должны иметь scenario!)
+  * Убедись что есть тег "M"
+  * Убедись что steps описывают полный пользовательский путь
 - Для переносимых в Integration:
   * Измени layer на "Integration frontend Tests"
-  * Добавь scenario (возьми из модели или сгенерируй на основе title)
+  * Добавь scenario (ОБЯЗАТЕЛЬНО! Integration тесты не могут быть без scenario)
+    - Если есть информация в модели — возьми scenario оттуда
+    - Если нет — сгенерируй scenario на основе title или запроси требования через инструменты
   * Убедись что steps описывают проверку компонента, а не полный пользовательский путь
+  * Добавь тег "M" (если его нет)
   * Можешь добавить технический precondition если нужно
 
 ### Тип 2: ИСПРАВЛЕНИЕ ПРЕДУСЛОВИЙ
@@ -6709,7 +6853,59 @@ ${toolInstruction}
 
 ВАЖНО: Не применяй исправления "на глаз" — сначала проанализируй, спланируй, потом исправляй!`;
 
-    const SYSTEM_PROMPT_FIX = BASE_SYSTEM_PROMPT_FIX;
+    // ✅ ДОБАВЛЯЕМ ИДЕАЛЬНЫЕ ПРИМЕРЫ В ПРОМПТ ДЛЯ УЛУЧШЕНИЯ КАЧЕСТВА ПРАВОК
+    let perfectExamplesSection = '';
+    if (perfectExamples && Object.keys(perfectExamples).length > 0) {
+        try {
+            const examplesForFix = {
+                e2e: perfectExamples['E2E Tests'] || [],
+                integration_fe: perfectExamples['Integration frontend Tests'] || [],
+                integration_be: perfectExamples['Integration backend Tests'] || []
+            };
+            
+            perfectExamplesSection = buildExamplesSection(examplesForFix);
+            console.log(`[fixTestCasesAsync] Идеальные примеры добавлены в промпт:`, 
+                Object.keys(examplesForFix).map(k => `${k}: ${examplesForFix[k].length}`).join(', '));
+        } catch (err) {
+            console.warn(`[fixTestCasesAsync] Ошибка форматирования идеальных примеров:`, err.message);
+            perfectExamplesSection = '';
+        }
+    }
+
+    // ✅ ФОРМИРУЕМ ФИНАЛЬНЫЙ СИСТЕМНЫЙ ПРОМПТ С ИДЕАЛЬНЫМИ ПРИМЕРАМИ
+    const SYSTEM_PROMPT_FIX = perfectExamplesSection
+        ? `${BASE_SYSTEM_PROMPT_FIX}
+
+═══════════════════════════════════════════════════════════════
+⭐ ИДЕАЛЬНЫЕ ПРИМЕРЫ (ИСПОЛЬЗУЙ КАК ЭТАЛОН ПРИ ИСПРАВЛЕНИИ!)
+═══════════════════════════════════════════════════════════════
+
+🚨 ВАЖНО: Эти примеры показывают ИДЕАЛЬНЫЙ формат тест-кейсов. 
+При исправлении ориентируйся на эти примеры и сохраняй тот же стиль и формат!
+НЕ отходи от стиля этих примеров — они созданы QA и проверены!
+
+${perfectExamplesSection}
+
+🚨🚨🚨 КРИТИЧЕСКИ ВАЖНО — ИДЕАЛЬНЫЕ ПРИМЕРЫ ЭТО ЭТАЛОН! 🚨🚨🚨
+
+Эти примеры созданы QA и проверены — они показывают ИДЕАЛЬНЫЙ формат тест-кейсов!
+При исправлении тест-кейсов ты ОБЯЗАН строго следовать формату из идеальных примеров выше!
+
+✅ ОБЯЗАТЕЛЬНО:
+- При исправлении тест-кейсов СТРОГО следуй формату из идеальных примеров выше!
+- Если исправляешь структуру — ориентируйся на структуру из примеров (E2E без scenario, Integration с scenario)
+- Если исправляешь expected — используй тот же стиль (причастие прошедшего времени), как в примерах
+- Если исправляешь steps — используй тот же формат (глаголы действий), как в примерах
+- Если исправляешь title — используй тот же стиль (конкретные названия, без "Полный цикл", без "E2E"), как в примерах
+- Сохраняй структуру и стиль как в идеальных примерах!
+
+❌ ЗАПРЕЩЕНО:
+- НЕ делай агрессивных изменений — исправляй ТОЛЬКО то, что указано в промпте!
+- НЕ отходи от стиля примеров — они показывают правильный формат!
+- НЕ переписывай поля, которые не требуют изменений!
+- НЕ меняй формат шагов, expected, title без необходимости!
+`
+        : BASE_SYSTEM_PROMPT_FIX;
 
     // Шаг 5: Разбиваем ТК на чанки если их много (для оптимизации)
     const CHUNK_SIZE = 20; // Максимум 20 ТК за раз
@@ -6731,6 +6927,9 @@ ${toolInstruction}
         try {
             // Создаем user prompt с контекстом для этого чанка
             const userPrompt = `🎯 ЗАДАЧА: Исправить следующие тест-кейсы согласно указанным доработкам.
+
+🚨 ВАЖНО: В системном промпте выше есть раздел "⭐ ИДЕАЛЬНЫЕ ПРИМЕРЫ" — ОБЯЗАТЕЛЬНО используй их как эталон формата при исправлении!
+Ориентируйся на структуру, стиль и формат из идеальных примеров — они показывают правильный способ оформления тест-кейсов!
 
 ═══════════════════════════════════════════════════════════════
 📋 ПРОМПТ С ДОРАБОТКАМИ
@@ -6765,10 +6964,12 @@ ${JSON.stringify(chunk, null, 2)}
 
 ШАГ 2: КЛАССИФИКАЦИЯ ПРОБЛЕМ (ОБЯЗАТЕЛЬНО!)
 Определи тип проблемы для каждого пункта промпта:
-- 🔀 ДЕКОМПОЗИЦИЯ: "слишком много E2E" → преобразовать часть E2E в Integration frontend
-- 🏷️ ПРЕДУСЛОВИЕ: "невалидно для E2E" → убрать технические precondition'ы из E2E
+- 🔀 ДЕКОМПОЗИЦИЯ: "слишком много E2E", "декомпозировать" → преобразовать часть E2E в Integration frontend
+- 🏷️ ПРЕДУСЛОВИЕ: "невалидно для E2E", "убери все предусловия" → убрать технические precondition'ы из E2E
 - 📝 НАЗВАНИЕ: "невалиден", "от лица пользователя" → изменить title на пользовательский язык
 - 🎯 КОЛИЧЕСТВО: "слишком много", "оставить 1" → сократить количество E2E тестов
+- 🏗️ СТРУКТУРА: "не имеет scenario хотя должен", "проверь структуру", "E2E только story", "Integration story и scenario" → проверить и исправить структуру (E2E без scenario, Integration с scenario)
+- 🏷️ ТЕГИ: "тег должен быть M", "кроме бекенд тестов", "удостоверься чтобы тег был M" → добавить/проверить теги (M для E2E и frontend, S для backend)
 
 ШАГ 3: ПЛАНИРОВАНИЕ ИСПРАВЛЕНИЙ (ОБЯЗАТЕЛЬНО!)
 Для КАЖДОГО тест-кейса из списка выше определи:
@@ -6789,10 +6990,19 @@ ${JSON.stringify(chunk, null, 2)}
 - Убедись, что id каждого ТК остался ПРЕЖНИМ
 
 ВАЖНО для каждого типа проблемы:
-- 🔀 ДЕКОМПОЗИЦИЯ: выбери 1-2 самых важных E2E, остальные → Integration frontend Tests (добавь scenario, измени layer)
+- 🔀 ДЕКОМПОЗИЦИЯ: выбери 1-2 самых важных E2E, остальные → Integration frontend Tests (добавь scenario, измени layer, добавь тег M)
 - 🏷️ ПРЕДУСЛОВИЕ: для E2E тестов удали технические precondition'ы ("Сервер доступен", "БД готова")
 - 📝 НАЗВАНИЕ: для E2E тестов измени технические названия на пользовательские ("Получить успешный ответ от API" → "Успешно выполнить действие")
 - 🎯 КОЛИЧЕСТВО: оставь только указанное количество E2E (остальные либо удали, либо преобразуй в Integration)
+- 🏗️ СТРУКТУРА: 
+  * Для E2E тестов: удали scenario если есть (E2E НЕ должны иметь scenario!)
+  * Для Integration тестов: добавь scenario если нет (Integration ОБЯЗАТЕЛЬНО должны иметь scenario!)
+  * Если scenario неизвестен — запроси требования через инструменты или сгенерируй на основе title
+- 🏷️ ТЕГИ: 
+  * Все E2E тесты: добавь тег "M" если его нет
+  * Все Integration frontend Tests: добавь тег "M" если его нет
+  * Integration backend Tests: добавь тег "S" если его нет (но не обязательно "M")
+  * Unit frontend Tests: добавь тег "M" если его нет
 
 ШАГ 5: ПРОВЕРКА РЕЗУЛЬТАТА (ОБЯЗАТЕЛЬНО!)
 Для КАЖДОГО исправленного тест-кейса проверь:
@@ -6801,6 +7011,10 @@ ${JSON.stringify(chunk, null, 2)}
 - ✅ Правильно ли изменён layer? (если требовалось)
 - ✅ Убраны ли технические precondition'ы из E2E? (если требовалось)
 - ✅ Изменён ли title на пользовательский язык? (если требовалось для E2E)
+- ✅ СТРУКТУРА: E2E тесты имеют только feature + story (БЕЗ scenario)? Если есть scenario — удали!
+- ✅ СТРУКТУРА: Integration тесты имеют feature + story + scenario? Если нет scenario — добавь!
+- ✅ ТЕГИ: Все E2E и Integration frontend имеют тег "M"? Если нет — добавь!
+- ✅ ТЕГИ: Integration backend имеет тег "S" (но не обязательно "M")?
 - ✅ Добавлен ли scenario для Integration тестов? (если требовалось)
 
 ═══════════════════════════════════════════════════════════════
@@ -11551,7 +11765,21 @@ ${stepsText}${expectedText}
 
                 // ✅ Выбираем релевантные примеры для Few-Shot Learning
                 const mode = chunk[0].stories[0]._mode || 'FULL';
-                const examples = selectExamples(chunk, mode);
+                // ✅ Загружаем идеальные примеры из БД для улучшения генерации
+                let perfectExamples = null;
+                const projectId = inputData?.projectId || inputData?.project_id;
+                if (projectId) {
+                    try {
+                        perfectExamples = await getAllPerfectExamplesByLayer(projectId, db);
+                        console.log(`[generateTestCasesAsync] Загружено идеальных примеров из БД для проекта ${projectId}:`, 
+                            Object.keys(perfectExamples).map(l => `${l}: ${perfectExamples[l].length}`).join(', '));
+                    } catch (err) {
+                        console.warn(`[generateTestCasesAsync] Ошибка загрузки идеальных примеров из БД:`, err.message);
+                        perfectExamples = null;
+                    }
+                }
+                
+                const examples = await selectExamples(chunk, mode, perfectExamples, db, projectId);
                 const examplesSection = buildExamplesSection(examples);
 
                 // ✅ Формируем system prompt с примерами
