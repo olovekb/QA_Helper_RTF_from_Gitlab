@@ -593,10 +593,38 @@ export async function updateTestCase(testCaseId, { precondition, expectedResult 
 // 3. Добавить шаг (body или sharedStepId + вставить после afterId)
 export async function addStepToTestCase(testCaseId, { body, sharedStepId, afterId }) {
     const payload = { testCaseId };
-    if (sharedStepId !== undefined) payload.sharedStepId = sharedStepId;
-    else payload.body = body;
+    if (sharedStepId !== undefined) {
+        // ✅ Убеждаемся, что sharedStepId - число (как в примере curl)
+        payload.sharedStepId = Number(sharedStepId);
+    } else {
+        // ✅ Убеждаемся, что body - строка (Allure API ожидает String, а не Object)
+        // Всегда преобразуем в строку, даже если передан объект
+        if (typeof body !== 'string') {
+            if (body === null || body === undefined) {
+                payload.body = '';
+            } else if (typeof body === 'object') {
+                // ⚠️ Если передан объект - это ошибка, извлекаем text или преобразуем в строку
+                console.warn(`[addStepToTestCase] ⚠️ Получен объект вместо строки для body. Объект:`, JSON.stringify(body));
+                // Пытаемся извлечь text из объекта
+                if (body.text && typeof body.text === 'string') {
+                    payload.body = body.text;
+                } else {
+                    // Если text нет - преобразуем объект в строку (не JSON, а обычную строку)
+                    payload.body = String(body);
+                }
+            } else {
+                // Примитив - преобразуем в строку
+                payload.body = String(body);
+            }
+        } else {
+            // body уже строка - используем как есть
+            payload.body = body;
+        }
+    }
     if (afterId !== undefined) payload.afterId = afterId;
-    const resp = await fetchWithAuth(`${BASE_URL}/testcase/step`, {
+    
+    // ✅ Добавляем параметр withExpectedResult=false в URL (как в примере curl)
+    const resp = await fetchWithAuth(`${BASE_URL}/testcase/step?withExpectedResult=false`, {
         method: 'POST',
         body: JSON.stringify(payload),
     });
@@ -605,6 +633,130 @@ export async function addStepToTestCase(testCaseId, { body, sharedStepId, afterI
         throw new Error(`Allure POST step failed ${resp.status}: ${txt}`);
     }
     return resp.json(); // возвращает созданный шаг с полем id
+}
+
+/**
+ * Добавить Expected Result к шагу тест-кейса
+ * @param {number} testCaseId - ID тест-кейса
+ * @param {number} stepId - ID шага, к которому добавляется Expected Result
+ * @param {string} expectedResultText - Текст ожидаемого результата
+ * @returns {Promise<Object>} - Созданный Expected Result с полями id и expectedResultId
+ */
+export async function addExpectedResultToStep(testCaseId, stepId, expectedResultText) {
+    if (!expectedResultText || !expectedResultText.trim()) {
+        throw new Error('expectedResultText is required');
+    }
+    
+    // 1. Создаем контейнер "Expected Result" (родительский шаг)
+    const containerPayload = {
+        testCaseId,
+        bodyJson: {
+            type: "doc",
+            content: [
+                {
+                    type: "paragraph",
+                    content: [
+                        {
+                            type: "text",
+                            text: "Expected Result"
+                        }
+                    ]
+                }
+            ]
+        }
+    };
+    
+    const containerResp = await fetchWithAuth(`${BASE_URL}/testcase/step?withExpectedResult=false`, {
+        method: 'POST',
+        body: JSON.stringify(containerPayload),
+    });
+    
+    if (!containerResp.ok) {
+        const txt = await containerResp.text();
+        throw new Error(`Allure POST Expected Result container failed ${containerResp.status}: ${txt}`);
+    }
+    
+    const container = await containerResp.json();
+    // ✅ Из curl примера: ответ содержит createdStepId в корне
+    // Структура: { createdStepId: 123, scenario: { scenarioSteps: { "123": {...} } } }
+    let containerId = container.createdStepId;
+    if (!containerId && container.scenario?.scenarioSteps) {
+        // Если createdStepId нет в корне, берем первый ключ из scenarioSteps
+        const stepKeys = Object.keys(container.scenario.scenarioSteps);
+        if (stepKeys.length > 0) {
+            containerId = parseInt(stepKeys[0]);
+        }
+    }
+    if (!containerId) {
+        containerId = container.id;
+    }
+    
+    if (!containerId) {
+        throw new Error(`Не удалось извлечь ID контейнера Expected Result из ответа: ${JSON.stringify(container).substring(0, 500)}`);
+    }
+    
+    // 2. Создаем дочерний шаг с текстом результата
+    const resultPayload = {
+        testCaseId,
+        bodyJson: {
+            type: "doc",
+            content: [
+                {
+                    type: "paragraph",
+                    content: [
+                        {
+                            type: "text",
+                            text: expectedResultText.trim()
+                        }
+                    ]
+                }
+            ]
+        },
+        parentId: containerId  // ✅ Связываем с контейнером
+    };
+    
+    const resultResp = await fetchWithAuth(`${BASE_URL}/testcase/step?withExpectedResult=false`, {
+        method: 'POST',
+        body: JSON.stringify(resultPayload),
+    });
+    
+    if (!resultResp.ok) {
+        const txt = await resultResp.text();
+        throw new Error(`Allure POST Expected Result text failed ${resultResp.status}: ${txt}`);
+    }
+    
+    const result = await resultResp.json();
+    // ✅ Из curl примера: ответ содержит createdStepId в корне
+    let resultId = result.createdStepId;
+    if (!resultId && result.scenario?.scenarioSteps) {
+        const stepKeys = Object.keys(result.scenario.scenarioSteps);
+        if (stepKeys.length > 0) {
+            resultId = parseInt(stepKeys[0]);
+        }
+    }
+    if (!resultId) {
+        resultId = result.id;
+    }
+    
+    // 3. Связываем основной шаг с контейнером через PATCH
+    // ✅ Из curl примера: используется PATCH /testcase/{testCaseId}/step/{stepId}
+    const updateResp = await fetchWithAuth(`${BASE_URL}/testcase/${testCaseId}/step/${stepId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+            expectedResultId: containerId
+        }),
+    });
+    
+    if (!updateResp.ok) {
+        const txt = await updateResp.text();
+        throw new Error(`Allure PATCH step expectedResultId failed ${updateResp.status}: ${txt}`);
+    }
+    
+    return {
+        containerId,
+        resultId,
+        expectedResultId: containerId
+    };
 }
 
 // 4. Добавить тег к ТК
@@ -816,19 +968,67 @@ export async function createProjectCustomFieldValue(projectId, customFieldId, na
  * @param {Array<{ customField: { id: number }, name: string }>} cfvArray
  */
 export async function setTestCaseCustomFieldValues(testCaseId, cfvArray) {
-    const resp = await fetchWithAuth(
-        `${BASE_URL}/testcase/${testCaseId}/cfv`,
-        {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(cfvArray),
+    // Валидация входных данных
+    if (!Array.isArray(cfvArray)) {
+        throw new Error(`cfvArray must be an array, got ${typeof cfvArray}`);
+    }
+    
+    // Проверяем формат каждого элемента
+    for (let i = 0; i < cfvArray.length; i++) {
+        const item = cfvArray[i];
+        if (!item || typeof item !== 'object') {
+            throw new Error(`cfvArray[${i}] must be an object, got ${typeof item}`);
         }
-    );
+        if (!item.customField || typeof item.customField !== 'object' || typeof item.customField.id !== 'number') {
+            throw new Error(`cfvArray[${i}].customField.id must be a number, got ${JSON.stringify(item.customField)}`);
+        }
+        if (typeof item.name !== 'string') {
+            throw new Error(`cfvArray[${i}].name must be a string, got ${typeof item.name}`);
+        }
+    }
+    
+    const url = `${BASE_URL}/testcase/${testCaseId}/cfv`;
+    const body = JSON.stringify(cfvArray);
+    
+    console.log(`[setTestCaseCustomFieldValues] POST ${url}`);
+    console.log(`[setTestCaseCustomFieldValues] Body:`, body);
+    
+    const resp = await fetchWithAuth(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body,
+    });
+    
     if (!resp.ok) {
         const txt = await resp.text();
+        let errorDetails = '';
+        try {
+            const errorJson = JSON.parse(txt);
+            errorDetails = JSON.stringify(errorJson, null, 2);
+        } catch {
+            errorDetails = txt;
+        }
+        
+        console.error(`[setTestCaseCustomFieldValues] ❌ Ошибка ${resp.status} для ТК ${testCaseId}`);
+        console.error(`[setTestCaseCustomFieldValues] Статус: ${resp.status} ${resp.statusText}`);
+        console.error(`[setTestCaseCustomFieldValues] Ответ сервера:`, errorDetails);
+        console.error(`[setTestCaseCustomFieldValues] Отправленные данные:`, body);
+        console.error(`[setTestCaseCustomFieldValues] URL: ${url}`);
+        
+        // ✅ Анализ ошибки
+        const hasNegativeIds = cfvArray.some(item => item.customField?.id < 0);
+        if (hasNegativeIds && resp.status === 500) {
+            const negativeIds = cfvArray.filter(item => item.customField?.id < 0).map(item => item.customField.id);
+            console.error(`[setTestCaseCustomFieldValues] ⚠️ В запросе есть поля с отрицательными ID: ${negativeIds.join(', ')}`);
+            console.error(`[setTestCaseCustomFieldValues] ⚠️ Это может быть причиной ошибки 500 - системные поля Allure могут не поддерживать установку через /cfv API`);
+        }
+        
         throw new Error(`Allure POST testcase cfv failed ${resp.status}: ${txt}`);
     }
-    return resp.json();
+    
+    const result = await resp.json();
+    console.log(`[setTestCaseCustomFieldValues] ✅ Успешно установлены кастомные поля для ТК ${testCaseId}`);
+    return result;
 }
 
 /**

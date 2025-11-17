@@ -1352,16 +1352,30 @@ const CodeNode = ({
                 <>
                     <Node droppableId={JSON.stringify(path)}>
                         {cases.map((c, i) => (
-                            <TestCaseCard
-                                key={c.id}
-                                testCase={c}
-                                index={i}
-                                onUpdate={onUpdate}
-                                onDelete={onDelete}
-                                projectId={projectId}
-                                jiraProject={jiraProject}
-                                jiraPat={jiraPat}
-                            />
+                            <Draggable key={c.id} draggableId={`case-${c.id}`} index={i}>
+                                {(provided, snapshot) => (
+                                    <div
+                                        ref={provided.innerRef}
+                                        {...provided.draggableProps}
+                                        style={{
+                                            ...provided.draggableProps.style,
+                                            opacity: snapshot.isDragging ? 0.8 : 1
+                                        }}
+                                    >
+                                        <div {...provided.dragHandleProps} style={{ cursor: 'grab' }}>
+                                            <TestCaseCard
+                                                testCase={c}
+                                                index={i}
+                                                onUpdate={onUpdate}
+                                                onDelete={onDelete}
+                                                projectId={projectId}
+                                                jiraProject={jiraProject}
+                                                jiraPat={jiraPat}
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+                            </Draggable>
                         ))}
                     </Node>
                     <div className="add-buttons">
@@ -1416,16 +1430,30 @@ const ScenarioNode = ({
             <>
                 <Node droppableId={JSON.stringify(path)}>
                     {cases.map((c, i) => (
-                        <TestCaseCard
-                            key={c.id}
-                            testCase={c}
-                            index={i}
-                            onUpdate={onUpdate}
-                            onDelete={onDelete}
-                            projectId={projectId}
-                            jiraProject={jiraProject}
-                            jiraPat={jiraPat}
-                        />
+                        <Draggable key={c.id} draggableId={`case-${c.id}`} index={i}>
+                            {(provided, snapshot) => (
+                                <div
+                                    ref={provided.innerRef}
+                                    {...provided.draggableProps}
+                                    style={{
+                                        ...provided.draggableProps.style,
+                                        opacity: snapshot.isDragging ? 0.8 : 1
+                                    }}
+                                >
+                                    <div {...provided.dragHandleProps} style={{ cursor: 'grab' }}>
+                                        <TestCaseCard
+                                            testCase={c}
+                                            index={i}
+                                            onUpdate={onUpdate}
+                                            onDelete={onDelete}
+                                            projectId={projectId}
+                                            jiraProject={jiraProject}
+                                            jiraPat={jiraPat}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                        </Draggable>
                     ))}
                 </Node>
 
@@ -1501,16 +1529,30 @@ const StoryNode = ({
             <div className="pl-4">
                 <Node droppableId={JSON.stringify(path)}>
                     {storyData.cases.map((c, i) => (
-                        <TestCaseCard
-                            key={c.id}
-                            testCase={c}
-                            index={i}
-                            onUpdate={onUpdate}
-                            onDelete={onDelete}
-                            projectId={projectId}
-                            jiraProject={jiraProject}
-                            jiraPat={jiraPat}
-                        />
+                        <Draggable key={c.id} draggableId={`case-${c.id}`} index={i}>
+                            {(provided, snapshot) => (
+                                <div
+                                    ref={provided.innerRef}
+                                    {...provided.draggableProps}
+                                    style={{
+                                        ...provided.draggableProps.style,
+                                        opacity: snapshot.isDragging ? 0.8 : 1
+                                    }}
+                                >
+                                    <div {...provided.dragHandleProps} style={{ cursor: 'grab' }}>
+                                        <TestCaseCard
+                                            testCase={c}
+                                            index={i}
+                                            onUpdate={onUpdate}
+                                            onDelete={onDelete}
+                                            projectId={projectId}
+                                            jiraProject={jiraProject}
+                                            jiraPat={jiraPat}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                        </Draggable>
                     ))}
                 </Node>
 
@@ -1724,74 +1766,81 @@ const SimpleTreeView = ({
         return 0;
     };
 
-    const renderTestCaseItem = (testCase, level, path) => {
+    const renderTestCaseItem = (testCase, level, path, index) => {
         const isSelected = selectedCaseId === testCase.id;
         const displayTitle = testCase.title || 'Без названия';
         
         return (
-            <div
-                key={testCase.id}
-                className={`test-tree-row ${isSelected ? 'selected' : ''}`}
-                onClick={() => onSelectCase(testCase)}
-                style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    padding: '4px 8px',
-                    paddingLeft: `${8 + level * 20}px`,
-                    cursor: 'pointer',
-                    backgroundColor: isSelected ? 'rgba(88, 166, 255, 0.15)' : 'transparent'
-                }}
-            >
-                <div style={{ marginRight: '8px', display: 'flex', alignItems: 'center' }}>
-                    <GreenCircleIcon />
-                </div>
-                <span 
-                    className="test-tree-node-title" 
-                    title={displayTitle}
-                    style={{ 
-                        flex: 1,
-                        fontSize: '13px',
-                        color: '#c9d1d9'
-                    }}
-                >
-                    {displayTitle}
-                </span>
-                <div 
-                    className="test-tree-node-controls"
-                    onClick={(e) => e.stopPropagation()}
-                    style={{ display: 'flex', alignItems: 'center' }}
-                >
-                    <button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            if (window.confirm('Удалить тест-кейс?')) {
-                                if (onDeleteCase) {
-                                    onDeleteCase(testCase.id, path);
-                                }
-                            }
-                        }}
+            <Draggable key={testCase.id} draggableId={`case-${testCase.id}`} index={index}>
+                {(provided, snapshot) => (
+                    <div
+                        ref={provided.innerRef}
+                        {...provided.draggableProps}
+                        className={`test-tree-row ${isSelected ? 'selected' : ''} ${snapshot.isDragging ? 'is-dragging' : ''}`}
+                        onClick={() => onSelectCase(testCase)}
                         style={{
-                            background: 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))',
-                            border: '1px solid var(--on-support-capella, #ff584d)',
-                            color: 'var(--on-support-capella, #ff584d)',
-                            cursor: 'pointer',
-                            padding: '6px 10px',
-                            fontSize: '16px',
-                            borderRadius: '4px',
-                            minWidth: '32px',
-                            height: '28px',
                             display: 'flex',
                             alignItems: 'center',
-                            justifyContent: 'center'
+                            padding: '4px 8px',
+                            paddingLeft: `${8 + level * 20}px`,
+                            cursor: snapshot.isDragging ? 'grabbing' : 'grab',
+                            backgroundColor: isSelected ? 'rgba(88, 166, 255, 0.15)' : 'transparent',
+                            opacity: snapshot.isDragging ? 0.8 : 1,
+                            ...provided.draggableProps.style
                         }}
-                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.2))'}
-                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))'}
-                        title="Удалить тест-кейс"
                     >
-                        ×
-                    </button>
-                </div>
-            </div>
+                        <div {...provided.dragHandleProps} style={{ marginRight: '8px', display: 'flex', alignItems: 'center', cursor: 'grab' }}>
+                            <GreenCircleIcon />
+                        </div>
+                        <span 
+                            className="test-tree-node-title" 
+                            title={displayTitle}
+                            style={{ 
+                                flex: 1,
+                                fontSize: '13px',
+                                color: '#c9d1d9'
+                            }}
+                        >
+                            {displayTitle}
+                        </span>
+                        <div 
+                            className="test-tree-node-controls"
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ display: 'flex', alignItems: 'center' }}
+                        >
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (window.confirm('Удалить тест-кейс?')) {
+                                        if (onDeleteCase) {
+                                            onDeleteCase(testCase.id, path);
+                                        }
+                                    }
+                                }}
+                                style={{
+                                    background: 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))',
+                                    border: '1px solid var(--on-support-capella, #ff584d)',
+                                    color: 'var(--on-support-capella, #ff584d)',
+                                    cursor: 'pointer',
+                                    padding: '6px 10px',
+                                    fontSize: '16px',
+                                    borderRadius: '4px',
+                                    minWidth: '32px',
+                                    height: '28px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center'
+                                }}
+                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.2))'}
+                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))'}
+                                title="Удалить тест-кейс"
+                            >
+                                ×
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </Draggable>
         );
     };
     
@@ -1929,6 +1978,32 @@ const SimpleTreeView = ({
                                         title="Добавить Story"
                                     >
                                         Story
+                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setEditingNode(path.join('/'));
+                                            setEditValue(nodeName);
+                                        }}
+                                        style={{
+                                            background: 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))',
+                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                            color: 'var(--on-text-primary, #f6fafef5)',
+                                            cursor: 'pointer',
+                                            padding: '6px 10px',
+                                            fontSize: '13px',
+                                            borderRadius: '4px',
+                                            minWidth: '32px',
+                                            height: '28px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.2))'}
+                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))'}
+                                        title="Редактировать название"
+                                    >
+                                        ✏️
                                     </button>
                                     <button
                                         onClick={(e) => {
@@ -2087,6 +2162,32 @@ const SimpleTreeView = ({
                                         title="Добавить Test Case"
                                     >
                                         +TC
+                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setEditingNode(path.join('/'));
+                                            setEditValue(nodeName);
+                                        }}
+                                        style={{
+                                            background: 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))',
+                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                            color: 'var(--on-text-primary, #f6fafef5)',
+                                            cursor: 'pointer',
+                                            padding: '6px 10px',
+                                            fontSize: '13px',
+                                            borderRadius: '4px',
+                                            minWidth: '32px',
+                                            height: '28px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.2))'}
+                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))'}
+                                        title="Редактировать название"
+                                    >
+                                        ✏️
                                     </button>
                                     <button
                                         onClick={(e) => {
@@ -2415,13 +2516,64 @@ const SimpleTreeView = ({
                 {isExpanded && (
                     <div>
                         {/* Кейсы на уровне story */}
-                        {nodeType === 'story' && (nodeData.cases || []).map(c => renderTestCaseItem(c, level + 1, path))}
+                        {nodeType === 'story' && (
+                            <Droppable droppableId={JSON.stringify(path)} type="CASE">
+                                {(provided, snapshot) => (
+                                    <div
+                                        ref={provided.innerRef}
+                                        {...provided.droppableProps}
+                                        style={{
+                                            minHeight: '10px',
+                                            backgroundColor: snapshot.isDraggingOver ? 'rgba(88, 166, 255, 0.1)' : 'transparent',
+                                            borderRadius: snapshot.isDraggingOver ? '4px' : '0'
+                                        }}
+                                    >
+                                        {(nodeData.cases || []).map((c, i) => renderTestCaseItem(c, level + 1, path, i))}
+                                        {provided.placeholder}
+                                    </div>
+                                )}
+                            </Droppable>
+                        )}
                         
                         {/* Кейсы на уровне scenario */}
-                        {nodeType === 'scenario' && (nodeData.cases || []).map(c => renderTestCaseItem(c, level + 1, path))}
+                        {nodeType === 'scenario' && (
+                            <Droppable droppableId={JSON.stringify(path)} type="CASE">
+                                {(provided, snapshot) => (
+                                    <div
+                                        ref={provided.innerRef}
+                                        {...provided.droppableProps}
+                                        style={{
+                                            minHeight: '10px',
+                                            backgroundColor: snapshot.isDraggingOver ? 'rgba(88, 166, 255, 0.1)' : 'transparent',
+                                            borderRadius: snapshot.isDraggingOver ? '4px' : '0'
+                                        }}
+                                    >
+                                        {(nodeData.cases || []).map((c, i) => renderTestCaseItem(c, level + 1, path, i))}
+                                        {provided.placeholder}
+                                    </div>
+                                )}
+                            </Droppable>
+                        )}
                         
                         {/* Кейсы на уровне code */}
-                        {nodeType === 'code' && (nodeData.cases || []).map(c => renderTestCaseItem(c, level + 1, path))}
+                        {nodeType === 'code' && (
+                            <Droppable droppableId={JSON.stringify(path)} type="CASE">
+                                {(provided, snapshot) => (
+                                    <div
+                                        ref={provided.innerRef}
+                                        {...provided.droppableProps}
+                                        style={{
+                                            minHeight: '10px',
+                                            backgroundColor: snapshot.isDraggingOver ? 'rgba(88, 166, 255, 0.1)' : 'transparent',
+                                            borderRadius: snapshot.isDraggingOver ? '4px' : '0'
+                                        }}
+                                    >
+                                        {(nodeData.cases || []).map((c, i) => renderTestCaseItem(c, level + 1, path, i))}
+                                        {provided.placeholder}
+                                    </div>
+                                )}
+                            </Droppable>
+                        )}
                         
                         {/* Вложенные узлы */}
                         {nodeType === 'feature' && Object.entries(nodeData.stories || {}).map(([storyName, storyData]) =>
@@ -2498,6 +2650,11 @@ export default function TestModelReviewModal({
     const [isSending, setIsSending] = useState(false);
     const [allureLink, setAllureLink] = useState(null);
     const [isGenerating, setIsGenerating] = useState(false);
+    const [isFixing, setIsFixing] = useState(false);
+    const [fixPrompt, setFixPrompt] = useState('');
+    const [showFixPanel, setShowFixPanel] = useState(false);
+    const [history, setHistory] = useState([]);
+    const MAX_HISTORY = 10;
 
     // Функция для копирования ссылки в буфер обмена
     const copyToClipboard = (text) => {
@@ -2613,6 +2770,23 @@ export default function TestModelReviewModal({
             return;
         }
         
+        // Если initialCases пустой массив, очищаем все состояние
+        if (initialCases && Array.isArray(initialCases) && initialCases.length === 0) {
+            console.log('TestModelReviewModal: initialCases пустой, очищаем состояние');
+            const storageKey = getStorageKey();
+            if (storageKey) {
+                try {
+                    localStorage.removeItem(storageKey);
+                    console.log('TestModelReviewModal: Состояние очищено из localStorage');
+                } catch (err) {
+                    console.warn('TestModelReviewModal: Ошибка при очистке localStorage:', err);
+                }
+            }
+            setTreeData({});
+            setSelectedCase(null);
+            return;
+        }
+        
         const storageKey = getStorageKey();
         let savedState = null;
         
@@ -2672,9 +2846,15 @@ export default function TestModelReviewModal({
         if (projectId) {
             axios
                 .get(`${config.serverUrl}/shared-steps`, { params: { projectId } })
-                .then((resp) =>
-                    setSharedStepsOptions(resp.data.map((s) => ({ value: s.id, label: s.body })))
-                )
+                .then((resp) => {
+                    // Проверяем, что resp.data - массив
+                    if (Array.isArray(resp.data)) {
+                        setSharedStepsOptions(resp.data.map((s) => ({ value: s.id, label: s.body })));
+                    } else {
+                        console.warn('TestModelReviewModal: shared-steps вернул не массив:', resp.data);
+                        setSharedStepsOptions([]);
+                    }
+                })
                 .catch(console.warn);
         }
     }, [isOpen, projectId, initialCases]);
@@ -3076,7 +3256,13 @@ export default function TestModelReviewModal({
 
     const onDragEnd = (result) => {
         const { source, destination, type } = result;
-        if (!destination) return;
+        console.log('[onDragEnd] Событие drag end:', { source, destination, type });
+        
+        if (!destination) {
+            console.log('[onDragEnd] Нет destination, отмена');
+            return;
+        }
+        
         if (type === 'STRUCTURE') {
             setTreeData((prev) => {
                 const keys = Object.keys(prev);
@@ -3089,30 +3275,107 @@ export default function TestModelReviewModal({
             });
             return;
         }
-        const srcPath = JSON.parse(source.droppableId);      // [f,s], [f,s,sc], [f,s,sc,code]
-        const dstPath = JSON.parse(destination.droppableId);
 
-        const getCasesArrayByPath = (tree, path) => {
+        // Если тип не указан или это CASE, обрабатываем как перемещение тест-кейса
+        // В react-beautiful-dnd тип может быть undefined, если не указан явно в Draggable
+        if (type && type !== 'CASE') {
+            console.log('[onDragEnd] Неизвестный тип:', type);
+            return;
+        }
+
+        let srcPath, dstPath;
+        try {
+            srcPath = JSON.parse(source.droppableId);      // [f,s], [f,s,sc], [f,s,sc,code]
+            dstPath = JSON.parse(destination.droppableId);
+        } catch (e) {
+            console.error('[onDragEnd] Ошибка парсинга пути:', e);
+            return;
+        }
+
+        const getCasesArrayByPath = (tree, path, createIfMissing = false) => {
             const [f, s, sc, code] = path;
-            if (path.length === 2) return tree[f].stories[s].cases;
-            if (path.length === 3) return tree[f].stories[s].scenarios[sc].cases;
-            if (path.length === 4) return tree[f].stories[s].scenarios[sc].codes[code].cases;
-            throw new Error('Unsupported path: ' + JSON.stringify(path));
+            if (!tree[f]) {
+                throw new Error(`Feature "${f}" не найдена`);
+            }
+            if (path.length === 2) {
+                if (!tree[f].stories[s]) {
+                    throw new Error(`Story "${s}" не найдена в feature "${f}"`);
+                }
+                if (!tree[f].stories[s].cases) {
+                    if (createIfMissing) {
+                        tree[f].stories[s].cases = [];
+                    } else {
+                        throw new Error(`Cases не найдены в story "${s}"`);
+                    }
+                }
+                return tree[f].stories[s].cases;
+            }
+            if (path.length === 3) {
+                if (!tree[f].stories[s]?.scenarios[sc]) {
+                    throw new Error(`Scenario "${sc}" не найден`);
+                }
+                if (!tree[f].stories[s].scenarios[sc].cases) {
+                    if (createIfMissing) {
+                        tree[f].stories[s].scenarios[sc].cases = [];
+                    } else {
+                        throw new Error(`Cases не найдены в scenario "${sc}"`);
+                    }
+                }
+                return tree[f].stories[s].scenarios[sc].cases;
+            }
+            if (path.length === 4) {
+                if (!tree[f].stories[s]?.scenarios[sc]?.codes[code]) {
+                    throw new Error(`Code "${code}" не найден`);
+                }
+                if (!tree[f].stories[s].scenarios[sc].codes[code].cases) {
+                    if (createIfMissing) {
+                        tree[f].stories[s].scenarios[sc].codes[code].cases = [];
+                    } else {
+                        throw new Error(`Cases не найдены в code "${code}"`);
+                    }
+                }
+                return tree[f].stories[s].scenarios[sc].codes[code].cases;
+            }
+            throw new Error('Unsupported path length: ' + path.length + ', path: ' + JSON.stringify(path));
         };
 
         setTreeData((prevTree) => {
             const newTree = JSON.parse(JSON.stringify(prevTree));
-            const srcArr = getCasesArrayByPath(newTree, srcPath);
-            const [moved] = srcArr.splice(source.index, 1);
+            
+            try {
+                // Получаем исходный массив
+                const srcArr = getCasesArrayByPath(newTree, srcPath, false);
+                if (!srcArr || srcArr.length === 0 || source.index >= srcArr.length) {
+                    console.error('[onDragEnd] Индекс вне границ или массив пуст:', source.index, srcArr?.length);
+                    return prevTree;
+                }
+                
+                // Удаляем элемент из исходного массива
+                const [moved] = srcArr.splice(source.index, 1);
+                if (!moved) {
+                    console.error('[onDragEnd] Не удалось извлечь элемент по индексу:', source.index);
+                    return prevTree;
+                }
 
-            moved.feature = dstPath[0];
-            moved.story = dstPath[1];
-            moved.scenario = dstPath[2] || '';
-            moved.code = dstPath[3] || '';
+                // Обновляем поля в перемещённом тест-кейсе
+                moved.feature = dstPath[0];
+                moved.story = dstPath[1];
+                moved.scenario = dstPath[2] || '';
+                moved.code = dstPath[3] || '';
 
-            const dstArr = getCasesArrayByPath(newTree, dstPath);
-            dstArr.splice(destination.index, 0, moved);
-            return newTree;
+                // Получаем целевой массив (создаём если нужно)
+                const dstArr = getCasesArrayByPath(newTree, dstPath, true);
+                
+                // Вставляем элемент в целевой массив
+                const insertIndex = Math.min(destination.index, dstArr.length);
+                dstArr.splice(insertIndex, 0, moved);
+                
+                console.log('[onDragEnd] Перемещён тест-кейс:', moved.id, 'из', srcPath, 'в', dstPath);
+                return newTree;
+            } catch (error) {
+                console.error('[onDragEnd] Ошибка при перемещении:', error.message, { srcPath, dstPath });
+                return prevTree;
+            }
         });
     };
 
@@ -3153,6 +3416,25 @@ export default function TestModelReviewModal({
                 if (newTree[f] && newName !== f) {
                     newTree[newName] = newTree[f];
                     delete newTree[f];
+                    // Обновляем feature во всех кейсах внутри этой фичи
+                    Object.values(newTree[newName].stories || {}).forEach(storyData => {
+                        // Кейсы на уровне story
+                        Object.values(storyData.cases || []).forEach(c => {
+                            c.feature = newName;
+                        });
+                        // Кейсы в scenarios
+                        Object.values(storyData.scenarios || {}).forEach(scData => {
+                            Object.values(scData.cases || []).forEach(c => {
+                                c.feature = newName;
+                            });
+                            // Кейсы в codes
+                            Object.values(scData.codes || {}).forEach(codeData => {
+                                Object.values(codeData.cases || []).forEach(c => {
+                                    c.feature = newName;
+                                });
+                            });
+                        });
+                    });
                 }
             } else if (path.length === 2) {
                 // Переименование story
@@ -3238,6 +3520,93 @@ export default function TestModelReviewModal({
         });
     }, []);
 
+
+    const handleFixTestCases = async () => {
+        if (!fixPrompt.trim()) {
+            alert('Введите описание доработок');
+            return;
+        }
+
+        setIsFixing(true);
+        try {
+            const rawCases = flattenTreeToCases(treeData);
+            
+            const snapshot = {
+                id: `snapshot_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                timestamp: new Date().toISOString(),
+                prompt: fixPrompt.trim(),
+                cases: rawCases
+            };
+
+            const resp = await axios.post(
+                `${config.serverUrl}/fix-test-cases`,
+                { 
+                    testCases: rawCases,
+                    fixPrompt: fixPrompt.trim(),
+                    projectId 
+                },
+                { headers: { 'Content-Type': 'application/json' } }
+            );
+
+            if (resp.data && resp.data.fixedTestCases && Array.isArray(resp.data.fixedTestCases)) {
+                setHistory(prev => {
+                    const next = [...prev, snapshot];
+                    return next.slice(-MAX_HISTORY);
+                });
+                // Обновляем treeData с исправленными ТК
+                const newTreeData = buildTreeFromCases(resp.data.fixedTestCases);
+                setTreeData(newTreeData);
+                
+                // Обновляем выбранный кейс если он был изменен
+                if (selectedCase) {
+                    const updatedCase = resp.data.fixedTestCases.find(c => c.id === selectedCase.id);
+                    if (updatedCase) {
+                        setSelectedCase(updatedCase);
+                    }
+                }
+                
+                // Очищаем промпт и закрываем панель
+                setFixPrompt('');
+                setShowFixPanel(false);
+                alert(`✅ Исправлено ${resp.data.fixedTestCases.length} тест-кейсов`);
+            } else {
+                throw new Error('Сервер вернул некорректный ответ');
+            }
+        } catch (err) {
+            console.error('Ошибка при правке тест-кейсов:', err);
+            alert('Ошибка при правке: ' + (err.response?.data?.error || err.message));
+        } finally {
+            setIsFixing(false);
+        }
+    };
+
+    const handleUndoLastFix = () => {
+        if (history.length === 0) {
+            alert('Нет сохраненных версий для отката');
+            return;
+        }
+        if (isFixing || isSending) {
+            alert('Дождитесь завершения текущей операции');
+            return;
+        }
+
+        const lastSnapshot = history[history.length - 1];
+        if (!lastSnapshot?.cases) {
+            console.warn('[handleUndoLastFix] Snapshot без cases');
+            setHistory(prev => prev.slice(0, -1));
+            return;
+        }
+
+        if (!window.confirm('Откатить тест-кейсы к предыдущей сохраненной версии?')) {
+            return;
+        }
+
+        const restoredTree = buildTreeFromCases(lastSnapshot.cases);
+        setTreeData(restoredTree);
+        setSelectedCase(null);
+        setHistory(prev => prev.slice(0, -1));
+        alert(`✅ Откат выполнен. Версия от ${new Date(lastSnapshot.timestamp).toLocaleString()} восстановлена.`);
+    };
 
     const handleConfirm = async () => {
         const rawCases = flattenTreeToCases(treeData);
@@ -3482,12 +3851,14 @@ export default function TestModelReviewModal({
     `}</style>
 
             {/* Loader поверх всего */}
-            {(isSending || isGenerating) && (
+            {(isSending || isGenerating || isFixing) && (
                 <div className="loader-overlay">
                     <div className="spinner" />
                     <div className="loader-text">
                         {isGenerating
                             ? 'Генерация XMind…'
+                            : isFixing
+                            ? 'Применение правок к тест-кейсам…'
                             : 'Отправка тест-кейсов в Allure…'}
                     </div>
                 </div>
@@ -3574,8 +3945,124 @@ export default function TestModelReviewModal({
                 <>
                     <div className="modal-header">
                         <h2>Ревью и редактирование тест-кейсов</h2>
-                        <button className="close-btn" onClick={handleCloseWithConfirm} disabled={isSending}>×</button>
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                            <button
+                                className="button-secondary"
+                                onClick={() => setShowFixPanel(!showFixPanel)}
+                                disabled={isFixing || isSending}
+                                style={{
+                                    fontSize: '13px',
+                                    padding: '6px 12px',
+                                    minWidth: 'auto'
+                                }}
+                            >
+                                {showFixPanel ? '✕ Скрыть' : '🔄 Быстрая правка'}
+                            </button>
+                            <button className="close-btn" onClick={handleCloseWithConfirm} disabled={isSending || isFixing}>×</button>
+                        </div>
                     </div>
+                    
+                    {/* Панель быстрой правки */}
+                    {showFixPanel && (
+                        <div style={{
+                            padding: '16px 24px',
+                            borderBottom: '1px solid var(--on-border-light, #bdd4ff36)',
+                            background: 'var(--bg-base-secondary, #2c343f)'
+                        }}>
+                            <div style={{ marginBottom: '12px' }}>
+                                <label style={{
+                                    display: 'block',
+                                    marginBottom: '8px',
+                                    fontSize: '13px',
+                                    fontWeight: '500',
+                                    color: 'var(--on-text-primary, #f6fafef5)'
+                                }}>
+                                    Описание доработок для тест-кейсов:
+                                </label>
+                                <textarea
+                                    value={fixPrompt}
+                                    onChange={(e) => setFixPrompt(e.target.value)}
+                                    placeholder="Например: 'Поправь слои для E2E тестов чтобы не было в сценариях а были в сторис только' или 'Неверные параметры в тесте &quot;Создание документа&quot; - должны быть указаны то-то и то-то'"
+                                    disabled={isFixing}
+                                    style={{
+                                        width: '100%',
+                                        minHeight: '80px',
+                                        padding: '10px 12px',
+                                        backgroundColor: 'var(--bg-base-primary, #1b2129)',
+                                        border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                        borderRadius: '6px',
+                                        color: 'var(--on-text-primary, #f6fafef5)',
+                                        fontSize: '13px',
+                                        fontFamily: 'inherit',
+                                        resize: 'vertical',
+                                        boxSizing: 'border-box'
+                                    }}
+                                />
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                <button
+                                    className="button-secondary"
+                                    onClick={() => {
+                                        setFixPrompt('');
+                                        setShowFixPanel(false);
+                                    }}
+                                    disabled={isFixing}
+                                    style={{ fontSize: '13px', padding: '8px 16px' }}
+                                >
+                                    Отмена
+                                </button>
+                                <button
+                                    className="button-primary"
+                                    onClick={handleFixTestCases}
+                                    disabled={isFixing || !fixPrompt.trim()}
+                                    style={{ fontSize: '13px', padding: '8px 16px' }}
+                                >
+                                    {isFixing ? 'Применяю правки...' : 'Применить правки'}
+                                </button>
+                            </div>
+                            {isFixing && (
+                                <div style={{
+                                    marginTop: '12px',
+                                    padding: '8px 12px',
+                                    background: 'rgba(88, 166, 255, 0.1)',
+                                    border: '1px solid rgba(88, 166, 255, 0.3)',
+                                    borderRadius: '6px',
+                                    fontSize: '12px',
+                                    color: 'var(--on-text-primary, #f6fafef5)'
+                                }}>
+                                    ⏳ Модель анализирует тест-кейсы и применяет правки...
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {history.length > 0 && (
+                        <div style={{
+                            padding: '12px 24px',
+                            borderBottom: '1px solid var(--on-border-light, #bdd4ff36)',
+                            background: 'var(--bg-base-primary, #1f252f)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: '12px'
+                        }}>
+                            <div style={{ fontSize: '12px', color: '#9fb3d1', display: 'flex', flexDirection: 'column' }}>
+                                <span style={{ fontWeight: 600, color: '#c9d1d9' }}>Сохранено версий: {history.length}</span>
+                                <span>Последняя: {new Date(history[history.length - 1].timestamp).toLocaleString()}</span>
+                                {history[history.length - 1].prompt && (
+                                    <span style={{ opacity: 0.8 }}>Промпт: {history[history.length - 1].prompt}</span>
+                                )}
+                            </div>
+                            <button
+                                className="button-secondary"
+                                onClick={handleUndoLastFix}
+                                disabled={isFixing || isSending}
+                                style={{ minWidth: '200px' }}
+                            >
+                                ↩️ Откатить последнюю правку
+                            </button>
+                        </div>
+                    )}
 
                     <div className="modal-layout">
                         {/* Левая панель - упрощенное дерево структуры */}
@@ -3590,16 +4077,18 @@ export default function TestModelReviewModal({
                                     Структура тестов
                                 </div>
                                 <div className="modal-left-content">
-                                    <SimpleTreeView
-                                        treeData={treeData}
-                                        selectedCaseId={selectedCase?.id}
-                                        onSelectCase={handleSelectCase}
-                                        onToggleExpand={handleToggleExpand}
-                                        onAddNode={handleAdd}
-                                        onDeleteNode={handleDeleteNode}
-                                        onRenameNode={handleRenameNode}
-                                        onDeleteCase={handleDeleteCase}
-                                    />
+                                    <DragDropContext onDragEnd={onDragEnd}>
+                                        <SimpleTreeView
+                                            treeData={treeData}
+                                            selectedCaseId={selectedCase?.id}
+                                            onSelectCase={handleSelectCase}
+                                            onToggleExpand={handleToggleExpand}
+                                            onAddNode={handleAdd}
+                                            onDeleteNode={handleDeleteNode}
+                                            onRenameNode={handleRenameNode}
+                                            onDeleteCase={handleDeleteCase}
+                                        />
+                                    </DragDropContext>
                                 </div>
                             </div>
                         </ResizablePanel>
@@ -3640,18 +4129,18 @@ export default function TestModelReviewModal({
                     </div>
 
                     <footer className="modal-footer">
-                        <button className="button-secondary" onClick={handleCloseWithConfirm} disabled={isSending}>
+                        <button className="button-secondary" onClick={handleCloseWithConfirm} disabled={isSending || isFixing}>
                             Отмена
                         </button>
                         <button
                             className="button-primary"
                             onClick={handleGenerateXmind}
-                            disabled={isSending || !Object.keys(treeData).length}
+                            disabled={isSending || isFixing || !Object.keys(treeData).length}
                             style={{ marginRight: '8px' }}
                         >
                             Сгенерировать Xmind
                         </button>
-                        <button className="button-primary" onClick={handleConfirm} disabled={isSending}>
+                        <button className="button-primary" onClick={handleConfirm} disabled={isSending || isFixing}>
                             Отправить в Allure
                         </button>
                     </footer>

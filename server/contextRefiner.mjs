@@ -112,7 +112,45 @@ async function callHybridAPI(messages, opts = {}) {
         });
 
         console.log(`[refiner] Cloud.ru success`);
-        return safeParseContent(result.choices?.[0]?.message?.content || '', result, expectedKeys);
+        const content = result.choices?.[0]?.message?.content || '';
+        if (!content && result.choices?.[0]?.message?.tool_calls) {
+            console.log(`[refiner] ⚠️ Content пустой, но есть tool_calls - пытаемся извлечь из tool_calls`);
+            // ✅ НОВОЕ: Если есть tool_calls, но нет content, пытаемся извлечь данные из tool_calls
+            const toolCalls = result.choices[0].message.tool_calls || [];
+            for (const toolCall of toolCalls) {
+                if (toolCall.function?.arguments) {
+                    try {
+                        const args = JSON.parse(toolCall.function.arguments);
+                        // Если в arguments есть JSON-строка, используем её как content
+                        if (typeof args === 'string' && args.trim().startsWith('{')) {
+                            console.log(`[refiner] ✅ Извлечён content из tool_call arguments`);
+                            return safeParseContent(args, result, expectedKeys);
+                        }
+                    } catch (e) {
+                        // Игнорируем ошибки парсинга
+                    }
+                }
+            }
+        }
+        if (!content) {
+            console.log(`[refiner] ⚠️ Content пустой, проверяем альтернативные форматы`);
+            // ✅ НОВОЕ: Проверяем альтернативные форматы
+            if (result.choices?.[0]?.delta?.content) {
+                console.log(`[refiner] ✅ Найден content в delta`);
+                return safeParseContent(result.choices[0].delta.content, result, expectedKeys);
+            }
+            if (result.choices?.[0]?.text) {
+                console.log(`[refiner] ✅ Найден text в choice`);
+                return safeParseContent(result.choices[0].text, result, expectedKeys);
+            }
+            if (result.content) {
+                console.log(`[refiner] ✅ Найден content в корне ответа`);
+                return safeParseContent(result.content, result, expectedKeys);
+            }
+            console.log(`[refiner] parse error: Пустой ответ модели`);
+            throw new Error('Пустой ответ модели');
+        }
+        return safeParseContent(content, result, expectedKeys);
 
     } catch (error) {
         // Увеличиваем количество попыток для Cloud.ru перед fallback

@@ -49,6 +49,62 @@ function getFreshAgent(url) {
 }
 
 /**
+ * Экранирует плейсхолдеры {{}} в тексте для предотвращения их интерпретации Cloud.ru API
+ * @param {string} text - Текст с плейсхолдерами
+ * @returns {string} - Текст с экранированными плейсхолдерами
+ */
+function escapePlaceholders(text) {
+    if (typeof text !== 'string') return text;
+    
+    // Экранируем {{параметр}} → \{\{параметр\}\}
+    // Используем обратную косую черту для экранирования фигурных скобок
+    const escaped = text.replace(/\{\{([^}]+)\}\}/g, '\\{\\{$1\\}\\}');
+    
+    // Подсчитываем количество экранированных плейсхолдеров
+    const matches = text.match(/\{\{([^}]+)\}\}/g);
+    const count = matches ? matches.length : 0;
+    
+    if (count > 0) {
+        console.log(`[cloudru] ✅ Экранированы ${count} placeholder(s)`);
+    }
+    
+    return escaped;
+}
+
+/**
+ * Экранирует плейсхолдеры во всех сообщениях
+ * @param {Array} messages - Массив сообщений {role, content}
+ * @returns {Array} - Массив сообщений с экранированными плейсхолдерами
+ */
+function escapePlaceholdersInMessages(messages) {
+    if (!Array.isArray(messages)) return messages;
+    
+    return messages.map(msg => {
+        if (typeof msg.content === 'string') {
+            return {
+                ...msg,
+                content: escapePlaceholders(msg.content)
+            };
+        } else if (Array.isArray(msg.content)) {
+            // Если content - массив (например, для vision API)
+            return {
+                ...msg,
+                content: msg.content.map(item => {
+                    if (item.type === 'text' && typeof item.text === 'string') {
+                        return {
+                            ...item,
+                            text: escapePlaceholders(item.text)
+                        };
+                    }
+                    return item;
+                })
+            };
+        }
+        return msg;
+    });
+}
+
+/**
  * Обработка больших запросов через разделение на чанки
  * @param {Array} messages - Исходные сообщения
  * @param {Object} opts - Опции
@@ -246,7 +302,9 @@ export async function callCloudRuAPI(messages, opts = {}) {
     // === ПРОВЕРКА РАЗМЕРА ЗАПРОСА ===
     const requestSize = JSON.stringify(messages).length;
     const estimatedTokens = Math.ceil(requestSize / 4); // Примерная оценка: 1 токен ≈ 4 символа
-    const MAX_TOKENS_CLOUDRU = 200000; // Оставляем запас от лимита 262144
+    // ✅ MiniMax-M2 имеет лимит 196,608 токенов на весь запрос (вход + выход)
+    // Оставляем запас 5K токенов на служебные данные
+    const MAX_TOKENS_CLOUDRU = 196608; // Реальный лимит модели MiniMax-M2
     
     console.log(`\n${'='*80}`);
     console.log(`🚀 CLOUD.RU API CALL START`);
@@ -303,11 +361,31 @@ export async function callCloudRuAPI(messages, opts = {}) {
         'Connection': 'keep-alive'
     };
 
+    // ✅ Автоматическая проверка и уменьшение max_tokens при превышении лимита
+    // Лимит модели MiniMax-M2: 196,608 токенов (вход + выход)
+    // Оставляем запас 5K токенов на служебные данные
+    const MAX_TOTAL_TOKENS = 196608;
+    const RESERVE_TOKENS = 5000;
+    const maxAllowedCompletionTokens = Math.max(0, MAX_TOTAL_TOKENS - estimatedTokens - RESERVE_TOKENS);
+    
+    let adjustedMaxTokens = max_tokens;
+    if (estimatedTokens + max_tokens > MAX_TOTAL_TOKENS) {
+        adjustedMaxTokens = Math.min(max_tokens, maxAllowedCompletionTokens);
+        console.warn(`⚠️  [cloudru] Превышен лимит токенов! Вход: ${estimatedTokens}, max_tokens: ${max_tokens}, лимит: ${MAX_TOTAL_TOKENS}`);
+        console.warn(`⚠️  [cloudru] Уменьшаю max_tokens с ${max_tokens} до ${adjustedMaxTokens} для соответствия лимиту модели`);
+        
+        if (adjustedMaxTokens < 1000) {
+            throw new Error(`❌ [cloudru] Входные сообщения слишком большие (${estimatedTokens} токенов)! Максимум для completion: ${maxAllowedCompletionTokens}. Используйте chunking для входных данных.`);
+        }
+    } else {
+        console.log(`✅ [cloudru] Лимит токенов в порядке: вход ${estimatedTokens} + completion ${max_tokens} = ${estimatedTokens + max_tokens} ≤ ${MAX_TOTAL_TOKENS}`);
+    }
+
     const requestBody = {
         model,
         messages,
         temperature,
-        max_completion_tokens: max_tokens
+        max_completion_tokens: adjustedMaxTokens
     };
 
     // Add optional parameters
@@ -441,10 +519,77 @@ export async function callCloudRuAPI(messages, opts = {}) {
                 throw new Error(`Cloud.ru API error ${response.status}: ${errorText}`);
             }
 
-            const data = await response.json();
-            
+            // ✅ ИСПРАВЛЕНО: Сначала читаем raw response для диагностики
+            const responseText = await response.text();
             console.log(`\n✅ CLOUD.RU API SUCCESS`);
-            console.log(`${'='*60}`);
+            console.log(`${'='.repeat(60)}`);
+            console.log(`📝 Raw response length: ${responseText.length} chars`);
+            console.log(`📝 Raw response preview (first 1000 chars): ${responseText.substring(0, 1000)}`);
+            
+            // ✅ КРИТИЧЕСКАЯ ПРОВЕРКА: Пустой ответ
+            if (!responseText || responseText.trim().length === 0) {
+                console.error(`❌ КРИТИЧЕСКАЯ ОШИБКА: Пустой ответ от Cloud.ru API!`);
+                throw new Error('Cloud.ru API вернул пустой ответ. Возможно, сервер перегружен или произошла ошибка на стороне API.');
+            }
+            
+            // ✅ НОВОЕ: Проверяем, может быть ответ обрезан
+            const trimmedResponse = responseText.trim();
+            if (trimmedResponse.length > 0 && !trimmedResponse.endsWith('}') && !trimmedResponse.endsWith(']')) {
+                console.log(`⚠️  ВОЗМОЖНО ОБРЕЗАННЫЙ ОТВЕТ: response не заканчивается на } или ]`);
+                console.log(`📝 Последние 200 chars: ${trimmedResponse.substring(Math.max(0, trimmedResponse.length - 200))}`);
+            }
+            
+            // Парсим JSON
+            let data;
+            try {
+                data = JSON.parse(responseText);
+            } catch (parseError) {
+                console.error(`❌ Ошибка парсинга JSON ответа: ${parseError.message}`);
+                console.error(`📝 Raw response length: ${responseText.length} chars`);
+                console.error(`📝 Raw response (first 2000 chars): ${responseText.substring(0, 2000)}`);
+                console.error(`📝 Raw response (last 500 chars): ${responseText.substring(Math.max(0, responseText.length - 500))}`);
+                
+                // ✅ УЛУЧШЕННАЯ ОБРАБОТКА: Пытаемся восстановить обрезанный JSON
+                if (parseError.message.includes('end of input') || 
+                    parseError.message.includes('Unexpected end') || 
+                    parseError.message.includes('JSON')) {
+                    console.log(`🔧 Попытка восстановить обрезанный/поврежденный JSON...`);
+                    
+                    // Проверка 1: Пустой ответ (уже проверили выше, но на всякий случай)
+                    if (trimmedResponse.length === 0) {
+                        throw new Error('Cloud.ru API вернул пустой ответ');
+                    }
+                    
+                    // Проверка 2: Пытаемся найти последний валидный JSON объект
+                    const lastBrace = trimmedResponse.lastIndexOf('}');
+                    const lastBracket = trimmedResponse.lastIndexOf(']');
+                    const cutPos = Math.max(lastBrace, lastBracket);
+                    
+                    if (cutPos > 0 && cutPos > trimmedResponse.length * 0.8) {
+                        // Если обрезано меньше 20%, пытаемся восстановить
+                        try {
+                            const partialText = trimmedResponse.substring(0, cutPos + 1);
+                            data = JSON.parse(partialText);
+                            console.log(`✅ Успешно восстановлен обрезанный JSON (обрезано ${trimmedResponse.length - cutPos - 1} символов)`);
+                        } catch (recoveryError) {
+                            console.error(`❌ Не удалось восстановить JSON: ${recoveryError.message}`);
+                            throw new Error(`Не удалось восстановить обрезанный JSON ответ от Cloud.ru API. Оригинальная ошибка: ${parseError.message}`);
+                        }
+                    } else if (cutPos <= 0) {
+                        // Нет закрывающих скобок вообще
+                        console.error(`❌ КРИТИЧЕСКАЯ ОШИБКА: В ответе нет закрывающих скобок!`);
+                        throw new Error(`Ответ от Cloud.ru API не содержит валидного JSON (нет закрывающих скобок). Возможно, ответ был полностью обрезан.`);
+                    } else {
+                        // Обрезано больше 20%
+                        console.error(`❌ КРИТИЧЕСКАЯ ОШИБКА: Ответ обрезан более чем на 20%!`);
+                        throw new Error(`Ответ от Cloud.ru API обрезан более чем на 20% (обрезано ${trimmedResponse.length - cutPos} из ${trimmedResponse.length} символов). Возможно, превышен лимит ответа.`);
+                    }
+                } else {
+                    // Другая ошибка парсинга
+                    throw new Error(`Ошибка парсинга JSON ответа от Cloud.ru API: ${parseError.message}`);
+                }
+            }
+            
             console.log(`📊 Usage: ${JSON.stringify(data.usage || {}, null, 2)}`);
             console.log(`📝 Response length: ${JSON.stringify(data).length} chars`);
             console.log(`🎯 Model used: ${data.model || 'Unknown'}`);
@@ -454,11 +599,40 @@ export async function callCloudRuAPI(messages, opts = {}) {
             console.log(`🔍 Response structure analysis:`);
             console.log(`  - has_choices: ${!!data.choices}`);
             console.log(`  - choices_length: ${data.choices?.length || 0}`);
-            console.log(`  - has_message: ${!!data.choices?.[0]?.message}`);
-            console.log(`  - has_content: ${!!data.choices?.[0]?.message?.content}`);
-            console.log(`  - content_length: ${data.choices?.[0]?.message?.content?.length || 0}`);
-            console.log(`  - has_tool_calls: ${!!data.choices?.[0]?.message?.tool_calls}`);
-            console.log(`  - tool_calls_count: ${data.choices?.[0]?.message?.tool_calls?.length || 0}`);
+            if (data.choices && data.choices.length > 0) {
+                console.log(`  - choice[0] keys: ${Object.keys(data.choices[0] || {}).join(', ')}`);
+                console.log(`  - has_message: ${!!data.choices[0]?.message}`);
+                if (data.choices[0]?.message) {
+                    console.log(`  - message keys: ${Object.keys(data.choices[0].message || {}).join(', ')}`);
+                    console.log(`  - has_content: ${!!data.choices[0]?.message?.content}`);
+                    console.log(`  - content_type: ${typeof data.choices[0]?.message?.content}`);
+                    console.log(`  - content_length: ${data.choices[0]?.message?.content?.length || 0}`);
+                    console.log(`  - has_tool_calls: ${!!data.choices[0]?.message?.tool_calls}`);
+                    console.log(`  - tool_calls_count: ${data.choices[0]?.message?.tool_calls?.length || 0}`);
+                    // ✅ НОВОЕ: Логируем полную структуру message для диагностики
+                    if (!data.choices[0]?.message?.content && !data.choices[0]?.message?.tool_calls) {
+                        console.log(`  ⚠️  ПРОБЛЕМА: message пустой, но completion_tokens > 0`);
+                        console.log(`  📋 Полная структура message: ${JSON.stringify(data.choices[0]?.message, null, 2)}`);
+                        console.log(`  📋 Полная структура choice[0]: ${JSON.stringify(data.choices[0], null, 2)}`);
+                        // ✅ НОВОЕ: Проверяем альтернативные форматы ответа
+                        if (data.choices[0]?.delta) {
+                            console.log(`  🔍 Найден delta: ${JSON.stringify(data.choices[0].delta, null, 2)}`);
+                        }
+                        if (data.choices[0]?.text) {
+                            console.log(`  🔍 Найден text: ${data.choices[0].text}`);
+                        }
+                        if (data.content) {
+                            console.log(`  🔍 Найден content в корне: ${data.content}`);
+                        }
+                    }
+                }
+            }
+            
+            // ✅ НОВОЕ: Проверяем, может быть ответ в streaming формате
+            if (data.choices?.[0]?.delta) {
+                console.log(`⚠️  Обнаружен streaming формат (delta), но мы ожидаем обычный формат`);
+                console.log(`📋 Delta структура: ${JSON.stringify(data.choices[0].delta, null, 2)}`);
+            }
             
             // Если есть tool_calls - логируем их детально
             if (data.choices?.[0]?.message?.tool_calls) {
@@ -601,7 +775,10 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
         try {
             console.log(`\n🚀 [hybrid] Trying Cloud.ru model ${i + 1}/${models.length}: ${model}`);
             
-            const result = await callCloudRuAPI(messages, {
+            // ✅ НОВОЕ: Экранируем плейсхолдеры {{}} перед отправкой в Cloud.ru
+            const escapedMessages = escapePlaceholdersInMessages(messages);
+            
+            const result = await callCloudRuAPI(escapedMessages, {
                 model,
                 temperature,
                 max_tokens,

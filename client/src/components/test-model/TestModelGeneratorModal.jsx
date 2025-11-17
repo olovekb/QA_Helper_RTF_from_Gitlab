@@ -1013,6 +1013,53 @@ export default function TestModelGeneratorModal({
         });
     };
 
+    // ✅ Функция для преобразования treeData обратно в формат модели (удаляет служебные поля)
+    const convertTreeToModel = (treeData) => {
+        return (treeData || []).map(feature => {
+            const modelFeature = {
+                id: feature.id,
+                text: feature.text,
+                ...(feature.stories && feature.stories.length > 0 ? {
+                    stories: feature.stories.map(story => {
+                        const modelStory = {
+                            id: story.id,
+                            text: story.text,
+                            ...(story.scenarios && story.scenarios.length > 0 ? {
+                                scenarios: story.scenarios.map(scenario => {
+                                    const modelScenario = {
+                                        id: scenario.id,
+                                        text: scenario.text,
+                                        ...(scenario.codes && scenario.codes.length > 0 ? {
+                                            codes: scenario.codes.map(code => {
+                                                const modelCode = {
+                                                    id: code.id,
+                                                    text: code.text,
+                                                    ...(code.type ? { type: code.type } : {})
+                                                };
+                                                // Удаляем служебные поля
+                                                delete modelCode.isExpanded;
+                                                return modelCode;
+                                            })
+                                        } : {})
+                                    };
+                                    // Удаляем служебные поля
+                                    delete modelScenario.isExpanded;
+                                    return modelScenario;
+                                })
+                            } : {})
+                        };
+                        // Удаляем служебные поля
+                        delete modelStory.isExpanded;
+                        return modelStory;
+                    })
+                } : {})
+            };
+            // Удаляем служебные поля
+            delete modelFeature.isExpanded;
+            return modelFeature;
+        });
+    };
+
     useEffect(() => {
         if (!isOpen) { setIsLoading(true); return; }
 
@@ -1026,6 +1073,9 @@ export default function TestModelGeneratorModal({
                 
                 if (savedTree && savedTree.length > 0) {
                     // Если есть сохраненные данные, используем их
+                    console.log('TestModelGeneratorModal: ⚠️ Загружены СТАРЫЕ данные из IndexedDB! Это может быть причиной кеширования!');
+                    console.log('TestModelGeneratorModal: savedTree features:', savedTree.length);
+                    console.log('TestModelGeneratorModal: savedModel:', savedModel ? 'есть' : 'нет');
                     setTreeData(savedTree);
                     if (savedModel) {
                         setLocalGeneratedModel(savedModel);
@@ -1141,8 +1191,12 @@ export default function TestModelGeneratorModal({
         // Очищаем предыдущие результаты при новой генерации
         setModelGenerationStatus(null);
         setModelGenerationProgress(0);
+        // ✅ Очищаем treeData и IndexedDB, чтобы не использовать старые данные
+        setTreeData([]);
         idbSet('generatedTestModel', null).catch(console.warn);
         idbSet('modelGenerationProgress', 0).catch(console.warn);
+        idbSet('testModelTree', null).catch(console.warn); // ✅ Очищаем старый treeData
+        console.log('TestModelGeneratorModal: ✅ Очищены все данные перед новой генерацией модели');
         
         // Запрашиваем разрешение на уведомления
         if (window.Notification && Notification.permission === 'default') {
@@ -1320,10 +1374,16 @@ export default function TestModelGeneratorModal({
         
         try {
             if (typeof onGenerate === 'function') {
-                // Передаем отредактированную структуру тестовой модели (treeData)
-                // Это гарантирует, что генерация тест-кейсов будет использовать актуальную структуру
-                console.log('TestModelGeneratorModal: передаем отредактированную структуру в генерацию тест-кейсов:', treeData);
-                onGenerate(treeData);
+                // ✅ Преобразуем treeData обратно в формат модели (удаляем служебные поля id, isExpanded)
+                const modelStructure = convertTreeToModel(treeData);
+                
+                console.log('TestModelGeneratorModal: передаем отредактированную структуру в генерацию тест-кейсов');
+                console.log('TestModelGeneratorModal: treeData (с служебными полями):', treeData);
+                console.log('TestModelGeneratorModal: modelStructure (без служебных полей):', modelStructure);
+                console.log('TestModelGeneratorModal: количество Features:', modelStructure.length);
+                
+                // ✅ Передаем преобразованную модель, а не treeData
+                onGenerate(modelStructure);
                 onClose(); // Закрываем модалку сразу
             } else {
                 console.error("onGenerate prop is not a function!");

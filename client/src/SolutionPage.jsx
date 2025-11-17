@@ -1095,6 +1095,23 @@ export default function SolutionPage({ projects = [] }) {
       // Очищаем сохраненные данные
       localStorage.removeItem('generatedTestCases');
       
+      // Очищаем все сохраненные состояния модалки просмотра тест-кейсов
+      try {
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('testCasesReview_')) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach(key => localStorage.removeItem(key));
+        if (keysToRemove.length > 0) {
+          console.log(`Очищено ${keysToRemove.length} сохраненных состояний модалки тест-кейсов`);
+        }
+      } catch (err) {
+        console.warn('Ошибка при очистке localStorage модалки:', err);
+      }
+      
       // Очищаем данные из IndexedDB
       idbSet('generationTaskId', null).catch(console.warn);
       idbSet('generationProgress', 0).catch(console.warn);
