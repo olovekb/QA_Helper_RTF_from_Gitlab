@@ -389,9 +389,22 @@ export async function callCloudRuAPI(messages, opts = {}) {
     };
 
     // Add optional parameters
+    // ⚠️ КРИТИЧНО: Cloud.ru API с response_format (strict: true) вызывает ЗАВИСАНИЯ!
+    // Модель "застревает" в генерации пробелов и не завершает JSON.
+    // РЕШЕНИЕ: ОТКЛЮЧАЕМ response_format полностью, используем только tools!
+    // Валидация будет выполнена на нашей стороне после получения ответа.
     if (response_format) {
-        requestBody.response_format = response_format;
-        console.log(`🔧 Response format: ${JSON.stringify(response_format, null, 2)}`);
+        const responseFormatStr = JSON.stringify(response_format);
+        const schemaSize = responseFormatStr.length;
+        
+        console.warn(`\n🚨 [cloudru] response_format ОТКЛЮЧЁН для Cloud.ru API!`);
+        console.warn(`📊 Schema size: ${schemaSize} символов`);
+        console.warn(`⚠️  Причина: strict: true вызывает зависания модели (10+ минут, генерация пробелов)`);
+        console.warn(`✅ Используем только tools для валидации формата ответа`);
+        console.warn(`✅ Валидация будет выполнена на нашей стороне\n`);
+        
+        // ПОЛНОСТЬЮ ОТКЛЮЧАЕМ response_format для Cloud.ru
+        // requestBody.response_format = response_format; // ← ЗАКОММЕНТИРОВАНО!
     }
     if (tools) {
         requestBody.tools = tools;
@@ -532,13 +545,6 @@ export async function callCloudRuAPI(messages, opts = {}) {
                 throw new Error('Cloud.ru API вернул пустой ответ. Возможно, сервер перегружен или произошла ошибка на стороне API.');
             }
             
-            // ✅ НОВОЕ: Проверяем, может быть ответ обрезан
-            const trimmedResponse = responseText.trim();
-            if (trimmedResponse.length > 0 && !trimmedResponse.endsWith('}') && !trimmedResponse.endsWith(']')) {
-                console.log(`⚠️  ВОЗМОЖНО ОБРЕЗАННЫЙ ОТВЕТ: response не заканчивается на } или ]`);
-                console.log(`📝 Последние 200 chars: ${trimmedResponse.substring(Math.max(0, trimmedResponse.length - 200))}`);
-            }
-            
             // Парсим JSON
             let data;
             try {
@@ -554,6 +560,9 @@ export async function callCloudRuAPI(messages, opts = {}) {
                     parseError.message.includes('Unexpected end') || 
                     parseError.message.includes('JSON')) {
                     console.log(`🔧 Попытка восстановить обрезанный/поврежденный JSON...`);
+                    
+                    // ✅ Исправлено: используем responseText вместо необъявленной trimmedResponse
+                    const trimmedResponse = responseText.trim();
                     
                     // Проверка 1: Пустой ответ (уже проверили выше, но на всякий случай)
                     if (trimmedResponse.length === 0) {
@@ -590,6 +599,39 @@ export async function callCloudRuAPI(messages, opts = {}) {
                 }
             }
             
+            // ✅ ПРОВЕРКА finish_reason для диагностики обрезанного ответа
+            const finishReason = data.choices?.[0]?.finish_reason;
+            if (finishReason && finishReason !== 'stop') {
+                console.warn(`⚠️  [cloudru] finish_reason=${finishReason} - ответ может быть обрезан`);
+                if (finishReason === 'length') {
+                    console.warn(`⚠️  [cloudru] Ответ обрезан из-за max_tokens лимита!`);
+                }
+            } else if (finishReason === 'stop') {
+                console.log(`✅ [cloudru] finish_reason=stop - ответ полный`);
+            }
+            
+            // ✅ ПРОВЕРКА целостности content
+            const content = data.choices?.[0]?.message?.content || '';
+            if (!content || content.length === 0) {
+                if (data.choices?.[0]?.message?.tool_calls) {
+                    console.log(`ℹ️  [cloudru] Content пустой, но есть tool_calls - это нормально`);
+                } else {
+                    console.warn(`⚠️  [cloudru] Content пустой и нет tool_calls!`);
+                }
+            } else {
+                // ✅ Проверяем, обрезан ли content
+                const trimmedContent = content.trim();
+                if (trimmedContent.length > 0 && !trimmedContent.endsWith('}') && !trimmedContent.endsWith(']')) {
+                    console.warn(`⚠️  [cloudru] Content возможно обрезан: не заканчивается на } или ]`);
+                    console.warn(`📝 Content последние 200 chars: ${trimmedContent.substring(Math.max(0, trimmedContent.length - 200))}`);
+                }
+                
+                // ✅ Логируем полный content для диагностики
+                console.log(`📝 Content length: ${content.length} chars`);
+                console.log(`📝 Content start (first 300): ${content.substring(0, 300)}`);
+                console.log(`📝 Content end (last 300): ${content.substring(Math.max(0, content.length - 300))}`);
+            }
+            
             console.log(`📊 Usage: ${JSON.stringify(data.usage || {}, null, 2)}`);
             console.log(`📝 Response length: ${JSON.stringify(data).length} chars`);
             console.log(`🎯 Model used: ${data.model || 'Unknown'}`);
@@ -601,6 +643,7 @@ export async function callCloudRuAPI(messages, opts = {}) {
             console.log(`  - choices_length: ${data.choices?.length || 0}`);
             if (data.choices && data.choices.length > 0) {
                 console.log(`  - choice[0] keys: ${Object.keys(data.choices[0] || {}).join(', ')}`);
+                console.log(`  - finish_reason: ${data.choices[0]?.finish_reason || 'N/A'}`);
                 console.log(`  - has_message: ${!!data.choices[0]?.message}`);
                 if (data.choices[0]?.message) {
                     console.log(`  - message keys: ${Object.keys(data.choices[0].message || {}).join(', ')}`);
@@ -643,12 +686,11 @@ export async function callCloudRuAPI(messages, opts = {}) {
             }
             
             // Если content пустой но есть tool_calls - это НОРМАЛЬНО для Cloud.ru
-            if (!data.choices?.[0]?.message?.content && data.choices?.[0]?.message?.tool_calls) {
+            if (!content && data.choices?.[0]?.message?.tool_calls) {
                 console.log(`ℹ️ Content пустой, но есть tool_calls - это ожидаемое поведение для Cloud.ru`);
             }
             
             // Проверяем и исправляем неполный markdown ответ
-            const content = data.choices?.[0]?.message?.content || '';
             console.log(`📝 Raw content: "${content}"`);
             
             if (content === '```' || (content.startsWith('```') && !content.includes('```', 3))) {

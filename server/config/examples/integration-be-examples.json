@@ -1,30 +1,30 @@
 [
   {
-    "title": "API GET /stateful/personal/kuban/client/info/v2 возвращает параметры email и isEmailConfirmed",
+    "title": "GET **/stateful/personal/kuban/client/info/v2** возвращает параметры email и isEmailConfirmed",
     "layer": "Integration backend Tests",
     "feature": "Безбумажный офис",
     "story": "Регистрация в ББО",
     "scenario": "1. Нажать на кнопку \"Безбумажный офис\"",
     "precondition": "",
     "steps": [
-      "Выполнить GET /stateful/personal/kuban/client/info/v2"
+      "Выполнить GET **/stateful/personal/kuban/client/info/v2**"
     ],
-    "expected": "Получен ответ 200 с JSON, содержащим параметры \"email\" и \"isEmailConfirmed\"",
+    "expected": "**Возвращается** 200 OK с JSON, содержащим параметры \"email\" и \"isEmailConfirmed\"",
     "tags": ["S"],
     "priority": "High",
     "version": "stable"
   },
   {
-    "title": "API POST /confirm/code/check возвращает ответ с кодом {{Код ответа}}",
+    "title": "POST **/confirm/code/check** возвращает ответ с кодом {{Код ответа}}",
     "layer": "Integration backend Tests",
     "feature": "Безбумажный офис",
     "story": "Регистрация в ББО",
     "scenario": "5. Ввести ОТП-код",
     "precondition": "",
     "steps": [
-      "Выполнить POST /confirm/code/check с телом запроса: {\"code\": \"{{ОТП-код}}\"}"
+      "Выполнить POST **/confirm/code/check** с телом запроса: {\"code\": \"{{ОТП-код}}\"}"
     ],
-    "expected": "Получен ответ {{Код ответа}} с JSON: {{Содержимое ответа}}",
+    "expected": "**Возвращается** {{Код ответа}} с JSON: {{Содержимое ответа}}",
     "tags": ["S"],
     "priority": "High",
     "version": "stable",
@@ -82,16 +82,16 @@
     ]
   },
   {
-    "title": "API GET /template/get_by_id возвращает шаблон платежа по doc_type=payment",
+    "title": "GET **/template/get_by_id** возвращает шаблон платежа по **doc_type=payment**",
     "layer": "Integration backend Tests",
     "feature": "Оплата по QR-коду",
     "story": "Получение шаблона платежа",
     "scenario": "Получить шаблон платежа по doc_type",
     "precondition": "в БД есть шаблон с doc_type=payment",
     "steps": [
-      "Выполнить GET /template/get_by_id с параметром doc_type=payment"
+      "Выполнить GET **/template/get_by_id** с параметром **doc_type=payment**"
     ],
-    "expected": "Получен ответ 200 с JSON: {id, type, amount, date}",
+    "expected": "**Возвращается** 200 OK с JSON: {id, type, amount, date}",
     "tags": ["S"],
     "priority": "High",
     "version": "stable"

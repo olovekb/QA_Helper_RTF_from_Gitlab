@@ -3087,9 +3087,14 @@ export default function TestModelReviewModal({
     };
     
     const handleSelectCase = (testCase) => {
-        // Обновляем тест-кейс из дерева, чтобы получить актуальные данные
-        const updatedCase = findCaseInTree(treeData, testCase.id) || testCase;
-        setSelectedCase(updatedCase);
+        // ✅ ИСПРАВЛЕНО: Всегда используем актуальные данные из переданного testCase
+        // Сначала пытаемся найти в дереве (может быть обновлен), но если не найдено - используем переданный
+        const caseInTree = findCaseInTree(treeData, testCase.id);
+        // Используем данные из дерева, если они есть, иначе используем переданный testCase
+        // Это гарантирует, что мы всегда используем актуальные данные
+        const updatedCase = caseInTree || testCase;
+        // ✅ КРИТИЧНО: Принудительно обновляем selectedCase, чтобы компонент перерендерился
+        setSelectedCase({ ...updatedCase });
     };
     const handleCloseWithConfirm = useCallback(() => {
         if (isGenerating || isSending) return; // не даём закрыть во время процессов
@@ -4527,6 +4532,7 @@ export default function TestModelReviewModal({
                             <div className="modal-right-content">
                                 {selectedCase ? (
                                     <TestCaseCard
+                                        key={selectedCase.id} // ✅ ИСПРАВЛЕНО: Добавлен key для принудительного перерендера при смене кейса
                                         testCase={selectedCase}
                                         index={0}
                                         onUpdate={(caseId, updatedCase) => {
