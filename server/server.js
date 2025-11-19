@@ -4704,7 +4704,7 @@ async function generateTestModelAsync(taskId, inputData) {
         const contextToolset = createContextToolset({
             sources: sourceRegistry.getSources(),
             fetcher: contextFetcher,
-            defaultChunk: 8000  // ✅ Увеличено для MiniMax-M2 (204K контекст)
+            defaultChunk: 20000  // ✅ Крупнее чанки, чтобы сократить число fetch_context_chunk
         });
 
         const interactiveTools = Array.isArray(contextToolset.tools) ? contextToolset.tools : [];
@@ -5254,7 +5254,7 @@ ${reqChunk}`;
                         tools: combinedTools,
                         toolHandlers: contextToolHandlers,
                         finalToolNames: ['submit_test_model'],
-                        maxIterations: 8,  // ✅ Уменьшено с 12 до 8 (достаточно для сбора контекста + генерации)
+                        maxIterations: 20,  // ✅ Больше итераций, чтобы успевать собрать крупные требования
                         modelOptions: {
                             temperature: 0,
                             top_p: 0.9,
