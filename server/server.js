@@ -5258,7 +5258,7 @@ ${reqChunk}`;
                         modelOptions: {
                             temperature: 0,
                             top_p: 0.9,
-                            max_tokens: 45000,  // ✅ Безопасное значение для MiniMax-M2 (лимит 196K, вход ~136K, оставляем запас 45K)
+                            max_tokens: 20000,  // ✅ Уменьшили запас completion, чтобы не превышать лимит Cloud.ru на больших промптах
                             extra: { transforms: 'middle-out' }
                         }
                     });
@@ -5276,7 +5276,7 @@ ${reqChunk}`;
                             tools: [buildSubmitModelTool()],
                             temperature: 0,
                             top_p: 0.9,
-                            max_tokens: 45000,  // ✅ Безопасное значение для MiniMax-M2 (лимит 196K, вход ~136K, оставляем запас 45K)
+                            max_tokens: 20000,  // ✅ Синхронизировано с основным вызовом
                             extra: { transforms: 'middle-out' }
                         }
                     );
