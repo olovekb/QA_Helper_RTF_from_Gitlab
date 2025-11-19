@@ -133,12 +133,14 @@ export function createContextToolset(options = {}) {
         defaultChunk = 8000  // ✅ Увеличено с 4000 до 8000 для MiniMax-M2 (204K контекст)
     } = options;
 
-    const normalizedDefaultChunk = clamp(defaultChunk, 512, 12000);
+    const normalizedDefaultChunk = clamp(defaultChunk, 512, 50000);  // ✅ Увеличено для больших документов
 
     const sourceMap = new Map();
     const contentCache = new Map();
     // ✅ Кэш для чанков (sourceId + offset + limit → chunk)
     const chunkCache = new Map();
+    // ✅ Отслеживание количества запросов к каждому источнику (sourceId → count)
+    const sourceRequestCounts = new Map();
 
     const normalisedSources = Array.isArray(sources) ? sources : [];
 
@@ -283,8 +285,8 @@ export function createContextToolset(options = {}) {
                         limit: {
                             type: 'integer',
                             minimum: 256,
-                            maximum: 12000,
-                            description: 'Максимальное количество символов в одном фрагменте (по умолчанию 8000).',
+                            maximum: 50000,  // ✅ Увеличено для больших документов
+                            description: 'Максимальное количество символов в одном фрагменте (по умолчанию зависит от источника).',
                             default: normalizedDefaultChunk
                         }
                     },
@@ -349,7 +351,11 @@ export function createContextToolset(options = {}) {
             }
 
             const offset = clamp(parsedArgs?.offset ?? 0, 0, Number.MAX_SAFE_INTEGER);
-            const limit = clamp(parsedArgs?.limit ?? normalizedDefaultChunk, 256, 12000);
+            const limit = clamp(parsedArgs?.limit ?? normalizedDefaultChunk, 256, 50000);  // ✅ Увеличено до 50000
+
+            // ✅ Отслеживаем количество запросов к этому источнику
+            const requestCount = (sourceRequestCounts.get(sourceId) || 0) + 1;
+            sourceRequestCounts.set(sourceId, requestCount);
 
             // ✅ Проверяем кэш чанков
             const cacheKey = `${sourceId}_${offset}_${limit}`;
@@ -383,6 +389,33 @@ export function createContextToolset(options = {}) {
                     totalLength
                 };
                 // ✅ Кэшируем результат
+                chunkCache.set(cacheKey, result);
+                return result;
+            }
+
+            // ✅ Если уже было 5+ запросов к этому источнику и остался контент - возвращаем большими частями
+            if (requestCount >= 5 && offset < totalLength) {
+                const remainingLength = totalLength - offset;
+                // ✅ Ограничиваем размер чанка до 50k символов (~12.5k токенов), чтобы не упереться в лимит модели
+                const maxChunkSize = 50000;
+                const chunkSize = Math.min(remainingLength, maxChunkSize);
+                const remainingContent = content.slice(offset, offset + chunkSize);
+                const hasMoreAfter = (offset + chunkSize) < totalLength;
+                
+                console.log(`[fetch_context_chunk] ⚡ После ${requestCount} запросов к "${sourceId}" возвращаю большой чанк (${remainingContent.length} из ${remainingLength} оставшихся символов)`);
+                
+                const result = {
+                    sourceId,
+                    chunk: remainingContent,
+                    offset,
+                    limit: chunkSize,
+                    nextOffset: offset + chunkSize,
+                    hasMore: hasMoreAfter,  // Может быть еще контент
+                    totalLength,
+                    title: source.title,
+                    pageId: source.pageId,
+                    _autoComplete: true  // Флаг, что это автоматическое ускорение
+                };
                 chunkCache.set(cacheKey, result);
                 return result;
             }

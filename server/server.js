@@ -4704,7 +4704,7 @@ async function generateTestModelAsync(taskId, inputData) {
         const contextToolset = createContextToolset({
             sources: sourceRegistry.getSources(),
             fetcher: contextFetcher,
-            defaultChunk: 20000  // ✅ Крупнее чанки, чтобы сократить число fetch_context_chunk
+            defaultChunk: 40000  // ✅ Увеличено для очень больших документов (200k+ символов)
         });
 
         const interactiveTools = Array.isArray(contextToolset.tools) ? contextToolset.tools : [];
