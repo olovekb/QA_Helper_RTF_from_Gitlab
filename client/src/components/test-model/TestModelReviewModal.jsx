@@ -564,6 +564,20 @@ const flattenTreeToCases = (tree) => {
     return flat;
 };
 
+const DND_PATH_DELIMITER = '|';
+
+const encodeDroppablePath = (path = []) =>
+    path
+        .map((part) => encodeURIComponent((part ?? '').toString()))
+        .join(DND_PATH_DELIMITER);
+
+const decodeDroppablePath = (droppableId = '') => {
+    if (!droppableId) {
+        return [];
+    }
+    return droppableId.split(DND_PATH_DELIMITER).map((part) => decodeURIComponent(part));
+};
+
 // --- UI COMPONENTS ---
 // Компонент для отображения diff изменений (как в git)
 const TestCaseDiffView = ({ diff, caseId, onApprove, onReject, hasPendingChanges }) => {
@@ -1518,7 +1532,7 @@ const CodeNode = ({
 
             {isExpanded && (
                 <>
-                    <Node droppableId={JSON.stringify(path)}>
+                    <Node droppableId={encodeDroppablePath(path)}>
                         {cases.map((c, i) => (
                             <Draggable key={c.id} draggableId={`case-${c.id}`} index={i}>
                                 {(provided, snapshot) => (
@@ -1596,7 +1610,7 @@ const ScenarioNode = ({
         </div>
         {isExpanded && (
             <>
-                <Node droppableId={JSON.stringify(path)}>
+                <Node droppableId={encodeDroppablePath(path)}>
                     {cases.map((c, i) => (
                         <Draggable key={c.id} draggableId={`case-${c.id}`} index={i}>
                             {(provided, snapshot) => (
@@ -1695,7 +1709,7 @@ const StoryNode = ({
         </div>
         {storyData.isExpanded && (
             <div className="pl-4">
-                <Node droppableId={JSON.stringify(path)}>
+                <Node droppableId={encodeDroppablePath(path)}>
                     {storyData.cases.map((c, i) => (
                         <Draggable key={c.id} draggableId={`case-${c.id}`} index={i}>
                             {(provided, snapshot) => (
@@ -1890,12 +1904,15 @@ const GreenCircleIcon = () => (
 const SimpleTreeView = ({ 
     treeData, 
     selectedCaseId, 
+    selectedCaseIds = new Set(),
     onSelectCase, 
     onToggleExpand,
     onAddNode,
     onDeleteNode,
     onRenameNode,
     onDeleteCase,
+    onToggleCaseSelection = () => {},
+    onSelectCasesByPath = () => {},
     testCaseDiffs = new Map(),
     pendingApprovals = new Set()
 }) => {
@@ -1938,6 +1955,7 @@ const SimpleTreeView = ({
 
     const renderTestCaseItem = (testCase, level, path, index) => {
         const isSelected = selectedCaseId === testCase.id;
+        const isBulkSelected = selectedCaseIds.has(testCase.id);
         const displayTitle = testCase.title || 'Без названия';
         
         // Проверяем, есть ли непринятые изменения для этого ТК
@@ -1950,7 +1968,8 @@ const SimpleTreeView = ({
                     <div
                         ref={provided.innerRef}
                         {...provided.draggableProps}
-                        className={`test-tree-row ${isSelected ? 'selected' : ''} ${snapshot.isDragging ? 'is-dragging' : ''}`}
+                        {...provided.dragHandleProps}
+                        className={`test-tree-row ${isSelected ? 'selected' : ''} ${isBulkSelected ? 'bulk-selected' : ''} ${snapshot.isDragging ? 'is-dragging' : ''}`}
                         onClick={() => onSelectCase(testCase)}
                         style={{
                             display: 'flex',
@@ -1959,17 +1978,22 @@ const SimpleTreeView = ({
                             paddingLeft: `${8 + level * 20}px`,
                             cursor: snapshot.isDragging ? 'grabbing' : 'grab',
                             backgroundColor: hasPendingChanges 
-                                ? 'rgba(255, 193, 7, 0.2)' // Жёлтый фон для непринятых изменений
+                                ? 'rgba(255, 193, 7, 0.2)' 
                                 : isSelected 
-                                    ? 'rgba(88, 166, 255, 0.15)' 
-                                    : 'transparent',
+                                    ? 'rgba(88, 166, 255, 0.15)'
+                                    : isBulkSelected
+                                        ? 'rgba(63, 185, 80, 0.18)'
+                                        : 'transparent',
                             borderLeft: hasPendingChanges ? '3px solid #ffc107' : '3px solid transparent',
                             opacity: snapshot.isDragging ? 0.8 : 1,
                             ...provided.draggableProps.style
                         }}
                     >
-                        <div {...provided.dragHandleProps} style={{ marginRight: '8px', display: 'flex', alignItems: 'center', cursor: 'grab' }}>
-                            <GreenCircleIcon />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginRight: '8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', cursor: 'grab' }}>
+                                <GreenCircleIcon />
+                            </div>
+                           
                         </div>
                         {hasPendingChanges && (
                             <span 
@@ -2710,7 +2734,7 @@ const SimpleTreeView = ({
                     <div>
                         {/* Кейсы на уровне story */}
                         {nodeType === 'story' && (
-                            <Droppable droppableId={JSON.stringify(path)} type="CASE">
+                            <Droppable droppableId={encodeDroppablePath(path)} type="CASE">
                                 {(provided, snapshot) => (
                                     <div
                                         ref={provided.innerRef}
@@ -2730,7 +2754,7 @@ const SimpleTreeView = ({
                         
                         {/* Кейсы на уровне scenario */}
                         {nodeType === 'scenario' && (
-                            <Droppable droppableId={JSON.stringify(path)} type="CASE">
+                            <Droppable droppableId={encodeDroppablePath(path)} type="CASE">
                                 {(provided, snapshot) => (
                                     <div
                                         ref={provided.innerRef}
@@ -2750,7 +2774,7 @@ const SimpleTreeView = ({
                         
                         {/* Кейсы на уровне code */}
                         {nodeType === 'code' && (
-                            <Droppable droppableId={JSON.stringify(path)} type="CASE">
+                            <Droppable droppableId={encodeDroppablePath(path)} type="CASE">
                                 {(provided, snapshot) => (
                                     <div
                                         ref={provided.innerRef}
@@ -3488,12 +3512,11 @@ export default function TestModelReviewModal({
             return;
         }
 
-        let srcPath, dstPath;
-        try {
-            srcPath = JSON.parse(source.droppableId);      // [f,s], [f,s,sc], [f,s,sc,code]
-            dstPath = JSON.parse(destination.droppableId);
-        } catch (e) {
-            console.error('[onDragEnd] Ошибка парсинга пути:', e);
+        const srcPath = decodeDroppablePath(source.droppableId);
+        const dstPath = decodeDroppablePath(destination.droppableId);
+
+        if (!srcPath.length || !dstPath.length) {
+            console.warn('[onDragEnd] Некорректный droppableId', { srcPath, dstPath, sourceId: source.droppableId, destinationId: destination.droppableId });
             return;
         }
 
@@ -4370,7 +4393,7 @@ export default function TestModelReviewModal({
                                 <textarea
                                     value={fixPrompt}
                                     onChange={(e) => setFixPrompt(e.target.value)}
-                                    placeholder="Например: 'Поправь слои для E2E тестов чтобы не было в сценариях а были в сторис только' или 'Неверные параметры в тесте &quot;Создание документа&quot; - должны быть указаны то-то и то-то'"
+                                    placeholder={'Пиши конкретно: 1) Для одного теста укажи точное название и опиши изменение. 2) Для одной проблемы в нескольких тестах перечисли их названия или укажи story/слой с формулировкой типа "все E2E в story «Выбор тарифа» — ...". 3) Для массовой чистки напиши правило: "убери шаги с \\"Проверить\\"", "добавь scenario во все Integration backend". 4) Не проси общие улучшения, всегда указывай конкретные действия.'}
                                     disabled={isFixing}
                                     style={{
                                         width: '100%',
@@ -4386,6 +4409,13 @@ export default function TestModelReviewModal({
                                         boxSizing: 'border-box'
                                     }}
                                 />
+                                <p style={{ marginTop: '6px', fontSize: '12px', color: '#9fb3d1', lineHeight: 1.45 }}>
+                                    💡 Как формировать запросы:<br/>
+                                    • Один тест: «Загрузка изображения в недоступный блок — замени файл .pdf на .png и не трогай шаги».<br/>
+                                    • Одна проблема в нескольких тестах: «Настройка уведомлений (оба варианта) — убери шаг с проверкой 404, остальное оставить».<br/>
+                                    • Массовая правка: «Все Integration frontend тесты в story "Фильтрация" — добавь scenario и убери шаги с "Проверить"».<br/>
+                                    ➜ Чем конкретнее формулировка (название, слой, story, шаблон шага), тем точнее будет правка.
+                                </p>
                             </div>
                             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                                 <button
@@ -4532,7 +4562,7 @@ export default function TestModelReviewModal({
                             <div className="modal-right-content">
                                 {selectedCase ? (
                                     <TestCaseCard
-                                        key={selectedCase.id} // ✅ ИСПРАВЛЕНО: Добавлен key для принудительного перерендера при смене кейса
+                                        key={selectedCase.id} 
                                         testCase={selectedCase}
                                         index={0}
                                         onUpdate={(caseId, updatedCase) => {

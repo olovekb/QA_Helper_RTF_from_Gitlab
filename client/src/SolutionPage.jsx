@@ -824,9 +824,33 @@ export default function SolutionPage({ projects = [] }) {
     }));
   }, [modelGenerationStatus, modelGenerationProgress, modelGenerationTaskId, modelIsMinimized]);
 
-  // Загружаем сохраненные тест-кейсы при инициализации
+  // Загружаем сохраненные тест-кейсы при инициализации (только если нет активной задачи)
   useEffect(() => {
-    const loadSavedTestCases = () => {
+    const loadSavedTestCases = async () => {
+      // ✅ ВАЖНО: Сначала загружаем generationTaskId из IndexedDB, так как usePersistentState загружает асинхронно
+      let activeTaskId = generationTaskId;
+      if (!activeTaskId) {
+        try {
+          activeTaskId = await idbGet('generationTaskId');
+        } catch (error) {
+          console.warn('Ошибка загрузки generationTaskId из IndexedDB:', error);
+        }
+      }
+
+      // ✅ ВАЖНО: Если есть активная задача генерации, НЕ загружаем старые данные из localStorage
+      // Вместо этого проверяем статус задачи и загружаем актуальные данные из API
+      if (activeTaskId) {
+        console.log('SolutionPage: есть активная задача генерации, пропускаем загрузку из localStorage, taskId:', activeTaskId);
+        // Проверяем статус задачи
+        try {
+          await checkGenerationStatus(activeTaskId);
+        } catch (error) {
+          console.warn('Ошибка проверки статуса активной задачи:', error);
+        }
+        return;
+      }
+
+      // Если нет активной задачи, загружаем из localStorage
       try {
         const savedCases = localStorage.getItem('generatedTestCases');
         console.log('SolutionPage: loading saved test cases:', savedCases);
@@ -844,7 +868,7 @@ export default function SolutionPage({ projects = [] }) {
     };
 
     loadSavedTestCases();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Проверяем, нужно ли открыть модальное окно генерации
   useEffect(() => {
@@ -860,7 +884,9 @@ export default function SolutionPage({ projects = [] }) {
 
   const checkGenerationStatus = async (taskId) => {
     try {
-      const { data } = await axios.get(`${config.serverUrl}/generate-test-cases-status/${taskId}`);
+      // ✅ Добавляем параметр ?nocache=true для принудительной очистки кэша на сервере
+      // Это гарантирует, что мы получим актуальные данные, а не закэшированные
+      const { data } = await axios.get(`${config.serverUrl}/generate-test-cases-status/${taskId}?nocache=${Date.now()}`);
       setGenerationProgress(data.progress);
       setGenerationStatus(data.status);
       
@@ -868,6 +894,8 @@ export default function SolutionPage({ projects = [] }) {
         console.log('SolutionPage: received test cases from server:', data.result.testCases);
         console.log('SolutionPage: test cases length:', data.result.testCases?.length);
         console.log('SolutionPage: first test case:', data.result.testCases?.[0]);
+        // ✅ ВАЖНО: Очищаем старые данные из localStorage перед сохранением новых
+        localStorage.removeItem('generatedTestCases');
         setGeneratedCases(data.result.testCases);
         // Сохраняем результат в localStorage
         localStorage.setItem('generatedTestCases', JSON.stringify(data.result.testCases));

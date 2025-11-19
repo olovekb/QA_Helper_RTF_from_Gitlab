@@ -247,7 +247,7 @@ const __dirname = dirname(__filename);
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const app = express();
-const PORT = 5002;
+const PORT = 5000;
 
 const TEST_CASE_JSON_SCHEMA = {
     type: 'object',
@@ -420,7 +420,7 @@ const upload = multer({
 
 
 const corsOptions = {
-    origin: 'http://localhost:3000',
+    origin: 'https://test-inspector.abanking.ru',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-OpenRouter-Key'],
     credentials: true,
@@ -3561,6 +3561,7 @@ ${scenarios.map((sc, idx) => `${idx + 1}. ${sc.text}${(sc.codes || []).length > 
 - Пример: "Выбрать чек-бокс" + "Нажать кнопку" → "Создать документ с выбранным чек-боксом"
 - НЕ создавай отдельный Scenario для каждого клика/поля
 - Сохраняй все Code из объединённых Scenarios
+- Запрещено придумывать новые API, пути, коды ответов и параметры. Используй только API, указанные в разделе 3 требований, и только те UI‑элементы/сообщения, которые уже встречаются в сценариях и requirements. Не вводи новые абстрактные параметры типа "Код ответа", "Числовое значение"
 
 REQUIREMENTS:
 ${requirements.substring(0, 3000)}
@@ -6852,6 +6853,56 @@ app.delete('/api/fix-test-cases/context/:taskId', async (req, res) => {
     }
 });
 
+function mergePreservingOriginals(originalCase, modifiedCase, fixPrompt = '') {
+    if (!originalCase) {
+        return modifiedCase;
+    }
+
+    const promptLower = (fixPrompt || '').toLowerCase();
+    const safeCase = { ...modifiedCase };
+
+    const stepsKeywords = ['шаг', 'step', 'действ', 'action', 'сценари', 'структур', 'detail', 'описан'];
+    const titleKeywords = ['названи', 'title', 'имя', 'заголов', 'rename', 'переимен'];
+    const tagsKeywords = ['tag', 'тег'];
+
+    const mentionsSteps = stepsKeywords.some(kw => promptLower.includes(kw));
+    const mentionsTitle = titleKeywords.some(kw => promptLower.includes(kw));
+    const mentionsTags = tagsKeywords.some(kw => promptLower.includes(kw));
+
+    const cleanupRules = extractStepCleanupRules(fixPrompt);
+    const cleanupEvaluation = cleanupRules.length
+        ? evaluateStepCleanup(originalCase, modifiedCase, cleanupRules)
+        : null;
+    const cleanupAllowed = cleanupEvaluation?.allowed;
+
+    if (!mentionsSteps) {
+        const originalSteps = JSON.stringify(originalCase.steps ?? []);
+        const newSteps = JSON.stringify(modifiedCase.steps ?? []);
+        if (originalSteps !== newSteps) {
+            if (cleanupAllowed) {
+                console.log(`[fixTestCasesAsync] 🧹 SmartMerge: разрешён step clean-up для ${originalCase.id} (удалено ${cleanupEvaluation.removedCount} шагов)`);
+            } else {
+                console.warn(`[fixTestCasesAsync] 🛡️ SmartMerge: откат steps для ${originalCase.id}`);
+                safeCase.steps = originalCase.steps;
+            }
+        }
+    }
+
+    if (!mentionsTitle && originalCase.title !== modifiedCase.title) {
+        console.warn(`[fixTestCasesAsync] 🛡️ SmartMerge: откат title для ${originalCase.id}`);
+        safeCase.title = originalCase.title;
+    }
+
+    if (!mentionsTags) {
+        safeCase.tags = originalCase.tags;
+    }
+
+    safeCase.feature = originalCase.feature;
+    safeCase.story = originalCase.story;
+
+    return safeCase;
+}
+
 /**
  * Исправляет тест-кейсы по промпту с использованием LLM и инструментов для запроса требований
  * @param {Object} options - Опции для правки ТК
@@ -6882,6 +6933,10 @@ async function fixTestCasesAsync({ taskId, testCases, fixPrompt, projectId, bear
         console.warn('[fixTestCasesAsync] ⚠️ Не найдено тест-кейсов для правки, возвращаем исходный список');
         return testCases;
     }
+
+    const originalCasesMap = new Map(
+        testCases.map(tc => [tc.id, JSON.parse(JSON.stringify(tc))])
+    );
 
     // Шаг 2: Создаем контекст для запроса требований при необходимости
     const sourceRegistry = createContextSourceRegistry();
@@ -7020,6 +7075,16 @@ async function fixTestCasesAsync({ taskId, testCases, fixPrompt, projectId, bear
         console.log(`[fixTestCasesAsync] Обработка чанка ${chunkIdx + 1}/${chunks.length} (${chunk.length} ТК)...`);
 
         try {
+            const strictConstraints = `
+⛔⛔⛔ ЖЕСТКИЕ ЗАПРЕТЫ (CRITICAL RULES) ⛔⛔⛔
+
+1. ЗАПРЕЩЕНО исправлять грамматику, пунктуацию или стиль, если это НЕ указано явно в промпте.
+2. ЗАПРЕЩЕНО "улучшать" шаги, если промпт НЕ просит менять steps. Если шаги плохие — оставь их плохими.
+3. ЗАПРЕЩЕНО менять "title", "feature", "story", если промпт НЕ касается переименования.
+4. Если тест-кейс НЕ подпадает под критерии изменений — верни его БЕЗ ЕДИНОЙ ПРАВКИ.
+5. Ты — оператор точечной хирургии, а не автор новых тестов. Выполняй ТОЛЬКО требуемые операции.
+`;
+
             // Создаем user prompt с контекстом для этого чанка
             const userPrompt = `❗❗❗ КРИТИЧНО: СОХРАНИ ПОЛЕ "id" ИЗ КАЖДОГО ТЕСТ-КЕЙСА! ❗❗❗
 
@@ -7051,6 +7116,8 @@ ${JSON.stringify(chunk.map(tc => ({ id: tc.id, title: tc.title, feature: tc.feat
 ═══════════════════════════════════════════════════════════════
 
 ${fixPrompt}
+
+${strictConstraints}
 
 ═══════════════════════════════════════════════════════════════
 📝 ТЕСТ-КЕЙСЫ ДЛЯ ПРАВКИ (${chunk.length} тест-кейсов)
@@ -7290,9 +7357,9 @@ ${userPrompt}`;
                 },
                 finalToolNames: ['submit_fixed_cases'],
                 modelOptions: {
-                    maxIterations: 10,
+                        maxIterations: 5,
                     temperature: 0,
-                    top_p: 0.9,
+                        top_p: 0.1,
                     max_tokens: 45000,
                     extra: { transforms: 'middle-out' }
                 },
@@ -7402,8 +7469,10 @@ ${userPrompt}`;
                 fixedCases.forEach(fixedCase => {
                     const index = allFixedCases.findIndex(tc => tc.id === fixedCase.id);
                     if (index !== -1) {
-                        allFixedCases[index] = fixedCase;
-                        fixedCasesMap.set(fixedCase.id, fixedCase);
+                        const originalCase = originalCasesMap.get(fixedCase.id) || allFixedCases[index];
+                        const safeFixedCase = mergePreservingOriginals(originalCase, fixedCase, fixPrompt);
+                        allFixedCases[index] = safeFixedCase;
+                        fixedCasesMap.set(safeFixedCase.id, safeFixedCase);
                     } else {
                         console.warn(`[fixTestCasesAsync] ⚠️ Не найден ТК с id=${fixedCase.id} в исходном списке`);
                     }
@@ -7429,12 +7498,47 @@ ${userPrompt}`;
  * @returns {Array} - Массив тест-кейсов для правки
  */
 function identifyTargetCases(testCases, fixPrompt) {
-    const promptLower = fixPrompt.toLowerCase();
+    const promptLower = (fixPrompt || '').toLowerCase();
     const targetCases = [];
+    const seenCaseIds = new Set();
+
+    const addCase = (tc) => {
+        const key = tc.id != null ? `id:${tc.id}` : `${tc.feature || ''}:${tc.story || ''}:${tc.title || ''}`;
+        if (seenCaseIds.has(key)) {
+            return;
+        }
+        seenCaseIds.add(key);
+        targetCases.push(tc);
+    };
 
     // Извлекаем указанные названия ТК из промпта (в кавычках)
     const titleMatches = fixPrompt.match(/"([^"]+)"/g);
     const targetTitles = titleMatches ? titleMatches.map(m => m.slice(1, -1).toLowerCase()) : [];
+
+    const idFilters = extractIdFiltersFromPrompt(fixPrompt);
+    if (idFilters.size > 0) {
+        console.log(`[identifyTargetCases] Применяем фильтр по ID (${idFilters.size})`);
+    }
+
+    const regexFilters = extractRegexFiltersFromPrompt(fixPrompt);
+    if (regexFilters.length > 0) {
+        console.log(`[identifyTargetCases] Применяем фильтр по регулярным выражениям: ${regexFilters.map(r => r.toString()).join(', ')}`);
+    }
+
+    const matchesRegexFilters = (tc) => {
+        if (!regexFilters.length) return false;
+        const valuesToCheck = [
+            tc.id != null ? String(tc.id) : '',
+            tc.title || '',
+            tc.story || '',
+            tc.feature || '',
+            tc.layer || ''
+        ];
+
+        return regexFilters.some(regex =>
+            valuesToCheck.some(value => value && regex.test(value))
+        );
+    };
 
     // Определяем слой из промпта
     const isE2E = /e2e|е2е|e-2-e|полный цикл/i.test(fixPrompt);
@@ -7445,19 +7549,32 @@ function identifyTargetCases(testCases, fixPrompt) {
     testCases.forEach(tc => {
         const titleLower = (tc.title || '').toLowerCase();
         const layer = (tc.layer || '').toLowerCase();
+        const tcIdLower = tc.id != null ? String(tc.id).toLowerCase() : '';
+
+        // Фильтр по конкретным ID
+        if (idFilters.size > 0 && tcIdLower && idFilters.has(tcIdLower)) {
+            addCase(tc);
+            return;
+        }
+
+        // Фильтр по регулярным выражениям
+        if (regexFilters.length > 0 && matchesRegexFilters(tc)) {
+            addCase(tc);
+            return;
+        }
 
         // Фильтр по названию (если указано в промпте)
         if (targetTitles.length > 0) {
             const matchesTitle = targetTitles.some(targetTitle => titleLower.includes(targetTitle));
             if (matchesTitle) {
-                targetCases.push(tc);
+                addCase(tc);
                 return;
             }
         }
 
         // Фильтр по слою
         if (isE2E && layer.includes('e2e')) {
-            targetCases.push(tc);
+            addCase(tc);
             return;
         }
         if (isIntegration) {
@@ -7465,29 +7582,239 @@ function identifyTargetCases(testCases, fixPrompt) {
                 if ((isFrontend && layer.includes('frontend')) ||
                     (isBackend && layer.includes('backend')) ||
                     (!isFrontend && !isBackend)) {
-                    targetCases.push(tc);
+                    addCase(tc);
                     return;
                 }
             }
         }
 
         // Если конкретные фильтры не применены — проверяем упоминание в промпте
-        if (targetTitles.length === 0 && !isE2E && !isIntegration) {
+        if (targetTitles.length === 0 && !isE2E && !isIntegration && idFilters.size === 0 && regexFilters.length === 0) {
             // Если промпт упоминает название ТК (без кавычек)
             if (titleLower.length > 5 && promptLower.includes(titleLower.substring(0, Math.min(titleLower.length, 30)))) {
-                targetCases.push(tc);
+                addCase(tc);
                 return;
             }
         }
     });
 
+    const hasExplicitFilters = isE2E || isIntegration || targetTitles.length > 0 || idFilters.size > 0 || regexFilters.length > 0;
+
     // Если не нашли по фильтрам — возвращаем все (для общей правки)
-    if (targetCases.length === 0 && (!isE2E && !isIntegration && targetTitles.length === 0)) {
+    if (targetCases.length === 0 && !hasExplicitFilters) {
         console.log('[identifyTargetCases] Не найдено конкретных ТК по фильтрам, применяем правку ко всем');
         return testCases;
     }
 
     return targetCases;
+}
+
+function extractIdFiltersFromPrompt(fixPrompt = '') {
+    const ids = new Set();
+    if (!fixPrompt) {
+        return ids;
+    }
+
+    const normalized = fixPrompt.replace(/\r/g, ' ');
+    const addId = (rawId) => {
+        if (rawId == null) return;
+        const cleaned = String(rawId).trim().replace(/^["']|["']$/g, '');
+        if (!cleaned) return;
+        ids.add(cleaned.toLowerCase());
+    };
+
+    const bracketListPattern = /\bids?\s*(?:=|:)\s*\[([^\]]+)]/gi;
+    let match;
+    while ((match = bracketListPattern.exec(normalized)) !== null) {
+        match[1].split(/[,;\s]+/).forEach(addId);
+    }
+
+    const inlineListPattern = /\bids?\s*(?:=|:)?\s*((?:"[^"]+"|'[^']+'|[A-Za-z0-9_-]+)(?:\s*,\s*(?:"[^"]+"|'[^']+'|[A-Za-z0-9_-]+))+)/gi;
+    while ((match = inlineListPattern.exec(normalized)) !== null) {
+        match[1].split(/\s*,\s*/).forEach(addId);
+    }
+
+    const singleIdPattern = /\b(?:id|tc(?:-?id)?|case|тест(?:-|\s*)кейс)\s*(?:№|#|=|:)?\s*([A-Za-z0-9_-]{3,})/gi;
+    while ((match = singleIdPattern.exec(normalized)) !== null) {
+        addId(match[1]);
+    }
+
+    return ids;
+}
+
+function extractRegexFiltersFromPrompt(fixPrompt = '') {
+    const filters = [];
+    if (!fixPrompt) {
+        return filters;
+    }
+
+    const normalized = fixPrompt.replace(/\r/g, '');
+    const keywordPattern = /(regex|regexp|регулярк[аи]?|pattern)\s*(?:=|:)\s*([^\n]+)/gi;
+    let match;
+    while ((match = keywordPattern.exec(normalized)) !== null) {
+        const chunk = match[2] || '';
+        chunk.split(/\s*,\s*/).forEach(part => {
+            const regex = buildRegexFromRaw(part.trim());
+            if (regex) {
+                filters.push(regex);
+            }
+        });
+    }
+
+    return filters;
+}
+
+function buildRegexFromRaw(rawPattern) {
+    if (!rawPattern) {
+        return null;
+    }
+
+    let pattern = rawPattern.trim();
+    if (!pattern) {
+        return null;
+    }
+
+    // Убираем завершающие точки/точки с запятой, часто попадающие из описаний
+    pattern = pattern.replace(/[.;,]+$/, '');
+
+    if ((pattern.startsWith('"') && pattern.endsWith('"')) || (pattern.startsWith("'") && pattern.endsWith("'"))) {
+        pattern = pattern.slice(1, -1);
+    }
+
+    let flags = 'i';
+    const literalMatch = pattern.match(/^\/((?:\\.|[^/])+?)\/([gimsuy]*)$/);
+    if (literalMatch) {
+        pattern = literalMatch[1];
+        flags = literalMatch[2] || 'i';
+    } else if (pattern.startsWith('/') && pattern.endsWith('/')) {
+        pattern = pattern.slice(1, -1);
+    }
+
+    flags = (flags || 'i').replace(/[^gimsuy]/g, '');
+    flags = flags.replace(/g/g, ''); // избегаем stateful RegExp
+    if (!flags.includes('i')) {
+        flags += 'i';
+    }
+
+    try {
+        return new RegExp(pattern, flags);
+    } catch (err) {
+        console.warn(`[identifyTargetCases] ❌ Некорректное регулярное выражение "${rawPattern}": ${err.message}`);
+        return null;
+    }
+}
+
+function extractStepCleanupRules(fixPrompt = '') {
+    const tokens = new Set();
+    if (!fixPrompt) {
+        return [];
+    }
+
+    const addToken = (token) => {
+        const normalized = (token || '').trim().toLowerCase();
+        if (normalized) {
+            tokens.add(normalized);
+        }
+    };
+
+    const cleanupQuotedPattern = /(?:убер(?:и|ать)|удал(?:и|ить)|remove|delete|clean)[^"\n]*(?:шаги|steps)[^"]*"([^"]+)"/gi;
+    let match;
+    while ((match = cleanupQuotedPattern.exec(fixPrompt)) !== null) {
+        addToken(match[1]);
+    }
+
+    const cleanupWordPattern = /(?:убер(?:и|ать)|удал(?:и|ить)|remove|delete|clean)[^.\n]*(?:провер(?:к|ки|ок)|checks?)/gi;
+    while ((match = cleanupWordPattern.exec(fixPrompt)) !== null) {
+        const phrase = match[0];
+        if (/провер/i.test(phrase)) {
+            addToken('провер');
+        }
+        if (/check/i.test(phrase)) {
+            addToken('check');
+        }
+    }
+
+    return Array.from(tokens).map(token => ({ type: 'contains', token }));
+}
+
+function evaluateStepCleanup(originalCase, modifiedCase, cleanupRules) {
+    if (!cleanupRules.length) {
+        return { allowed: false, removedCount: 0 };
+    }
+
+    const diff = diffSteps(originalCase?.steps, modifiedCase?.steps);
+    if (!diff.removed.length) {
+        return { allowed: false, removedCount: 0 };
+    }
+
+    if (diff.added.length > 0) {
+        return { allowed: false, removedCount: 0 };
+    }
+
+    const allRemovedMatchRule = diff.removed.every(stepText =>
+        cleanupRules.some(rule => stepText.toLowerCase().includes(rule.token))
+    );
+
+    return {
+        allowed: allRemovedMatchRule,
+        removedCount: diff.removed.length
+    };
+}
+
+function diffSteps(originalSteps = [], modifiedSteps = []) {
+    const original = Array.isArray(originalSteps) ? originalSteps.map(canonicalStepValue) : [];
+    const modified = Array.isArray(modifiedSteps) ? modifiedSteps.map(canonicalStepValue) : [];
+
+    const modifiedCounters = new Map();
+    modified.forEach(value => {
+        modifiedCounters.set(value, (modifiedCounters.get(value) || 0) + 1);
+    });
+
+    const removed = [];
+    original.forEach(value => {
+        const counter = modifiedCounters.get(value) || 0;
+        if (counter > 0) {
+            modifiedCounters.set(value, counter - 1);
+        } else {
+            removed.push(value);
+        }
+    });
+
+    const added = [];
+    modifiedCounters.forEach((count, value) => {
+        if (count > 0) {
+            for (let i = 0; i < count; i++) {
+                added.push(value);
+            }
+        }
+    });
+
+    return { removed, added };
+}
+
+function canonicalStepValue(step) {
+    if (step == null) {
+        return '';
+    }
+
+    if (typeof step === 'string') {
+        return step.trim();
+    }
+
+    if (typeof step === 'object') {
+        const text = typeof step.text === 'string' ? step.text.trim() : '';
+        const expectedResult = typeof step.expectedResult === 'string' ? step.expectedResult.trim() : '';
+
+        if (text || expectedResult) {
+            return [text, expectedResult].filter(Boolean).join(' → ').trim();
+        }
+
+        if (step.sharedStepId != null) {
+            return `shared:${step.sharedStepId}`;
+        }
+    }
+
+    return JSON.stringify(step);
 }
 
 /**
@@ -10485,42 +10812,28 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
         console.log(`[generate-test-cases-async] ✅ Оригинальная модель сохранена: Features=${originalModelStats.features}, Stories=${originalModelStats.stories}, Scenarios=${originalModelStats.scenarios}, Codes=${originalModelStats.codes}`);
 
-        // ⚠️ ВНИМАНИЕ: normalizeModelStructure изменяет структуру (удаляет дубликаты, объединяет элементы)
-        // Используем её только для создания рабочей копии для чтения, НЕ для возврата
-        // Рабочая копия используется для валидации и генерации тест-кейсов
-        const modelStructure = normalizeModelStructure(workingModelCopy);
+        // ✅ КРИТИЧЕСКИ ВАЖНО: Модель уже отвалидирована QA инженером - она IMMUTABLE (неизменяема)!
+        // НЕ вызываем normalizeModelStructure, deduplicateScenariosAcrossStories, mergeDetailedScenarios и т.д.
+        // Модель используется как CONST - источник правды для генерации тест-кейсов
+        // Используем оригинальную модель БЕЗ модификаций
+        const modelStructure = workingModelCopy;
 
-        // ✅ ЛОГИРОВАНИЕ: Сохраняем статистику ПОСЛЕ нормализации (для рабочей копии)
-        const normalizedStats = {
-            features: modelStructure.length,
-            stories: modelStructure.reduce((sum, f) => sum + (f.stories || []).length, 0),
-            scenarios: modelStructure.reduce((sum, f) =>
-                sum + (f.stories || []).reduce((s, st) => s + (st.scenarios || []).length, 0), 0),
-            codes: modelStructure.reduce((sum, f) =>
-                sum + (f.stories || []).reduce((s, st) =>
-                    s + (st.scenarios || []).reduce((sc, scn) => sc + (scn.codes || []).length, 0), 0), 0)
-        };
-
-        // ✅ ЛОГИРОВАНИЕ: Сравниваем оригинальную и нормализованную модели
-        if (JSON.stringify(originalModelStats) !== JSON.stringify(normalizedStats)) {
-            console.warn(`[generate-test-cases-async] ⚠️ МОДЕЛЬ ИЗМЕНИЛАСЬ после normalizeModelStructure (это нормально для рабочей копии):`);
-            console.warn(`  ОРИГИНАЛ: Features=${originalModelStats.features}, Stories=${originalModelStats.stories}, Scenarios=${originalModelStats.scenarios}, Codes=${originalModelStats.codes}`);
-            console.warn(`  НОРМАЛИЗОВАНА (рабочая копия): Features=${normalizedStats.features}, Stories=${normalizedStats.stories}, Scenarios=${normalizedStats.scenarios}, Codes=${normalizedStats.codes}`);
-            console.warn(`[generate-test-cases-async] ⚠️ ВАЖНО: В ответе будет возвращена ОРИГИНАЛЬНАЯ модель БЕЗ изменений!`);
-        } else {
-            console.log(`[generate-test-cases-async] ✅ Рабочая копия модели идентична оригиналу`);
-        }
+        console.log(`[generate-test-cases-async] ✅ Используем модель БЕЗ модификаций (QA-валидированная модель как источник правды)`);
 
         if ((!Array.isArray(requirements) && typeof requirements !== 'string') || !modelStructure) {
             throw new Error('requirements и modelStructure обязательны');
         }
 
-        // ✅ Убеждаемся, что все Code имеют поле type (ТОЛЬКО в рабочей копии modelStructure, НЕ в originalModel!)
-        // originalModel остается нетронутой!
+        // ✅ ТЕХНИЧЕСКАЯ НЕОБХОДИМОСТЬ: Добавляем отсутствующее поле type для Code (ТОЛЬКО в рабочей копии modelStructure, НЕ в originalModel!)
+        // ⚠️ ВАЖНО: Это НЕ модификация структуры - мы только добавляем отсутствующее поле type для работы генератора
+        // НЕ меняем text, id, структуру или другие поля - только добавляем type, если его нет
+        // originalModel остается полностью нетронутой!
         for (const feature of modelStructure || []) {
             for (const story of feature.stories || []) {
                 for (const scenario of story.scenarios || []) {
                     for (const code of scenario.codes || []) {
+                        // Добавляем только отсутствующее поле type, если его нет
+                        // НЕ меняем text, id или другие поля!
                         if (!code.type && code.text) {
                             code.type = detectCodeType(code.text);
                         }
@@ -11309,6 +11622,16 @@ ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 - **E2E Tests**: 🚨 ОБЯЗАТЕЛЬНО! Полные пользовательские сценарии через UI (начинаются с авторизации, без технических деталей API). Для КАЖДОЙ Story создай 1-2 E2E теста!
 - **Integration frontend Tests**: Атомарные тесты UI-компонент (без предварительных шагов авторизации)
 - **Integration backend Tests**: Атомарные тесты API (формат: "Выполнить GET /api/endpoint с параметрами X")
+  
+🚨 ПРАВИЛО ПРИВЯЗКИ BACKEND ТЕСТОВ К STORIES:
+- Backend тест должен быть привязан к Story, которая ИСПОЛЬЗУЕТ этот API!
+- Перед генерацией проверь: API из Code должен соответствовать Story!
+  ❌ Backend тест "GET /api/categories" в Story "Редактирование изображения" → ✅ В Story "Поиск изображения"!
+  ❌ Backend тест "DELETE /api/images/{id}" в Story "Редактирование изображения" → ✅ В Story "Удаление изображения"!
+  ❌ Backend тест "POST /api/upload" в Story "Редактирование изображения" → ✅ В Story "Загрузка изображения в категорию"!
+🚨 ПРАВИЛО СВЯЗИ С SCENARIO:
+- Integration frontend Tests ОБЯЗАТЕЛЬНО указывают scenario из тестовой модели, где описан соответствующий frontend code.
+- Integration backend Tests ОБЯЗАТЕЛЬНО указывают scenario из тестовой модели, где описан соответствующий backend code.
 
 🚨 КРИТИЧЕСКИ ВАЖНО: НЕ ПРОПУСКАЙ E2E ТЕСТЫ!
 - Каждая Story ДОЛЖНА иметь минимум 1 E2E тест
@@ -11347,7 +11670,13 @@ ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
 🔐 PRECONDITION (обязательно для некоторых типов):
 - E2E Tests: обычно "" (пустая строка), если нет особых предварительных настроек
-- Integration frontend Tests: описание состояния UI, например "Модальное окно открыто"
+- Integration frontend Tests: ОБЯЗАТЕЛЬНО! Описание состояния UI, например:
+  ✅ "Пользователь авторизован, находится на странице с блоком 'Изображение'"
+  ✅ "Модальное окно 'Выбор изображения' открыто, выбрана категория 'Пользовательские'"
+  ❌ Integration frontend тест БЕЗ precondition → ОШИБКА! Добавь precondition!
+- Integration backend Tests: ОБЯЗАТЕЛЬНО! Описание состояния сервера, например:
+  ✅ "Сервер доступен, БД содержит данные категорий"
+  ✅ "Изображение существует в базе данных"
 
 
 📊 ПАРАМЕТРИЗАЦИЯ (используй где есть вариативность!):
@@ -11392,6 +11721,12 @@ ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
    - D = Desktop (веб) окружение
    - A = Автоматизация
    - S = Smoke тест
+   
+   🚨 ПРАВИЛА ТЕГОВ ПО LAYER (СТРОГО СОБЛЮДАЙ!):
+   - E2E Tests: МОГУТ иметь теги M, D, A, PWA (в зависимости от требований), НО НЕ МОГУТ иметь тег S!
+     ❌ E2E тест с тегами ["D", "S"] → ✅ ["D"]
+   - Integration backend Tests: ОБЯЗАТЕЛЬНО имеют тег S (Smoke)
+   - Integration frontend Tests: МОГУТ иметь теги M, D, A, PWA (в зависимости от требований), НО НЕ МОГУТ иметь тег S!
 
 5. ❌ E2E тест БЕЗ precondition → ✅ "precondition": "Пользователь не авторизован"
    ❌ Integration backend БЕЗ precondition → ✅ "precondition": "Сервер доступен, БД содержит данные"
@@ -11405,15 +11740,17 @@ ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
 ✅ ОБЯЗАТЕЛЬНАЯ ПРОВЕРКА ПЕРЕД ОТПРАВКОЙ (КАЖДЫЙ ТЕСТ!):
 □ id сгенерирован (UUID или tc-{layer}-{num})?
-□ tags указаны (M/D/A/S)?
+□ tags указаны (M/D/A/S) и соответствуют layer (E2E НЕ имеет S, backend ОБЯЗАТЕЛЬНО имеет S)?
 □ version = "stable" указана?
 □ priority указан (High/Medium/Low)?
-□ precondition указан (для E2E и Integration)?
+□ precondition указан (ОБЯЗАТЕЛЬНО для Integration frontend и Integration backend)?
 □ Expected начинается с правильного **Ключевого слова** (Отображается/Возвращается/Скрывается)?
 □ Есть параметризация где нужна вариативность (категории, форматы, размеры, фильтры)?
 □ E2E тесты БЕЗ HTTP-методов/статус-кодов?
 □ ВСЕ эндпоинты в Integration backend выделены ЖИРНЫМ (**/api/...**)?
 □ Steps БЕЗ "Попытаться", "Дождаться", "Проверить"?
+□ Backend тесты привязаны к правильной Story (API из Code соответствует Story)?
+□ Integration frontend/backend тесты имеют корректный scenario (ссылка на scenario из модели), E2E тесты БЕЗ scenario?
 `;
 
 
@@ -12078,6 +12415,22 @@ ${JSON.stringify(chunk, null, 2)}
 - E2E тесты НЕ должны содержать HTTP-методы, статус-коды, эндпоинты
 - E2E тесты должны описывать действия пользователя: "Нажать кнопку", "Ввести текст", "Выбрать категорию"
 - После E2E тестов создай Integration frontend и Integration backend тесты для каждого Scenario
+
+🚨 ПРАВИЛА ТЕГОВ:
+- E2E тесты: tags = ['D'] или ['M'] или ['D', 'M'], НЕ используй 'S'!
+- Integration backend: tags = ['S'] (обязательно)!
+- Integration frontend: tags = ['D'] или ['M'] или ['D', 'M'], НЕ используй 'S'!
+
+🚨 ПРАВИЛА PRECONDITION:
+- Integration frontend Tests: ОБЯЗАТЕЛЬНО добавь precondition с описанием состояния UI!
+- Integration backend Tests: ОБЯЗАТЕЛЬНО добавь precondition с описанием состояния сервера!
+
+🚨 ПРАВИЛО ПРИВЯЗКИ BACKEND ТЕСТОВ:
+- Backend тесты: проверь, что story соответствует API из Code! Если API используется в другой Story → привяжи к правильной Story!
+
+🚨 ПРАВИЛО SCENARIO:
+- Integration frontend и Integration backend тесты ОБЯЗАТЕЛЬНО должны ссылаться на scenario из тестовой модели, в которой описан соответствующий code.
+- E2E тесты НЕ должны иметь scenario.
 
 ⚡⚡⚡ ВАЖНО: Сгенерируй максимум 8-12 тест-кейсов! Используй ПАРАМЕТРИЗАЦИЮ для вариаций данных!
 `.trim();
@@ -13028,13 +13381,20 @@ app.get('/api/generate-test-cases-status/:taskId', async (req, res) => {
     try {
         const taskId = req.params.taskId;
         const cacheKey = `status_${taskId}`;
+        const nocache = req.query.nocache; // ✅ Параметр для принудительной очистки кэша
 
         // ✅ КЭШ ТОЛЬКО ДЛЯ СТАТУСА: Кэш используется ТОЛЬКО для уменьшения нагрузки на БД при частых запросах статуса
         // Это НЕ означает использование старых тест-кейсов для генерации!
         // Генерация тест-кейсов всегда происходит с нуля, используя только новую модель с фронтенда
         // Кэш здесь - это просто оптимизация для возврата статуса задачи клиенту
+        // ✅ ВАЖНО: Если передан параметр ?nocache, принудительно очищаем кэш для этой задачи
+        if (nocache) {
+            taskStatusCache.delete(cacheKey);
+            console.log(`[generate-test-cases-status] 🔄 Принудительная очистка кэша для taskId=${taskId} (nocache=${nocache})`);
+        }
+
         const cached = taskStatusCache.get(cacheKey);
-        if (cached && Date.now() - cached.timestamp < 5000) {
+        if (cached && Date.now() - cached.timestamp < 5000 && !nocache) {
             console.log(`[generate-test-cases-status] ✅ Возвращаем статус из кэша (только для отображения, НЕ для генерации): taskId=${taskId}`);
             return res.json(cached.data);
         }

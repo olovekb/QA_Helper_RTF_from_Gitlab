@@ -1,5 +1,6 @@
 [
   {
+    "id": "d4e5f6a7-b8c9-0123-def0-234567890123",
     "title": "GET **/stateful/personal/kuban/client/info/v2** возвращает параметры email и isEmailConfirmed",
     "layer": "Integration backend Tests",
     "feature": "Безбумажный офис",
@@ -15,6 +16,7 @@
     "version": "stable"
   },
   {
+    "id": "e5f6a7b8-c9d0-1234-ef01-345678901234",
     "title": "POST **/confirm/code/check** возвращает ответ с кодом {{Код ответа}}",
     "layer": "Integration backend Tests",
     "feature": "Безбумажный офис",
@@ -82,6 +84,7 @@
     ]
   },
   {
+    "id": "f6a7b8c9-d0e1-2345-f012-456789012345",
     "title": "GET **/template/get_by_id** возвращает шаблон платежа по **doc_type=payment**",
     "layer": "Integration backend Tests",
     "feature": "Оплата по QR-коду",
