@@ -6216,7 +6216,14 @@ ${escalationPrompt}`;
             });
         } catch (error) {
             // Если столбец metrics не существует - сохраняем без метрик
-            if (error.message && error.message.includes('столбец "metrics"')) {
+            // Проверяем как русский, так и английский вариант ошибки
+            const errorMsg = error.message || '';
+            const isMetricsColumnError = 
+                errorMsg.includes('столбец "metrics"') || 
+                errorMsg.includes('column "metrics"') ||
+                (errorMsg.includes('metrics') && (errorMsg.includes('does not exist') || errorMsg.includes('doesn\'t exist')));
+            
+            if (isMetricsColumnError) {
                 console.warn('[generateTestModelAsync] Столбец metrics не существует, сохраняю без метрик');
                 await db('generation_tasks').where('id', taskId).update(updateData);
             } else {
