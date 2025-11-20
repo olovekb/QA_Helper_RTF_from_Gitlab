@@ -302,9 +302,9 @@ export async function callCloudRuAPI(messages, opts = {}) {
     // === ПРОВЕРКА РАЗМЕРА ЗАПРОСА ===
     const requestSize = JSON.stringify(messages).length;
     const estimatedTokens = Math.ceil(requestSize / 4); // Примерная оценка: 1 токен ≈ 4 символа
-    // ✅ MiniMax-M2 имеет лимит 196,608 токенов на весь запрос (вход + выход)
+    // ✅ Qwen/Qwen3-235B-A22B-Instruct-2507 имеет лимит 262,144 токенов на весь запрос (вход + выход)
     // Оставляем запас 5K токенов на служебные данные
-    const MAX_TOKENS_CLOUDRU = 196608; // Реальный лимит модели MiniMax-M2
+    const MAX_TOKENS_CLOUDRU = 262144; // Реальный лимит модели Qwen/Qwen3-235B-A22B-Instruct-2507
     
     console.log(`\n${'='*80}`);
     console.log(`🚀 CLOUD.RU API CALL START`);
@@ -362,9 +362,9 @@ export async function callCloudRuAPI(messages, opts = {}) {
     };
 
     // ✅ Автоматическая проверка и уменьшение max_tokens при превышении лимита
-    // Лимит модели MiniMax-M2: 196,608 токенов (вход + выход)
+    // Лимит модели Qwen/Qwen3-235B-A22B-Instruct-2507: 262,144 токенов (вход + выход)
     // Оставляем запас 5K токенов на служебные данные
-    const MAX_TOTAL_TOKENS = 196608;
+    const MAX_TOTAL_TOKENS = 262144;
     const RESERVE_TOKENS = 5000;
     const maxAllowedCompletionTokens = Math.max(0, MAX_TOTAL_TOKENS - estimatedTokens - RESERVE_TOKENS);
     
@@ -525,6 +525,32 @@ export async function callCloudRuAPI(messages, opts = {}) {
                     console.log(`🔄 [cloudru] ${response.status} server error - retrying in ${waitMs}ms`);
                     await sleep(waitMs);
                     continue;
+                }
+
+                // ✅ Обработка ошибки 400 с превышением лимита токенов - автоматически уменьшаем max_tokens
+                if (response.status === 400) {
+                    // Пытаемся извлечь информацию о реальном количестве входных токенов из сообщения об ошибке
+                    const tokenLimitMatch = errorText.match(/maximum context length is (\d+) tokens/);
+                    const inputTokensMatch = errorText.match(/has (\d+) input tokens/);
+                    
+                    if (tokenLimitMatch && inputTokensMatch) {
+                        const modelMaxTokens = parseInt(tokenLimitMatch[1]);
+                        const realInputTokens = parseInt(inputTokensMatch[1]);
+                        const availableTokens = modelMaxTokens - realInputTokens - RESERVE_TOKENS;
+                        
+                        if (availableTokens > 0 && adjustedMaxTokens > availableTokens) {
+                            const newMaxTokens = Math.max(1000, Math.floor(availableTokens * 0.9)); // Оставляем 10% запаса
+                            console.warn(`\n⚠️  [cloudru] Обнаружено превышение лимита токенов!`);
+                            console.warn(`📊 Реальный вход: ${realInputTokens} токенов, лимит модели: ${modelMaxTokens}`);
+                            console.warn(`📊 Доступно для completion: ${availableTokens} токенов`);
+                            console.warn(`🔧 Уменьшаю max_tokens с ${adjustedMaxTokens} до ${newMaxTokens} и повторяю запрос...`);
+                            
+                            adjustedMaxTokens = newMaxTokens;
+                            requestBody.max_completion_tokens = adjustedMaxTokens;
+                            await sleep(BASE_RETRY_MS); // Небольшая задержка перед повтором
+                            continue; // Повторяем запрос с уменьшенным max_tokens
+                        }
+                    }
                 }
 
                 // Client error - don't retry
