@@ -12385,6 +12385,14 @@ ${COVENANT}
 - ⚡ Общий лимит: **10-15 тест-кейсов в ответе** (1-2 E2E + 8-12 Integration)
 - 🎯 ПРИОРИТЕТ: Integration тесты покрывают бизнес-логику (негативные, граничные значения, валидации)
 
+🚨 КРИТИЧНО: Если техники тест-дизайна требуют больше тестов, чем лимит:
+   1. ПРИОРИТЕТ #1: Позитивные тесты для каждого Code (обязательно!)
+   2. ПРИОРИТЕТ #2: Негативные тесты с параметризацией (объединяй через examples!)
+   3. ПРИОРИТЕТ #3: Граничные значения (объединяй в ОДИН тест с параметризацией!)
+   4. ПРИОРИТЕТ #4: UI логика и зависимости (если осталось место)
+   
+   ❌ НЕ превышай лимит 8-12 Integration тестов! Используй параметризацию для объединения!
+
 🚨 ОБЯЗАТЕЛЬНАЯ ПАРАМЕТРИЗАЦИЯ:
 - ❌ ЗАПРЕЩЕНО создавать дубликаты для разных значений (формат, размер, категория)
 - ✅ ОБЯЗАТЕЛЬНО используй parameters + examples для вариаций
@@ -12516,10 +12524,57 @@ ${isNegativePass ? `
                         console.log(`[genForChunkOptimized] ✅ Дубликатов по title нет`);
                     }
 
-                    // 🔍 ПРОВЕРКА ЛИМИТА (должно быть ≤12)
-                    if (cases.length > 12) {
-                        console.warn(`[genForChunkOptimized] ⚠️ ПРЕВЫШЕН ЛИМИТ! Получено ${cases.length} тестов (ожидалось ≤12)`);
-                        console.warn(`[genForChunkOptimized] 💡 Модель игнорирует лимиты из промпта!`);
+                    // 🔍 ПРОВЕРКА И ФИЛЬТРАЦИЯ ПО ЛИМИТУ
+                    const e2eCases = cases.filter(tc => tc.layer === 'E2E Tests');
+                    const integrationCases = cases.filter(tc => tc.layer?.includes('Integration'));
+                    const totalLimit = 15; // Общий лимит: 1-2 E2E + 8-12 Integration = 10-15
+                    const maxIntegration = 12; // Максимум Integration тестов
+                    const maxE2E = 2; // Максимум E2E тестов
+                    
+                    // Фильтруем E2E (максимум 2)
+                    const filteredE2E = e2eCases.slice(0, maxE2E);
+                    if (e2eCases.length > maxE2E) {
+                        console.warn(`[genForChunkOptimized] ⚠️ E2E тестов больше лимита (${e2eCases.length} > ${maxE2E}), оставляю первые ${maxE2E}`);
+                    }
+                    
+                    // Фильтруем Integration по приоритетам (максимум 12)
+                    let filteredIntegration = integrationCases;
+                    if (integrationCases.length > maxIntegration) {
+                        console.warn(`[genForChunkOptimized] ⚠️ ПРЕВЫШЕН ЛИМИТ Integration! Получено ${integrationCases.length} (ожидалось ≤${maxIntegration})`);
+                        console.warn(`[genForChunkOptimized] 💡 Применяю фильтрацию по приоритетам...`);
+                        
+                        // Сортируем Integration тесты по приоритету:
+                        // 1. Позитивные тесты (без слов "негатив", "ошибка", "невалид", "граничн" в title)
+                        // 2. Негативные с параметризацией (есть examples)
+                        // 3. Остальные негативные
+                        const sortedIntegration = integrationCases.sort((a, b) => {
+                            const aTitle = (a.title || '').toLowerCase();
+                            const bTitle = (b.title || '').toLowerCase();
+                            const aIsPositive = !aTitle.includes('негатив') && !aTitle.includes('ошибка') && !aTitle.includes('невалид') && !aTitle.includes('граничн');
+                            const bIsPositive = !bTitle.includes('негатив') && !bTitle.includes('ошибка') && !bTitle.includes('невалид') && !bTitle.includes('граничн');
+                            const aHasParams = Array.isArray(a.examples) && a.examples.length > 0;
+                            const bHasParams = Array.isArray(b.examples) && b.examples.length > 0;
+                            
+                            if (aIsPositive && !bIsPositive) return -1;
+                            if (!aIsPositive && bIsPositive) return 1;
+                            if (aHasParams && !bHasParams) return -1;
+                            if (!aHasParams && bHasParams) return 1;
+                            return 0;
+                        });
+                        
+                        filteredIntegration = sortedIntegration.slice(0, maxIntegration);
+                        console.warn(`[genForChunkOptimized] ✅ Оставлено ${filteredIntegration.length} Integration тестов (приоритетные)`);
+                    }
+                    
+                    // Объединяем и проверяем общий лимит
+                    cases = [...filteredE2E, ...filteredIntegration];
+                    if (cases.length > totalLimit) {
+                        console.warn(`[genForChunkOptimized] ⚠️ Общий лимит превышен (${cases.length} > ${totalLimit}), обрезаю до ${totalLimit}`);
+                        cases = cases.slice(0, totalLimit);
+                    }
+                    
+                    if (e2eCases.length > maxE2E || integrationCases.length > maxIntegration || cases.length > totalLimit) {
+                        console.warn(`[genForChunkOptimized] ✅ После фильтрации: ${filteredE2E.length} E2E + ${filteredIntegration.length} Integration = ${cases.length} тестов`);
                     }
 
                     return cases;
@@ -12550,9 +12605,57 @@ ${isNegativePass ? `
                         duplicates.slice(0, 5).forEach(t => console.warn(`   - "${t}"`));
                     }
 
-                    // 🔍 ПРОВЕРКА ЛИМИТА (должно быть ≤12)
-                    if (cases.length > 12) {
-                        console.warn(`[genForChunkOptimized] ⚠️ ПРЕВЫШЕН ЛИМИТ! Получено ${cases.length} тестов (ожидалось ≤12)`);
+                    // 🔍 ПРОВЕРКА И ФИЛЬТРАЦИЯ ПО ЛИМИТУ
+                    const e2eCases = cases.filter(tc => tc.layer === 'E2E Tests');
+                    const integrationCases = cases.filter(tc => tc.layer?.includes('Integration'));
+                    const totalLimit = 15; // Общий лимит: 1-2 E2E + 8-12 Integration = 10-15
+                    const maxIntegration = 12; // Максимум Integration тестов
+                    const maxE2E = 2; // Максимум E2E тестов
+                    
+                    // Фильтруем E2E (максимум 2)
+                    const filteredE2E = e2eCases.slice(0, maxE2E);
+                    if (e2eCases.length > maxE2E) {
+                        console.warn(`[genForChunkOptimized] ⚠️ E2E тестов больше лимита (${e2eCases.length} > ${maxE2E}), оставляю первые ${maxE2E}`);
+                    }
+                    
+                    // Фильтруем Integration по приоритетам (максимум 12)
+                    let filteredIntegration = integrationCases;
+                    if (integrationCases.length > maxIntegration) {
+                        console.warn(`[genForChunkOptimized] ⚠️ ПРЕВЫШЕН ЛИМИТ Integration! Получено ${integrationCases.length} (ожидалось ≤${maxIntegration})`);
+                        console.warn(`[genForChunkOptimized] 💡 Применяю фильтрацию по приоритетам...`);
+                        
+                        // Сортируем Integration тесты по приоритету:
+                        // 1. Позитивные тесты (без слов "негатив", "ошибка", "невалид", "граничн" в title)
+                        // 2. Негативные с параметризацией (есть examples)
+                        // 3. Остальные негативные
+                        const sortedIntegration = integrationCases.sort((a, b) => {
+                            const aTitle = (a.title || '').toLowerCase();
+                            const bTitle = (b.title || '').toLowerCase();
+                            const aIsPositive = !aTitle.includes('негатив') && !aTitle.includes('ошибка') && !aTitle.includes('невалид') && !aTitle.includes('граничн');
+                            const bIsPositive = !bTitle.includes('негатив') && !bTitle.includes('ошибка') && !bTitle.includes('невалид') && !bTitle.includes('граничн');
+                            const aHasParams = Array.isArray(a.examples) && a.examples.length > 0;
+                            const bHasParams = Array.isArray(b.examples) && b.examples.length > 0;
+                            
+                            if (aIsPositive && !bIsPositive) return -1;
+                            if (!aIsPositive && bIsPositive) return 1;
+                            if (aHasParams && !bHasParams) return -1;
+                            if (!aHasParams && bHasParams) return 1;
+                            return 0;
+                        });
+                        
+                        filteredIntegration = sortedIntegration.slice(0, maxIntegration);
+                        console.warn(`[genForChunkOptimized] ✅ Оставлено ${filteredIntegration.length} Integration тестов (приоритетные)`);
+                    }
+                    
+                    // Объединяем и проверяем общий лимит
+                    cases = [...filteredE2E, ...filteredIntegration];
+                    if (cases.length > totalLimit) {
+                        console.warn(`[genForChunkOptimized] ⚠️ Общий лимит превышен (${cases.length} > ${totalLimit}), обрезаю до ${totalLimit}`);
+                        cases = cases.slice(0, totalLimit);
+                    }
+                    
+                    if (e2eCases.length > maxE2E || integrationCases.length > maxIntegration || cases.length > totalLimit) {
+                        console.warn(`[genForChunkOptimized] ✅ После фильтрации: ${filteredE2E.length} E2E + ${filteredIntegration.length} Integration = ${cases.length} тестов`);
                     }
 
                     return cases;
