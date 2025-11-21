@@ -235,6 +235,10 @@ import {
     addPerfectExamplesAsFewShot
 } from './prompt-composer.mjs';
 import {
+    extractLogicAndConstraints,
+    formatLogicConstraintsForPrompt
+} from './logic-extractor.mjs';
+import {
     runTestCaseLLMWithContext,
     validateFixedCases
 } from './llm-with-context.mjs';
@@ -8580,6 +8584,7 @@ async function generateTestCasesAsync(taskId, inputData) {
     let finalTestCases = [];
     const projectId = inputData?.projectId || inputData?.project_id; // ✅ ProjectId для Allure API
     const skipAllureAPICalls = inputData?.skipAllureAPICalls || false; // ✅ Флаг для debug режима
+    const includeBackendTests = inputData?.includeBackendTests !== false; // ✅ По умолчанию true, если не указано
 
     if (skipAllureAPICalls) {
         console.log('[generateTestCasesAsync] 🐛 DEBUG MODE: skipAllureAPICalls=true (Allure API вызовы отключены)');
@@ -8587,6 +8592,7 @@ async function generateTestCasesAsync(taskId, inputData) {
     if (projectId) {
         console.log(`[generateTestCasesAsync] 🔑 ProjectId: ${projectId}`);
     }
+    console.log(`[generateTestCasesAsync] 🔧 includeBackendTests: ${includeBackendTests} (${includeBackendTests ? 'генерируем E2E + Integration frontend + Integration backend' : 'генерируем только E2E + Integration frontend'})`);
 
     try {
         await db('generation_tasks').where('id', taskId).update({
@@ -12329,8 +12335,8 @@ create_shared_step({
             return allTestCases;
         }
 
-        // ✅ ОПТИМИЗИРОВАННАЯ ВЕРСИЯ: ONE-SHOT с fallback + Few-Shot Learning
-        async function genForChunkOptimized(chunk, requirements, existingE2E = [], modelStructure, reqStructure = null, contextId = null, existingCases = []) {
+        // ✅ ОПТИМИЗИРОВАННАЯ ВЕРСИЯ: ONE-SHOT с fallback + Few-Shot Learning + Logic Extraction
+        async function genForChunkOptimized(chunk, requirements, existingE2E = [], modelStructure, reqStructure = null, contextId = null, existingCases = [], logicConstraints = null, isNegativePass = false, includeBackendTests = true) {
             const contextPrompt = buildContextPrompt(chunk, existingE2E);
             const relevantReqs = filterRelevantRequirements(requirements, chunk);
             // ✅ ИСПРАВЛЕНО: Используем ПОЛНУЮ модель для enum, а не только chunk
@@ -12357,7 +12363,12 @@ create_shared_step({
             const examples = await selectExamples(chunk, mode, perfectExamples, db, projectId);
             const examplesSection = buildExamplesSection(examples);
 
-            // ✅ Формируем system prompt с примерами
+            // ✅ Форматируем логику и ограничения для промпта (если есть)
+            const logicConstraintsSection = logicConstraints 
+                ? formatLogicConstraintsForPrompt(logicConstraints)
+                : '';
+
+            // ✅ Формируем system prompt с примерами и логикой
             const systemPromptWithExamples = `
 ${BASE_SYSTEM_PROMPT}
 
@@ -12368,10 +12379,11 @@ ${COVENANT}
 ═══════════════════════════════════════════════════════════════
 
 🎯 ОПТИМАЛЬНОЕ ПОКРЫТИЕ (ОБЯЗАТЕЛЬНО ГЕНЕРИРУЙ ВСЕ ТИПЫ!):
-🚨 E2E Tests: ОБЯЗАТЕЛЬНО минимум **1-2 теста на Story** (покрывают основной позитивный + 1 негативный сценарий)
-- БЕЗ E2E тестов = НЕПРАВИЛЬНО! Каждая Story ДОЛЖНА иметь минимум 1 E2E тест!
-- Integration Tests: максимум **10-12 тестов на Scenario** (frontend + backend вместе!)
-- ⚡ Общий лимит: **8-12 тест-кейсов в ответе** (но E2E обязательны!)
+🚨 E2E Tests: **1-2 теста на Story** (только позитивный + 1 базовый негативный)
+- Основной упор на Integration тесты! E2E — только для основного Happy Path.
+- Integration Tests: **8-12 тестов на Scenario** (frontend + backend вместе!)
+- ⚡ Общий лимит: **10-15 тест-кейсов в ответе** (1-2 E2E + 8-12 Integration)
+- 🎯 ПРИОРИТЕТ: Integration тесты покрывают бизнес-логику (негативные, граничные значения, валидации)
 
 🚨 ОБЯЗАТЕЛЬНАЯ ПАРАМЕТРИЗАЦИЯ:
 - ❌ ЗАПРЕЩЕНО создавать дубликаты для разных значений (формат, размер, категория)
@@ -12395,6 +12407,8 @@ ${COVENANT}
 
 ${examplesSection}
 
+${logicConstraintsSection}
+
 🚨 КРИТИЧЕСКИ ВАЖНО:
 - Примеры = ЭТАЛОН, строго следуй их формату
 - Для параметризации ОБЯЗАТЕЛЬНО используй parameters + examples (как в примерах)
@@ -12416,21 +12430,47 @@ ${relevantReqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 Модель:
 ${JSON.stringify(chunk, null, 2)}
 
+${isNegativePass ? `
+🚨🚨🚨 СПЕЦЗАДАНИЕ: НЕГАТИВНЫЕ И ГРАНИЧНЫЕ ТЕСТЫ 🚨🚨🚨
+
+Ты сгенерировал основные сценарии. Теперь добавь кейсы "на слом":
+
+1. Найди в требованиях все поля с валидацией (Сумма, Назначение платежа, и т.д.).
+   - Создай Integration frontend тесты на нарушение этих валидаций.
+${includeBackendTests ? '   - Создай Integration backend тесты на ошибки API (400, 500, таймаут).\n' : '   - ❌ НЕ создавай Integration backend тесты!\n'}
+
+2. Найди логику "Если... то... иначе...".
+   - Создай тест на ветку "Иначе" (например, нет торговых точек → отобразить алерт).
+
+3. Найди кнопки и чекбоксы.
+   - Создай тест: сняли галочку → поле очистилось и скрылось.
+
+4. Найди граничные значения (мин/макс суммы, длины полей).
+   - Создай Boundary Tests: Min-1, Min, Max, Max+1.
+
+Не дублируй E2E. Делай это через Integration frontend (валидация UI)${includeBackendTests ? ' или Integration backend (ошибки API)' : ' (НЕ создавай Integration backend тесты!)'}.
+
+🎯 ФОКУС: Только негативные и граничные тесты! Позитивные уже сгенерированы.
+${!includeBackendTests ? '🚨 КРИТИЧНО: НЕ создавай Integration backend тесты! Только E2E и Integration frontend!\n' : ''}
+` : `
 🚨 КРИТИЧЕСКИ ВАЖНО - ОБЯЗАТЕЛЬНО ГЕНЕРИРУЙ E2E ТЕСТЫ:
 - Для КАЖДОЙ Story в chunk ОБЯЗАТЕЛЬНО создай 1-2 E2E теста (layer: "E2E Tests")
 - E2E тесты = полные пользовательские сценарии через UI (без технических деталей API)
 - E2E тесты НЕ должны содержать HTTP-методы, статус-коды, эндпоинты
 - E2E тесты должны описывать действия пользователя: "Нажать кнопку", "Ввести текст", "Выбрать категорию"
-- После E2E тестов создай Integration frontend и Integration backend тесты для каждого Scenario
+- После E2E тестов создай Integration frontend тесты для каждого Scenario
+${includeBackendTests ? '- После Integration frontend создай Integration backend тесты для каждого Scenario с API\n' : '🚨 КРИТИЧНО: НЕ создавай Integration backend тесты! Только E2E и Integration frontend!\n'}
+`}
 
 🚨 ПРАВИЛА ТЕГОВ:
 - E2E тесты: tags = ['D'] или ['M'] или ['D', 'M'], НЕ используй 'S'!
-- Integration backend: tags = ['S'] (обязательно)!
+${includeBackendTests ? '- Integration backend: tags = [\'S\'] (обязательно)!\n' : '🚨 КРИТИЧНО: Integration backend тесты ЗАПРЕЩЕНЫ! НЕ создавай их!\n'}
 - Integration frontend: tags = ['D'] или ['M'] или ['D', 'M'], НЕ используй 'S'!
 
 🚨 ПРАВИЛА PRECONDITION:
 - Integration frontend Tests: ОБЯЗАТЕЛЬНО добавь precondition с описанием состояния UI!
-- Integration backend Tests: ОБЯЗАТЕЛЬНО добавь precondition с описанием состояния сервера!
+${includeBackendTests ? '- Integration backend Tests: ОБЯЗАТЕЛЬНО добавь precondition с описанием состояния сервера!\n' : ''}
+${!includeBackendTests ? '🚨 КРИТИЧНО: НЕ создавай Integration backend тесты! Только E2E и Integration frontend!\n' : ''}
 
 🚨 ПРАВИЛО ПРИВЯЗКИ BACKEND ТЕСТОВ:
 - Backend тесты: проверь, что story соответствует API из Code! Если API используется в другой Story → привяжи к правильной Story!
@@ -12439,7 +12479,11 @@ ${JSON.stringify(chunk, null, 2)}
 - Integration frontend и Integration backend тесты ОБЯЗАТЕЛЬНО должны ссылаться на scenario из тестовой модели, в которой описан соответствующий code.
 - E2E тесты НЕ должны иметь scenario.
 
-⚡⚡⚡ ВАЖНО: Сгенерируй максимум 8-12 тест-кейсов! Используй ПАРАМЕТРИЗАЦИЮ для вариаций данных!
+${isNegativePass ? `
+⚡⚡⚡ ВАЖНО: Сгенерируй 5-10 негативных/граничных тест-кейсов! Фокус на Integration тесты!
+` : `
+⚡⚡⚡ ВАЖНО: Сгенерируй максимум 10-15 тест-кейсов (1-2 E2E + 8-12 Integration)! Используй ПАРАМЕТРИЗАЦИЮ для вариаций данных!
+`}
 `.trim();
 
             try {
@@ -12538,6 +12582,24 @@ ${JSON.stringify(chunk, null, 2)}
                 updated_at: new Date()
             });
 
+            // ✅ НОВЫЙ ШАГ: Извлечение логики и ограничений из требований
+            console.log(`[generate-test-cases-async] === Извлечение логики и ограничений ===`);
+            let logicConstraints = null;
+            try {
+                const requirementsText = Array.isArray(refinedReqs) 
+                    ? refinedReqs.join('\n\n') 
+                    : (typeof refinedReqs === 'string' ? refinedReqs : '');
+                
+                if (requirementsText && requirementsText.trim().length > 100) {
+                    logicConstraints = await extractLogicAndConstraints(requirementsText);
+                    console.log(`[generate-test-cases-async] ✅ Извлечено ограничений: ${logicConstraints.validations.length} валидаций, ${logicConstraints.boundary_values.length} граничных значений, ${logicConstraints.negative_scenarios.length} негативных сценариев`);
+                } else {
+                    console.log(`[generate-test-cases-async] ⚠️ Требования слишком короткие для извлечения логики, пропускаем`);
+                }
+            } catch (error) {
+                console.warn(`[generate-test-cases-async] ⚠️ Ошибка извлечения логики: ${error.message}, продолжаем без ограничений`);
+            }
+
             // ✅ ONE-PASS: Генерируем E2E + Integration за один проход
             console.log(`[generate-test-cases-async] === ONE-PASS: Генерация E2E + Integration ===`);
             let allCases = [];
@@ -12598,7 +12660,10 @@ ${JSON.stringify(chunk, null, 2)}
                             modelStructure,
                             null, // reqStructure
                             currentContextId, // ✅ Передаём contextId для управления контекстом
-                            allCases // ✅ Передаём существующие тест-кейсы для проверки уникальности ID
+                            allCases, // ✅ Передаём существующие тест-кейсы для проверки уникальности ID
+                            logicConstraints, // ✅ Передаём извлеченные ограничения логики
+                            false, // isNegativePass = false для первого прохода
+                            includeBackendTests // ✅ Передаём флаг включения backend тестов
                         );
 
                         // Используем Promise.race для таймаута
@@ -12654,6 +12719,79 @@ ${JSON.stringify(chunk, null, 2)}
             }
 
             console.log(`[generate-test-cases-async] ONE-PASS завершён: ${allCases.length} тестов`);
+
+            // ✅ ФИЛЬТРАЦИЯ: Удаляем Integration backend тесты, если флаг выключен
+            if (!includeBackendTests) {
+                const beforeCount = allCases.length;
+                allCases = allCases.filter(tc => tc.layer !== 'Integration backend Tests');
+                const removedCount = beforeCount - allCases.length;
+                if (removedCount > 0) {
+                    console.log(`[generate-test-cases-async] 🚫 Удалено ${removedCount} Integration backend тестов (includeBackendTests=false)`);
+                }
+            }
+
+            // ✅ ВТОРОЙ ПРОХОД: Генерация негативных и граничных тестов
+            if (logicConstraints && (
+                logicConstraints.validations.length > 0 ||
+                logicConstraints.boundary_values.length > 0 ||
+                logicConstraints.negative_scenarios.length > 0 ||
+                logicConstraints.ui_logic.length > 0 ||
+                logicConstraints.dependencies.length > 0
+            )) {
+                console.log(`[generate-test-cases-async] === ВТОРОЙ ПРОХОД: Генерация негативных и граничных тестов ===`);
+                
+                const negativeCases = [];
+                for (let i = 0; i < storyChunks.length; i++) {
+                    const chunk = storyChunks[i];
+                    const storyText = chunk[0].stories[0].text;
+                    const currentFeature = chunk[0].text;
+                    const mode = chunk[0].stories[0]._mode;
+                    
+                    console.log(`[generate-test-cases-async] 🔄 Второй проход для Chunk ${i + 1}/${storyChunks.length}: "${storyText}"`);
+                    
+                    try {
+                        const negativeResult = await genForChunkOptimized(
+                            chunk,
+                            refinedReqs,
+                            [], // existingE2E - не нужны для негативных тестов
+                            modelStructure,
+                            null, // reqStructure
+                            `${taskId}-negative-${i}`, // contextId для негативных тестов
+                            allCases, // existingCases
+                            logicConstraints, // logicConstraints
+                            true, // isNegativePass = true
+                            includeBackendTests // ✅ Передаём флаг включения backend тестов
+                        );
+                        
+                        if (negativeResult && negativeResult.length > 0) {
+                            negativeCases.push(...negativeResult);
+                            console.log(`[generate-test-cases-async] ✅ Второй проход для Chunk ${i + 1}: ${negativeResult.length} негативных тестов`);
+                        }
+                    } catch (error) {
+                        console.warn(`[generate-test-cases-async] ⚠️ Ошибка второго прохода для chunk ${i + 1}: ${error.message}`);
+                        // Продолжаем без негативных тестов для этого chunk
+                    }
+                }
+                
+                if (negativeCases.length > 0) {
+                    // ✅ ФИЛЬТРАЦИЯ: Удаляем Integration backend тесты из негативных, если флаг выключен
+                    if (!includeBackendTests) {
+                        const beforeCount = negativeCases.length;
+                        negativeCases = negativeCases.filter(tc => tc.layer !== 'Integration backend Tests');
+                        const removedCount = beforeCount - negativeCases.length;
+                        if (removedCount > 0) {
+                            console.log(`[generate-test-cases-async] 🚫 Удалено ${removedCount} Integration backend тестов из негативных (includeBackendTests=false)`);
+                        }
+                    }
+                    
+                    allCases.push(...negativeCases);
+                    console.log(`[generate-test-cases-async] ✅ Второй проход завершён: добавлено ${negativeCases.length} негативных/граничных тестов`);
+                } else {
+                    console.log(`[generate-test-cases-async] ⚠️ Второй проход не сгенерировал тестов`);
+                }
+            } else {
+                console.log(`[generate-test-cases-async] ⚠️ Нет ограничений логики для второго прохода, пропускаем`);
+            }
 
             // === sanitize → fixAgainstModel до аудита покрытия ===
             const idx = buildModelIndex(modelStructure);

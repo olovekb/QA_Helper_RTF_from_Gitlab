@@ -91,6 +91,56 @@ export const PROMPTS = {
 `,
 
     /**
+     * Техники тест-дизайна (обязательно к применению)
+     */
+    testDesign: `
+═══════════════════════════════════════════════════════════════
+🧠 ТЕХНИКИ ТЕСТ-ДИЗАЙНА (ОБЯЗАТЕЛЬНО К ПРИМЕНЕНИЮ)
+═══════════════════════════════════════════════════════════════
+
+Ты — злобный QA, который хочет сломать систему. Happy Path недостаточно.
+
+Для каждой Story примени следующие техники:
+
+1. **Граничные значения (Boundary Values):**
+   - Если есть диапазон (сумма, длина), создай тесты для: Min-1, Min, Max, Max+1.
+   - Пример: Лимит 1 млн. Тесты: 1 000 000 (ОК), 1 000 000.01 (Ошибка).
+   - Для Integration frontend: тесты на валидацию граничных значений в UI.
+   - Для Integration backend: тесты на обработку граничных значений API.
+
+2. **Классы эквивалентности (Equivalence Partitioning):**
+   - Пустые значения там, где они запрещены.
+   - Спецсимволы, пробелы, emoji в текстовых полях.
+   - Нули и отрицательные числа в суммах.
+   - Невалидные форматы (email без @, дата в неправильном формате).
+
+3. **Таблица состояний (State Transition):**
+   - Как ведет себя UI, если API вернул пустой список? (Скелетная загрузка, Алерт)
+   - Что если API вернул ошибку 500?
+   - Что если API вернул только 1 элемент (автозаполнение)?
+   - Что если API вернул null или undefined?
+
+4. **Зависимости полей:**
+   - Переключение свитчеров/чекбоксов. Проверь, что поля появляются/исчезают и очищаются.
+   - Если выбран чекбокс А, то поле Б становится обязательным.
+   - Если поле А заполнено, то поле Б становится доступным.
+
+5. **Негативные сценарии (ОБЯЗАТЕЛЬНО!):**
+   - Для каждого поля с валидацией создай Integration frontend тест на нарушение.
+   - Для каждого API создай Integration backend тест на ошибки (400, 500, таймаут).
+   - Для каждой логики "Если... то... иначе..." создай тест на ветку "Иначе".
+
+🚨 КРИТИЧНО: Негативные тесты — это ОСНОВНОЙ упор! Happy Path — только 1-2 E2E теста.
+   Основная бизнес-логика должна быть покрыта Integration тестами (frontend + backend)!
+
+🎯 ПРИОРИТЕТЫ:
+   - 1-2 E2E теста на Story (позитивный + 1 негативный)
+   - 8-12 Integration тестов на Scenario (основной упор на негативные и граничные значения)
+   - Для форм с валидацией: ОБЯЗАТЕЛЬНО тесты на нарушение валидации
+   - Для UI логики (скрытие/очистка): ОБЯЗАТЕЛЬНО тесты на проверку этой логики
+`,
+
+    /**
      * Контекст требований (динамический)
      */
     requirements: (reqs) => {
@@ -226,6 +276,8 @@ ${recentErrors.map((err, i) => `${i + 1}. ${err.error}${err.userRequest ? ` (з�
  * @param {Array} [options.errorHistory] - История ошибок (динамический)
  * @param {boolean} [options.includeE2ERules=true] - Включить правила E2E
  * @param {boolean} [options.includeIntegrationRules=true] - Включить правила Integration
+ * @param {boolean} [options.includeTestDesign=true] - Включить техники тест-дизайна
+ * @param {string} [options.logicConstraints] - Форматированные ограничения логики (из logic-extractor)
  * @returns {string} - Скомпилированный системный промпт
  */
 export function buildSystemPrompt(options = {}) {
@@ -235,7 +287,9 @@ export function buildSystemPrompt(options = {}) {
         examples = null,
         errorHistory = null,
         includeE2ERules = true,
-        includeIntegrationRules = true
+        includeIntegrationRules = true,
+        includeTestDesign = true,
+        logicConstraints = null
     } = options;
 
     const parts = [PROMPTS.base, PROMPTS.rules];
@@ -250,6 +304,14 @@ export function buildSystemPrompt(options = {}) {
 
     if (includeIntegrationRules) {
         parts.push(PROMPTS.integrationRules);
+    }
+
+    if (includeTestDesign && mode === 'generation') {
+        parts.push(PROMPTS.testDesign);
+    }
+
+    if (logicConstraints) {
+        parts.push(logicConstraints);
     }
 
     if (requirements) {

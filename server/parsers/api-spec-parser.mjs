@@ -264,9 +264,10 @@ function guessEntityName(url, obj) {
  * Валидирует Code из тестовой модели против API спецификации
  * @param {string} codeText - Текст Code
  * @param {object} apiSpec - API спецификация
+ * @param {object} [logicConstraints] - Извлеченные ограничения логики (из logic-extractor)
  * @returns {{valid: boolean, errors: string[], warnings: string[]}}
  */
-export function validateCodeAgainstAPISpec(codeText, apiSpec) {
+export function validateCodeAgainstAPISpec(codeText, apiSpec, logicConstraints = null) {
     const result = {
         valid: true,
         errors: [],
@@ -304,6 +305,48 @@ export function validateCodeAgainstAPISpec(codeText, apiSpec) {
                 result.warnings.push(
                     `Параметр "${param.name}" (${param.type}) должен быть указан для ${method} ${url}`
                 );
+            }
+        }
+    }
+
+    // ✅ НОВОЕ: Валидация параметров против ограничений логики
+    if (logicConstraints) {
+        // Проверяем граничные значения в параметрах
+        if (logicConstraints.boundary_values && logicConstraints.boundary_values.length > 0) {
+            for (const bv of logicConstraints.boundary_values) {
+                // Ищем упоминание поля в codeText
+                if (codeText.toLowerCase().includes(bv.field.toLowerCase())) {
+                    // Проверяем, что значения соответствуют ограничениям
+                    if (bv.type === 'number' && bv.min !== undefined && bv.max !== undefined) {
+                        // Ищем числовые значения в тексте
+                        const numberPattern = /(\d+(?:\.\d+)?)/g;
+                        const numbers = codeText.match(numberPattern);
+                        if (numbers) {
+                            for (const numStr of numbers) {
+                                const num = parseFloat(numStr);
+                                if (num < parseFloat(bv.min) || num > parseFloat(bv.max)) {
+                                    result.warnings.push(
+                                        `Значение ${num} для поля "${bv.field}" выходит за границы (${bv.min} - ${bv.max})`
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Проверяем валидации
+        if (logicConstraints.validations && logicConstraints.validations.length > 0) {
+            for (const validation of logicConstraints.validations) {
+                if (codeText.toLowerCase().includes(validation.field.toLowerCase())) {
+                    // Если в коде упоминается поле с валидацией, проверяем соответствие
+                    if (validation.rule && !codeText.includes(validation.rule)) {
+                        result.warnings.push(
+                            `Поле "${validation.field}" имеет правило валидации "${validation.rule}", но оно не упомянуто в коде`
+                        );
+                    }
+                }
             }
         }
     }

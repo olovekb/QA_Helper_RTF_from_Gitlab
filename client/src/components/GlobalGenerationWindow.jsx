@@ -127,9 +127,10 @@ const GlobalGenerationWindow = ({
   }, [modelGenerationTaskId, modelGenerationStatus, checkModelGenerationStatus]);
 
   // Обработчик генерации тест-кейсов
-  const handleGenerateCases = async (modelStructure) => {
+  const handleGenerateCases = async (modelStructure, includeBackendTests = true) => {
     console.log('GlobalGenerationWindow: получена структура тестовой модели для генерации тест-кейсов:', modelStructure);
     console.log('GlobalGenerationWindow: количество features в структуре:', modelStructure?.length);
+    console.log('GlobalGenerationWindow: includeBackendTests:', includeBackendTests);
     
     if (window.Notification && Notification.permission === 'default') {
       await Notification.requestPermission();
@@ -139,11 +140,13 @@ const GlobalGenerationWindow = ({
       // Собираем payload с требованиями
       const payload = {
         modelStructure,
+        includeBackendTests: includeBackendTests !== false, // По умолчанию true, если не передан
         ...buildRequirementsPayload({ includeRequirements: true }),
         ...(allureProject?.id ? { projectId: allureProject.id } : {})  // ✅ Добавляем projectId для shared steps
       };
       
       console.log('GlobalGenerationWindow: отправляем payload с modelStructure:', payload);
+      console.log('GlobalGenerationWindow: includeBackendTests в payload:', payload.includeBackendTests);
 
       const { data } = await axios.post(
         `${config.serverUrl}/generate-test-cases-async`,

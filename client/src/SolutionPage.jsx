@@ -1041,9 +1041,10 @@ export default function SolutionPage({ projects = [] }) {
     }
   };
 
-  const handleGenerateModel = async (modelStructure) => {
+  const handleGenerateModel = async (modelStructure, includeBackendTests = true) => {
     console.log('SolutionPage: получена структура тестовой модели для генерации тест-кейсов:', modelStructure);
     console.log('SolutionPage: количество features в структуре:', modelStructure?.length);
+    console.log('SolutionPage: includeBackendTests:', includeBackendTests);
     
     const payloadBase = buildRequirementsPayload({ includeRequirements: true });
 
@@ -1064,6 +1065,7 @@ export default function SolutionPage({ projects = [] }) {
         const payload = { 
           ...payloadBase, 
           modelStructure,
+          includeBackendTests: includeBackendTests !== false, // ✅ Передаём флаг включения backend тестов
           ...(allureProject ? { projectId: allureProject } : {})  // ✅ Добавляем projectId для shared steps
         };
         console.log('SolutionPage: отправляем payload с modelStructure:', payload);

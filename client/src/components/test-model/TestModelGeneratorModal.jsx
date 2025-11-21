@@ -1367,6 +1367,9 @@ export default function TestModelGeneratorModal({
         setTreeData(newTree);
     }, [treeData]);
 
+    // ✅ State для чекбокса "С интеграционными бекенд тестами"
+    const [includeBackendTests, setIncludeBackendTests] = useState(true); // По умолчанию включено
+
     const handleSubmitForCases = async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -1381,9 +1384,10 @@ export default function TestModelGeneratorModal({
                 console.log('TestModelGeneratorModal: treeData (с служебными полями):', treeData);
                 console.log('TestModelGeneratorModal: modelStructure (без служебных полей):', modelStructure);
                 console.log('TestModelGeneratorModal: количество Features:', modelStructure.length);
+                console.log('TestModelGeneratorModal: includeBackendTests:', includeBackendTests);
                 
-                // ✅ Передаем преобразованную модель, а не treeData
-                onGenerate(modelStructure);
+                // ✅ Передаем преобразованную модель и флаг includeBackendTests
+                onGenerate(modelStructure, includeBackendTests);
                 onClose(); // Закрываем модалку сразу
             } else {
                 console.error("onGenerate prop is not a function!");
@@ -1568,6 +1572,17 @@ export default function TestModelGeneratorModal({
                                 </button>
                             </div>
                             <div className="modal-footer">
+                                <div className="backend-tests-checkbox">
+                                    <label>
+                                        <input
+                                            type="checkbox"
+                                            checked={includeBackendTests}
+                                            onChange={(e) => setIncludeBackendTests(e.target.checked)}
+                                            disabled={isBusy || modelGenerationStatus === 'processing'}
+                                        />
+                                        <span>С интеграционными бекенд тестами</span>
+                                    </label>
+                                </div>
                                 <button type="button" className="button-base button-secondary" onClick={handleCloseWithConfirm} disabled={isBusy}>
                                     Отмена
                                 </button>
