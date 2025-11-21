@@ -236,10 +236,6 @@ import {
     addPerfectExamplesAsFewShot
 } from './prompt-composer.mjs';
 import {
-    extractLogicAndConstraints,
-    formatLogicConstraintsForPrompt
-} from './logic-extractor.mjs';
-import {
     runTestCaseLLMWithContext,
     validateFixedCases
 } from './llm-with-context.mjs';
