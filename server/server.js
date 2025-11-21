@@ -12446,7 +12446,8 @@ ${includeBackendTests ? '   - Создай Integration backend тесты на �
    - Создай тест: сняли галочку → поле очистилось и скрылось.
 
 4. Найди граничные значения (мин/макс суммы, длины полей).
-   - Создай Boundary Tests: Min-1, Min, Max, Max+1.
+   - Создай ОДИН Boundary Test с параметризацией: Min-1, Min, Max, Max+1 (через parameters + examples).
+   - ❌ НЕ создавай 4 отдельных теста! Используй параметризацию!
 
 Не дублируй E2E. Делай это через Integration frontend (валидация UI)${includeBackendTests ? ' или Integration backend (ошибки API)' : ' (НЕ создавай Integration backend тесты!)'}.
 
