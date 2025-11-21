@@ -202,6 +202,7 @@ import { createContextSourceRegistry, createContextToolset } from './contextTool
 import { runInteractiveLLM } from './interactiveLLM.mjs';
 import { selectExamples, buildExamplesSection } from './config/example-selector.js';
 import { registerDebugRoutes } from './debug-routes.mjs';
+import { extractLogicAndConstraints, formatLogicConstraintsForPrompt } from './logic-extractor.mjs';
 
 // ═══════════════════════════════════════════════════════════════
 // НОВЫЕ МОДУЛИ - АРХИТЕКТУРНЫЕ УЛУЧШЕНИЯ
@@ -3172,9 +3173,10 @@ ${requirementsText}
  * Строит промпт для генерации тестовой модели с заданной структурой Feature → Story
  * @param {RequirementsStructure} reqStructure - Извлечённая структура requirements
  * @param {string} fullRequirementsText - Полный текст requirements
+ * @param {Object} logicConstraints - Извлечённые логические ограничения (опционально)
  * @returns {string} - Промпт для LLM
  */
-function buildTestModelPrompt(reqStructure, fullRequirementsText) {
+function buildTestModelPrompt(reqStructure, fullRequirementsText, logicConstraints = null) {
     const featuresList = reqStructure.features.map((feature, fIdx) => {
         const storiesList = feature.stories.map((st, sIdx) =>
             `${sIdx + 1}. "${st.name}" (требования: ${st.requirements.join(', ')})`
@@ -3186,6 +3188,9 @@ ${feature.description ? `Описание: ${feature.description}` : ''}
 Stories (обязательные ${feature.stories.length} шт):
 ${storiesList}`;
     }).join('\n\n');
+
+    // Форматируем извлечённую логику для промпта (Domain Driven Testing)
+    const logicSection = logicConstraints ? formatLogicConstraintsForPrompt(logicConstraints) : '';
 
     return `
 📋 ЗАДАНИЕ: Создай детальную тестовую модель на основе ЗАДАННОЙ структуры Feature → Story.
@@ -3199,12 +3204,18 @@ ${featuresList}
 REQUIREMENTS (полный текст):
 ${fullRequirementsText}
 
-ТВОЯ ЗАДАЧА:
+${logicSection ? `\n${logicSection}\n` : ''}
+
+ТВОЯ ЗАДАЧА (DOMAIN DRIVEN TESTING):
 
 Для КАЖДОЙ Story из списка выше:
 
-1. Извлеки Scenarios (пользовательские действия) из соответствующих требований
-2. Для каждого Scenario определи Code (поведение системы: frontend + backend)
+1. Извлеки Scenarios (АТОМАРНЫЕ пользовательские действия) из соответствующих требований
+2. Для каждого Scenario определи Code (System Contract - реакция системы: UI_State, API_Contract, Data_State)
+
+🎯 АЛГОРИТМ "ACTION → REACTION":
+- Scenario (Action) = одно атомарное действие пользователя
+- Code (Reaction) = цепочка реакций системы (Frontend запрос → Backend ответ → Frontend отображение)
 
 ПРАВИЛА SCENARIOS:
 
@@ -4677,6 +4688,17 @@ async function generateTestModelAsync(taskId, inputData) {
             };
         }
 
+        // ✅ DOMAIN DRIVEN TESTING: Извлечение логических ограничений для модели
+        console.log('[generateTestModelAsync] 🧠 Извлечение логических ограничений (Domain Driven Testing)...');
+        let logicConstraints = null;
+        try {
+            logicConstraints = await extractLogicAndConstraints(reqStringForModel);
+            console.log(`[generateTestModelAsync] ✅ Извлечено: валидаций=${logicConstraints.validations.length}, граничных значений=${logicConstraints.boundary_values.length}, негативных сценариев=${logicConstraints.negative_scenarios.length}, UI логик=${logicConstraints.ui_logic.length}, зависимостей=${logicConstraints.dependencies.length}`);
+        } catch (error) {
+            console.warn('[generateTestModelAsync] ⚠️ Ошибка при извлечении логики, продолжаем без неё:', error.message);
+            logicConstraints = null;
+        }
+
         if (reqStringForModel) {
             registerSource({
                 id: pageId ? `sanitized-requirement-${pageId}` : 'primary-requirement',
@@ -4759,17 +4781,23 @@ ${contextSourcesSummary || '—'}
 
 
         const SYSTEM_PROMPT = `
-Ты — SDET, генерирующий тестовую модель на основе requirements.
+Ты — Системный Архитектор и QA Lead, генерирующий тестовую модель на основе requirements.
 
 ═══════════════════════════════════════════════════════════════
-🏗️ СТРУКТУРА ТЕСТОВОЙ МОДЕЛИ
+🏗️ DOMAIN DRIVEN TESTING (DDT) - СТРУКТУРА ТЕСТОВОЙ МОДЕЛИ
 ═══════════════════════════════════════════════════════════════
+
+МЫСЛИ КАК DOMAIN EXPERT: Модель описывает не просто текст требований, а ПОВЕДЕНИЕ СИСТЕМЫ.
 
 Feature → Story → Scenario → Code
 
-**Feature** — высокоуровневая функциональность ("Безбумажный офис", "Платежи")
+**Feature** = ДОМЕН / ЭПИК. Крупная функциональная область системы.
+  ✅ "Эквайринг СБП" - домен платежных операций
+  ✅ "Безбумажный офис" - домен электронного документооборота
+  ✅ "Платежи" - домен финансовых операций
 
-**Story** — пользовательская история внутри Feature, описывает ЧТО хочет получить пользователь:
+**Story** = USER STORY / CAPABILITY. Потребность пользователя с бизнес-правилами.
+  Story должна включать в себя неявные бизнес-правила и ограничения.
   ✅ "Регистрация в ББО" - пользователь хочет зарегистрироваться
   ✅ "QR-коды для физических лиц" - пользователь хочет работать с QR-кодами
   ✅ "Перевод между счетами" - пользователь хочет перевести деньги
@@ -4779,9 +4807,9 @@ Feature → Story → Scenario → Code
   
   🚨 ПРАВИЛО: Story = ценность для пользователя, НЕ техническая реализация!
 
-**Scenario** — ОДНО конкретное действие пользователя, ВСЕГДА начинается с номера и глагола действия:
-  
+**Scenario** = USER INTERACTION / TRIGGER. Атомарное воздействие на систему (одно действие).
   🚨 КРИТИЧНО: Scenario = АТОМАРНОЕ действие (один клик/ввод/выбор), НЕ последовательность!
+  Scenario описывает ОДНО действие пользователя, которое триггерит реакцию системы.
   
   ✅ "1. Нажать на кнопку 'Безбумажный офис'"
   ✅ "2. Выбрать чекбокс 'УНК в другом банке'"
@@ -4828,12 +4856,29 @@ Feature → Story → Scenario → Code
   ❌ "Проверить отсутствие товаров" → ✅ "Ввести несуществующий ID товара"
   ❌ "Убедиться в отображении ошибки" → ✅ Это не Scenario, это Expected result!
 
-**Code** — ПОВЕДЕНИЕ системы (что отправляется, что возвращается, что отображается):
+**Code** = SYSTEM CONTRACT / REACTION. Контракт поведения системы на Scenario.
+  Code описывает КАК система обязана отреагировать на действие пользователя.
   
-  🔑 ЧТО ТАКОЕ CODE:
-  - Code = НАБЛЮДАЕМОЕ поведение (Black Box подход)
-  - Frontend code = что ОТПРАВЛЯЕТСЯ + что ОТОБРАЖАЕТСЯ
-  - Backend code = что ВОЗВРАЩАЕТСЯ (HTTP статус + JSON структура)
+  🔑 ТИПИЗАЦИЯ CODE (КРИТИЧНО ДЛЯ ПОКРЫТИЯ):
+  
+  **UI_State (Black Box, type: "frontend"):**
+    - Визуальные изменения, валидация полей, переходы между экранами
+    - Что ОТОБРАЖАЕТСЯ пользователю: "Отображается модальное окно", "Скрывается форма"
+  
+  **API_Contract (White Box, type: "backend"):**
+    - Конкретные эндпоинты (GET/POST/PUT/DELETE), коды ответов, JSON структуры
+    - Что ВОЗВРАЩАЕТСЯ: "Возвращается 200 OK с {id, name}", "Возвращается 400 Bad Request"
+  
+  **Data_State (White Box, type: "integration"):**
+    - Изменения в БД/Кэше, интеграции с внешними системами
+    - Что ИЗМЕНЯЕТСЯ: "Запись создана в БД", "Статус обновлен в кэше"
+  
+  🎯 АЛГОРИТМ "ACTION → REACTION":
+    - Scenario (Action) = "Нажать кнопку 'Оплатить'"
+    - Code (Reaction) = цепочка реакций системы:
+      1. Frontend: "Отправляется POST **/api/pay** с телом {...}" (type: "frontend")
+      2. Backend: "Возвращается 200 OK с {orderId, status}" (type: "backend")
+      3. Frontend: "Отображается экран 'Чек' с данными заказа" (type: "frontend")
   
   ✅ ПРАВИЛЬНО (Frontend - отправка запросов):
   - "Отправляется GET **/api/v1/users**" + type: "frontend"
@@ -5092,36 +5137,43 @@ ${reqStringForModel}
                 console.log(`[generate-test-model-async] Обработка чанка ${chunkIdx + 1}/${reqChunks.length}...`);
             }
 
-            // Модифицируем промпт для чанков
+            // Модифицируем промпт для чанков (Domain Driven Testing)
+            const logicSectionForChunk = logicConstraints ? formatLogicConstraintsForPrompt(logicConstraints) : '';
+            
             let userPrompt = `
-📋 ЗАДАНИЕ: Создай тестовую модель Feature → Story → Scenario → Code
+📋 ЗАДАНИЕ: Создай тестовую модель Feature → Story → Scenario → Code (Domain Driven Testing)
 
 REQUIREMENTS:
 ${reqChunk}
 
-ПРАВИЛА ГЕНЕРАЦИИ:
+${logicSectionForChunk ? `\n${logicSectionForChunk}\n` : ''}
+
+ПРАВИЛА ГЕНЕРАЦИИ (DOMAIN DRIVEN):
 
 1. СТРУКТУРА
-   - Feature: высокоуровневая функциональность
-   - Story: пользовательская история
-   - Scenario: действие пользователя (ВСЕГДА начинается с "N. Глагол...")
-   - Code: поведение системы после действия
+   - Feature = ДОМЕН (крупная функциональная область)
+   - Story = USER STORY (потребность пользователя с бизнес-правилами)
+   - Scenario = АТОМАРНОЕ взаимодействие (одно действие пользователя)
+   - Code = SYSTEM CONTRACT (реакция системы: UI_State, API_Contract, Data_State)
 
-2. CODE = ПОВЕДЕНИЕ СИСТЕМЫ
+2. CODE = SYSTEM CONTRACT (реакция системы)
+   Типизация Code:
+   - UI_State (type: "frontend"): "Отображается...", "Скрывается...", "Валидация..."
+   - API_Contract (type: "backend"): "Отправляется GET **/api/...**", "Возвращается 200 OK с {...}"
+   - Data_State (type: "integration"): "Запись создана в БД", "Статус обновлен"
+   
    Извлекай из requirements:
    - HTTP-методы: "GET /api/endpoint", "POST /confirm/code/check"
    - UI-поведение: "Отобразить модальное окно", "Показать лоадер"
    - Методы: "Вызвать метод auth()", "Выполнить verificate()"
    - Интеграции: "Отправить push-уведомление", "Сохранить в БД"
 
-3. ОДИН SCENARIO → НЕСКОЛЬКО CODE
-   Scenario "4. Нажать на кнопку 'Подтвердить'":
-   codes: [
-     "Показать лоадер на кнопке 'Подтвердить'",
-     "PUT /nopaper/user",
-     "Отобразить модальное окно ОТП",
-     "Отправить push 'Требуется ввод кода'"
-   ]
+3. АЛГОРИТМ "ACTION → REACTION"
+   Scenario (Action) = "Нажать кнопку 'Оплатить'"
+   Code (Reaction) = цепочка реакций:
+   - Frontend: "Отправляется POST **/api/pay** с телом {...}" (type: "frontend")
+   - Backend: "Возвращается 200 OK с {orderId, status}" (type: "backend")
+   - Frontend: "Отображается экран 'Чек'" (type: "frontend")
 
 4. ЗАПРЕТЫ
    ❌ НЕТ поля "requirement"
@@ -5181,15 +5233,19 @@ ${interactiveInstructionBlock}
 ${reqChunk}`;
 
             } else {
-                // Для одного чанка - явно просим генерировать ПОЛНУЮ модель
+                // Для одного чанка - явно просим генерировать ПОЛНУЮ модель (Domain Driven Testing)
+                const logicSectionForSingleChunk = logicConstraints ? formatLogicConstraintsForPrompt(logicConstraints) : '';
+                
                 userPrompt = `🚨 КРИТИЧЕСКИ ВАЖНО: ГЕНЕРИРУЙ ПОЛНУЮ ТЕСТОВУЮ МОДЕЛЬ! 🚨
 
-📋 ЗАДАНИЕ: Создай ПОЛНУЮ тестовую модель Feature → Story → Scenario → Code
+📋 ЗАДАНИЕ: Создай ПОЛНУЮ тестовую модель Feature → Story → Scenario → Code (Domain Driven Testing)
 
 REQUIREMENTS:
 ${reqChunk}
 
-🚨 ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:
+${logicSectionForSingleChunk ? `\n${logicSectionForSingleChunk}\n` : ''}
+
+🚨 ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА (DOMAIN DRIVEN):
 
 1. ПОЛНОТА МОДЕЛИ:
    - Прочитай ВЕСЬ документ от начала до конца
