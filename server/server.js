@@ -8448,16 +8448,19 @@ function deduplicateTestCases(testCases, stage = 'final') {
     };
 
     const buildSignature = (testCase) => {
+        const layer = normalize(testCase.layer);
+        const isE2E = layer === 'e2e tests';
+
         const paramsSignature = (testCase.parameters || [])
             .map(p => `${p.name}:${(p.values || []).sort().join(',')}`)
             .sort()
             .join('|');
 
         return [
-            normalize(testCase.layer),
+            layer,
             normalize(testCase.feature),
-            normalize(testCase.story),
-            normalize(testCase.scenario),
+            isE2E ? '' : normalize(testCase.story),
+            isE2E ? '' : normalize(testCase.scenario),
             normalize(testCase.title),
             (testCase.steps || []).map(step => normalize(stepToText(step))).join('|'),
             normalize(testCase.expected),
