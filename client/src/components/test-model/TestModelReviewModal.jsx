@@ -1901,7 +1901,8 @@ const GreenCircleIcon = () => (
 );
 
 // Упрощенное дерево для левой панели (только названия, кликабельные)
-const SimpleTreeView = ({ 
+// Мемоизировано для оптимизации производительности при больших списках
+const SimpleTreeView = React.memo(({ 
     treeData, 
     selectedCaseId, 
     selectedCaseIds = new Set(),
@@ -1918,8 +1919,8 @@ const SimpleTreeView = ({
 }) => {
     const [editingNode, setEditingNode] = useState(null);
     const [editValue, setEditValue] = useState('');
-    // Функция для подсчета количества элементов в узле
-    const countItems = (nodeData, nodeType) => {
+    // Функция для подсчета количества элементов в узле (мемоизирована для производительности)
+    const countItems = useCallback((nodeData, nodeType) => {
         if (nodeType === 'feature') {
             let count = 0;
             Object.values(nodeData.stories || {}).forEach(story => {
@@ -1951,7 +1952,7 @@ const SimpleTreeView = ({
             return (nodeData.cases || []).length;
         }
         return 0;
-    };
+    }, []);
 
     const renderTestCaseItem = (testCase, level, path, index) => {
         const isSelected = selectedCaseId === testCase.id;
@@ -2843,7 +2844,16 @@ const SimpleTreeView = ({
             </div>
         </div>
     );
-};
+}, (prevProps, nextProps) => {
+    // Кастомная функция сравнения для оптимизации
+    // Перерендериваем только если изменились важные пропсы
+    return (
+        prevProps.treeData === nextProps.treeData &&
+        prevProps.selectedCaseId === nextProps.selectedCaseId &&
+        prevProps.testCaseDiffs === nextProps.testCaseDiffs &&
+        prevProps.pendingApprovals === nextProps.pendingApprovals
+    );
+});
 
 export default function TestModelReviewModal({
     isOpen,
@@ -2911,11 +2921,15 @@ export default function TestModelReviewModal({
         let casesHash = 'default';
         if (initialCases && initialCases.length > 0) {
             try {
-                const str = JSON.stringify(initialCases);
+                // Используем только ID и количество для быстрого хеширования
+                const idsAndCount = JSON.stringify({
+                    count: initialCases.length,
+                    ids: initialCases.slice(0, 10).map(c => c.id).sort() // Первые 10 ID для проверки
+                });
                 // Простая хеш-функция для строки
                 let hash = 0;
-                for (let i = 0; i < str.length; i++) {
-                    const char = str.charCodeAt(i);
+                for (let i = 0; i < idsAndCount.length; i++) {
+                    const char = idsAndCount.charCodeAt(i);
                     hash = ((hash << 5) - hash) + char;
                     hash = hash & hash; // Convert to 32bit integer
                 }
@@ -2927,6 +2941,28 @@ export default function TestModelReviewModal({
             }
         }
         return `testCasesReview_${projectId}_${casesHash}`;
+    };
+
+    // Функция для проверки соответствия сохраненных данных текущим initialCases
+    const validateSavedState = (savedState, currentCases) => {
+        if (!savedState || !currentCases || !Array.isArray(currentCases)) return false;
+        
+        // Проверяем количество
+        const savedCases = flattenTreeToCases(savedState.treeData || {});
+        if (savedCases.length !== currentCases.length) {
+            console.log(`TestModelReviewModal: Количество не совпадает: сохранено ${savedCases.length}, текущее ${currentCases.length}`);
+            return false;
+        }
+        
+        // Проверяем первые несколько ID для быстрой проверки
+        const savedIds = new Set(savedCases.slice(0, 5).map(c => c.id).sort());
+        const currentIds = new Set(currentCases.slice(0, 5).map(c => c.id).sort());
+        if (savedIds.size !== currentIds.size || ![...savedIds].every(id => currentIds.has(id))) {
+            console.log('TestModelReviewModal: ID не совпадают, данные устарели');
+            return false;
+        }
+        
+        return true;
     };
 
     // Подсчет количества тест-кейсов из treeData
@@ -2962,6 +2998,19 @@ export default function TestModelReviewModal({
         return count;
     }, []);
 
+    // Debounced сохранение состояния в localStorage для оптимизации производительности
+    const saveToLocalStorageDebounced = useMemo(
+        () => debouncePromise((storageKey, dataToSave) => {
+            try {
+                localStorage.setItem(storageKey, JSON.stringify(dataToSave));
+                console.log('TestModelReviewModal: Сохранено состояние в localStorage:', storageKey);
+            } catch (err) {
+                console.warn('TestModelReviewModal: Ошибка при сохранении в localStorage:', err);
+            }
+        }, 1000), // Сохраняем через 1 секунду после последнего изменения
+        []
+    );
+
     // Сохранение состояния в localStorage при изменении treeData и обновление счетчика
     useEffect(() => {
         if (!isOpen || !treeData || Object.keys(treeData).length === 0) return;
@@ -2969,24 +3018,32 @@ export default function TestModelReviewModal({
         const storageKey = getStorageKey();
         if (!storageKey) return;
         
-        try {
-            const dataToSave = {
-                treeData,
-                selectedCaseId: selectedCase?.id || null,
-                timestamp: Date.now()
-            };
-            localStorage.setItem(storageKey, JSON.stringify(dataToSave));
-            console.log('TestModelReviewModal: Сохранено состояние в localStorage:', storageKey);
-            
-            // Обновляем счетчик в родительском компоненте
-            const count = countTestCases(treeData);
-            if (onCasesCountChange) {
-                onCasesCountChange(count);
-            }
-        } catch (err) {
-            console.warn('TestModelReviewModal: Ошибка при сохранении в localStorage:', err);
+        const dataToSave = {
+            treeData,
+            selectedCaseId: selectedCase?.id || null,
+            timestamp: Date.now(),
+            initialCasesCount: initialCases?.length || 0 // Сохраняем количество для проверки
+        };
+        
+        // Используем debounced сохранение для оптимизации
+        saveToLocalStorageDebounced(storageKey, dataToSave);
+        
+        // Обновляем счетчик в родительском компоненте (синхронно, т.к. это важно для UI)
+        const count = countTestCases(treeData);
+        if (onCasesCountChange) {
+            onCasesCountChange(count);
         }
-    }, [treeData, selectedCase, isOpen, projectId, initialCases, countTestCases, onCasesCountChange]);
+        
+        // Cleanup: отменяем отложенное сохранение при размонтировании
+        return () => {
+            // Сохраняем синхронно при размонтировании
+            try {
+                localStorage.setItem(storageKey, JSON.stringify(dataToSave));
+            } catch (err) {
+                console.warn('TestModelReviewModal: Ошибка при финальном сохранении:', err);
+            }
+        };
+    }, [treeData, selectedCase, isOpen, projectId, initialCases, countTestCases, onCasesCountChange, saveToLocalStorageDebounced]);
 
     useEffect(() => {
         if (!isOpen) {
@@ -3022,10 +3079,25 @@ export default function TestModelReviewModal({
                     savedState = JSON.parse(saved);
                     // Проверяем, что сохраненное состояние не слишком старое (например, не старше 7 дней)
                     const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 дней
-                    if (savedState.timestamp && (Date.now() - savedState.timestamp) < maxAge) {
-                        console.log('TestModelReviewModal: Загружено сохраненное состояние из localStorage');
+                    const isNotExpired = savedState.timestamp && (Date.now() - savedState.timestamp) < maxAge;
+                    
+                    // Проверяем соответствие сохраненных данных текущим initialCases
+                    const isValid = isNotExpired && validateSavedState(savedState, initialCases);
+                    
+                    if (isValid) {
+                        console.log('TestModelReviewModal: Загружено валидное сохраненное состояние из localStorage');
                     } else {
-                        console.log('TestModelReviewModal: Сохраненное состояние устарело, используем initialCases');
+                        if (!isNotExpired) {
+                            console.log('TestModelReviewModal: Сохраненное состояние устарело, используем initialCases');
+                        } else {
+                            console.log('TestModelReviewModal: Сохраненное состояние не соответствует текущим данным, используем initialCases');
+                        }
+                        // Удаляем невалидное состояние
+                        try {
+                            localStorage.removeItem(storageKey);
+                        } catch (e) {
+                            console.warn('TestModelReviewModal: Ошибка при удалении невалидного состояния:', e);
+                        }
                         savedState = null;
                     }
                 }
@@ -3071,13 +3143,14 @@ export default function TestModelReviewModal({
             axios
                 .get(`${config.serverUrl}/shared-steps`, { params: { projectId } })
                 .then((resp) => {
-                    // Проверяем, что resp.data - массив
+                    // Обрабатываем как массив или объект с content (пагинация)
+                    let items = [];
                     if (Array.isArray(resp.data)) {
-                        setSharedStepsOptions(resp.data.map((s) => ({ value: s.id, label: s.body })));
-                    } else {
-                        console.warn('TestModelReviewModal: shared-steps вернул не массив:', resp.data);
-                        setSharedStepsOptions([]);
+                        items = resp.data;
+                    } else if (resp.data?.content && Array.isArray(resp.data.content)) {
+                        items = resp.data.content;
                     }
+                    setSharedStepsOptions(items.map((s) => ({ value: s.id, label: s.body || s.name })));
                 })
                 .catch(console.warn);
         }
