@@ -9718,9 +9718,22 @@ async function generateTestCasesAsync(taskId, inputData) {
                 try {
                     if (task.type === 'remove_duplicates') {
                         // Удаляем дубликаты, оставляя только первый
-                        const indicesToRemove = task.duplicateGroup.indices.slice(1); // Все кроме первого
-                        fixedCases = fixedCases.filter((_, idx) => !indicesToRemove.includes(idx));
-                        console.log(`[regenerateTestCasesWithFixes] ✅ Удалено ${indicesToRemove.length} дубликатов`);
+                        const indicesToRemove = task.duplicateGroup.indices
+                            .slice(1) // Все кроме первого
+                            .filter(idx => Number.isInteger(idx) && idx >= 0 && idx < testCases.length);
+
+                        if (indicesToRemove.length === 0) {
+                            console.log('[regenerateTestCasesWithFixes] ⚠️ Нет валидных индексов для удаления дублей');
+                            continue;
+                        }
+
+                        // Используем ссылки на исходные тест-кейсы, чтобы не зависеть от изменения индексов
+                        const duplicatesToRemove = new Set(indicesToRemove.map(idx => testCases[idx]));
+                        const beforeCount = fixedCases.length;
+                        fixedCases = fixedCases.filter(tc => !duplicatesToRemove.has(tc));
+                        const removedCount = beforeCount - fixedCases.length;
+
+                        console.log(`[regenerateTestCasesWithFixes] ✅ Удалено ${removedCount} дубликатов (отмечено ${indicesToRemove.length})`);
                     } else if (task.type === 'fix_pairwise') {
                         // Исправляем pairwise для конкретного тест-кейса
                         // ⚠️ ВАЖНО: Пропускаем в debug режиме, т.к. это вызов Allure API
@@ -11413,6 +11426,218 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             }).slice(0, 20); // максимум 20 релевантных требований
         }
 
+        function normalizeEndpoint(raw) {
+            if (!raw) return null;
+            let endpoint = raw.trim();
+            endpoint = endpoint.replace(/^\*\*/g, '').replace(/\*\*$/g, '');
+            endpoint = endpoint.replace(/^["'`]/, '').replace(/["'`,.;:\]]$/g, '');
+            const slashIdx = endpoint.indexOf('/');
+            if (slashIdx > 0) {
+                endpoint = endpoint.slice(slashIdx);
+            }
+            if (!endpoint.startsWith('/')) return null;
+            if (endpoint.length < 2) return null;
+            return endpoint;
+        }
+
+        function deriveFileNameFromLink(link) {
+            if (!link) return 'mock.json';
+            try {
+                const url = new URL(link);
+                const pathname = url.pathname || '';
+                const parts = pathname.split('/').filter(Boolean);
+                if (parts.length === 0) return 'mock.json';
+                return parts[parts.length - 1] || 'mock.json';
+            } catch {
+                const fallbackParts = link.split('/').filter(Boolean);
+                return fallbackParts.length ? fallbackParts[fallbackParts.length - 1] : 'mock.json';
+            }
+        }
+
+        function extractInlineJsonSnippet(context, maxLength = 1200) {
+            if (!context) return null;
+            const fencedMatch = context.match(/```(?:json)?([\s\S]{10,2000}?)```/i);
+            if (fencedMatch && safeTrim(fencedMatch[1])) {
+                return fencedMatch[1].trim();
+            }
+            const braceStart = context.indexOf('{');
+            if (braceStart === -1) return null;
+            let depth = 0;
+            for (let i = braceStart; i < context.length && i < braceStart + maxLength; i++) {
+                const char = context[i];
+                if (char === '{') depth++;
+                if (char === '}') {
+                    depth--;
+                    if (depth === 0) {
+                        return context.slice(braceStart, i + 1).trim();
+                    }
+                }
+            }
+            return null;
+        }
+
+        function isJsonReference(label, href) {
+            const labelLower = (label || '').toLowerCase();
+            const hrefLower = (href || '').toLowerCase();
+            return labelLower.includes('.json') || hrefLower.includes('.json');
+        }
+
+        function extractMockReferenceFromContext(endpoint, contextSegment) {
+            if (!contextSegment) return null;
+
+            const markdownLinkRegex = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gi;
+            let match;
+            while ((match = markdownLinkRegex.exec(contextSegment)) !== null) {
+                const [, label, href] = match;
+                if (isJsonReference(label, href)) {
+                    return {
+                        endpoint,
+                        type: 'link',
+                        label: label?.trim() || deriveFileNameFromLink(href),
+                        href: href.trim()
+                    };
+                }
+            }
+
+            const plainLinks = contextSegment.match(/https?:\/\/[^\s)]+/g) || [];
+            for (const href of plainLinks) {
+                if (isJsonReference('', href)) {
+                    return {
+                        endpoint,
+                        type: 'link',
+                        label: deriveFileNameFromLink(href),
+                        href: href.trim()
+                    };
+                }
+            }
+
+            const inlineJson = extractInlineJsonSnippet(contextSegment);
+            if (inlineJson) {
+                return {
+                    endpoint,
+                    type: 'inline',
+                    inlineJson
+                };
+            }
+
+            return null;
+        }
+
+        function extractApiMocksFromText(text) {
+            const source = safeTrim(text) ? text : '';
+            if (!source) return [];
+            const endpointRegex = /(?:GET|POST|PUT|DELETE|PATCH)?\s*(?:\*\*)?(\/[A-Za-z0-9_\-\/.]+(?:\?[^\s"'`)]+)?)/gi;
+            const mocks = new Map();
+            let match;
+
+            while ((match = endpointRegex.exec(source)) !== null) {
+                const endpoint = normalizeEndpoint(match[1]);
+                if (!endpoint) continue;
+                if (mocks.has(endpoint)) continue; // уже нашли мок для этого эндпоинта
+
+                const window = 600;
+                const contextStart = Math.max(0, match.index - window);
+                const contextEnd = Math.min(source.length, match.index + window);
+                const context = source.slice(contextStart, contextEnd);
+                const mockInfo = extractMockReferenceFromContext(endpoint, context);
+                if (mockInfo) {
+                    mocks.set(endpoint, mockInfo);
+                }
+            }
+
+            return [...mocks.values()];
+        }
+
+        function buildEntryPointPreconditionStep(existingPrecondition = '') {
+            const normalized = (existingPrecondition || '')
+                .replace(/^предварительное условие[:\s]*/i, '')
+                .trim();
+            if (!normalized) {
+                return 'Осуществлен переход на главную страницу';
+            }
+
+            const withoutIndex = normalized.replace(/^\d+\.\s*/, '').trim();
+            if (!withoutIndex) {
+                return 'Осуществлен переход на главную страницу';
+            }
+
+            if (/^осуществлен/i.test(withoutIndex)) {
+                return withoutIndex;
+            }
+
+            return `Осуществлен переход: ${withoutIndex}`;
+        }
+
+        function formatMockStep(mock) {
+            if (!mock) return null;
+            if (mock.type === 'link' && mock.href) {
+                const label = mock.label || deriveFileNameFromLink(mock.href);
+                return `Подменить тело ответа ${mock.endpoint} на [${label}](${mock.href})`;
+            }
+            if (mock.type === 'inline' && mock.inlineJson) {
+                const trimmed = mock.inlineJson.trim();
+                const limited = trimmed.length > 800 ? `${trimmed.slice(0, 800)}…` : trimmed;
+                return `Подменить тело ответа ${mock.endpoint} на ${limited}`;
+            }
+            return null;
+        }
+
+        function formatPreconditionBlock(steps) {
+            const cleaned = steps.filter(step => safeTrim(step));
+            if (!cleaned.length) return '';
+            const seen = new Set();
+            const unique = [];
+            for (const step of cleaned) {
+                const key = step.toLowerCase();
+                if (seen.has(key)) continue;
+                seen.add(key);
+                unique.push(step);
+            }
+            const enumerated = unique.map((step, idx) => `${idx + 1}. ${step}`);
+            return `Предварительное условие\n\n${enumerated.join('\n')}`;
+        }
+
+        function applyMockPreconditions(testCases, storyMockHints) {
+            if (!Array.isArray(testCases) || !storyMockHints || storyMockHints.size === 0) {
+                return testCases;
+            }
+
+            let updated = 0;
+            const patched = testCases.map(tc => {
+                if (!tc || tc.layer !== 'Integration frontend Tests' || !tc.story) {
+                    return tc;
+                }
+                const mocks = storyMockHints.get(tc.story);
+                if (!mocks || mocks.length === 0) {
+                    return tc;
+                }
+
+                const existingPrecondition = tc.precondition || '';
+                const missingMocks = mocks.filter(mock => !existingPrecondition.includes(mock.endpoint));
+                if (missingMocks.length === 0) {
+                    return tc;
+                }
+
+                const entryStep = buildEntryPointPreconditionStep(existingPrecondition);
+                const mockSteps = missingMocks
+                    .map(formatMockStep)
+                    .filter(Boolean);
+                if (mockSteps.length === 0) {
+                    return tc;
+                }
+
+                tc.precondition = formatPreconditionBlock([entryStep, ...mockSteps]);
+                updated++;
+                return tc;
+            });
+
+            if (updated > 0) {
+                console.log(`[applyMockPreconditions] ✅ Добавлено mock-precondition для ${updated} Integration frontend тестов`);
+            }
+
+            return patched;
+        }
+
         // ✅ КОРОТКИЙ КОНТЕКСТНО-ЗАВИСИМЫЙ ПРОМПТ
         function buildContextPrompt(chunk, existingE2E = []) {
             const mode = chunk[0].stories[0]._mode;
@@ -12717,9 +12942,22 @@ ${isNegativePass ? `
             }
         }
 
+        const storyMockHints = new Map();
+
         // ====== ОСНОВНАЯ ЛОГИКА ГЕНЕРАЦИИ (ONE-PASS ОПТИМИЗАЦИЯ) ======
         try {
             const storyChunks = splitByStoriesOptimized(modelStructure);
+
+            for (const chunk of storyChunks) {
+                const storyName = chunk?.[0]?.stories?.[0]?.text;
+                if (!storyName) continue;
+                const relevantReqs = filterRelevantRequirements(refinedReqs, chunk) || [];
+                const mocks = extractApiMocksFromText(relevantReqs.join('\n\n'));
+                if (mocks.length > 0) {
+                    storyMockHints.set(storyName, mocks);
+                    console.log(`[generate-test-cases-async] 🧪 Найдены mock-эндпоинты для "${storyName}": ${mocks.map(m => m.endpoint).join(', ')}`);
+                }
+            }
 
             // === Подготовка данных ===
             console.log(`[generate-test-cases-async] Подготовлено ${storyChunks.length} chunks для генерации (ONE-PASS)`);
@@ -13064,6 +13302,9 @@ ${isNegativePass ? `
 
         // Автоматическая параметризация похожих тестов
         finalTestCases = autoParameterizeSimilarTests(finalTestCases);
+
+        // Автоматически добавляем precondition для mock-эндпоинтов Integration frontend тестов
+        finalTestCases = applyMockPreconditions(finalTestCases, storyMockHints);
 
         // ✅ НОВОЕ: LLM-валидация и автоисправление ВРАКОВ (итеративно)
         console.log(`[generate-test-cases-async] 🔍 LLM-валидация и автоисправление ВРАКОВ...`);
