@@ -10623,6 +10623,20 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         /**
          * Экранирует специальные символы для использования в регулярных выражениях
          */
+        const FILLER_STEP_PREFIXES = [
+            /^дождаться/i,
+            /^убедиться/i
+        ];
+
+        function stepToText(step) {
+            if (typeof step === 'string') return step;
+            if (step && typeof step === 'object') {
+                if (typeof step.text === 'string') return step.text;
+                if (typeof step.body === 'string') return step.body;
+            }
+            return String(step ?? '');
+        }
+
         function escapeRegex(str) {
             return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         }
@@ -10657,6 +10671,17 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                     .replace(/\s+/g, ' ').trim();
             }
 
+            function normalizeStepForSignature(step) {
+                const raw = stepToText(step);
+                if (!raw) return '';
+                const trimmed = raw.trim();
+                if (!trimmed) return '';
+                if (FILLER_STEP_PREFIXES.some(regex => regex.test(trimmed))) {
+                    return '';
+                }
+                return trimmed.toLowerCase().replace(/\s+/g, ' ');
+            }
+
             function getLogicSignature(testCase) {
                 // ✅ ИСПРАВЛЕНО: учитываем parameters в сигнатуре
                 const paramsSignature = (testCase.parameters || [])
@@ -10664,7 +10689,12 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                     .sort()
                     .join('|');
 
-                return `${testCase.layer || ''}::${normalizeText(testCase.story)}::${normalizeText(testCase.scenario)}::${normalizeText(testCase.title)}::${(testCase.steps || []).map(s => normalizeText(s)).join('|')}::${normalizeText(testCase.expected)}::PARAMS[${paramsSignature}]`;
+                const normalizedSteps = (testCase.steps || [])
+                    .map(normalizeStepForSignature)
+                    .filter(Boolean)
+                    .join('|');
+
+                return `${testCase.layer || ''}::${normalizeText(testCase.story)}::${normalizeText(testCase.scenario)}::${normalizeText(testCase.title)}::${normalizedSteps}::${normalizeText(testCase.expected)}::PARAMS[${paramsSignature}]`;
             }
 
             // ✅ ДОРАБОТКА 1: Функция валидации привязки к модели
@@ -10674,6 +10704,41 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
              * @param {Array} modelStructure - Структура тестовой модели
              * @returns {Object} - { valid, errors, correctedFeature, correctedStory, correctedScenario }
              */
+            function computeStoryMatchScore(textPayload, storyText) {
+                const payloadWords = normalizeText(textPayload).split(/\s+/).filter(w => w.length > 3);
+                const storyWords = normalizeText(storyText).split(/\s+/).filter(w => w.length > 3);
+                if (!payloadWords.length || !storyWords.length) return 0;
+                const payloadSet = new Set(payloadWords);
+                const overlap = storyWords.filter(w => payloadSet.has(w));
+                return overlap.length / storyWords.length;
+            }
+
+            function findBestMatchingStory(testCase, feature) {
+                if (!feature || !Array.isArray(feature.stories)) return null;
+                const payload = [
+                    testCase.title,
+                    ...(testCase.steps || []),
+                    testCase.scenario || ''
+                ].join(' ');
+                const currentStoryText = testCase.story || '';
+                let bestStory = null;
+                let bestScore = 0;
+                const currentScore = computeStoryMatchScore(payload, currentStoryText);
+
+                for (const story of feature.stories) {
+                    const score = computeStoryMatchScore(payload, story.text || '');
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestStory = story;
+                    }
+                }
+
+                if (bestStory && bestScore >= currentScore + 0.2 && bestScore >= 0.3) {
+                    return bestStory;
+                }
+                return null;
+            }
+
             function validateModelBinding(testCase, modelStructure) {
                 const errors = [];
                 let correctedFeature = testCase.feature;
@@ -10748,6 +10813,21 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                             // Если не нашли похожую - используем первую Story из Feature
                             correctedStory = foundFeature.stories[0].text;
                             console.warn(`[validateModelBinding] ⚠️ Story "${testCase.story}" не найдена, используем "${correctedStory}"`);
+                        }
+                    }
+                }
+
+                if (storyExists && foundFeature) {
+                    const betterStory = findBestMatchingStory(testCase, foundFeature);
+                    if (betterStory && betterStory.text !== correctedStory) {
+                        console.log(`[validateModelBinding] ⚙️ Story скорректирована по содержанию: "${correctedStory}" → "${betterStory.text}"`);
+                        correctedStory = betterStory.text;
+
+                        const foundScenario = (betterStory.scenarios || []).find(sc =>
+                            normalizeText(sc.text) === normalizeText(testCase.scenario)
+                        );
+                        if (!foundScenario) {
+                            correctedScenario = undefined;
                         }
                     }
                 }
@@ -11623,32 +11703,6 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         function extractMockReferenceFromContext(endpoint, contextSegment) {
             if (!contextSegment) return null;
 
-            const markdownLinkRegex = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gi;
-            let match;
-            while ((match = markdownLinkRegex.exec(contextSegment)) !== null) {
-                const [, label, href] = match;
-                if (isJsonReference(label, href)) {
-                    return {
-                        endpoint,
-                        type: 'link',
-                        label: label?.trim() || deriveFileNameFromLink(href),
-                        href: href.trim()
-                    };
-                }
-            }
-
-            const plainLinks = contextSegment.match(/https?:\/\/[^\s)]+/g) || [];
-            for (const href of plainLinks) {
-                if (isJsonReference('', href)) {
-                    return {
-                        endpoint,
-                        type: 'link',
-                        label: deriveFileNameFromLink(href),
-                        href: href.trim()
-                    };
-                }
-            }
-
             const inlineJson = extractInlineJsonSnippet(contextSegment);
             if (inlineJson) {
                 return {
@@ -11708,10 +11762,6 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
         function formatMockStep(mock) {
             if (!mock) return null;
-            if (mock.type === 'link' && mock.href) {
-                const label = mock.label || deriveFileNameFromLink(mock.href);
-                return `Подменить тело ответа ${mock.endpoint} на [${label}](${mock.href})`;
-            }
             if (mock.type === 'inline' && mock.inlineJson) {
                 const trimmed = mock.inlineJson.trim();
                 const limited = trimmed.length > 800 ? `${trimmed.slice(0, 800)}…` : trimmed;
