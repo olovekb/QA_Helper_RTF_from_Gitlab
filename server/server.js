@@ -2933,7 +2933,7 @@ function buildSubmitModelTool() {
                                                         id: { type: "string", description: "UUID Scenario" },
                                                         text: {
                                                             type: "string",
-                                                            description: "Действие пользователя, начинается с 'N. Глагол...'"
+                                                            description: "Действие пользователя (глагол в повелительном наклонении)"
                                                         },
                                                         codes: {
                                                             type: "array",
@@ -3245,7 +3245,7 @@ ${logicSection ? `\n${logicSection}\n` : ''}
         "scenarios": [
           {
             "id": "uuid",
-            "text": "1. Действие пользователя",
+            "text": "Действие пользователя",
             "codes": [
               {"id": "uuid", "text": "Поведение системы", "type": "frontend|backend|integration"}
             ]
@@ -3582,7 +3582,7 @@ ${requirements.substring(0, 3000)}
   "scenarios": [
     {
       "id": "${scenarios[0]?.id || uuidv4()}",
-      "text": "1. Объединённое действие...",
+      "text": "Объединённое действие...",
       "codes": [
         {
           "id": "${scenarios[0]?.codes?.[0]?.id || uuidv4()}",
@@ -3748,7 +3748,6 @@ function mergeDetailedScenarios(model) {
 
             // Объединяем группы в логические Scenarios
             const mergedScenarios = [];
-            let scenarioNumber = 1;
 
             // Группа 1: Навигация (открытие страниц) - объединяем в один
             if (groups.has('navigation')) {
@@ -3765,10 +3764,9 @@ function mergeDetailedScenarios(model) {
                 }
                 mergedScenarios.push({
                     id: navScenarios[0].id || uuidv4(),
-                    text: `${scenarioNumber}. Открыть страницу`,
+                    text: `Открыть страницу`,
                     codes: uniqueCodes
                 });
-                scenarioNumber++;
                 mergedCount += navScenarios.length - 1;
             }
 
@@ -3787,10 +3785,9 @@ function mergeDetailedScenarios(model) {
                 }
                 mergedScenarios.push({
                     id: checkboxScenarios[0].id || uuidv4(),
-                    text: `${scenarioNumber}. Работа с чек-боксом`,
+                    text: `Работа с чек-боксом`,
                     codes: uniqueCodes
                 });
-                scenarioNumber++;
                 mergedCount += checkboxScenarios.length - 1;
             }
 
@@ -3809,10 +3806,9 @@ function mergeDetailedScenarios(model) {
                 }
                 mergedScenarios.push({
                     id: buttonScenarios[0].id || uuidv4(),
-                    text: `${scenarioNumber}. Нажать кнопку`,
+                    text: `Нажать кнопку`,
                     codes: uniqueCodes
                 });
-                scenarioNumber++;
                 mergedCount += buttonScenarios.length - 1;
             }
 
@@ -3831,20 +3827,19 @@ function mergeDetailedScenarios(model) {
                 }
                 mergedScenarios.push({
                     id: viewEditScenarios[0].id || uuidv4(),
-                    text: `${scenarioNumber}. Просмотр/редактирование документа`,
+                    text: `Просмотр/редактирование документа`,
                     codes: uniqueCodes
                 });
-                scenarioNumber++;
                 mergedCount += viewEditScenarios.length - 1;
             }
 
-            // Остальные Scenarios добавляем как есть
+            // Остальные Scenarios добавляем как есть (убираем нумерацию если есть)
             for (const [actionType, scenarios] of groups.entries()) {
                 if (!['navigation', 'checkbox', 'button', 'view_edit'].includes(actionType)) {
                     for (const scenario of scenarios) {
-                        scenario.text = scenario.text.replace(/^\d+\.\s*/, `${scenarioNumber}. `);
+                        // Убираем нумерацию если она есть
+                        scenario.text = scenario.text.replace(/^\d+\.\s*/, '').trim();
                         mergedScenarios.push(scenario);
-                        scenarioNumber++;
                     }
                 }
             }
@@ -4807,13 +4802,13 @@ Feature → Story → Scenario → Code
   🚨 КРИТИЧНО: Scenario = АТОМАРНОЕ действие (один клик/ввод/выбор), НЕ последовательность!
   Scenario описывает ОДНО действие пользователя, которое триггерит реакцию системы.
   
-  ✅ "1. Нажать на кнопку 'Безбумажный офис'"
-  ✅ "2. Выбрать чекбокс 'УНК в другом банке'"
-  ✅ "3. Ввести ОТП-код в модальное окно"
-  ✅ "4. Кликнуть на товар из списка"
-  ✅ "5. Выбрать способ оплаты 'Карта'"
-  ✅ "6. Ввести номер телефона в поле ввода"
-  ✅ "7. Выбрать статус 'Активен' из выпадающего списка"
+  ✅ "Нажать на кнопку 'Безбумажный офис'"
+  ✅ "Выбрать чекбокс 'УНК в другом банке'"
+  ✅ "Ввести ОТП-код в модальное окно"
+  ✅ "Кликнуть на товар из списка"
+  ✅ "Выбрать способ оплаты 'Карта'"
+  ✅ "Ввести номер телефона в поле ввода"
+  ✅ "Выбрать статус 'Активен' из выпадающего списка"
   
   ❌ "Открыть окно, выбрать статус и отфильтровать список" - ЭТО 3 ДЕЙСТВИЯ! Раздели на 3 Scenario!
   ❌ "Нажать 'Создать', заполнить форму и получить ошибку" - ЭТО 2 ДЕЙСТВИЯ! Раздели на 2 Scenario!
@@ -4841,9 +4836,9 @@ Feature → Story → Scenario → Code
   ✅ "Отменить удаление изображения из категории" - ОК, если это явное действие (клик на кнопку "Отмена")
   
   🚨 КРИТИЧНО: Scenario = действие пользователя, НЕ поведение системы!
-  ❌ "4. Отобразить кнопку 'Загрузить своё' при отсутствии результатов поиска" - НЕПРАВИЛЬНО!
+  ❌ "Отобразить кнопку 'Загрузить своё' при отсутствии результатов поиска" - НЕПРАВИЛЬНО!
      Это поведение системы, НЕ действие пользователя! Это должно быть в Code, а НЕ в Scenario!
-  ✅ Правильно: "4. Ввести несуществующее значение в поле поиска" (действие пользователя)
+  ✅ Правильно: "Ввести несуществующее значение в поле поиска" (действие пользователя)
      А "Отобразить кнопку..." - это Code (поведение системы)!
   
   ПРИМЕРЫ ИСПРАВЛЕНИЙ:
@@ -5024,7 +5019,7 @@ Feature → Story → Scenario → Code
 ВАЖНО:
 - НЕТ поля "requirement" НА ВСЕХ УРОВНЯХ!
 - Code = массив объектов с id + text
-- Scenario.text ВСЕГДА начинается с номера "N."
+- Scenario.text = действие пользователя (глагол в повелительном наклонении, БЕЗ нумерации)
 - Code.text = конкретное поведение системы БЕЗ префиксов
 
 ═══════════════════════════════════════════════════════════════
@@ -5032,7 +5027,7 @@ Feature → Story → Scenario → Code
 ═══════════════════════════════════════════════════════════════
 
 ПРИМЕР 1: Scenario с Frontend + Backend вместе
-Scenario: "4. Нажать на кнопку 'Подтвердить'"
+Scenario: "Нажать на кнопку 'Подтвердить'"
 codes: [
   {"id": "...", "text": "Показать лоадер на кнопке 'Подтвердить'"},
   {"id": "...", "text": "PUT /nopaper/user"},
@@ -5041,7 +5036,7 @@ codes: [
 ]
 
 ПРИМЕР 2: Scenario с цепочкой методов
-Scenario: "6. Нажать на кнопку 'Продолжить'"
+Scenario: "Нажать на кнопку 'Продолжить'"
 codes: [
   {"id": "...", "text": "GET /stateful/personal/kuban/noPaper/secretCodeAsync"},
   {"id": "...", "text": "Вызвать метод auth()"},
@@ -5051,7 +5046,7 @@ codes: [
 ]
 
 ПРИМЕР 3: Scenario с условной логикой
-Scenario: "1. Нажать на кнопку 'Безбумажный офис'"
+Scenario: "Нажать на кнопку 'Безбумажный офис'"
 codes: [
   {"id": "...", "text": "GET /stateful/personal/kuban/client/info/v2"},
   {"id": "...", "text": "Отобразить страницу 'Электронная почта не найдена' или 'Письмо отправлено'"}
@@ -5073,9 +5068,9 @@ codes: [
 ❌ {"text": "GET /info/v2", "requirement": "2.2.1"}
 ✅ {"text": "GET /info/v2"}
 
-ОШИБКА 4: Scenario без номера
-❌ "Нажать на кнопку 'Подтвердить'"
-✅ "4. Нажать на кнопку 'Подтвердить'"
+ОШИБКА 4: Scenario с нумерацией (не нужно!)
+❌ "1. Нажать на кнопку 'Подтвердить'" (с нумерацией - не нужно!)
+✅ "Нажать на кнопку 'Подтвердить'" (без нумерации)
 
 ═══════════════════════════════════════════════════════════════
 🛡️ ЗАПРЕТЫ
@@ -5259,10 +5254,10 @@ ${logicSectionForSingleChunk ? `\n${logicSectionForSingleChunk}\n` : ''}
    Story должна описывать ЧТО хочет получить пользователь, а НЕ техническую реализацию!
 
 3. SCENARIO = ДЕЙСТВИЕ ПОЛЬЗОВАТЕЛЯ:
-   - ВСЕГДА начинается с "N. Глагол..." (где N - номер)
-   ✅ "1. Нажать на кнопку 'Создать QR-код'"
-   ✅ "2. Выбрать тип QR-кода"
-   ❌ "Нажать на кнопку" (без номера)
+   - Глагол в повелительном наклонении, БЕЗ нумерации
+   ✅ "Нажать на кнопку 'Создать QR-код'"
+   ✅ "Выбрать тип QR-кода"
+   ❌ "1. Нажать на кнопку" (с нумерацией - не нужно!)
    ❌ "Проверить поле" (проверка не действие пользователя)
 
 4. CODE = ПОВЕДЕНИЕ СИСТЕМЫ:
@@ -5616,7 +5611,7 @@ ${reqChunk}`;
                         }
 
                         if (scenarioIssues.length > 0) {
-                            escalationDetails.push(`\n🚨 ПРОБЛЕМЫ С SCENARIO:\n${scenarioIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}\n\nПРАВИЛО: Scenario = ДЕЙСТВИЕ ПОЛЬЗОВАТЕЛЯ, ВСЕГДА начинается с "N. Глагол..."\n✅ "1. Нажать на кнопку 'Безбумажный офис'", "2. Выбрать чекбокс 'УНК в другом банке'"\n❌ "Нажать на кнопку" (без номера), "Проверить поле" (проверка не действие)`);
+                            escalationDetails.push(`\n🚨 ПРОБЛЕМЫ С SCENARIO:\n${scenarioIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}\n\nПРАВИЛО: Scenario = ДЕЙСТВИЕ ПОЛЬЗОВАТЕЛЯ (глагол в повелительном наклонении, БЕЗ нумерации)\n✅ "Нажать на кнопку 'Безбумажный офис'", "Выбрать чекбокс 'УНК в другом банке'"\n❌ "1. Нажать на кнопку" (с нумерацией - не нужно!), "Проверить поле" (проверка не действие)`);
                         }
 
                         if (codeIssues.length > 0) {
@@ -6040,7 +6035,7 @@ ${chunkReq}
 1. СТРУКТУРА
    - Feature: высокоуровневая функциональность
    - Story: пользовательская история (НЕ техническая реализация!)
-   - Scenario: действие пользователя (ВСЕГДА начинается с "N. Глагол...")
+   - Scenario: действие пользователя (глагол в повелительном наклонении, БЕЗ нумерации)
    - Code: поведение системы после действия
 
 2. CODE = ПОВЕДЕНИЕ СИСТЕМЫ
@@ -6051,7 +6046,7 @@ ${chunkReq}
    - Интеграции: "Отправить push-уведомление", "Сохранить в БД"
 
 3. ОДИН SCENARIO → НЕСКОЛЬКО CODE
-   Scenario "4. Нажать на кнопку 'Подтвердить'":
+   Scenario "Нажать на кнопку 'Подтвердить'":
    codes: [
      "Показать лоадер на кнопке 'Подтвердить'",
      "PUT /nopaper/user",
@@ -12896,7 +12891,7 @@ ${isNegativePass ? `
             )) {
                 console.log(`[generate-test-cases-async] === ВТОРОЙ ПРОХОД: Генерация негативных и граничных тестов ===`);
                 
-                const negativeCases = [];
+                let negativeCases = [];
                 for (let i = 0; i < storyChunks.length; i++) {
                     const chunk = storyChunks[i];
                     const storyText = chunk[0].stories[0].text;

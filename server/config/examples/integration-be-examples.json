@@ -5,7 +5,7 @@
     "layer": "Integration backend Tests",
     "feature": "Безбумажный офис",
     "story": "Регистрация в ББО",
-    "scenario": "1. Нажать на кнопку \"Безбумажный офис\"",
+    "scenario": "Нажать на кнопку \"Безбумажный офис\"",
     "precondition": "",
     "steps": [
       "Выполнить GET **/stateful/personal/kuban/client/info/v2**"
@@ -21,7 +21,7 @@
     "layer": "Integration backend Tests",
     "feature": "Безбумажный офис",
     "story": "Регистрация в ББО",
-    "scenario": "5. Ввести ОТП-код",
+    "scenario": "Ввести ОТП-код",
     "precondition": "",
     "steps": [
       "Выполнить POST **/confirm/code/check** с телом запроса: {\"code\": \"{{ОТП-код}}\"}"

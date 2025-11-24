@@ -313,3 +313,5 @@ const enhancedPrompt = NO_HALLUCINATIONS_RULE + originalPrompt;
 *Создано: 18 ноября 2025*
 *Версия: 2.2.0 - Правило "НЕ ВЫДУМЫВАЙ!"*
 
+
+
