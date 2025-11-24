@@ -8396,6 +8396,83 @@ function autoParameterizeSimilarTests(testCases) {
     return result;
 }
 
+function deduplicateTestCases(testCases, stage = 'final') {
+    if (!Array.isArray(testCases) || testCases.length === 0) {
+        return Array.isArray(testCases) ? testCases : [];
+    }
+
+    const normalize = (text) => String(text || '')
+        .toLowerCase()
+        .replace(/[^a-zа-я0-9]+/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const stepToText = (step) => {
+        if (typeof step === 'string') return step;
+        if (step && typeof step === 'object') {
+            if (step.text) return step.text;
+            if (step.body) return step.body;
+        }
+        return JSON.stringify(step ?? '');
+    };
+
+    const buildSignature = (testCase) => {
+        const paramsSignature = (testCase.parameters || [])
+            .map(p => `${p.name}:${(p.values || []).sort().join(',')}`)
+            .sort()
+            .join('|');
+
+        return [
+            normalize(testCase.layer),
+            normalize(testCase.feature),
+            normalize(testCase.story),
+            normalize(testCase.scenario),
+            normalize(testCase.title),
+            (testCase.steps || []).map(step => normalize(stepToText(step))).join('|'),
+            normalize(testCase.expected),
+            `PARAMS[${paramsSignature}]`
+        ].join('::');
+    };
+
+    const seenSignatures = new Map();
+    const usedIds = new Set();
+    let removed = 0;
+    let reassignedIds = 0;
+    const uniqueCases = [];
+
+    for (const original of testCases) {
+        if (!original) continue;
+        const testCase = { ...original };
+
+        if (!testCase.id || usedIds.has(testCase.id)) {
+            const oldId = testCase.id;
+            testCase.id = uuidv4();
+            reassignedIds++;
+            if (oldId) {
+                console.warn(`[deduplicateTestCases:${stage}] Обнаружен повторяющийся ID "${oldId}", сгенерирован новый: ${testCase.id}`);
+            }
+        }
+        usedIds.add(testCase.id);
+
+        const signature = buildSignature(testCase);
+        if (seenSignatures.has(signature)) {
+            removed++;
+            continue;
+        }
+
+        seenSignatures.set(signature, testCase.id);
+        uniqueCases.push(testCase);
+    }
+
+    if (removed > 0 || reassignedIds > 0) {
+        console.log(`[deduplicateTestCases:${stage}] ✅ Удалено ${removed} дублей, переназначено ${reassignedIds} ID из ${testCases.length} тестов (итого ${uniqueCases.length})`);
+    } else {
+        console.log(`[deduplicateTestCases:${stage}] ✅ Дубликатов не найдено (всего ${testCases.length})`);
+    }
+
+    return uniqueCases;
+}
+
 /**
  * Проверяет, похожи ли два теста (одинаковая логика, разные значения)
  */
@@ -12775,6 +12852,12 @@ ${includeBackendTests ? '- После Integration frontend создай Integrat
 ${includeBackendTests ? '- Integration backend: tags = [\'S\'] (обязательно)!\n' : '🚨 КРИТИЧНО: Integration backend тесты ЗАПРЕЩЕНЫ! НЕ создавай их!\n'}
 - Integration frontend: tags = ['D'] или ['M'] или ['D', 'M'], НЕ используй 'S'!
 
+🚨 ЗАПРЕТ ДУБЛИКАТОВ:
+- ❌ НЕ создавай два теста с одинаковыми steps/expected/layer/story/scenario!
+- ❌ НЕ копируй E2E тесты ради разных дат/данных — используй parameters или examples!
+- ✅ Каждый тест = уникальная комбинация "layer + story + scenario + steps + expected".
+- ✅ Если нужно проверить несколько значений → параметризуй внутри одного теста!
+
 🚨 ПРАВИЛА PRECONDITION:
 - Integration frontend Tests: ОБЯЗАТЕЛЬНО добавь precondition с описанием состояния UI!
 ${includeBackendTests ? '- Integration backend Tests: ОБЯЗАТЕЛЬНО добавь precondition с описанием состояния сервера!\n' : ''}
@@ -13212,6 +13295,7 @@ ${isNegativePass ? `
             // === sanitize → fixAgainstModel до аудита покрытия ===
             const idx = buildModelIndex(modelStructure);
             allCases = sanitize(allCases, undefined, modelStructure);
+            allCases = deduplicateTestCases(allCases, 'post-sanitize');
 
             // Обновляем progress после sanitize
             await db('generation_tasks').where('id', taskId).update({
@@ -13329,6 +13413,7 @@ ${isNegativePass ? `
 
         // Автоматическая параметризация похожих тестов
         finalTestCases = autoParameterizeSimilarTests(finalTestCases);
+        finalTestCases = deduplicateTestCases(finalTestCases, 'pre-validation');
 
         // Автоматически добавляем precondition для mock-эндпоинтов Integration frontend тестов
         finalTestCases = applyMockPreconditions(finalTestCases, storyMockHints);
@@ -13477,6 +13562,8 @@ ${isNegativePass ? `
                 // Продолжаем с исходными тест-кейсами
             }
         }
+
+        finalTestCases = deduplicateTestCases(finalTestCases, 'post-regeneration');
 
         // ✅ НОВОЕ: Рассчитываем покрытие Scenarios тест-кейсами
         if (modelStructure && finalTestCases.length > 0) {
