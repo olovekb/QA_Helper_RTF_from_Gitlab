@@ -1113,6 +1113,25 @@ export default function SolutionPage({ projects = [] }) {
     setReviewModalOpen(false);
   };
 
+  // Очищает все сохраненные состояния ревью тест-кейсов в localStorage
+  const clearReviewState = useCallback(() => {
+    try {
+      const keysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('testCasesReview_')) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach(key => localStorage.removeItem(key));
+      if (keysToRemove.length > 0) {
+        console.log(`Очищено ${keysToRemove.length} сохраненных состояний модалки тест-кейсов`);
+      }
+    } catch (err) {
+      console.warn('Ошибка при очистке localStorage модалки:', err);
+    }
+  }, []);
+
   // Функция для очистки состояния тест-кейсов
   const handleClearTestCases = useCallback(() => {
     if (window.confirm('Вы уверены, что хотите удалить все сгенерированные тест-кейсы? Это действие нельзя отменить.')) {
@@ -1124,23 +1143,7 @@ export default function SolutionPage({ projects = [] }) {
       
       // Очищаем сохраненные данные
       localStorage.removeItem('generatedTestCases');
-      
-      // Очищаем все сохраненные состояния модалки просмотра тест-кейсов
-      try {
-        const keysToRemove = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key && key.startsWith('testCasesReview_')) {
-            keysToRemove.push(key);
-          }
-        }
-        keysToRemove.forEach(key => localStorage.removeItem(key));
-        if (keysToRemove.length > 0) {
-          console.log(`Очищено ${keysToRemove.length} сохраненных состояний модалки тест-кейсов`);
-        }
-      } catch (err) {
-        console.warn('Ошибка при очистке localStorage модалки:', err);
-      }
+      clearReviewState();
       
       // Очищаем данные из IndexedDB
       idbSet('generationTaskId', null).catch(console.warn);
@@ -1150,7 +1153,7 @@ export default function SolutionPage({ projects = [] }) {
       
       console.log('Состояние тест-кейсов очищено');
     }
-  }, []);
+  }, [clearReviewState]);
 
   // Функция для очистки состояния тестовой модели
   const handleClearTestModel = useCallback(() => {
@@ -1913,6 +1916,7 @@ export default function SolutionPage({ projects = [] }) {
         setReviewModalOpen={setReviewModalOpen}
         onClearTestCases={handleClearTestCases}
         onClearTestModel={handleClearTestModel}
+        clearReviewState={clearReviewState}
       />
       
 

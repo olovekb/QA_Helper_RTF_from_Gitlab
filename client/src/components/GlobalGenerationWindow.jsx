@@ -90,7 +90,8 @@ const GlobalGenerationWindow = ({
   reviewModalOpen,
   setReviewModalOpen,
   onClearTestCases,
-  onClearTestModel
+  onClearTestModel,
+  clearReviewState
 }) => {
   const location = useLocation();
   
@@ -155,6 +156,9 @@ const GlobalGenerationWindow = ({
       );
       
       // Очищаем предыдущие результаты при новой генерации
+      if (typeof clearReviewState === 'function') {
+        clearReviewState();
+      }
       setGeneratedCases([]);
       localStorage.removeItem('generatedTestCases');
       
