@@ -5416,7 +5416,7 @@ ${reqStringForModel}
 
             // Модифицируем промпт для чанков (Domain Driven Testing)
             const logicSectionForChunk = logicConstraints ? formatLogicConstraintsForPrompt(logicConstraints) : '';
-            
+
             let userPrompt = `
 📋 ЗАДАНИЕ: Создай тестовую модель Feature → Story → Scenario → Code (Domain Driven Testing)
 
@@ -5512,7 +5512,7 @@ ${reqChunk}`;
             } else {
                 // Для одного чанка - явно просим генерировать ПОЛНУЮ модель (Domain Driven Testing)
                 const logicSectionForSingleChunk = logicConstraints ? formatLogicConstraintsForPrompt(logicConstraints) : '';
-                
+
                 userPrompt = `🚨 КРИТИЧЕСКИ ВАЖНО: ГЕНЕРИРУЙ ПОЛНУЮ ТЕСТОВУЮ МОДЕЛЬ! 🚨
 
 📋 ЗАДАНИЕ: Создай ПОЛНУЮ тестовую модель Feature → Story → Scenario → Code (Domain Driven Testing)
@@ -6555,11 +6555,11 @@ ${escalationPrompt}`;
             // Если столбец metrics не существует - сохраняем без метрик
             // Проверяем как русский, так и английский вариант ошибки
             const errorMsg = error.message || '';
-            const isMetricsColumnError = 
-                errorMsg.includes('столбец "metrics"') || 
+            const isMetricsColumnError =
+                errorMsg.includes('столбец "metrics"') ||
                 errorMsg.includes('column "metrics"') ||
                 (errorMsg.includes('metrics') && (errorMsg.includes('does not exist') || errorMsg.includes('doesn\'t exist')));
-            
+
             if (isMetricsColumnError) {
                 console.warn('[generateTestModelAsync] Столбец metrics не существует, сохраняю без метрик');
                 await db('generation_tasks').where('id', taskId).update(updateData);
@@ -7701,9 +7701,9 @@ ${userPrompt}`;
                 },
                 finalToolNames: ['submit_fixed_cases'],
                 modelOptions: {
-                        maxIterations: 5,
+                    maxIterations: 5,
                     temperature: 0,
-                        top_p: 0.1,
+                    top_p: 0.1,
                     max_tokens: 45000,
                     extra: { transforms: 'middle-out' }
                 },
@@ -7813,7 +7813,7 @@ ${userPrompt}`;
                 fixedCases.forEach(fixedCase => {
                     // ✅ КРИТИЧНО: Ищем старый тест-кейс по ID
                     let index = allFixedCases.findIndex(tc => tc.id === fixedCase.id);
-                    
+
                     // ✅ FALLBACK: Если не нашли по ID, ищем по логической сигнатуре (title + feature + story + scenario)
                     if (index === -1) {
                         const found = findTestCaseBySignature(allFixedCases, fixedCase);
@@ -7824,7 +7824,7 @@ ${userPrompt}`;
                             fixedCase.id = allFixedCases[index].id;
                         }
                     }
-                    
+
                     if (index !== -1) {
                         // ✅ ЗАМЕНЯЕМ старый тест-кейс на исправленный
                         const originalCase = originalCasesMap.get(fixedCase.id) || allFixedCases[index];
@@ -9001,12 +9001,12 @@ function smartMergeTestCases(originalCases, newCases, registry) {
 
         // Проверяем дубликаты через реестр
         const duplicate = registry.checkDuplicate(newCase);
-        
+
         if (duplicate) {
             // Найден дубликат - заменяем существующий
             const existingId = duplicate.existingId;
             const existingIndex = result.findIndex(tc => tc.id === existingId);
-            
+
             if (existingIndex !== -1) {
                 const existing = result[existingIndex];
                 const existingStepsCount = (existing.steps || []).length;
@@ -9015,7 +9015,7 @@ function smartMergeTestCases(originalCases, newCases, registry) {
                 const newExpectedLength = String(newCase.expected || '').length;
 
                 // Заменяем если новый кейс лучше (больше шагов или более полный expected)
-                if (newStepsCount > existingStepsCount || 
+                if (newStepsCount > existingStepsCount ||
                     (newStepsCount === existingStepsCount && newExpectedLength > existingExpectedLength)) {
                     result[existingIndex] = { ...newCase, id: existingId }; // Сохраняем оригинальный ID
                     registry.replace(existingId, newCase);
@@ -9093,7 +9093,7 @@ function deduplicateTestCases(testCases, stage = 'final') {
             `PARAMS[${paramsSignature}]`
         ].join('::');
     };
-    
+
     // ✅ СТРОГАЯ сигнатура для точной дедупликации (С учетом steps и expected)
     const buildStrictSignature = (testCase) => {
         const layer = normalize(testCase.layer);
@@ -9144,16 +9144,16 @@ function deduplicateTestCases(testCases, stage = 'final') {
             // Найден дубликат по базовой сигнатуре - проверяем, какой тест-кейс лучше (с более полными шагами)
             const existingId = seenSignatures.get(signature);
             const existingIndex = uniqueCases.findIndex(tc => tc.id === existingId);
-            
+
             if (existingIndex !== -1) {
                 const existing = uniqueCases[existingIndex];
                 const existingStepsCount = (existing.steps || []).length;
                 const newStepsCount = (testCase.steps || []).length;
                 const existingExpectedLength = String(existing.expected || '').length;
                 const newExpectedLength = String(testCase.expected || '').length;
-                
+
                 // Оставляем тест-кейс с более полными шагами и expected
-                if (newStepsCount > existingStepsCount || 
+                if (newStepsCount > existingStepsCount ||
                     (newStepsCount === existingStepsCount && newExpectedLength > existingExpectedLength)) {
                     // Новый тест-кейс лучше - заменяем старый
                     uniqueCases[existingIndex] = testCase;
@@ -10715,10 +10715,10 @@ ${JSON.stringify(pc.testCase, null, 2)}
                                         // ✅ КРИТИЧНО: Заменяем старый тест-кейс на исправленный, сохраняя оригинальный ID
                                         const fixedCase = retryArgs.cases[0];
                                         fixedCase.id = pc.testCase.id; // Сохраняем оригинальный ID
-                                        
+
                                         // Ищем старый тест-кейс в fixedCases по ID или по логической сигнатуре
                                         let oldCaseIndex = fixedCases.findIndex(tc => tc.id === pc.testCase.id);
-                                        
+
                                         // Если не нашли по ID, ищем по логической сигнатуре
                                         if (oldCaseIndex === -1) {
                                             const found = findTestCaseBySignature(fixedCases, pc.testCase);
@@ -10726,15 +10726,15 @@ ${JSON.stringify(pc.testCase, null, 2)}
                                                 oldCaseIndex = found.index;
                                             }
                                         }
-                                        
+
                                         if (oldCaseIndex !== -1) {
                                             // ✅ ЗАМЕНЯЕМ старый тест-кейс на исправленный
                                             fixedCases[oldCaseIndex] = fixedCase;
                                         } else {
                                             // Если не нашли - заменяем по индексу (fallback)
-                                        fixedCases[pc.index] = fixedCase;
+                                            fixedCases[pc.index] = fixedCase;
                                         }
-                                        
+
                                         console.log(`[regenerateTestCasesWithFixes] ✅ Исправлен семантический дефект в тест-кейсе "${pc.testCase.title}" (ID: ${pc.testCase.id})`);
                                     } else {
                                         console.warn(`[regenerateTestCasesWithFixes] ⚠️ Не удалось исправить семантический дефект в "${pc.testCase.title}", оставляем исходный`);
@@ -13415,11 +13415,11 @@ create_shared_step({
                             }
                             // Добавляем новый ID в множество использованных
                             usedIds.add(testCaseId);
-                            
+
                             allTestCases.push({
                                 id: testCaseId, // ✅ Гарантированно уникальный ID
                                 title: testCase.title,
-                                steps: steps, 
+                                steps: steps,
                                 expected: testCase.expected,
                                 layer: testCase.layer,
                                 feature: testCase.feature,
@@ -13573,7 +13573,7 @@ create_shared_step({
             const examplesSection = buildExamplesSection(examples);
 
             // ✅ Форматируем логику и ограничения для промпта (если есть)
-            const logicConstraintsSection = logicConstraints 
+            const logicConstraintsSection = logicConstraints
                 ? formatLogicConstraintsForPrompt(logicConstraints)
                 : '';
 
@@ -13751,19 +13751,19 @@ ${isNegativePass ? `
                     const totalLimit = 15; // Общий лимит: 1-2 E2E + 8-12 Integration = 10-15
                     const maxIntegration = 12; // Максимум Integration тестов
                     const maxE2E = 2; // Максимум E2E тестов
-                    
+
                     // Фильтруем E2E (максимум 2)
                     const filteredE2E = e2eCases.slice(0, maxE2E);
                     if (e2eCases.length > maxE2E) {
                         console.warn(`[genForChunkOptimized] ⚠️ E2E тестов больше лимита (${e2eCases.length} > ${maxE2E}), оставляю первые ${maxE2E}`);
                     }
-                    
+
                     // Фильтруем Integration по приоритетам (максимум 12)
                     let filteredIntegration = integrationCases;
                     if (integrationCases.length > maxIntegration) {
                         console.warn(`[genForChunkOptimized] ⚠️ ПРЕВЫШЕН ЛИМИТ Integration! Получено ${integrationCases.length} (ожидалось ≤${maxIntegration})`);
                         console.warn(`[genForChunkOptimized] 💡 Применяю фильтрацию по приоритетам...`);
-                        
+
                         // Сортируем Integration тесты по приоритету:
                         // 1. Позитивные тесты (без слов "негатив", "ошибка", "невалид", "граничн" в title)
                         // 2. Негативные с параметризацией (есть examples)
@@ -13775,18 +13775,18 @@ ${isNegativePass ? `
                             const bIsPositive = !bTitle.includes('негатив') && !bTitle.includes('ошибка') && !bTitle.includes('невалид') && !bTitle.includes('граничн');
                             const aHasParams = Array.isArray(a.examples) && a.examples.length > 0;
                             const bHasParams = Array.isArray(b.examples) && b.examples.length > 0;
-                            
+
                             if (aIsPositive && !bIsPositive) return -1;
                             if (!aIsPositive && bIsPositive) return 1;
                             if (aHasParams && !bHasParams) return -1;
                             if (!aHasParams && bHasParams) return 1;
                             return 0;
                         });
-                        
+
                         filteredIntegration = sortedIntegration.slice(0, maxIntegration);
                         console.warn(`[genForChunkOptimized] ✅ Оставлено ${filteredIntegration.length} Integration тестов (приоритетные)`);
                     }
-                    
+
                     // Объединяем и проверяем общий лимит
                     cases = [...filteredE2E, ...filteredIntegration];
                     if (cases.length > totalLimit) {
@@ -13814,7 +13814,7 @@ ${isNegativePass ? `
                             console.log(`[genForChunkOptimized] ✅ Реестр отфильтровал ${beforeCount - cases.length} дублей (осталось ${cases.length})`);
                         }
                     }
-                    
+
                     if (e2eCases.length > maxE2E || integrationCases.length > maxIntegration || cases.length > totalLimit) {
                         console.warn(`[genForChunkOptimized] ✅ После фильтрации: ${filteredE2E.length} E2E + ${filteredIntegration.length} Integration = ${cases.length} тестов`);
                     }
@@ -13853,19 +13853,19 @@ ${isNegativePass ? `
                     const totalLimit = 15; // Общий лимит: 1-2 E2E + 8-12 Integration = 10-15
                     const maxIntegration = 12; // Максимум Integration тестов
                     const maxE2E = 2; // Максимум E2E тестов
-                    
+
                     // Фильтруем E2E (максимум 2)
                     const filteredE2E = e2eCases.slice(0, maxE2E);
                     if (e2eCases.length > maxE2E) {
                         console.warn(`[genForChunkOptimized] ⚠️ E2E тестов больше лимита (${e2eCases.length} > ${maxE2E}), оставляю первые ${maxE2E}`);
                     }
-                    
+
                     // Фильтруем Integration по приоритетам (максимум 12)
                     let filteredIntegration = integrationCases;
                     if (integrationCases.length > maxIntegration) {
                         console.warn(`[genForChunkOptimized] ⚠️ ПРЕВЫШЕН ЛИМИТ Integration! Получено ${integrationCases.length} (ожидалось ≤${maxIntegration})`);
                         console.warn(`[genForChunkOptimized] 💡 Применяю фильтрацию по приоритетам...`);
-                        
+
                         // Сортируем Integration тесты по приоритету:
                         // 1. Позитивные тесты (без слов "негатив", "ошибка", "невалид", "граничн" в title)
                         // 2. Негативные с параметризацией (есть examples)
@@ -13877,18 +13877,18 @@ ${isNegativePass ? `
                             const bIsPositive = !bTitle.includes('негатив') && !bTitle.includes('ошибка') && !bTitle.includes('невалид') && !bTitle.includes('граничн');
                             const aHasParams = Array.isArray(a.examples) && a.examples.length > 0;
                             const bHasParams = Array.isArray(b.examples) && b.examples.length > 0;
-                            
+
                             if (aIsPositive && !bIsPositive) return -1;
                             if (!aIsPositive && bIsPositive) return 1;
                             if (aHasParams && !bHasParams) return -1;
                             if (!aHasParams && bHasParams) return 1;
                             return 0;
                         });
-                        
+
                         filteredIntegration = sortedIntegration.slice(0, maxIntegration);
                         console.warn(`[genForChunkOptimized] ✅ Оставлено ${filteredIntegration.length} Integration тестов (приоритетные)`);
                     }
-                    
+
                     // Объединяем и проверяем общий лимит
                     cases = [...filteredE2E, ...filteredIntegration];
                     if (cases.length > totalLimit) {
@@ -13916,7 +13916,7 @@ ${isNegativePass ? `
                             console.log(`[genForChunkOptimized] ✅ Реестр отфильтровал ${beforeCount - cases.length} дублей (осталось ${cases.length})`);
                         }
                     }
-                    
+
                     if (e2eCases.length > maxE2E || integrationCases.length > maxIntegration || cases.length > totalLimit) {
                         console.warn(`[genForChunkOptimized] ✅ После фильтрации: ${filteredE2E.length} E2E + ${filteredIntegration.length} Integration = ${cases.length} тестов`);
                     }
@@ -13966,10 +13966,10 @@ ${isNegativePass ? `
             console.log(`[generate-test-cases-async] === Извлечение логики и ограничений ===`);
             let logicConstraints = null;
             try {
-                const requirementsText = Array.isArray(refinedReqs) 
-                    ? refinedReqs.join('\n\n') 
+                const requirementsText = Array.isArray(refinedReqs)
+                    ? refinedReqs.join('\n\n')
                     : (typeof refinedReqs === 'string' ? refinedReqs : '');
-                
+
                 if (requirementsText && requirementsText.trim().length > 100) {
                     logicConstraints = await extractLogicAndConstraints(requirementsText);
                     console.log(`[generate-test-cases-async] ✅ Извлечено ограничений: ${logicConstraints.validations.length} валидаций, ${logicConstraints.boundary_values.length} граничных значений, ${logicConstraints.negative_scenarios.length} негативных сценариев`);
@@ -14125,16 +14125,16 @@ ${isNegativePass ? `
                 logicConstraints.dependencies.length > 0
             )) {
                 console.log(`[generate-test-cases-async] === ВТОРОЙ ПРОХОД: Генерация негативных и граничных тестов ===`);
-                
+
                 let negativeCases = [];
                 for (let i = 0; i < storyChunks.length; i++) {
                     const chunk = storyChunks[i];
                     const storyText = chunk[0].stories[0].text;
                     const currentFeature = chunk[0].text;
                     const mode = chunk[0].stories[0]._mode;
-                    
+
                     console.log(`[generate-test-cases-async] 🔄 Второй проход для Chunk ${i + 1}/${storyChunks.length}: "${storyText}"`);
-                    
+
                     try {
                         const negativeResult = await genForChunkOptimized(
                             chunk,
@@ -14149,7 +14149,7 @@ ${isNegativePass ? `
                             includeBackendTests, // ✅ Передаём флаг включения backend тестов
                             signatureRegistry // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Передаём глобальный реестр сигнатур
                         );
-                        
+
                         if (negativeResult && negativeResult.length > 0) {
                             negativeCases.push(...negativeResult);
                             console.log(`[generate-test-cases-async] ✅ Второй проход для Chunk ${i + 1}: ${negativeResult.length} негативных тестов`);
@@ -14159,7 +14159,7 @@ ${isNegativePass ? `
                         // Продолжаем без негативных тестов для этого chunk
                     }
                 }
-                
+
                 if (negativeCases.length > 0) {
                     // ✅ ФИЛЬТРАЦИЯ: Удаляем Integration backend тесты из негативных, если флаг выключен
                     if (!includeBackendTests) {
@@ -14170,8 +14170,11 @@ ${isNegativePass ? `
                             console.log(`[generate-test-cases-async] 🚫 Удалено ${removedCount} Integration backend тестов из негативных (includeBackendTests=false)`);
                         }
                     }
-                    
-                    allCases.push(...negativeCases);
+
+                    for (const testCase of negativeCases) {
+                        smartMergeTestCases(allCases, testCase);
+                    }
+
                     console.log(`[generate-test-cases-async] ✅ Второй проход завершён: добавлено ${negativeCases.length} негативных/граничных тестов`);
                 } else {
                     console.log(`[generate-test-cases-async] ⚠️ Второй проход не сгенерировал тестов`);
@@ -14688,13 +14691,13 @@ ${JSON.stringify(problematicCase, null, 2)}
                                 const retryArgs = extractToolArgs(retryAi, 'submit_cases');
                                 if (retryArgs && retryArgs.cases && retryArgs.cases.length > 0) {
                                     const fixedCase = retryArgs.cases[0];
-                                    
+
                                     // ✅ КРИТИЧНО: Сохраняем оригинальный ID и ищем старый тест-кейс для замены
                                     fixedCase.id = problematicCase.id; // Сохраняем оригинальный ID
-                                    
+
                                     // Ищем старый тест-кейс в finalTestCases по ID или по логической сигнатуре
                                     let oldCaseIndex = finalTestCases.findIndex(tc => tc.id === problematicCase.id);
-                                    
+
                                     // Если не нашли по ID, ищем по логической сигнатуре (title + feature + story + scenario)
                                     if (oldCaseIndex === -1) {
                                         const found = findTestCaseBySignature(finalTestCases, problematicCase);
@@ -14702,7 +14705,7 @@ ${JSON.stringify(problematicCase, null, 2)}
                                             oldCaseIndex = found.index;
                                         }
                                     }
-                                    
+
                                     if (oldCaseIndex !== -1) {
                                         // ✅ ЗАМЕНЯЕМ старый тест-кейс на исправленный
                                         finalTestCases[oldCaseIndex] = fixedCase;
@@ -14733,8 +14736,8 @@ ${JSON.stringify(problematicCase, null, 2)}
                         const unprocessedProblematic = problematicCases.slice(10);
                         // Удаляем необработанные проблемные тест-кейсы из finalTestCases
                         finalTestCases = finalTestCases.filter(tc => {
-                            const isUnprocessed = unprocessedProblematic.some(pc => 
-                                pc.id === tc.id || 
+                            const isUnprocessed = unprocessedProblematic.some(pc =>
+                                pc.id === tc.id ||
                                 (pc.title === tc.title && pc.feature === tc.feature && pc.story === tc.story && pc.scenario === tc.scenario)
                             );
                             return !isUnprocessed;
