@@ -8723,6 +8723,336 @@ function findTestCaseBySignature(testCases, targetCase) {
     return null;
 }
 
+/**
+ * Глобальный реестр сигнатур для предотвращения дублей на этапе генерации
+ * Архитектурное решение для устранения дублей при chunking и перегенерации
+ */
+class GlobalSignatureRegistry {
+    constructor() {
+        // signature -> { testCaseId, testCase, expectedHash, stepsHash }
+        this.registry = new Map();
+        // expectedHash -> [testCaseIds] для кластеризации по expected
+        this.expectedClusters = new Map();
+        // feature+story -> { e2eCount, maxE2E } для контроля пирамиды
+        this.pyramidBudget = new Map();
+    }
+
+    /**
+     * Нормализует текст для сравнения
+     */
+    normalize(text) {
+        return String(text || '')
+            .toLowerCase()
+            .replace(/[^a-zа-я0-9]+/gi, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    /**
+     * Извлекает текст из шага
+     */
+    stepToText(step) {
+        if (typeof step === 'string') return step;
+        if (step && typeof step === 'object') {
+            if (step.text) return step.text;
+            if (step.body) return step.body;
+        }
+        return JSON.stringify(step ?? '');
+    }
+
+    /**
+     * Строит базовую сигнатуру (без steps и expected)
+     * Используется для обнаружения дублей даже при улучшении шагов
+     */
+    buildSignature(testCase) {
+        const layer = this.normalize(testCase.layer);
+        const isE2E = layer === 'e2e tests';
+
+        const paramsSignature = (testCase.parameters || [])
+            .map(p => `${p.name}:${(p.values || []).sort().join(',')}`)
+            .sort()
+            .join('|');
+
+        return [
+            layer,
+            this.normalize(testCase.feature),
+            isE2E ? '' : this.normalize(testCase.story),
+            isE2E ? '' : this.normalize(testCase.scenario),
+            this.normalize(testCase.title),
+            `PARAMS[${paramsSignature}]`
+        ].join('::');
+    }
+
+    /**
+     * Строит строгую сигнатуру (с учетом steps и expected)
+     */
+    buildStrictSignature(testCase) {
+        const layer = this.normalize(testCase.layer);
+        const isE2E = layer === 'e2e tests';
+
+        const paramsSignature = (testCase.parameters || [])
+            .map(p => `${p.name}:${(p.values || []).sort().join(',')}`)
+            .sort()
+            .join('|');
+
+        const stepsHash = (testCase.steps || [])
+            .map(step => this.normalize(this.stepToText(step)))
+            .join('|');
+
+        const expectedHash = this.normalize(testCase.expected || '');
+
+        return [
+            layer,
+            this.normalize(testCase.feature),
+            isE2E ? '' : this.normalize(testCase.story),
+            isE2E ? '' : this.normalize(testCase.scenario),
+            this.normalize(testCase.title),
+            stepsHash,
+            expectedHash,
+            `PARAMS[${paramsSignature}]`
+        ].join('::');
+    }
+
+    /**
+     * Проверяет, существует ли кейс с такой сигнатурой
+     * @returns {Object|null} { existingId, existingCase, isDuplicate } или null
+     */
+    checkDuplicate(testCase) {
+        const signature = this.buildSignature(testCase);
+        const strictSignature = this.buildStrictSignature(testCase);
+
+        // Проверяем строгую сигнатуру (точный дубликат)
+        const strictEntry = this.registry.get(strictSignature);
+        if (strictEntry) {
+            return {
+                existingId: strictEntry.testCaseId,
+                existingCase: strictEntry.testCase,
+                isDuplicate: true,
+                isStrict: true
+            };
+        }
+
+        // Проверяем базовую сигнатуру (логический дубликат)
+        const baseEntry = this.registry.get(signature);
+        if (baseEntry) {
+            return {
+                existingId: baseEntry.testCaseId,
+                existingCase: baseEntry.testCase,
+                isDuplicate: true,
+                isStrict: false
+            };
+        }
+
+        return null;
+    }
+
+    /**
+     * Регистрирует тест-кейс в реестре
+     * @returns {boolean} true если зарегистрирован, false если был дубликат
+     */
+    register(testCase) {
+        const signature = this.buildSignature(testCase);
+        const strictSignature = this.buildStrictSignature(testCase);
+        const duplicate = this.checkDuplicate(testCase);
+
+        if (duplicate && duplicate.isStrict) {
+            // Точный дубликат - не регистрируем
+            return false;
+        }
+
+        const expectedHash = this.normalize(testCase.expected || '');
+        const stepsHash = (testCase.steps || [])
+            .map(step => this.normalize(this.stepToText(step)))
+            .join('|');
+
+        // Регистрируем обе сигнатуры
+        const entry = {
+            testCaseId: testCase.id,
+            testCase: { ...testCase },
+            expectedHash,
+            stepsHash,
+            registeredAt: Date.now()
+        };
+
+        this.registry.set(signature, entry);
+        this.registry.set(strictSignature, entry);
+
+        // Кластеризация по expected для параметризации
+        if (expectedHash) {
+            if (!this.expectedClusters.has(expectedHash)) {
+                this.expectedClusters.set(expectedHash, []);
+            }
+            this.expectedClusters.get(expectedHash).push(testCase.id);
+        }
+
+        return true;
+    }
+
+    /**
+     * Заменяет существующий кейс новым (при перегенерации)
+     */
+    replace(existingId, newTestCase) {
+        // Находим старую запись
+        let oldEntry = null;
+        for (const [sig, entry] of this.registry.entries()) {
+            if (entry.testCaseId === existingId) {
+                oldEntry = entry;
+                // Удаляем старые сигнатуры
+                this.registry.delete(sig);
+                break;
+            }
+        }
+
+        if (oldEntry) {
+            // Удаляем из кластера expected
+            const oldExpectedHash = oldEntry.expectedHash;
+            if (oldExpectedHash && this.expectedClusters.has(oldExpectedHash)) {
+                const cluster = this.expectedClusters.get(oldExpectedHash);
+                const index = cluster.indexOf(existingId);
+                if (index !== -1) cluster.splice(index, 1);
+                if (cluster.length === 0) {
+                    this.expectedClusters.delete(oldExpectedHash);
+                }
+            }
+        }
+
+        // Регистрируем новый с тем же ID
+        newTestCase.id = existingId;
+        return this.register(newTestCase);
+    }
+
+    /**
+     * Получает список уже занятых expected для Feature/Story (для промпта)
+     */
+    getOccupiedExpecteds(feature, story) {
+        const normalizedFeature = this.normalize(feature);
+        const normalizedStory = this.normalize(story);
+        const occupied = [];
+
+        for (const [sig, entry] of this.registry.entries()) {
+            const parts = sig.split('::');
+            if (parts.length >= 2) {
+                const entryFeature = parts[1];
+                const entryStory = parts.length > 2 ? parts[2] : '';
+                if (entryFeature === normalizedFeature && entryStory === normalizedStory) {
+                    if (entry.expectedHash) {
+                        occupied.push(entry.testCase.expected);
+                    }
+                }
+            }
+        }
+
+        return [...new Set(occupied)].slice(0, 10); // Максимум 10 для промпта
+    }
+
+    /**
+     * Проверяет и обновляет бюджет E2E для feature+story
+     * @returns {boolean} true если можно добавить E2E, false если бюджет исчерпан
+     */
+    checkE2EBudget(feature, story, maxE2E = 2) {
+        const key = `${this.normalize(feature)}::${this.normalize(story)}`;
+        const budget = this.pyramidBudget.get(key) || { e2eCount: 0, maxE2E };
+
+        if (budget.e2eCount >= budget.maxE2E) {
+            return false;
+        }
+
+        budget.e2eCount++;
+        this.pyramidBudget.set(key, budget);
+        return true;
+    }
+
+    /**
+     * Получает статистику реестра
+     */
+    getStats() {
+        return {
+            totalRegistered: this.registry.size / 2, // Каждый кейс регистрируется дважды (base + strict)
+            expectedClusters: this.expectedClusters.size,
+            pyramidBudgets: this.pyramidBudget.size
+        };
+    }
+
+    /**
+     * Очищает реестр
+     */
+    clear() {
+        this.registry.clear();
+        this.expectedClusters.clear();
+        this.pyramidBudget.clear();
+    }
+}
+
+/**
+ * Умное объединение тест-кейсов при перегенерации
+ * Заменяет существующие кейсы вместо добавления новых
+ */
+function smartMergeTestCases(originalCases, newCases, registry) {
+    if (!Array.isArray(originalCases) || !Array.isArray(newCases)) {
+        return originalCases || [];
+    }
+
+    const originalMap = new Map(originalCases.map(tc => [tc.id, tc]));
+    const result = [...originalCases];
+    const processedIds = new Set();
+
+    for (const newCase of newCases) {
+        if (!newCase || !newCase.id) continue;
+
+        // Проверяем дубликаты через реестр
+        const duplicate = registry.checkDuplicate(newCase);
+        
+        if (duplicate) {
+            // Найден дубликат - заменяем существующий
+            const existingId = duplicate.existingId;
+            const existingIndex = result.findIndex(tc => tc.id === existingId);
+            
+            if (existingIndex !== -1) {
+                const existing = result[existingIndex];
+                const existingStepsCount = (existing.steps || []).length;
+                const newStepsCount = (newCase.steps || []).length;
+                const existingExpectedLength = String(existing.expected || '').length;
+                const newExpectedLength = String(newCase.expected || '').length;
+
+                // Заменяем если новый кейс лучше (больше шагов или более полный expected)
+                if (newStepsCount > existingStepsCount || 
+                    (newStepsCount === existingStepsCount && newExpectedLength > existingExpectedLength)) {
+                    result[existingIndex] = { ...newCase, id: existingId }; // Сохраняем оригинальный ID
+                    registry.replace(existingId, newCase);
+                    processedIds.add(existingId);
+                    console.log(`[smartMergeTestCases] 🔄 Заменён кейс "${newCase.title}" (ID: ${existingId}, шагов: ${existingStepsCount} → ${newStepsCount})`);
+                } else {
+                    console.log(`[smartMergeTestCases] ⏭️ Пропущен дубликат "${newCase.title}" (существующий лучше)`);
+                }
+            } else {
+                // ID не найден, но сигнатура совпадает - добавляем как новый
+                result.push(newCase);
+                registry.register(newCase);
+                processedIds.add(newCase.id);
+            }
+        } else {
+            // Новый уникальный кейс
+            if (originalMap.has(newCase.id)) {
+                // ID существует - заменяем
+                const existingIndex = result.findIndex(tc => tc.id === newCase.id);
+                if (existingIndex !== -1) {
+                    result[existingIndex] = newCase;
+                    registry.replace(newCase.id, newCase);
+                    processedIds.add(newCase.id);
+                    console.log(`[smartMergeTestCases] 🔄 Обновлён кейс "${newCase.title}" (ID: ${newCase.id})`);
+                }
+            } else {
+                // Полностью новый кейс
+                result.push(newCase);
+                registry.register(newCase);
+                processedIds.add(newCase.id);
+            }
+        }
+    }
+
+    return result;
+}
+
 function deduplicateTestCases(testCases, stage = 'final') {
     if (!Array.isArray(testCases) || testCases.length === 0) {
         return Array.isArray(testCases) ? testCases : [];
@@ -10402,7 +10732,7 @@ ${JSON.stringify(pc.testCase, null, 2)}
                                             fixedCases[oldCaseIndex] = fixedCase;
                                         } else {
                                             // Если не нашли - заменяем по индексу (fallback)
-                                            fixedCases[pc.index] = fixedCase;
+                                        fixedCases[pc.index] = fixedCase;
                                         }
                                         
                                         console.log(`[regenerateTestCasesWithFixes] ✅ Исправлен семантический дефект в тест-кейсе "${pc.testCase.title}" (ID: ${pc.testCase.id})`);
@@ -13215,7 +13545,7 @@ create_shared_step({
         }
 
         // ✅ ОПТИМИЗИРОВАННАЯ ВЕРСИЯ: ONE-SHOT с fallback + Few-Shot Learning + Logic Extraction
-        async function genForChunkOptimized(chunk, requirements, existingE2E = [], modelStructure, reqStructure = null, contextId = null, existingCases = [], logicConstraints = null, isNegativePass = false, includeBackendTests = true) {
+        async function genForChunkOptimized(chunk, requirements, existingE2E = [], modelStructure, reqStructure = null, contextId = null, existingCases = [], logicConstraints = null, isNegativePass = false, includeBackendTests = true, signatureRegistry = null) {
             const contextPrompt = buildContextPrompt(chunk, existingE2E);
             const relevantReqs = filterRelevantRequirements(requirements, chunk);
             // ✅ ИСПРАВЛЕНО: Используем ПОЛНУЮ модель для enum, а не только chunk
@@ -13463,6 +13793,27 @@ ${isNegativePass ? `
                         console.warn(`[genForChunkOptimized] ⚠️ Общий лимит превышен (${cases.length} > ${totalLimit}), обрезаю до ${totalLimit}`);
                         cases = cases.slice(0, totalLimit);
                     }
+
+                    // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Фильтрация дублей через глобальный реестр
+                    if (signatureRegistry) {
+                        const beforeCount = cases.length;
+                        const filteredCases = [];
+                        for (const testCase of cases) {
+                            const duplicate = signatureRegistry.checkDuplicate(testCase);
+                            if (!duplicate) {
+                                // Уникальный кейс - регистрируем и добавляем
+                                if (signatureRegistry.register(testCase)) {
+                                    filteredCases.push(testCase);
+                                }
+                            } else {
+                                console.log(`[genForChunkOptimized] 🚫 Пропущен дубликат "${testCase.title}" (существует ID: ${duplicate.existingId})`);
+                            }
+                        }
+                        cases = filteredCases;
+                        if (beforeCount > cases.length) {
+                            console.log(`[genForChunkOptimized] ✅ Реестр отфильтровал ${beforeCount - cases.length} дублей (осталось ${cases.length})`);
+                        }
+                    }
                     
                     if (e2eCases.length > maxE2E || integrationCases.length > maxIntegration || cases.length > totalLimit) {
                         console.warn(`[genForChunkOptimized] ✅ После фильтрации: ${filteredE2E.length} E2E + ${filteredIntegration.length} Integration = ${cases.length} тестов`);
@@ -13544,6 +13895,27 @@ ${isNegativePass ? `
                         console.warn(`[genForChunkOptimized] ⚠️ Общий лимит превышен (${cases.length} > ${totalLimit}), обрезаю до ${totalLimit}`);
                         cases = cases.slice(0, totalLimit);
                     }
+
+                    // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Фильтрация дублей через глобальный реестр (fallback)
+                    if (signatureRegistry) {
+                        const beforeCount = cases.length;
+                        const filteredCases = [];
+                        for (const testCase of cases) {
+                            const duplicate = signatureRegistry.checkDuplicate(testCase);
+                            if (!duplicate) {
+                                // Уникальный кейс - регистрируем и добавляем
+                                if (signatureRegistry.register(testCase)) {
+                                    filteredCases.push(testCase);
+                                }
+                            } else {
+                                console.log(`[genForChunkOptimized] 🚫 Пропущен дубликат "${testCase.title}" (существует ID: ${duplicate.existingId})`);
+                            }
+                        }
+                        cases = filteredCases;
+                        if (beforeCount > cases.length) {
+                            console.log(`[genForChunkOptimized] ✅ Реестр отфильтровал ${beforeCount - cases.length} дублей (осталось ${cases.length})`);
+                        }
+                    }
                     
                     if (e2eCases.length > maxE2E || integrationCases.length > maxIntegration || cases.length > totalLimit) {
                         console.warn(`[genForChunkOptimized] ✅ После фильтрации: ${filteredE2E.length} E2E + ${filteredIntegration.length} Integration = ${cases.length} тестов`);
@@ -13608,6 +13980,10 @@ ${isNegativePass ? `
                 console.warn(`[generate-test-cases-async] ⚠️ Ошибка извлечения логики: ${error.message}, продолжаем без ограничений`);
             }
 
+            // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Глобальный реестр сигнатур для предотвращения дублей
+            const signatureRegistry = new GlobalSignatureRegistry();
+            console.log(`[generate-test-cases-async] 📋 Инициализирован глобальный реестр сигнатур`);
+
             // ✅ ONE-PASS: Генерируем E2E + Integration за один проход
             console.log(`[generate-test-cases-async] === ONE-PASS: Генерация E2E + Integration ===`);
             let allCases = [];
@@ -13671,7 +14047,8 @@ ${isNegativePass ? `
                             allCases, // ✅ Передаём существующие тест-кейсы для проверки уникальности ID
                             logicConstraints, // ✅ Передаём извлеченные ограничения логики
                             false, // isNegativePass = false для первого прохода
-                            includeBackendTests // ✅ Передаём флаг включения backend тестов
+                            includeBackendTests, // ✅ Передаём флаг включения backend тестов
+                            signatureRegistry // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Передаём глобальный реестр сигнатур
                         );
 
                         // Используем Promise.race для таймаута
@@ -13709,8 +14086,9 @@ ${isNegativePass ? `
                     e2eTestsByStory.set(storyText, [...existing, ...e2eFromResult]);
                 }
 
-                allCases.push(...result);
-                console.log(`[generate-test-cases-async] ✅ Chunk ${i + 1}: ${result.length} тестов (E2E: ${e2eFromResult.length}, Integration: ${result.length - e2eFromResult.length})`);
+                // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Умное объединение через реестр (дубли уже отфильтрованы в genForChunkOptimized)
+                allCases = smartMergeTestCases(allCases, result, signatureRegistry);
+                console.log(`[generate-test-cases-async] ✅ Chunk ${i + 1}: ${result.length} тестов (E2E: ${e2eFromResult.length}, Integration: ${result.length - e2eFromResult.length}), всего: ${allCases.length}`);
 
                 // Обновляем прогресс после обработки chunk
                 const nextProgress = 10 + Math.round(((i + 1) / storyChunks.length) * 80);
@@ -13768,7 +14146,8 @@ ${isNegativePass ? `
                             allCases, // existingCases
                             logicConstraints, // logicConstraints
                             true, // isNegativePass = true
-                            includeBackendTests // ✅ Передаём флаг включения backend тестов
+                            includeBackendTests, // ✅ Передаём флаг включения backend тестов
+                            signatureRegistry // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Передаём глобальный реестр сигнатур
                         );
                         
                         if (negativeResult && negativeResult.length > 0) {
