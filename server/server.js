@@ -12648,6 +12648,9 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         function extractApiMocksFromText(text) {
             const source = safeTrim(text) ? text : '';
             if (!source) return [];
+            
+            // ✅ ИСПРАВЛЕНИЕ: Ищем только эндпоинты, которые явно упоминаются в контексте тестирования
+            // Игнорируем URL в примерах, ссылках на Confluence, общих описаниях
             const endpointRegex = /(?:GET|POST|PUT|DELETE|PATCH)?\s*(?:\*\*)?(\/[A-Za-z0-9_\-\/.]+(?:\?[^\s"'`)]+)?)/gi;
             const mocks = new Map();
             let match;
@@ -12655,19 +12658,29 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             while ((match = endpointRegex.exec(source)) !== null) {
                 const endpoint = normalizeEndpoint(match[1]);
                 if (!endpoint) continue;
-                if (mocks.has(endpoint)) continue; // уже нашли мок для этого эндпоинта
-
+                
+                // ✅ ПРОПУСКАЕМ: URL в ссылках Confluence, общих примерах
                 const window = 600;
                 const contextStart = Math.max(0, match.index - window);
                 const contextEnd = Math.min(source.length, match.index + window);
                 const context = source.slice(contextStart, contextEnd);
+                
+                // Пропускаем, если это ссылка на Confluence или общий пример
+                if (/wiki\.|confluence|pages\.viewpage|http:\/\/|https:\/\//i.test(context)) {
+                    continue;
+                }
+                
+                // Пропускаем, если эндпоинт упоминается только в общем контексте, без связи с тестированием
+                if (mocks.has(endpoint)) continue; // уже нашли мок для этого эндпоинта
+
                 const mockInfo = extractMockReferenceFromContext(endpoint, context);
                 if (mockInfo) {
                     mocks.set(endpoint, mockInfo);
                 }
             }
 
-            return [...mocks.values()];
+            // ✅ ОГРАНИЧЕНИЕ: Максимум 10 уникальных моков на Story (чтобы не раздувать)
+            return [...mocks.values()].slice(0, 10);
         }
 
         function buildEntryPointPreconditionStep(existingPrecondition = '') {
@@ -12730,14 +12743,44 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                     return tc;
                 }
 
+                // ✅ ИСПРАВЛЕНИЕ: Проверяем, используется ли эндпоинт в тесте
+                // Собираем все текстовые поля теста для проверки
+                const testText = [
+                    tc.steps || [],
+                    tc.expected || '',
+                    tc.scenario || '',
+                    tc.precondition || '',
+                    tc.title || ''
+                ].flat().join(' ').toLowerCase();
+
+                // Фильтруем моки: оставляем только те, которые упоминаются в тесте
+                const relevantMocks = mocks.filter(mock => {
+                    if (!mock || !mock.endpoint) return false;
+                    // Нормализуем endpoint для поиска (убираем **, параметры запроса)
+                    const normalizedEndpoint = mock.endpoint
+                        .replace(/\*\*/g, '')
+                        .replace(/\?[^\s]+/g, '')
+                        .toLowerCase();
+                    // Ищем упоминание эндпоинта в тексте теста
+                    return testText.includes(normalizedEndpoint) || 
+                           testText.includes(mock.endpoint.toLowerCase());
+                });
+
+                if (relevantMocks.length === 0) {
+                    return tc;
+                }
+
                 const existingPrecondition = tc.precondition || '';
-                const missingMocks = mocks.filter(mock => !existingPrecondition.includes(mock.endpoint));
+                const missingMocks = relevantMocks.filter(mock => !existingPrecondition.includes(mock.endpoint));
                 if (missingMocks.length === 0) {
                     return tc;
                 }
 
+                // ✅ ОГРАНИЧЕНИЕ: Максимум 5 моков на тест (чтобы не раздувать precondition)
+                const limitedMocks = missingMocks.slice(0, 5);
+
                 const entryStep = buildEntryPointPreconditionStep(existingPrecondition);
-                const mockSteps = missingMocks
+                const mockSteps = limitedMocks
                     .map(formatMockStep)
                     .filter(Boolean);
                 if (mockSteps.length === 0) {
@@ -14527,8 +14570,9 @@ ${isNegativePass ? `
         finalTestCases = autoParameterizeSimilarTests(finalTestCases);
         finalTestCases = deduplicateTestCases(finalTestCases, 'pre-validation');
 
-        // Автоматически добавляем precondition для mock-эндпоинтов Integration frontend тестов
-        finalTestCases = applyMockPreconditions(finalTestCases, storyMockHints);
+        // ❌ ОТКЛЮЧЕНО: Автоматическое добавление моков в precondition
+        // Моки должны добавляться LLM в процессе генерации, а не автоматически парситься из требований
+        // finalTestCases = applyMockPreconditions(finalTestCases, storyMockHints);
 
         // ✅ НОВОЕ: LLM-валидация и автоисправление ВРАКОВ (итеративно)
         console.log(`[generate-test-cases-async] 🔍 LLM-валидация и автоисправление ВРАКОВ...`);
