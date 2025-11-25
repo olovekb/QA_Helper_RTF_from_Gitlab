@@ -248,6 +248,46 @@ import { dirname, join } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+const FALLBACK_TEST_MODEL_EXAMPLE = `[
+  {
+    "text": "Безбумажный офис",
+    "stories": [
+      {
+        "text": "Регистрация в ББО",
+        "scenarios": [
+          {
+            "text": "Нажать на кнопку 'Безбумажный офис'",
+            "codes": [
+              { "text": "Отправляется GET **/stateful/personal/kuban/client/info/v2**", "type": "frontend" },
+              { "text": "Возвращается 200 OK с {email, phone, status}", "type": "backend" },
+              { "text": "Отображается страница 'Электронная почта не найдена'", "type": "frontend" }
+            ]
+          },
+          {
+            "text": "Нажать на кнопку 'Подтвердить'",
+            "codes": [
+              { "text": "Отображается лоадер на кнопке 'Подтвердить'", "type": "frontend" },
+              { "text": "Отправляется PUT **/nopaper/user** с параметрами email (string), phone (string)", "type": "frontend" },
+              { "text": "Возвращается 200 OK с {userId, status: 'pending'}", "type": "backend" },
+              { "text": "Отображается модальное окно ОТП", "type": "frontend" },
+              { "text": "Отправляется push-уведомление 'Требуется ввод кода'", "type": "integration" }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]`.trim();
+
+let TEST_MODEL_EXAMPLE_TEXT = FALLBACK_TEST_MODEL_EXAMPLE;
+try {
+    const testModelExamplePath = join(__dirname, 'config', 'examples', 'test-model-example.json');
+    TEST_MODEL_EXAMPLE_TEXT = readFileSync(testModelExamplePath, 'utf-8').trim();
+    console.log(`[server] ✅ Загружен эталон test-model-example.json (${TEST_MODEL_EXAMPLE_TEXT.length} символов)`);
+} catch (err) {
+    console.warn(`[server] ⚠️ Не удалось загрузить test-model-example.json: ${err.message}. Используем встроенный fallback.`);
+}
+
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const app = express();
 const PORT = 5000;
@@ -3189,38 +3229,9 @@ ${storiesList}`;
 
     // Форматируем извлечённую логику для промпта (Domain Driven Testing)
     const logicSection = logicConstraints ? formatLogicConstraintsForPrompt(logicConstraints) : '';
-    const idealExample = `
-Эталонная структура (test-model-example.json):
-[
-  {
-    "text": "Безбумажный офис",
-    "stories": [
-      {
-        "text": "Регистрация в ББО",
-        "scenarios": [
-          {
-            "text": "Нажать на кнопку 'Безбумажный офис'",
-            "codes": [
-              "Отправляется GET **/stateful/personal/kuban/client/info/v2**",
-              "Возвращается 200 OK с {email, phone, status}",
-              "Отображается страница 'Электронная почта не найдена'"
-            ]
-          },
-          {
-            "text": "Нажать на кнопку 'Подтвердить'",
-            "codes": [
-              "Отображается лоадер на кнопке 'Подтвердить'",
-              "Отправляется PUT **/nopaper/user** с параметрами email (string), phone (string)",
-              "Возвращается 200 OK с {userId, status: 'pending'}",
-              "Отображается модальное окно ОТП",
-              "Отправляется push-уведомление 'Требуется ввод кода'"
-            ]
-          }
-        ]
-      }
-    ]
-  }
-]`.trim();
+    const formattedExample = TEST_MODEL_EXAMPLE_TEXT
+        ? TEST_MODEL_EXAMPLE_TEXT
+        : FALLBACK_TEST_MODEL_EXAMPLE;
 
     return `
 📋 ЗАДАНИЕ: Создай универсальную, разветвлённую тестовую модель на основе ЗАДАННОЙ структуры Feature → Story.
@@ -3239,12 +3250,14 @@ ${logicSection ? `\n${logicSection}\n` : ''}
 ═══════════════════════════════════════════════════════════════
 📚 ОБРАЗЕЦ ИДЕАЛЬНОЙ МОДЕЛИ (ориентируйся на test-model-example.json)
 ═══════════════════════════════════════════════════════════════
-${idealExample}
+\`\`\`json
+${formattedExample}
+\`\`\`
 
 🔑 Выводы из примера:
 - Story описывает бизнес-ценность пользователем (например, «Регистрация в ББО»), а не технический пункт.
 - Scenario — короткое действие пользователя, формулированное глаголом («Нажать…», «Ввести…», «Выбрать…»).
-- Codes — цепочка реакций системы на конкретное действие (frontend → backend → frontend → integration).
+- Codes — массив объектов {id, text, type}, описывающих полную цепочку реакций системы на конкретное действие (frontend → backend → frontend → integration) с обязательным type.
 
 ═══════════════════════════════════════════════════════════════
 🎯 УНИВЕРСАЛЬНАЯ СТРАТЕГИЯ ПОСТРОЕНИЯ МОДЕЛИ
@@ -8984,8 +8997,113 @@ class GlobalSignatureRegistry {
 }
 
 /**
+ * Нормализует шаги Integration frontend тестов
+ * Переносит технические шаги (API вызовы) в precondition
+ */
+function normalizeIntegrationFrontendSteps(testCase) {
+    if (!testCase || testCase.layer !== 'Integration frontend Tests') {
+        return testCase;
+    }
+
+    const API_STEP_PATTERNS = [
+        /^отправить\s+(GET|POST|PUT|DELETE|PATCH)/i,
+        /^выполнить\s+(GET|POST|PUT|DELETE|PATCH)/i,
+        /\b(GET|POST|PUT|DELETE|PATCH)\s+(\*\*|https?:|\/)/i,
+        /^получить\s+ответ/i,
+        /^отправить\s+запрос/i
+    ];
+
+    const steps = Array.isArray(testCase.steps) ? [...testCase.steps] : [];
+    const uiSteps = [];
+    const technicalSteps = [];
+
+    for (const step of steps) {
+        const stepText = typeof step === 'string' ? step : (step?.text || step?.body || String(step));
+        if (!stepText) continue;
+
+        const isTechnical = API_STEP_PATTERNS.some(pattern => pattern.test(stepText));
+        if (isTechnical) {
+            technicalSteps.push(stepText);
+        } else {
+            uiSteps.push(step);
+        }
+    }
+
+    // Если есть технические шаги - переносим их в precondition
+    if (technicalSteps.length > 0) {
+        let precondition = testCase.precondition || '';
+        
+        // Проверяем, есть ли уже заголовок "Предварительное условие"
+        const hasHeader = /^предварительное условие/i.test(precondition.trim());
+        if (!hasHeader && precondition) {
+            precondition = `Предварительное условие\n\n${precondition}`;
+        } else if (!precondition) {
+            precondition = 'Предварительное условие\n\n';
+        }
+        
+        // Извлекаем существующие пронумерованные строки
+        const existingLines = precondition
+            .replace(/^предварительное условие\s*\n*/i, '')
+            .split('\n')
+            .map(line => line.trim())
+            .filter(line => line && !line.match(/^\d+\./)); // Убираем уже пронумерованные
+        
+        // Находим максимальный номер
+        const numberMatches = precondition.match(/\n(\d+)\./g);
+        let maxNumber = numberMatches 
+            ? Math.max(...numberMatches.map(m => parseInt(m.match(/\d+/)[0])))
+            : 0;
+        
+        // Добавляем технические шаги с правильной нумерацией
+        const newLines = technicalSteps.map((step, i) => {
+            maxNumber++;
+            return `${maxNumber}. ${step}`;
+        });
+        
+        const updatedPrecondition = precondition.trim() + '\n' + newLines.join('\n');
+        
+        console.log(`[normalizeIntegrationFrontendSteps] 🔧 Перенесено ${technicalSteps.length} технических шагов в precondition для "${testCase.title}"`);
+
+        return {
+            ...testCase,
+            steps: uiSteps.length > 0 ? uiSteps : (testCase.steps || []), // Оставляем UI шаги или оригинальные
+            precondition: updatedPrecondition
+        };
+    }
+
+    return testCase;
+}
+
+/**
+ * Проверяет, являются ли два E2E теста дубликатами по шагам
+ * Если шаги одинаковые, но тайтлы разные - это косвенный дубликат
+ */
+function areE2EStepsDuplicate(test1, test2) {
+    if (test1.layer !== 'E2E Tests' || test2.layer !== 'E2E Tests') return false;
+    if (test1.feature !== test2.feature || test1.story !== test2.story) return false;
+
+    const normalizeStep = (step) => {
+        const text = typeof step === 'string' ? step : (step?.text || step?.body || String(step));
+        return text.toLowerCase().trim().replace(/\s+/g, ' ');
+    };
+
+    const steps1 = (test1.steps || []).map(normalizeStep).filter(Boolean);
+    const steps2 = (test2.steps || []).map(normalizeStep).filter(Boolean);
+
+    if (steps1.length !== steps2.length) return false;
+
+    // Проверяем, что все шаги идентичны
+    for (let i = 0; i < steps1.length; i++) {
+        if (steps1[i] !== steps2[i]) return false;
+    }
+
+    return true;
+}
+
+/**
  * Умное объединение тест-кейсов при перегенерации
  * Заменяет существующие кейсы вместо добавления новых
+ * Улучшено: более агрессивная дедупликация по шагам для E2E
  */
 function smartMergeTestCases(originalCases, newCases, registry) {
     if (!Array.isArray(originalCases) || !Array.isArray(newCases)) {
@@ -8993,20 +9111,50 @@ function smartMergeTestCases(originalCases, newCases, registry) {
     }
 
     const originalMap = new Map(originalCases.map(tc => [tc.id, tc]));
-    const result = [...originalCases];
+    let result = [...originalCases];
     const processedIds = new Set();
 
-    for (const newCase of newCases) {
+    // ✅ НОРМАЛИЗАЦИЯ: Нормализуем новые кейсы перед обработкой
+    const normalizedNewCases = newCases.map(tc => normalizeIntegrationFrontendSteps(tc));
+
+    for (const newCase of normalizedNewCases) {
         if (!newCase || !newCase.id) continue;
 
-        // Проверяем дубликаты через реестр
-        const duplicate = registry.checkDuplicate(newCase);
+        // ✅ УЛУЧШЕНО: Для E2E проверяем дубликаты по шагам, а не только по сигнатуре
+        if (newCase.layer === 'E2E Tests') {
+            const duplicateBySteps = result.find(existing => 
+                existing.layer === 'E2E Tests' && areE2EStepsDuplicate(existing, newCase)
+            );
 
+            if (duplicateBySteps) {
+                // Найден дубликат по шагам - проверяем, можно ли объединить через параметры
+                const existingSteps = JSON.stringify(duplicateBySteps.steps || []);
+                const newSteps = JSON.stringify(newCase.steps || []);
+                
+                if (existingSteps === newSteps) {
+                    // Шаги полностью идентичны - это дубликат
+                    // Проверяем, отличаются ли только precondition или expected
+                    const existingPrecondition = String(duplicateBySteps.precondition || '').trim();
+                    const newPrecondition = String(newCase.precondition || '').trim();
+                    const existingExpected = String(duplicateBySteps.expected || '').trim();
+                    const newExpected = String(newCase.expected || '').trim();
+
+                    // Если отличаются только precondition или expected - это вариация, которую можно параметризовать
+                    // Но пока просто пропускаем дубликат
+                    console.log(`[smartMergeTestCases] 🚫 Пропущен E2E дубликат по шагам "${newCase.title}" (существует "${duplicateBySteps.title}")`);
+                    continue;
+                }
+            }
+        }
+
+        // Проверяем дубликаты через реестр
+        const duplicate = registry ? registry.checkDuplicate(newCase) : null;
+        
         if (duplicate) {
             // Найден дубликат - заменяем существующий
             const existingId = duplicate.existingId;
             const existingIndex = result.findIndex(tc => tc.id === existingId);
-
+            
             if (existingIndex !== -1) {
                 const existing = result[existingIndex];
                 const existingStepsCount = (existing.steps || []).length;
@@ -9015,10 +9163,10 @@ function smartMergeTestCases(originalCases, newCases, registry) {
                 const newExpectedLength = String(newCase.expected || '').length;
 
                 // Заменяем если новый кейс лучше (больше шагов или более полный expected)
-                if (newStepsCount > existingStepsCount ||
+                if (newStepsCount > existingStepsCount || 
                     (newStepsCount === existingStepsCount && newExpectedLength > existingExpectedLength)) {
                     result[existingIndex] = { ...newCase, id: existingId }; // Сохраняем оригинальный ID
-                    registry.replace(existingId, newCase);
+                    if (registry) registry.replace(existingId, newCase);
                     processedIds.add(existingId);
                     console.log(`[smartMergeTestCases] 🔄 Заменён кейс "${newCase.title}" (ID: ${existingId}, шагов: ${existingStepsCount} → ${newStepsCount})`);
                 } else {
@@ -9027,7 +9175,7 @@ function smartMergeTestCases(originalCases, newCases, registry) {
             } else {
                 // ID не найден, но сигнатура совпадает - добавляем как новый
                 result.push(newCase);
-                registry.register(newCase);
+                if (registry) registry.register(newCase);
                 processedIds.add(newCase.id);
             }
         } else {
@@ -9037,18 +9185,21 @@ function smartMergeTestCases(originalCases, newCases, registry) {
                 const existingIndex = result.findIndex(tc => tc.id === newCase.id);
                 if (existingIndex !== -1) {
                     result[existingIndex] = newCase;
-                    registry.replace(newCase.id, newCase);
+                    if (registry) registry.replace(newCase.id, newCase);
                     processedIds.add(newCase.id);
                     console.log(`[smartMergeTestCases] 🔄 Обновлён кейс "${newCase.title}" (ID: ${newCase.id})`);
                 }
             } else {
                 // Полностью новый кейс
                 result.push(newCase);
-                registry.register(newCase);
+                if (registry) registry.register(newCase);
                 processedIds.add(newCase.id);
             }
         }
     }
+
+    // ✅ ФИНАЛЬНАЯ НОРМАЛИЗАЦИЯ: Нормализуем все Integration frontend тесты в результате
+    result = result.map(tc => normalizeIntegrationFrontendSteps(tc));
 
     return result;
 }
@@ -9136,6 +9287,37 @@ function deduplicateTestCases(testCases, stage = 'final') {
             }
         }
         usedIds.add(testCase.id);
+
+        // ✅ УЛУЧШЕНО: Для E2E проверяем дубликаты по шагам ДО проверки сигнатуры
+        if (testCase.layer === 'E2E Tests') {
+            const duplicateBySteps = uniqueCases.find(existing => 
+                existing.layer === 'E2E Tests' && areE2EStepsDuplicate(existing, testCase)
+            );
+
+            if (duplicateBySteps) {
+                // Найден дубликат по шагам - проверяем, какой лучше
+                const existingStepsCount = (duplicateBySteps.steps || []).length;
+                const newStepsCount = (testCase.steps || []).length;
+                const existingExpectedLength = String(duplicateBySteps.expected || '').length;
+                const newExpectedLength = String(testCase.expected || '').length;
+
+                if (newStepsCount > existingStepsCount || 
+                    (newStepsCount === existingStepsCount && newExpectedLength > existingExpectedLength)) {
+                    // Новый лучше - заменяем
+                    const existingIndex = uniqueCases.findIndex(tc => tc.id === duplicateBySteps.id);
+                    if (existingIndex !== -1) {
+                        uniqueCases[existingIndex] = testCase;
+                        seenSignatures.set(buildSignature(testCase), testCase.id);
+                        seenStrictSignatures.set(buildStrictSignature(testCase), testCase.id);
+                        console.log(`[deduplicateTestCases:${stage}] 🔄 Заменён E2E дубликат по шагам "${testCase.title}" (шагов: ${existingStepsCount} → ${newStepsCount})`);
+                    }
+                } else {
+                    removed++;
+                    console.log(`[deduplicateTestCases:${stage}] 🚫 Пропущен E2E дубликат по шагам "${testCase.title}" (существующий лучше)`);
+                }
+                continue;
+            }
+        }
 
         // ✅ УЛУЧШЕНО: Сначала проверяем по базовой сигнатуре (title + feature + story + scenario)
         // Это позволяет находить дубликаты даже если шаги были улучшены при перегенерации
@@ -13569,7 +13751,26 @@ create_shared_step({
                 }
             }
 
+            // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: ВСЕГДА загружаем примеры (статические + идеальные из БД)
             const examples = await selectExamples(chunk, mode, perfectExamples, db, projectId);
+            
+            // ✅ ПРОВЕРКА: Убеждаемся, что примеры загружены (критично для качества генерации)
+            const totalExamples = (examples.e2e?.length || 0) + 
+                                 (examples.integration_fe?.length || 0) + 
+                                 (examples.integration_be?.length || 0) + 
+                                 (examples.parametrized?.length || 0);
+            
+            if (totalExamples === 0) {
+                console.error(`[genForChunkOptimized] ❌ КРИТИЧЕСКАЯ ОШИБКА: Примеры не загружены! Это может привести к неправильному формату тестов!`);
+                throw new Error('Эталонные примеры не загружены. Проверьте файлы в server/config/examples/');
+            }
+            
+            console.log(`[genForChunkOptimized] 📚 Загружено ${totalExamples} эталонных примеров для chunk:`);
+            if (examples.e2e?.length) console.log(`  - E2E: ${examples.e2e.length}`);
+            if (examples.integration_fe?.length) console.log(`  - Integration Frontend: ${examples.integration_fe.length}`);
+            if (examples.integration_be?.length) console.log(`  - Integration Backend: ${examples.integration_be.length}`);
+            if (examples.parametrized?.length) console.log(`  - Параметризованные: ${examples.parametrized.length}`);
+            
             const examplesSection = buildExamplesSection(examples);
 
             // ✅ Форматируем логику и ограничения для промпта (если есть)
@@ -13578,10 +13779,20 @@ create_shared_step({
                 : '';
 
             // ✅ Формируем system prompt с примерами и логикой
+            // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Примеры в НАЧАЛЕ промпта как обязательные шаблоны
             const systemPromptWithExamples = `
 ${BASE_SYSTEM_PROMPT}
 
 ${COVENANT}
+
+═══════════════════════════════════════════════════════════════
+🚨🚨🚨 ОБЯЗАТЕЛЬНЫЕ ЭТАЛОННЫЕ ШАБЛОНЫ - ЧИТАЙ ПЕРВЫМ ДЕЛОМ! 🚨🚨🚨
+═══════════════════════════════════════════════════════════════
+
+Ты ОБЯЗАН изучить примеры ниже ПЕРЕД генерацией тест-кейсов.
+Эти примеры - ЭТАЛОН формата. Строго следуй их структуре, стилю и формату!
+
+${examplesSection}
 
 ═══════════════════════════════════════════════════════════════
 ⚡ ЛИМИТЫ НА КОЛИЧЕСТВО ТЕСТОВ (СТРОГО СОБЛЮДАЙ!)
@@ -13618,34 +13829,26 @@ ${COVENANT}
 - Лучше 8 идеальных тестов с параметризацией, чем 40 дубликатов!
 - Каждый тест должен покрывать УНИКАЛЬНУЮ логику, не вариацию данных
 
-═══════════════════════════════════════════════════════════════
-📚 ЭТАЛОННЫЕ ПРИМЕРЫ (ИСПОЛЬЗУЙ КАК ШАБЛОНЫ!)
-═══════════════════════════════════════════════════════════════
-
-🚨 ПЕРЕД ГЕНЕРАЦИЕЙ - ИЗУЧИ ПРИМЕРЫ:
-1. Посмотри на структуру JSON в примерах
-2. Обрати внимание на формат параметризации (parameters + examples)
-3. Заметь использование {{параметр}} в steps и expected
-4. Проверь формат полей: feature, story, scenario, title, steps, expected, layer, priority, tags, version
-
-${examplesSection}
-
 ${logicConstraintsSection}
 
-🚨 КРИТИЧЕСКИ ВАЖНО:
-- Примеры = ЭТАЛОН, строго следуй их формату
-- Для параметризации ОБЯЗАТЕЛЬНО используй parameters + examples (как в примерах)
+🚨 КРИТИЧЕСКИ ВАЖНО (ПОВТОРЯЕМ ДЛЯ АКЦЕНТА):
+- Примеры выше = ЭТАЛОН, строго следуй их формату!
+- Для параметризации ОБЯЗАТЕЛЬНО используй parameters + examples (как в примерах выше)
 - В steps и expected используй {{параметр}} для подстановки значений
-- Expected должен быть КОНКРЕТНЫМ (как в примерах)
+- Expected должен быть КОНКРЕТНЫМ (как в примерах выше)
 - ❌ НЕ создавай дубликаты - используй параметризацию!
 - ✅ Каждый тест-кейс должен иметь УНИКАЛЬНЫЙ title
 - ✅ Правильно определяй layer по содержанию (E2E = полный путь, Integration = атомарный тест)
 - ✅ Используй ТОЛЬКО feature/story/scenario/code из enum в tool definition!
 - ⚡ ПОМНИ ЛИМИТ: максимум 8-12 тест-кейсов в ответе!
+- 📚 Если забыл формат - вернись к примерам выше и изучи их структуру!
 `.trim();
 
             const userPrompt = `
 ${contextPrompt}
+
+🚨🚨🚨 ВАЖНО: ПЕРЕД ГЕНЕРАЦИЕЙ ИЗУЧИ ЭТАЛОННЫЕ ПРИМЕРЫ В SYSTEM PROMPT! 🚨🚨🚨
+Примеры показывают ИДЕАЛЬНЫЙ формат тест-кейсов. Строго следуй их структуре!
 
 Требования (релевантные):
 ${relevantReqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
@@ -13697,10 +13900,26 @@ ${includeBackendTests ? '- Integration backend: tags = [\'S\'] (обязател
 - ✅ Каждый тест = уникальная комбинация "layer + story + scenario + steps + expected".
 - ✅ Если нужно проверить несколько значений → параметризуй внутри одного теста!
 
+🚨 КРИТИЧНО ДЛЯ E2E ТЕСТОВ:
+- Если два E2E теста имеют одинаковые шаги, но разные тайтлы (например, "при наличии sbpId" vs "при отсутствии sbpId"):
+  → Либо объедини их в ОДИН параметризованный тест с parameters/examples
+  → Либо добавь различия в precondition или steps (например, "Пользователь авторизован, sbpId отсутствует" в precondition)
+- ❌ НЕ создавай E2E тесты с одинаковыми шагами, но разными тайтлами без различий в precondition/steps!
+
 🚨 ПРАВИЛА PRECONDITION:
 - Integration frontend Tests: ОБЯЗАТЕЛЬНО добавь precondition с описанием состояния UI!
 ${includeBackendTests ? '- Integration backend Tests: ОБЯЗАТЕЛЬНО добавь precondition с описанием состояния сервера!\n' : ''}
 ${!includeBackendTests ? '🚨 КРИТИЧНО: НЕ создавай Integration backend тесты! Только E2E и Integration frontend!\n' : ''}
+
+🚨 КРИТИЧНО ДЛЯ INTEGRATION FRONTEND ТЕСТОВ:
+- ❌ НЕ используй технические шаги типа "Отправить GET **/rest/...**" или "Выполнить запрос" в поле steps!
+- ✅ Используй ТОЛЬКО пользовательские действия: "Нажать кнопку", "Ввести текст", "Выбрать значение"
+- ✅ Технические детали (API вызовы, ответы сервера) должны быть в precondition или expected, НЕ в steps!
+- ✅ Expected для Integration frontend тестов МОЖЕТ содержать:
+  * UI реакции: "**Отображается** страница...", "**Скрывается** форма..."
+  * Технические реакции: "**Отправляется** GET **/rest/...**", "**Выполняется** POST **/api/...**"
+  * Это нормально для интеграционных тестов, так как они проверяют взаимодействие фронтенда с бэкендом!
+- 📚 Смотри на идеальные примеры выше - они показывают правильный формат Integration frontend тестов!
 
 🚨 ПРАВИЛО ПРИВЯЗКИ BACKEND ТЕСТОВ:
 - Backend тесты: проверь, что story соответствует API из Code! Если API используется в другой Story → привяжи к правильной Story!
@@ -14171,11 +14390,9 @@ ${isNegativePass ? `
                         }
                     }
 
-                    for (const testCase of negativeCases) {
-                        smartMergeTestCases(allCases, testCase);
-                    }
-
-                    console.log(`[generate-test-cases-async] ✅ Второй проход завершён: добавлено ${negativeCases.length} негативных/граничных тестов`);
+                    // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Умное объединение негативных тестов через реестр
+                    allCases = smartMergeTestCases(allCases, negativeCases, signatureRegistry);
+                    console.log(`[generate-test-cases-async] ✅ Второй проход завершён: добавлено ${negativeCases.length} негативных/граничных тестов, всего: ${allCases.length}`);
                 } else {
                     console.log(`[generate-test-cases-async] ⚠️ Второй проход не сгенерировал тестов`);
                 }
@@ -14186,6 +14403,10 @@ ${isNegativePass ? `
             // === sanitize → fixAgainstModel до аудита покрытия ===
             const idx = buildModelIndex(modelStructure);
             allCases = sanitize(allCases, undefined, modelStructure);
+            
+            // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Нормализация Integration frontend тестов (перенос технических шагов в precondition)
+            allCases = allCases.map(tc => normalizeIntegrationFrontendSteps(tc));
+            
             allCases = deduplicateTestCases(allCases, 'post-sanitize');
 
             // Обновляем progress после sanitize

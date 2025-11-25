@@ -5,11 +5,48 @@ import { dirname, join } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Загружаем примеры из JSON файлов (статические примеры по умолчанию)
-const e2eExamples = JSON.parse(readFileSync(join(__dirname, 'examples', 'e2e-examples.json'), 'utf-8'));
-const integrationFeExamples = JSON.parse(readFileSync(join(__dirname, 'examples', 'integration-fe-examples.json'), 'utf-8'));
-const integrationBeExamples = JSON.parse(readFileSync(join(__dirname, 'examples', 'integration-be-examples.json'), 'utf-8'));
-const parametrizedExamples = JSON.parse(readFileSync(join(__dirname, 'examples', 'parametrized-examples.json'), 'utf-8'));
+// ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Загружаем примеры из JSON файлов (статические примеры по умолчанию)
+// Эти примеры ВСЕГДА доступны и используются как обязательные шаблоны
+let e2eExamples = [];
+let integrationFeExamples = [];
+let integrationBeExamples = [];
+let parametrizedExamples = [];
+
+try {
+    e2eExamples = JSON.parse(readFileSync(join(__dirname, 'examples', 'e2e-examples.json'), 'utf-8'));
+    console.log(`[example-selector] ✅ Загружено ${e2eExamples.length} E2E примеров`);
+} catch (err) {
+    console.error(`[example-selector] ❌ Ошибка загрузки e2e-examples.json:`, err.message);
+}
+
+try {
+    integrationFeExamples = JSON.parse(readFileSync(join(__dirname, 'examples', 'integration-fe-examples.json'), 'utf-8'));
+    console.log(`[example-selector] ✅ Загружено ${integrationFeExamples.length} Integration Frontend примеров`);
+} catch (err) {
+    console.error(`[example-selector] ❌ Ошибка загрузки integration-fe-examples.json:`, err.message);
+}
+
+try {
+    integrationBeExamples = JSON.parse(readFileSync(join(__dirname, 'examples', 'integration-be-examples.json'), 'utf-8'));
+    console.log(`[example-selector] ✅ Загружено ${integrationBeExamples.length} Integration Backend примеров`);
+} catch (err) {
+    console.error(`[example-selector] ❌ Ошибка загрузки integration-be-examples.json:`, err.message);
+}
+
+try {
+    parametrizedExamples = JSON.parse(readFileSync(join(__dirname, 'examples', 'parametrized-examples.json'), 'utf-8'));
+    console.log(`[example-selector] ✅ Загружено ${parametrizedExamples.length} параметризованных примеров`);
+} catch (err) {
+    console.error(`[example-selector] ❌ Ошибка загрузки parametrized-examples.json:`, err.message);
+}
+
+// ✅ ПРОВЕРКА: Убеждаемся, что хотя бы базовые примеры загружены
+const totalStaticExamples = e2eExamples.length + integrationFeExamples.length + integrationBeExamples.length + parametrizedExamples.length;
+if (totalStaticExamples === 0) {
+    console.error(`[example-selector] ❌ КРИТИЧЕСКАЯ ОШИБКА: Не загружено ни одного статического примера! Проверьте файлы в server/config/examples/`);
+} else {
+    console.log(`[example-selector] ✅ Всего загружено ${totalStaticExamples} статических примеров`);
+}
 
 /**
  * Выбирает набор примеров для промпта (статические + идеальные из БД)
@@ -79,51 +116,96 @@ async function selectExamples(chunk, mode = 'FULL', perfectExamples = null, db =
 
 /**
  * Формирует секцию примеров для промпта
+ * Делает примеры ОБЯЗАТЕЛЬНЫМИ ШАБЛОНАМИ для агента
  * @param {Object} examples - Объект с примерами по категориям
  * @returns {string} Форматированная секция примеров
  */
 function buildExamplesSection(examples) {
     let section = '';
 
+    section += `\n\n═══════════════════════════════════════════════════════════════\n`;
+    section += `🚨🚨🚨 ОБЯЗАТЕЛЬНЫЕ ЭТАЛОННЫЕ ШАБЛОНЫ - СТРОГО СЛЕДУЙ ИМ! 🚨🚨🚨\n`;
+    section += `═══════════════════════════════════════════════════════════════\n\n`;
+    section += `Эти примеры - ЭТАЛОН для генерации тест-кейсов. Ты ОБЯЗАН:\n`;
+    section += `1. Изучить структуру JSON в каждом примере\n`;
+    section += `2. Строго следовать формату полей (feature, story, scenario, steps, expected, layer, priority, tags)\n`;
+    section += `3. Использовать ТОЧНО такой же стиль шагов и expected, как в примерах\n`;
+    section += `4. Для Integration frontend: steps = ТОЛЬКО пользовательские действия (НЕ API вызовы!)\n`;
+    section += `5. Для параметризации: использовать parameters + examples (как в примерах)\n\n`;
+
     // E2E примеры
     if (examples.e2e && examples.e2e.length > 0) {
-        section += `\n## E2E ТЕСТЫ (${examples.e2e.length} пример${examples.e2e.length > 1 ? 'а' : ''})\n\n`;
-        section += `🚨 ВАЖНО: Эти примеры показывают ИДЕАЛЬНЫЙ формат E2E тестов. Изучи их структуру и следуй формату!\n\n`;
+        section += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        section += `📋 ЭТАЛОН E2E ТЕСТОВ (${examples.e2e.length} пример${examples.e2e.length > 1 ? 'а' : ''})\n`;
+        section += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        section += `🚨 КРИТИЧНО: Эти примеры показывают ИДЕАЛЬНЫЙ формат E2E тестов.\n`;
+        section += `Ты ОБЯЗАН следовать ТОЧНО такому же формату: структура, стиль шагов, формат expected!\n\n`;
         examples.e2e.forEach((ex, i) => {
-            section += `### Пример ${i + 1}: ${ex.title}\n\n`;
+            section += `\n### 📌 ЭТАЛОН E2E #${i + 1}: "${ex.title}"\n\n`;
+            section += `**Обрати внимание на:**\n`;
+            section += `- Формат steps: только пользовательские действия, БЕЗ технических деталей\n`;
+            section += `- Формат expected: начинается с "**Отображается**" или "**Осуществляется**"\n`;
+            section += `- Структура: layer="E2E Tests", НЕТ scenario, НЕТ code\n\n`;
             section += `\`\`\`json\n${JSON.stringify(ex, null, 2)}\n\`\`\`\n\n`;
         });
     }
 
     // Integration Frontend примеры
     if (examples.integration_fe && examples.integration_fe.length > 0) {
-        section += `\n## INTEGRATION FRONTEND (${examples.integration_fe.length} пример${examples.integration_fe.length > 1 ? 'а' : ''})\n\n`;
-        section += `🚨 ВАЖНО: Эти примеры показывают ИДЕАЛЬНЫЙ формат Integration frontend тестов. Изучи их структуру и следуй формату!\n\n`;
+        section += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        section += `📋 ЭТАЛОН INTEGRATION FRONTEND ТЕСТОВ (${examples.integration_fe.length} пример${examples.integration_fe.length > 1 ? 'а' : ''})\n`;
+        section += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        section += `🚨 КРИТИЧНО: Эти примеры показывают ИДЕАЛЬНЫЙ формат Integration frontend тестов.\n`;
+        section += `Ты ОБЯЗАН следовать ТОЧНО такому же формату!\n\n`;
+        section += `**КЛЮЧЕВЫЕ ПРАВИЛА из примеров:**\n`;
+        section += `- steps: ТОЛЬКО пользовательские действия ("Нажать кнопку", "Ввести текст", "Выбрать значение")\n`;
+        section += `- НЕ используй в steps: "Отправить GET", "Выполнить запрос", "Получить ответ" - это технические детали!\n`;
+        section += `- Технические детали (API, ответы сервера) должны быть в precondition или expected\n`;
+        section += `- precondition: описание состояния UI и данных\n`;
+        section += `- scenario: ОБЯЗАТЕЛЬНО должен быть указан (из тестовой модели)\n\n`;
         examples.integration_fe.forEach((ex, i) => {
-            section += `### Пример ${i + 1}: ${ex.title}\n\n`;
+            section += `\n### 📌 ЭТАЛОН Integration Frontend #${i + 1}: "${ex.title}"\n\n`;
+            section += `**Обрати внимание на:**\n`;
+            section += `- steps: ${JSON.stringify(ex.steps || [])}\n`;
+            section += `- precondition: содержит состояние UI и данные\n`;
+            section += `- expected: формат "**Отображается** ..."\n\n`;
             section += `\`\`\`json\n${JSON.stringify(ex, null, 2)}\n\`\`\`\n\n`;
         });
     }
 
     // Integration Backend примеры
     if (examples.integration_be && examples.integration_be.length > 0) {
-        section += `\n## INTEGRATION BACKEND (${examples.integration_be.length} пример${examples.integration_be.length > 1 ? 'а' : ''})\n\n`;
-        section += `🚨 ВАЖНО: Эти примеры показывают ИДЕАЛЬНЫЙ формат Integration backend тестов. Изучи их структуру и следуй формату!\n\n`;
+        section += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        section += `📋 ЭТАЛОН INTEGRATION BACKEND ТЕСТОВ (${examples.integration_be.length} пример${examples.integration_be.length > 1 ? 'а' : ''})\n`;
+        section += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        section += `🚨 КРИТИЧНО: Эти примеры показывают ИДЕАЛЬНЫЙ формат Integration backend тестов.\n`;
+        section += `Ты ОБЯЗАН следовать ТОЧНО такому же формату!\n\n`;
         examples.integration_be.forEach((ex, i) => {
-            section += `### Пример ${i + 1}: ${ex.title}\n\n`;
+            section += `\n### 📌 ЭТАЛОН Integration Backend #${i + 1}: "${ex.title}"\n\n`;
             section += `\`\`\`json\n${JSON.stringify(ex, null, 2)}\n\`\`\`\n\n`;
         });
     }
 
     // Параметризация примеры
     if (examples.parametrized && examples.parametrized.length > 0) {
-        section += `\n## ПАРАМЕТРИЗАЦИЯ (${examples.parametrized.length} пример${examples.parametrized.length > 1 ? 'а' : ''})\n\n`;
-        section += `🚨 КРИТИЧЕСКИ ВАЖНО: Используй параметризацию вместо дубликатов!\n\n`;
+        section += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        section += `📋 ЭТАЛОН ПАРАМЕТРИЗАЦИИ (${examples.parametrized.length} пример${examples.parametrized.length > 1 ? 'а' : ''})\n`;
+        section += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        section += `🚨 КРИТИЧЕСКИ ВАЖНО: Используй параметризацию вместо дубликатов!\n`;
+        section += `Если шаги и expected одинаковые, но меняются только входные данные → используй parameters + examples!\n\n`;
         examples.parametrized.forEach((ex, i) => {
-            section += `### Пример ${i + 1}: ${ex.title}\n\n`;
+            section += `\n### 📌 ЭТАЛОН Параметризации #${i + 1}: "${ex.title}"\n\n`;
+            section += `**Обрати внимание на:**\n`;
+            section += `- parameters: массив с name и values\n`;
+            section += `- examples: массив объектов с параметрами\n`;
+            section += `- Использование {{параметр}} в steps и expected\n\n`;
             section += `\`\`\`json\n${JSON.stringify(ex, null, 2)}\n\`\`\`\n\n`;
         });
     }
+
+    section += `\n═══════════════════════════════════════════════════════════════\n`;
+    section += `🚨 ЗАПОМНИ: Эти примеры - ЭТАЛОН. Строго следуй их формату!\n`;
+    section += `═══════════════════════════════════════════════════════════════\n\n`;
 
     return section.trim();
 }
