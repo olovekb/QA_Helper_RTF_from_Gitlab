@@ -7,6 +7,8 @@ import knex from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 import compression from 'compression';
 
+const CONFLUENCE_BASE_URL = process.env.CONFLUENCE_BASE || 'https://confluence.artsofte.ru';
+
 
 /**
  * Обработка больших запросов для OpenRouter через разделение на чанки
@@ -11398,6 +11400,29 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             testModelId  // Опционально: ID задачи генерации модели (игнорируется - используем только новую модель)
         } = inputData;
 
+        const normalizedPageId = pageId != null ? String(pageId).trim() : null;
+        const normalizedContextIds = Array.isArray(contextPageIds)
+            ? contextPageIds.map(id => (id != null ? String(id).trim() : '')).filter(Boolean)
+            : [];
+        const requirementPageId = normalizedPageId || normalizedContextIds[0] || null;
+        const requirementLinkEntry = requirementPageId
+            ? {
+                text: 'Требование (Confluence)',
+                url: `${CONFLUENCE_BASE_URL}/pages/viewpage.action?pageId=${requirementPageId}`
+            }
+            : null;
+
+        const appendRequirementLink = (linksInput) => {
+            const normalizedLinks = Array.isArray(linksInput) ? [...linksInput] : [];
+            if (requirementLinkEntry) {
+                const alreadyHas = normalizedLinks.some(link => link && link.url === requirementLinkEntry.url);
+                if (!alreadyHas) {
+                    normalizedLinks.push(requirementLinkEntry);
+                }
+            }
+            return normalizedLinks;
+        };
+
         // ✅ КРИТИЧЕСКИ ВАЖНО: НЕ ЗАГРУЖАЕМ СТАРЫЕ ТЕСТ-КЕЙСЫ ИЗ БД!
         // При генерации тест-кейсов используем ТОЛЬКО новую модель с фронтенда
         // Старые тест-кейсы из generation_tasks.result.testCases НЕ используются
@@ -13078,7 +13103,8 @@ create_shared_step({
                                 version: testCase.version || 'stable',
                                 // ❌ УДАЛЕНО: requirement - не используется в тест-кейсах
                                 precondition: testCase.precondition,
-                                links: testCase.links || [],
+                                links: appendRequirementLink(testCase.links),
+                                links: appendRequirementLink(testCase.links),
                                 jiraIssue: testCase.jiraIssueOption?.value,
                                 parameters: testCase.parameters || [],
                                 examples: testCase.examples || []
@@ -14362,7 +14388,8 @@ ${JSON.stringify(problematicCase, null, 2)}
                 description: "Проверить основную функциональность",
                 steps: ["Выполнить базовую проверку"],
                 expectedResult: "Функциональность работает корректно",
-                type: "E2E"
+                type: "E2E",
+                links: appendRequirementLink()
             });
         }
 
