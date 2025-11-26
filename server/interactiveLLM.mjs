@@ -3,6 +3,11 @@ import config from './config.json' assert { type: 'json' };
 import { callWithCloudRuFallback } from './cloudruClient.mjs';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const HARD_ITERATION_CAP = 8;
+const APPROX_CHARS_PER_TOKEN = 4;
+const MAX_CONTEXT_TOKENS = 180000;
+const MAX_TOOL_CALLS = 8;
+const MAX_FETCH_CONTEXT_CALLS = 5;
 
 /**
  * Универсальный цикл обработки tool-calling.
@@ -30,35 +35,63 @@ export async function runInteractiveLLM({
 
     const conversation = [...initialMessages];
     const finalNames = Array.isArray(finalToolNames) ? finalToolNames : [];
-    
-    // 🚨 ЗАЩИТА ОТ ЗАЦИКЛИВАНИЯ: отслеживаем размер промпта и количество fetch_context_chunk
-    const MAX_PROMPT_TOKENS = 200000; // Лимит входных токенов (оставляем запас для completion)
-    const MAX_FETCH_CONTEXT_CALLS = 5; // Максимум вызовов fetch_context_chunk
-    let fetchContextCallCount = 0;
-    let toolsToUse = [...tools]; // Копия для модификации
+    const iterationLimit = Math.min(maxIterations, HARD_ITERATION_CAP);
+    const maxContextTokens = modelOptions?.maxContextTokens || MAX_CONTEXT_TOKENS;
+    const maxToolCalls = modelOptions?.maxToolCalls || MAX_TOOL_CALLS;
 
-    for (let iteration = 0; iteration < maxIterations; iteration++) {
-        // Оцениваем размер промпта (примерно 4 символа = 1 токен)
-        const currentPromptSize = JSON.stringify(conversation).length;
-        const estimatedPromptTokens = Math.ceil(currentPromptSize / 4);
-        
-        console.log(`[interactiveLLM] 🔁 Итерация ${iteration + 1}/${maxIterations}, messages=${conversation.length}, estimatedTokens=${estimatedPromptTokens}, fetchContextCalls=${fetchContextCallCount}`);
-        
-        // Если промпт слишком большой или слишком много fetch_context_chunk - отключаем его
-        if (estimatedPromptTokens > MAX_PROMPT_TOKENS || fetchContextCallCount >= MAX_FETCH_CONTEXT_CALLS) {
-            const hasFetchContext = toolsToUse.some(t => t.function?.name === 'fetch_context_chunk');
-            if (hasFetchContext) {
-                toolsToUse = toolsToUse.filter(t => t.function?.name !== 'fetch_context_chunk');
-                console.warn(`[interactiveLLM] 🔒 Отключен fetch_context_chunk (estimatedTokens=${estimatedPromptTokens} > ${MAX_PROMPT_TOKENS} или calls=${fetchContextCallCount} >= ${MAX_FETCH_CONTEXT_CALLS})`);
-            }
+    let fetchContextCallCount = 0;
+    let totalToolCalls = 0;
+
+    const estimateTokens = () => Math.ceil(JSON.stringify(conversation).length / APPROX_CHARS_PER_TOKEN);
+
+    const requestFinalAnswer = async (reason) => {
+        if (reason) {
+            console.warn(`[interactiveLLM] ⛔ ${reason}. Запрашиваю финальный ответ без инструментов.`);
+            conversation.push({
+                role: 'system',
+                content: '⚠️ Достигнут лимит контекста/инструментов. Не используй tools. Верни финальный ответ строго в требуемом JSON-формате.'
+            });
         }
+
+        const finalResponse = await callWithCloudRuFallback(
+            OPENROUTER_URL,
+            conversation,
+            config.openRouterAiKey,
+            {
+                tools: [],
+                temperature: 0,
+                ...modelOptions
+            }
+        );
+
+        const finalMessage = finalResponse.choices?.[0]?.message || {};
+        if (!finalMessage.role) {
+            finalMessage.role = 'assistant';
+        }
+        conversation.push(finalMessage);
+
+        return {
+            status: 'assistant-message',
+            message: finalMessage,
+            response: finalResponse,
+            messages: conversation
+        };
+    };
+
+    for (let iteration = 0; iteration < iterationLimit; iteration++) {
+        const estimatedTokens = estimateTokens();
+        if (estimatedTokens >= maxContextTokens) {
+            return await requestFinalAnswer(`Лимит контекста превышен (${estimatedTokens} токенов ≥ ${maxContextTokens})`);
+        }
+
+        console.log(`[interactiveLLM] 🔁 Итерация ${iteration + 1}/${iterationLimit}, messages=${conversation.length}, estimatedTokens=${estimatedTokens}, fetchContextCalls=${fetchContextCallCount}, toolCalls=${totalToolCalls}`);
 
         const response = await callWithCloudRuFallback(
             OPENROUTER_URL,
             conversation,
             config.openRouterAiKey,
             {
-                tools: toolsToUse,
+                tools,
                 temperature: 0,
                 ...modelOptions
             }
@@ -74,6 +107,7 @@ export async function runInteractiveLLM({
         const toolCalls = assistantMessage.tool_calls;
 
         if (Array.isArray(toolCalls) && toolCalls.length) {
+            totalToolCalls += toolCalls.length;
             let finalCallPayload = null;
 
             for (const toolCall of toolCalls) {
@@ -177,6 +211,10 @@ export async function runInteractiveLLM({
                 return finalCallPayload;
             }
 
+            if (totalToolCalls >= maxToolCalls) {
+                return await requestFinalAnswer(`Достигнут лимит tool_calls (${totalToolCalls} ≥ ${maxToolCalls})`);
+            }
+
             // Если были tool_calls, продолжаем цикл: отправляем контекст назад модели
             continue;
         }
@@ -190,7 +228,7 @@ export async function runInteractiveLLM({
         };
     }
 
-    throw new Error(`runInteractiveLLM: превышено количество итераций (${maxIterations}) без финального ответа`);
+    throw new Error(`runInteractiveLLM: превышено количество итераций (${iterationLimit}) без финального ответа`);
 }
 
 

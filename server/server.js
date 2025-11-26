@@ -2569,6 +2569,11 @@ function extractToolArgs(aiResponse, preferredFnName) {
         if (content) {
             console.log(`[extractToolArgs] tool_calls не найдены, пробуем парсить content (${content.length} символов)`);
 
+            const inlineToolArgs = tryParseInlineToolCall(content, preferredFnName);
+            if (inlineToolArgs) {
+                return inlineToolArgs;
+            }
+
             // ✅ УЛУЧШЕННЫЙ парсинг JSON с обработкой ошибок
             const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) ||
                 content.match(/```\s*([\s\S]*?)\s*```/) ||
@@ -2722,6 +2727,54 @@ function extractToolArgs(aiResponse, preferredFnName) {
         console.error(`[extractToolArgs] 💥 Критическая ошибка:`, error.message);
         return null;
     }
+}
+
+function tryParseInlineToolCall(rawContent, toolName) {
+    if (!rawContent) return null;
+
+    const toolBlockMatch = rawContent.match(/<tool_call>\s*([\s\S]+?)\s*<\/tool_call>/i);
+    const payload = toolBlockMatch ? toolBlockMatch[1] : rawContent;
+    const firstBrace = payload.indexOf('{');
+    const lastBrace = payload.lastIndexOf('}');
+
+    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+        return null;
+    }
+
+    const jsonCandidate = payload.slice(firstBrace, lastBrace + 1).trim();
+
+    try {
+        const parsed = JSON5.parse(jsonCandidate);
+
+        if (parsed && parsed.name && parsed.arguments) {
+            if (toolName && parsed.name !== toolName) {
+                console.warn(`[extractToolArgs] ⚠️ Inline tool_call содержит "${parsed.name}", ожидалось "${toolName}"`);
+            }
+
+            if (typeof parsed.arguments === 'string') {
+                try {
+                    const args = JSON.parse(parsed.arguments);
+                    console.log('[extractToolArgs] ✅ Извлечены аргументы из inline tool_call (string)');
+                    return args;
+                } catch (err) {
+                    console.warn('[extractToolArgs] ⚠️ Не удалось распарсить строковые arguments, пробую JSON5:', err.message);
+                    return JSON5.parse(parsed.arguments);
+                }
+            }
+
+            console.log('[extractToolArgs] ✅ Извлечены аргументы из inline tool_call (object)');
+            return parsed.arguments;
+        }
+
+        if (parsed && typeof parsed === 'object') {
+            console.log('[extractToolArgs] ✅ Извлечён JSON из inline tool_call');
+            return parsed;
+        }
+    } catch (err) {
+        console.warn(`[extractToolArgs] ⚠️ Не удалось распарсить inline tool_call: ${err.message}`);
+    }
+
+    return null;
 }
 
 
@@ -5360,7 +5413,7 @@ ${reqStringForModel}
 
         const partialModels = [];
 
-        const MAX_MODEL_ATTEMPTS_PER_CHUNK = 5; // ✅ Увеличено с 3 до 5 для более качественной генерации
+        const MAX_MODEL_ATTEMPTS_PER_CHUNK = 3; // ✅ Оптимизировано: стараемся завершать быстрее
 
         // === ГЕНЕРАЦИЯ ДЛЯ КАЖДОГО ЧАНКА ===
         for (let chunkIdx = 0; chunkIdx < reqChunks.length; chunkIdx++) {
@@ -5819,86 +5872,24 @@ ${reqChunk}`;
                 }
 
                 const normalizedPartial = normalizeModelStructure(partialModel);
-                const repairedPartial = repairModelStructure(normalizedPartial);
-                const structureIssues = detectModelStructureIssues(repairedPartial, `chunk-${chunkIdx + 1}`);
+                let repairedPartial = repairModelStructure(normalizedPartial);
+                let structureIssues = detectModelStructureIssues(repairedPartial, `chunk-${chunkIdx + 1}`);
 
                 if (structureIssues.length) {
-                    console.warn(`[generate-test-model-async] Структурные ошибки (chunk ${chunkIdx + 1}, attempt ${attempt + 1}):`, structureIssues);
+                    console.warn(`[generate-test-model-async] ⚠️ Структурные предупреждения (chunk ${chunkIdx + 1}, attempt ${attempt + 1}):`, structureIssues);
 
-                    // ✅ АВТОМАТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Исправляем Code с пользовательскими действиями
                     const codeIssues = structureIssues.filter(issue => issue.includes('Code') && issue.includes('пользовательское действие'));
                     if (codeIssues.length > 0) {
-                        console.log(`[generate-test-model-async] Автоматически исправляю ${codeIssues.length} Code с пользовательскими действиями...`);
-                        // Применяем автоматическое исправление Code
                         const autoFixedModel = autoFixCodeWithUserActions(repairedPartial);
                         const fixedIssues = detectModelStructureIssues(autoFixedModel, `chunk-${chunkIdx + 1}`);
                         if (fixedIssues.length < structureIssues.length) {
-                            console.log(`[generate-test-model-async] ✅ Автоматическое исправление помогло: ${structureIssues.length} → ${fixedIssues.length} ошибок`);
+                            console.log(`[generate-test-model-async] ✅ Автофикс Code помог: ${structureIssues.length} → ${fixedIssues.length}`);
                             repairedPartial = autoFixedModel;
-                            if (fixedIssues.length === 0) {
-                                validatedChunkModel = repairedPartial;
-                                break;
-                            }
-                            // Обновляем список ошибок для следующей попытки
                             structureIssues = fixedIssues;
-                        } else {
-                            console.warn(`[generate-test-model-async] ⚠️ Автоматическое исправление не помогло, осталось ${fixedIssues.length} ошибок`);
                         }
                     }
 
-                    if (attempt < MAX_MODEL_ATTEMPTS_PER_CHUNK - 1) {
-                        // ✅ Формируем детальный escalation prompt для всех типов проблем
-                        const featureIssues = structureIssues.filter(issue => issue.includes('Feature'));
-                        const storyIssues = structureIssues.filter(issue => issue.includes('Story'));
-                        const scenarioIssues = structureIssues.filter(issue => issue.includes('Scenario'));
-                        const codeIssues = structureIssues.filter(issue => issue.includes('Code'));
-
-                        let escalationDetails = [];
-
-                        if (featureIssues.length > 0) {
-                            escalationDetails.push(`\n🚨 ПРОБЛЕМЫ С FEATURE:\n${featureIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}\n\nПРАВИЛО: Feature = БИЗНЕС-ПОТРЕБНОСТЬ для пользователя\n✅ "Безбумажный офис", "Платежи", "QR-коды для физических лиц"\n❌ "Реализация...", "Доработка...", "API метод..."`);
-                        }
-
-                        if (storyIssues.length > 0) {
-                            escalationDetails.push(`\n🚨 ПРОБЛЕМЫ С STORY:\n${storyIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}\n\nПРАВИЛО: Story = ПОЛЬЗОВАТЕЛЬСКАЯ ИСТОРИЯ (что хочет получить пользователь)\n✅ "Регистрация в ББО", "QR-коды для физических лиц", "Оплата по QR-коду"\n❌ "Реализация кнопки...", "API метод...", "Чек-бокс X", "Вкладка X", "Контрол X"\n\n🚨 КРИТИЧНО: Story НЕ должна описывать техническую реализацию или UI-контролы!`);
-                        }
-
-                        if (scenarioIssues.length > 0) {
-                            escalationDetails.push(`\n🚨 ПРОБЛЕМЫ С SCENARIO:\n${scenarioIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}\n\nПРАВИЛО: Scenario = ДЕЙСТВИЕ ПОЛЬЗОВАТЕЛЯ (глагол в повелительном наклонении, БЕЗ нумерации)\n✅ "Нажать на кнопку 'Безбумажный офис'", "Выбрать чекбокс 'УНК в другом банке'"\n❌ "1. Нажать на кнопку" (с нумерацией - не нужно!), "Проверить поле" (проверка не действие)`);
-                        }
-
-                        if (codeIssues.length > 0) {
-                            escalationDetails.push(`\n🚨 ПРОБЛЕМЫ С CODE:\n${codeIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}\n\nПРАВИЛО: Code = ПОВЕДЕНИЕ СИСТЕМЫ после действия пользователя\n✅ "GET /stateful/...", "Отобразить страницу...", "Вызвать метод auth()"\n❌ "Заполнить поле", "Ввести значение", "Нажать кнопку" (это действия пользователя!)`);
-                        }
-
-                        escalationPrompt = `
-🚨 КРИТИЧЕСКАЯ ОШИБКА: Структура модели нарушена! Попытка ${attempt + 1}/${MAX_MODEL_ATTEMPTS_PER_CHUNK}
-
-Следуй ПРИМЕРУ выше (см. пример тестовой модели):
-
-КРИТИЧЕСКИ ВАЖНО - ИСПОЛЬЗУЙ ПРИМЕР КАК ЭТАЛОН:
-- Feature = БИЗНЕС-ПОТРЕБНОСТЬ (как в примере: "Безбумажный офис")
-- Story = ПОЛЬЗОВАТЕЛЬСКАЯ ИСТОРИЯ (как в примере: "Регистрация в ББО")
-- Scenario = ДЕЙСТВИЕ ПОЛЬЗОВАТЕЛЯ (как в примере: "Нажать на кнопку \"Безбумажный офис\"")
-- Code = РЕАКЦИЯ СИСТЕМЫ (как в примере: "GET /stateful/...", "Отобразить страницу...")
-
-${escalationDetails.join('\n')}
-
-🚨 ОБЯЗАТЕЛЬНО:
-1. Перечитай ВЕСЬ чанк requirements от начала до конца
-2. Найди ВСЕ нумерованные разделы (X.X, X.X.X)
-3. Создай Story для КАЖДОГО раздела (НЕ пропускай!)
-4. Удали все технические формулировки из Story
-5. Убедись, что Story описывает ценность для пользователя, а не техническую реализацию
-
-Перегенерируй модель СТРОГО по примеру выше и верни через submit_test_model.`.trim();
-                        continue;
-                    }
-
-                    // После всех попыток - принимаем модель с предупреждением
-                    console.warn(`[generate-test-model-async] ⚠️ Принимаю модель с ${structureIssues.length} структурными ошибками после ${MAX_MODEL_ATTEMPTS_PER_CHUNK} попыток`);
-                    validatedChunkModel = repairedPartial;
-                    break;
+                    repairedPartial.__warnings = structureIssues;
                 }
 
                 validatedChunkModel = repairedPartial;

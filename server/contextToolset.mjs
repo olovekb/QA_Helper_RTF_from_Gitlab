@@ -134,6 +134,8 @@ export function createContextToolset(options = {}) {
     } = options;
 
     const normalizedDefaultChunk = clamp(defaultChunk, 512, 50000);  // ✅ Увеличено для больших документов
+    const HARD_MAX_CHUNK_CHARS = 6000; // ✅ Ограничиваем размер возвращаемого чанка (≈1500 токенов)
+    const MAX_CHUNKS_PER_SOURCE = 3;   // ✅ Не более 3 уникальных чанков на источник за весь диалог
 
     const sourceMap = new Map();
     const contentCache = new Map();
@@ -141,6 +143,10 @@ export function createContextToolset(options = {}) {
     const chunkCache = new Map();
     // ✅ Отслеживание количества запросов к каждому источнику (sourceId → count)
     const sourceRequestCounts = new Map();
+
+    // ✅ Отслеживаем какие чанки уже были отданы (чтобы не дублировать контент)
+    const deliveredChunkKeys = new Set(); // `${sourceId}_${offset}_${limit}`
+    const deliveredChunksBySource = new Map(); // sourceId → [{offset, end}]
 
     const normalisedSources = Array.isArray(sources) ? sources : [];
 
@@ -351,14 +357,32 @@ export function createContextToolset(options = {}) {
             }
 
             const offset = clamp(parsedArgs?.offset ?? 0, 0, Number.MAX_SAFE_INTEGER);
-            const limit = clamp(parsedArgs?.limit ?? normalizedDefaultChunk, 256, 50000);  // ✅ Увеличено до 50000
+            const rawLimit = clamp(parsedArgs?.limit ?? normalizedDefaultChunk, 256, 50000);  // ✅ Увеличено до 50000
+            const effectiveLimit = Math.min(rawLimit, HARD_MAX_CHUNK_CHARS);
 
             // ✅ Отслеживаем количество запросов к этому источнику
             const requestCount = (sourceRequestCounts.get(sourceId) || 0) + 1;
             sourceRequestCounts.set(sourceId, requestCount);
 
-            // ✅ Проверяем кэш чанков
-            const cacheKey = `${sourceId}_${offset}_${limit}`;
+            const chunkKey = `${sourceId}_${offset}_${effectiveLimit}`;
+            const deliveredForSource = deliveredChunksBySource.get(sourceId) || [];
+            if (!deliveredChunksBySource.has(sourceId)) {
+                deliveredChunksBySource.set(sourceId, deliveredForSource);
+            }
+
+            // ✅ Не отдаём один и тот же чанк несколько раз — возвращаем короткую подсказку
+            if (deliveredChunkKeys.has(chunkKey)) {
+                return buildAlreadyProvidedResponse(source, offset, totalLength, deliveredForSource);
+            }
+
+            // ✅ Ограничиваем количество уникальных чанков на источник
+            if (!deliveredForSource.some(entry => entry.key === chunkKey) &&
+                deliveredForSource.length >= MAX_CHUNKS_PER_SOURCE) {
+                return buildLimitReachedResponse(source, offset, totalLength, deliveredForSource);
+            }
+
+            // ✅ Проверяем кэш чанков (с учётом урезанного effectiveLimit)
+            const cacheKey = `${sourceId}_${offset}_${effectiveLimit}`;
             if (chunkCache.has(cacheKey)) {
                 console.log(`[fetch_context_chunk] ✅ CACHE HIT для ${cacheKey}`);
                 return chunkCache.get(cacheKey);
@@ -420,19 +444,25 @@ export function createContextToolset(options = {}) {
                 return result;
             }
 
-            const nextOffset = Math.min(offset + limit, totalLength);
+            const nextOffset = Math.min(offset + effectiveLimit, totalLength);
             const chunk = content.slice(offset, nextOffset);
+
+            deliveredChunkKeys.add(chunkKey);
+            deliveredForSource.push({ key: chunkKey, offset, end: nextOffset });
 
             const result = {
                 sourceId,
                 chunk,
                 offset,
-                limit,
+                limit: effectiveLimit,
                 nextOffset,
                 hasMore: nextOffset < totalLength,
                 totalLength,
                 title: source.title,
-                pageId: source.pageId
+                pageId: source.pageId,
+                note: rawLimit > effectiveLimit
+                    ? `⚠️ Запрошено ${rawLimit} символов, но по правилам выдано только ${effectiveLimit}.`
+                    : undefined
             };
             
             // ✅ Кэшируем результат
@@ -460,6 +490,39 @@ export function createContextToolset(options = {}) {
         handlers,
         summary
     };
+    function buildAlreadyProvidedResponse(source, offset, totalLength, deliveredForSource) {
+        return {
+            sourceId: source.id,
+            chunk: '',
+            offset,
+            limit: 0,
+            nextOffset: offset,
+            hasMore: offset < totalLength,
+            totalLength,
+            title: source.title,
+            pageId: source.pageId,
+            note: '⚠️ Этот чанк уже был предоставлен ранее. Используй его из истории диалога вместо повторного запроса.'
+        };
+    }
+
+    function buildLimitReachedResponse(source, offset, totalLength, deliveredForSource) {
+        const summary = deliveredForSource
+            .map((entry, idx) => `#${idx + 1}: ${entry.offset}…${entry.end}`)
+            .join(', ');
+
+        return {
+            sourceId: source.id,
+            chunk: '',
+            offset,
+            limit: 0,
+            nextOffset: offset,
+            hasMore: offset < totalLength,
+            totalLength,
+            title: source.title,
+            pageId: source.pageId,
+            note: `⚠️ Достигнут лимит ${MAX_CHUNKS_PER_SOURCE} уникальных чанков для "${source.title}". Используй ранее полученные диапазоны: ${summary}`
+        };
+    }
 }
 
 
