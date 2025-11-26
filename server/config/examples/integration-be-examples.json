@@ -98,5 +98,61 @@
     "tags": ["S"],
     "priority": "High",
     "version": "stable"
+  },
+  {
+    "id": "a7b8c9d0-e1f2-3456-7890-123456789012",
+    "title": "POST **/rest/personal/bio/auth** возвращает ответ с кодом {{Код ответа}} при неуспешной аутентификации",
+    "layer": "Integration backend Tests",
+    "feature": "Авторизация по биометрии",
+    "story": "Авторизовываться по биометрии",
+    "scenario": "Проверять наличие доступности входа по биометрии",
+    "precondition": "1. Сервер доступен\n2. Пользователь ранее зарегистрировал пин-код и авторизовался в приложении с помощью биометрии\n3. Подменить ответ запроса **/rest/personal/bio/auth** на {{Код ответа}} с телом: {{Содержимое ответа}}",
+    "steps": [
+      "Выполнить POST **/rest/personal/bio/auth** с заголовком Authorization: sysuser и deviceid (значения из localStorage)"
+    ],
+    "expected": "**Возвращается** {{Код ответа}} с JSON: {{Содержимое ответа}}",
+    "tags": ["S"],
+    "priority": "High",
+    "version": "stable",
+    "parameters": [
+      {
+        "name": "Код ответа",
+        "values": ["401", "400", "500"]
+      },
+      {
+        "name": "Содержимое ответа",
+        "values": [
+          "{error: 'Unauthorized'}",
+          "{error: 'Bad Request', code: 'auth.biofail'}",
+          "{error: 'Internal Server Error'}"
+        ]
+      }
+    ],
+    "examples": [
+      {
+        "parameters": [
+          {
+            "name": "Код ответа",
+            "value": "401"
+          },
+          {
+            "name": "Содержимое ответа",
+            "value": "{error: 'Unauthorized'}"
+          }
+        ]
+      },
+      {
+        "parameters": [
+          {
+            "name": "Код ответа",
+            "value": "400"
+          },
+          {
+            "name": "Содержимое ответа",
+            "value": "{error: 'Bad Request', code: 'auth.biofail'}"
+          }
+        ]
+      }
+    ]
   }
 ]
