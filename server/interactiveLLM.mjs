@@ -30,16 +30,35 @@ export async function runInteractiveLLM({
 
     const conversation = [...initialMessages];
     const finalNames = Array.isArray(finalToolNames) ? finalToolNames : [];
+    
+    // 🚨 ЗАЩИТА ОТ ЗАЦИКЛИВАНИЯ: отслеживаем размер промпта и количество fetch_context_chunk
+    const MAX_PROMPT_TOKENS = 200000; // Лимит входных токенов (оставляем запас для completion)
+    const MAX_FETCH_CONTEXT_CALLS = 5; // Максимум вызовов fetch_context_chunk
+    let fetchContextCallCount = 0;
+    let toolsToUse = [...tools]; // Копия для модификации
 
     for (let iteration = 0; iteration < maxIterations; iteration++) {
-        console.log(`[interactiveLLM] 🔁 Итерация ${iteration + 1}/${maxIterations}, messages=${conversation.length}`);
+        // Оцениваем размер промпта (примерно 4 символа = 1 токен)
+        const currentPromptSize = JSON.stringify(conversation).length;
+        const estimatedPromptTokens = Math.ceil(currentPromptSize / 4);
+        
+        console.log(`[interactiveLLM] 🔁 Итерация ${iteration + 1}/${maxIterations}, messages=${conversation.length}, estimatedTokens=${estimatedPromptTokens}, fetchContextCalls=${fetchContextCallCount}`);
+        
+        // Если промпт слишком большой или слишком много fetch_context_chunk - отключаем его
+        if (estimatedPromptTokens > MAX_PROMPT_TOKENS || fetchContextCallCount >= MAX_FETCH_CONTEXT_CALLS) {
+            const hasFetchContext = toolsToUse.some(t => t.function?.name === 'fetch_context_chunk');
+            if (hasFetchContext) {
+                toolsToUse = toolsToUse.filter(t => t.function?.name !== 'fetch_context_chunk');
+                console.warn(`[interactiveLLM] 🔒 Отключен fetch_context_chunk (estimatedTokens=${estimatedPromptTokens} > ${MAX_PROMPT_TOKENS} или calls=${fetchContextCallCount} >= ${MAX_FETCH_CONTEXT_CALLS})`);
+            }
+        }
 
         const response = await callWithCloudRuFallback(
             OPENROUTER_URL,
             conversation,
             config.openRouterAiKey,
             {
-                tools,
+                tools: toolsToUse,
                 temperature: 0,
                 ...modelOptions
             }
@@ -120,6 +139,22 @@ export async function runInteractiveLLM({
                 }
 
                 try {
+                    // Отслеживаем вызовы fetch_context_chunk
+                    if (toolName === 'fetch_context_chunk') {
+                        fetchContextCallCount++;
+                        if (fetchContextCallCount > MAX_FETCH_CONTEXT_CALLS) {
+                            console.warn(`[interactiveLLM] ⚠️ Превышен лимит вызовов fetch_context_chunk (${fetchContextCallCount} > ${MAX_FETCH_CONTEXT_CALLS}), возвращаем ошибку`);
+                            conversation.push({
+                                role: 'tool',
+                                name: toolName,
+                                content: JSON.stringify({
+                                    error: `Превышен лимит вызовов fetch_context_chunk (${MAX_FETCH_CONTEXT_CALLS}). Используй уже полученный контекст для генерации модели.`
+                                })
+                            });
+                            continue;
+                        }
+                    }
+                    
                     const result = await handler(handlerArgs);
                     conversation.push({
                         role: 'tool',

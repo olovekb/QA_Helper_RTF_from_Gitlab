@@ -5381,7 +5381,7 @@ ${reqStringForModel}
 
             // Модифицируем промпт для чанков (Domain Driven Testing)
             const logicSectionForChunk = logicConstraints ? formatLogicConstraintsForPrompt(logicConstraints) : '';
-
+            
             let userPrompt = `
 📋 ЗАДАНИЕ: Создай тестовую модель Feature → Story → Scenario → Code (Domain Driven Testing)
 
@@ -5479,7 +5479,7 @@ ${reqChunk}`;
             } else {
                 // Для одного чанка - явно просим генерировать ПОЛНУЮ модель (Domain Driven Testing)
                 const logicSectionForSingleChunk = logicConstraints ? formatLogicConstraintsForPrompt(logicConstraints) : '';
-
+                
                 userPrompt = `🚨 КРИТИЧЕСКИ ВАЖНО: ГЕНЕРИРУЙ ПОЛНУЮ ТЕСТОВУЮ МОДЕЛЬ! 🚨
 
 📋 ЗАДАНИЕ: Создай ПОЛНУЮ тестовую модель Feature → Story → Scenario → Code (Domain Driven Testing)
@@ -5558,7 +5558,7 @@ ${reqChunk}`;
                         tools: combinedTools,
                         toolHandlers: contextToolHandlers,
                         finalToolNames: ['submit_test_model'],
-                        maxIterations: 20,  // ✅ Больше итераций, чтобы успевать собрать крупные требования
+                        maxIterations: 10,  // ✅ Уменьшено с 20 до 10 для предотвращения зацикливания и превышения лимита токенов
                         modelOptions: {
                             temperature: 0,
                             top_p: 0.9,
@@ -6522,11 +6522,11 @@ ${escalationPrompt}`;
             // Если столбец metrics не существует - сохраняем без метрик
             // Проверяем как русский, так и английский вариант ошибки
             const errorMsg = error.message || '';
-            const isMetricsColumnError =
-                errorMsg.includes('столбец "metrics"') ||
+            const isMetricsColumnError = 
+                errorMsg.includes('столбец "metrics"') || 
                 errorMsg.includes('column "metrics"') ||
                 (errorMsg.includes('metrics') && (errorMsg.includes('does not exist') || errorMsg.includes('doesn\'t exist')));
-
+            
             if (isMetricsColumnError) {
                 console.warn('[generateTestModelAsync] Столбец metrics не существует, сохраняю без метрик');
                 await db('generation_tasks').where('id', taskId).update(updateData);
@@ -7229,11 +7229,15 @@ async function fixTestCasesAsync({ taskId, testCases, fixPrompt, projectId, bear
         throw new Error('[fixTestCasesAsync] taskId обязателен для сохранения контекста диалога');
     }
 
-    console.log(`[fixTestCasesAsync] Начало правки ${testCases.length} тест-кейсов (taskId: ${taskId})`);
+    // ✅ РАЗДЕЛЕНИЕ КОНТЕКСТА ПО ФАЗАМ: Используем отдельный taskId для фиксов
+    // Это предотвращает смешивание инструкций генерации и фиксов
+    const fixTaskId = `${taskId}:fix`;
+
+    console.log(`[fixTestCasesAsync] Начало правки ${testCases.length} тест-кейсов (taskId: ${taskId}, fixTaskId: ${fixTaskId})`);
     console.log(`[fixTestCasesAsync] Промпт: "${fixPrompt.substring(0, 200)}..."`);
 
-    // ✅ Получаем существующий контекст или создаём новый
-    let context = getConversationContext(taskId);
+    // ✅ Получаем существующий контекст или создаём новый (используем fixTaskId)
+    let context = getConversationContext(fixTaskId);
     const attemptNumber = context ? (context.metadata.previousErrors?.length || 0) + 1 : 1;
 
     // Шаг 1: Определяем какие ТК нужно править из промпта
@@ -7321,19 +7325,63 @@ async function fixTestCasesAsync({ taskId, testCases, fixPrompt, projectId, bear
         ]
         : [];
 
-    // ✅ Создаём системный промпт используя модульную систему
-    const systemPrompt = buildSystemPrompt({
-        mode: 'fix',
-        requirements: requirements || null,
-        examples: perfectExamplesList.length > 0 ? perfectExamplesList : null,
-        errorHistory: errorHistory.length > 0 ? errorHistory : null,
-        includeE2ERules: true,
-        includeIntegrationRules: true
-    });
+    // ✅ ИСПОЛЬЗУЕМ УПРОЩЁННЫЙ ПРОМПТ ДЛЯ ФОРМАТЕРА (только стайл-гайд, без правил покрытия)
+    // Форматер получает уже готовые тест-кейсы и только приводит их к идеальному формату
+    const FORMATTER_SYSTEM_PROMPT = `
+Ты — Форматер тест-кейсов. Твоя задача — привести уже готовые тест-кейсы к идеальному формату.
 
-    // ✅ Инициализируем или обновляем контекст диалога
+🚨 КРИТИЧНО: НЕ переизобретай структуру тест-кейса, только поправь формат по правилам ниже!
+
+📝 ПРАВИЛА ФОРМАТА:
+
+**TITLE:**
+- БЕЗ "проверка|тестирование|валидация"
+- От лица пользователя для E2E: "Создать платеж" (НЕ "Проверка создания платежа")
+
+**STEPS:**
+❌ ЗАПРЕЩЕНО: "Попытаться", "Дождаться", "Проверить", "Убедиться"
+❌ ЗАПРЕЩЕНО: Описания состояний: "открытия модального окна", "загрузки списка"
+✅ ТОЛЬКО действия: "Нажать кнопку", "Ввести текст", "Выбрать файл"
+
+**PRECONDITION:**
+- E2E Tests: обычно "" (пустая строка)
+- Integration frontend Tests: ОБЯЗАТЕЛЬНО! Описание состояния UI (БЕЗ действий пользователя!)
+  ✅ Правильно: "Пользователь авторизован, на странице создания QR-кода"
+  ❌ Неправильно: "Нажать кнопку, ввести данные" (это steps!)
+- Integration backend Tests: ОБЯЗАТЕЛЬНО! Описание состояния сервера
+
+**EXPECTED:**
+✅ **Отображается** (UI), **Возвращается** (API), **Скрывается** (UI), **Создан/Удалён/Обновлён** (объекты)
+❌ **Обновляется**, **Удаляется** — НЕПРАВИЛЬНО!
+✅ Всегда начинается с **жирного** ключевого слова!
+
+**INTEGRATION FRONTEND - ОСОБЫЕ ПРАВИЛА:**
+🚨 КРИТИЧНО: steps = ТОЛЬКО пользовательские действия (Нажать, Ввести, Выбрать)
+🚨 КРИТИЧНО: Технические детали (API запросы) → в precondition или expected, НЕ в steps!
+✅ Правильно в steps: "Нажать кнопку 'Создать QR-код'"
+❌ Неправильно в steps: "Отправить GET /rest/stateful/corp/sbp/request_sbp_reg_tsp/list"
+`;
+
+    let systemPrompt = FORMATTER_SYSTEM_PROMPT;
+    
+    // Добавляем идеальные примеры если есть
+    if (perfectExamplesList.length > 0) {
+        const examplesSection = `
+═══════════════════════════════════════════════════════════════
+⭐ ИДЕАЛЬНЫЕ ПРИМЕРЫ - ИСПОЛЬЗУЙ КАК ЭТАЛОН ФОРМАТА
+═══════════════════════════════════════════════════════════════
+
+${perfectExamplesList.map((ex, i) => `
+ПРИМЕР ${i + 1} (${ex.layer}):
+${JSON.stringify(ex, null, 2)}
+`).join('\n')}
+`;
+        systemPrompt = systemPrompt + '\n\n' + examplesSection;
+    }
+
+    // ✅ Инициализируем или обновляем контекст диалога (используем fixTaskId для изоляции)
     if (!context) {
-        context = createConversationContext(taskId, {
+        context = createConversationContext(fixTaskId, {
             systemPrompt,
             metadata: {
                 attemptNumber: 0,
@@ -7343,12 +7391,12 @@ async function fixTestCasesAsync({ taskId, testCases, fixPrompt, projectId, bear
                 requirements: requirements || null
             }
         });
-        console.log(`[fixTestCasesAsync] Создан новый контекст для taskId: ${taskId}`);
+        console.log(`[fixTestCasesAsync] Создан новый контекст для fixTaskId: ${fixTaskId}`);
     } else {
         // Если контекст существует, обновляем системный промпт если нужно (только при первой попытке)
         if (attemptNumber === 1 && context.messages.length === 1) {
             context.messages[0].content = systemPrompt;
-            console.log(`[fixTestCasesAsync] Обновлён системный промпт в существующем контексте taskId: ${taskId}`);
+            console.log(`[fixTestCasesAsync] Обновлён системный промпт в существующем контексте fixTaskId: ${fixTaskId}`);
         }
     }
 
@@ -7357,14 +7405,14 @@ async function fixTestCasesAsync({ taskId, testCases, fixPrompt, projectId, bear
     const perfectExamplesForFewShot = perfectExamplesList.length > 0 ? perfectExamplesList : [];
 
     // ✅ Получаем контекст для добавления few-shot примеров в messages
-    context = getConversationContext(taskId);
+    context = getConversationContext(fixTaskId);
     if (context && perfectExamplesForFewShot.length > 0) {
         // Добавляем few-shot примеры в начало диалога (после system message)
         const fewShotMessages = addPerfectExamplesAsFewShot([], perfectExamplesForFewShot, 2);
         // Вставляем few-shot примеры после system message (если их ещё нет)
         if (context.messages.length === 1) {
             context.messages.push(...fewShotMessages);
-            console.log(`[fixTestCasesAsync] Добавлено ${fewShotMessages.length} few-shot примеров в контекст taskId: ${taskId}`);
+            console.log(`[fixTestCasesAsync] Добавлено ${fewShotMessages.length} few-shot примеров в контекст fixTaskId: ${fixTaskId}`);
         }
     }
 
@@ -7633,8 +7681,8 @@ ${JSON.stringify(chunk, null, 2)}
             // Формируем user prompt с контекстом предыдущих попыток
             let contextualUserPrompt = userPrompt;
 
-            // Получаем актуальный контекст для получения истории ошибок
-            context = getConversationContext(taskId);
+            // Получаем актуальный контекст для получения истории ошибок (используем fixTaskId)
+            context = getConversationContext(fixTaskId);
             const currentErrorHistory = context ? (context.metadata.previousErrors || []) : [];
 
             if (attemptNumber > 1 && currentErrorHistory.length > 0) {
@@ -7656,9 +7704,9 @@ ${err.userRequest ? `- Запрос: ${err.userRequest.substring(0, 100)}...` : 
 ${userPrompt}`;
             }
 
-            // ✅ Вызываем LLM с контекстом для сохранения истории
+            // ✅ Вызываем LLM с контекстом для сохранения истории (используем fixTaskId для изоляции контекста)
             const result = await runTestCaseLLMWithContext({
-                taskId,
+                taskId: fixTaskId, // ✅ Используем отдельный контекст для фиксов
                 userPrompt: contextualUserPrompt,
                 systemPrompt, // Используем модульный промпт (если контекст новый, иначе будет использован существующий)
                 tools,
@@ -7668,9 +7716,9 @@ ${userPrompt}`;
                 },
                 finalToolNames: ['submit_fixed_cases'],
                 modelOptions: {
-                    maxIterations: 5,
+                        maxIterations: 5,
                     temperature: 0,
-                    top_p: 0.1,
+                        top_p: 0.1,
                     max_tokens: 45000,
                     extra: { transforms: 'middle-out' }
                 },
@@ -7762,7 +7810,7 @@ ${userPrompt}`;
                 if (!validation.valid) {
                     // Записываем ошибки валидации в контекст для следующей попытки
                     const errorMsg = `Ошибки валидации: ${validation.errors.join('; ')}`;
-                    addErrorToContext(taskId, errorMsg, fixPrompt);
+                    addErrorToContext(fixTaskId, errorMsg, fixPrompt);
                     console.warn(`[fixTestCasesAsync] ⚠️ Валидация не пройдена для чанка ${chunkIdx + 1}:`, validation.errors);
                     // Продолжаем, но логируем предупреждение
                 } else {
@@ -8959,6 +9007,14 @@ function normalizeIntegrationFrontendSteps(testCase) {
         return testCase;
     }
 
+    // ✅ ЛОГИРОВАНИЕ: Сохраняем состояние до нормализации
+    const beforeState = {
+        id: testCase.id,
+        title: testCase.title,
+        precondition: testCase.precondition || '',
+        steps: Array.isArray(testCase.steps) ? [...testCase.steps] : []
+    };
+
     const API_STEP_PATTERNS = [
         /^отправить\s+(GET|POST|PUT|DELETE|PATCH)/i,
         /^выполнить\s+(GET|POST|PUT|DELETE|PATCH)/i,
@@ -9016,13 +9072,28 @@ function normalizeIntegrationFrontendSteps(testCase) {
         
         const updatedPrecondition = precondition.trim() + '\n' + newLines.join('\n');
         
+        const afterState = {
+            id: testCase.id,
+            title: testCase.title,
+            precondition: updatedPrecondition,
+            steps: uiSteps.length > 0 ? uiSteps : (testCase.steps || [])
+        };
+
         console.log(`[normalizeIntegrationFrontendSteps] 🔧 Перенесено ${technicalSteps.length} технических шагов в precondition для "${testCase.title}"`);
+        console.log(`[normalizeIntegrationFrontendSteps] 📊 BEFORE:`, JSON.stringify(beforeState, null, 2));
+        console.log(`[normalizeIntegrationFrontendSteps] 📊 AFTER:`, JSON.stringify(afterState, null, 2));
 
         return {
             ...testCase,
             steps: uiSteps.length > 0 ? uiSteps : (testCase.steps || []), // Оставляем UI шаги или оригинальные
             precondition: updatedPrecondition
         };
+    }
+
+    // ✅ ЛОГИРОВАНИЕ: Даже если не было изменений, логируем для отладки
+    if (process.env.DEBUG_NORMALIZE === '1') {
+        console.log(`[normalizeIntegrationFrontendSteps] ✅ Нет изменений для "${testCase.title}"`);
+        console.log(`[normalizeIntegrationFrontendSteps] 📊 STATE:`, JSON.stringify(beforeState, null, 2));
     }
 
     return testCase;
@@ -9199,7 +9270,8 @@ function deduplicateTestCases(testCases, stage = 'final') {
         ].join('::');
     };
 
-    // ✅ СТРОГАЯ сигнатура для точной дедупликации (С учетом steps и expected)
+    // ✅ СТРОГАЯ сигнатура для точной дедупликации (С учетом steps и expected, БЕЗ title)
+    // Используется как ОСНОВНАЯ для финальной дедупликации, чтобы схлопывать тесты с одинаковыми шагами, но разными заголовками
     const buildStrictSignature = (testCase) => {
         const layer = normalize(testCase.layer);
         const isE2E = layer === 'e2e tests';
@@ -9214,7 +9286,7 @@ function deduplicateTestCases(testCases, stage = 'final') {
             normalize(testCase.feature),
             isE2E ? '' : normalize(testCase.story),
             isE2E ? '' : normalize(testCase.scenario),
-            normalize(testCase.title),
+            // ✅ УБРАЛИ title - чтобы схлопывать тесты с одинаковыми шагами, но разными заголовками
             (testCase.steps || []).map(step => normalize(stepToText(step))).join('|'),
             normalize(testCase.expected),
             `PARAMS[${paramsSignature}]`
@@ -9273,12 +9345,12 @@ function deduplicateTestCases(testCases, stage = 'final') {
             }
         }
 
-        // ✅ УЛУЧШЕНО: Сначала проверяем по базовой сигнатуре (title + feature + story + scenario)
-        // Это позволяет находить дубликаты даже если шаги были улучшены при перегенерации
-        const signature = buildSignature(testCase);
-        if (seenSignatures.has(signature)) {
-            // Найден дубликат по базовой сигнатуре - проверяем, какой тест-кейс лучше (с более полными шагами)
-            const existingId = seenSignatures.get(signature);
+        // ✅ ИСПРАВЛЕНО: Используем строгую сигнатуру (БЕЗ title) как ОСНОВНУЮ для финальной дедупликации
+        // Это позволяет схлопывать тесты с одинаковыми шагами и expected, но разными заголовками
+        const strictSignature = buildStrictSignature(testCase);
+        if (seenStrictSignatures.has(strictSignature)) {
+            // Найден дубликат по строгой сигнатуре - проверяем, какой тест-кейс лучше (с более полными шагами)
+            const existingId = seenStrictSignatures.get(strictSignature);
             const existingIndex = uniqueCases.findIndex(tc => tc.id === existingId);
 
             if (existingIndex !== -1) {
@@ -9293,11 +9365,11 @@ function deduplicateTestCases(testCases, stage = 'final') {
                     (newStepsCount === existingStepsCount && newExpectedLength > existingExpectedLength)) {
                     // Новый тест-кейс лучше - заменяем старый
                     uniqueCases[existingIndex] = testCase;
-                    seenStrictSignatures.set(buildStrictSignature(testCase), testCase.id);
-                    console.log(`[deduplicateTestCases:${stage}] 🔄 Заменён дубликат "${testCase.title}" на улучшенную версию (шагов: ${existingStepsCount} → ${newStepsCount})`);
+                    console.log(`[deduplicateTestCases:${stage}] 🔄 Заменён дубликат "${existing.title}" → "${testCase.title}" (шагов: ${existingStepsCount} → ${newStepsCount})`);
                 } else {
                     // Старый тест-кейс лучше - оставляем его
                     removed++;
+                    console.log(`[deduplicateTestCases:${stage}] 🚫 Пропущен дубликат "${testCase.title}" (существующий "${existing.title}" лучше)`);
                 }
             } else {
                 removed++;
@@ -9305,14 +9377,37 @@ function deduplicateTestCases(testCases, stage = 'final') {
             continue;
         }
 
-        // ✅ Дополнительная проверка по строгой сигнатуре (с учетом steps и expected)
-        const strictSignature = buildStrictSignature(testCase);
-        if (seenStrictSignatures.has(strictSignature)) {
-            removed++;
-            continue;
+        // ✅ Дополнительная проверка по базовой сигнатуре (только для ранних стадий, перед auto-фиксом)
+        // На финальной стадии используем только строгую сигнатуру
+        if (stage !== 'final') {
+            const signature = buildSignature(testCase);
+            if (seenSignatures.has(signature)) {
+                const existingId = seenSignatures.get(signature);
+                const existingIndex = uniqueCases.findIndex(tc => tc.id === existingId);
+
+                if (existingIndex !== -1) {
+                    const existing = uniqueCases[existingIndex];
+                    const existingStepsCount = (existing.steps || []).length;
+                    const newStepsCount = (testCase.steps || []).length;
+                    const existingExpectedLength = String(existing.expected || '').length;
+                    const newExpectedLength = String(testCase.expected || '').length;
+
+                    if (newStepsCount > existingStepsCount ||
+                        (newStepsCount === existingStepsCount && newExpectedLength > existingExpectedLength)) {
+                        uniqueCases[existingIndex] = testCase;
+                        seenStrictSignatures.set(strictSignature, testCase.id);
+                        console.log(`[deduplicateTestCases:${stage}] 🔄 Заменён дубликат "${testCase.title}" на улучшенную версию (шагов: ${existingStepsCount} → ${newStepsCount})`);
+                    } else {
+                        removed++;
+                    }
+                } else {
+                    removed++;
+                }
+                continue;
+            }
+            seenSignatures.set(signature, testCase.id);
         }
 
-        seenSignatures.set(signature, testCase.id);
         seenStrictSignatures.set(strictSignature, testCase.id);
         uniqueCases.push(testCase);
     }
@@ -10868,7 +10963,7 @@ ${JSON.stringify(pc.testCase, null, 2)}
                                             fixedCases[oldCaseIndex] = fixedCase;
                                         } else {
                                             // Если не нашли - заменяем по индексу (fallback)
-                                            fixedCases[pc.index] = fixedCase;
+                                        fixedCases[pc.index] = fixedCase;
                                         }
 
                                         console.log(`[regenerateTestCasesWithFixes] ✅ Исправлен семантический дефект в тест-кейсе "${pc.testCase.title}" (ID: ${pc.testCase.id})`);
@@ -13015,44 +13110,28 @@ ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         }
 
 
-        const BASE_SYSTEM_PROMPT = `
+        // ✅ УПРОЩЁННЫЙ ПРОМПТ ДЛЯ ГЕНЕРАТОРА (только покрытие и структура, без детального стайл-гайда)
+        const GENERATOR_SYSTEM_PROMPT = `
 Ты — SDET, генерирующий тест-кейсы на основе requirements и тестовой модели.
 
 🎯 ТИПЫ ТЕСТОВ (ОБЯЗАТЕЛЬНО ГЕНЕРИРУЙ ВСЕ!):
 - **E2E Tests**: 🚨 ОБЯЗАТЕЛЬНО! 1-2 теста на КАЖДУЮ Story. Полные пользовательские сценарии через UI (без HTTP-методов/эндпоинтов)
 - **Integration frontend Tests**: Атомарные тесты UI-компонент (указывают scenario из модели)
 - **Integration backend Tests**: Атомарные тесты API (указывают scenario из модели, привязаны к Story с соответствующим API)
+
 🚨 ОБЯЗАТЕЛЬНЫЕ ПОЛЯ:
 - **id**: "tc-e2e-001", "tc-if-001", "tc-ib-001" (НЕ пустой!)
-- **title**: БЕЗ "проверка|тестирование|валидация"
 - **feature**, **story**: Из тестовой модели
+- **scenario**: Для Integration тестов (из модели)
 - **layer**: "E2E Tests" / "Integration frontend Tests" / "Integration backend Tests"
-- **steps**: Массив действий (БЕЗ "Попытаться", "Дождаться", "Проверить", "Убедиться"!)
-- **expected**: С **жирным** ключевым словом в начале!
 - **tags**: ["D"] / ["M"] / ["S"] / ["D", "M"] (НЕ пустой!)
 - **priority**: "High" / "Medium" / "Low"
 - **version**: "stable"
 
-🚫 ЗАПРЕЩЕНО В STEPS:
-❌ "Попытаться", "Дождаться", "Проверить", "Убедиться"
-❌ Описания состояний: "открытия модального окна", "загрузки списка"
-✅ ТОЛЬКО действия: "Нажать кнопку", "Ввести текст", "Выбрать файл"
-
-🔐 PRECONDITION:
-- E2E Tests: обычно "" (пустая строка)
-- Integration frontend Tests: ОБЯЗАТЕЛЬНО! Описание состояния UI
-- Integration backend Tests: ОБЯЗАТЕЛЬНО! Описание состояния сервера
-
 📊 ПАРАМЕТРИЗАЦИЯ:
 ✅ Используй parameters + examples для вариативности (категории, форматы, размеры, места размещения кнопок)
-✅ Если кнопка/элемент в разных местах (модальное окно, страница, вкладка), но реакция системы одинаковая → ОДИН тест с параметризацией!
-   Пример: кнопка "Создать QR-код" в модальном окне "Создать платёж" ИЛИ в модальном окне "+ Платёж" ИЛИ на странице "Эквайринг" → 
-   ОДИН Integration frontend тест с параметром "Место размещения кнопки" и examples
+✅ Если кнопка/элемент в разных местах, но реакция системы одинаковая → ОДИН тест с параметризацией!
 ❌ НЕ создавай дубликаты для разных значений — параметризуй!
-
-⚡ EXPECTED RESULT:
-✅ **Отображается** (UI), **Возвращается** (API), **Скрывается** (UI), **Создан/Удалён/Обновлён** (объекты)
-❌ **Обновляется**, **Удаляется** — НЕПРАВИЛЬНО!
 
 🚨 КРИТИЧНО: НЕ ВЫДУМЫВАЙ ИНФОРМАЦИЮ, КОТОРОЙ НЕТ В ТРЕБОВАНИЯХ!
 ✅ Используй ТОЛЬКО то, что явно указано в requirements!
@@ -13061,14 +13140,46 @@ ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 - E2E Tests: ["D"] / ["M"] / ["D", "M"] (НЕ "S"!)
 - Integration backend Tests: ОБЯЗАТЕЛЬНО ["S"]
 - Integration frontend Tests: ["D"] / ["M"] / ["D", "M"] (НЕ "S"!)
-
-✅ ПРОВЕРКА ПЕРЕД ОТПРАВКОЙ:
-□ Все обязательные поля заполнены (id, tags, version, priority, precondition для Integration)?
-□ Expected начинается с **жирного** ключевого слова?
-□ Steps БЕЗ "Попытаться", "Дождаться", "Проверить"?
-□ E2E тесты БЕЗ HTTP-методов/эндпоинтов?
-□ Эндпоинты в Integration backend выделены **жирным**?
 `;
+
+        // ✅ УПРОЩЁННЫЙ ПРОМПТ ДЛЯ ФОРМАТЕРА (только стайл-гайд, без правил покрытия)
+        const FORMATTER_SYSTEM_PROMPT = `
+Ты — Форматер тест-кейсов. Твоя задача — привести уже готовые тест-кейсы к идеальному формату.
+
+🚨 КРИТИЧНО: НЕ переизобретай структуру тест-кейса, только поправь формат по правилам ниже!
+
+📝 ПРАВИЛА ФОРМАТА:
+
+**TITLE:**
+- БЕЗ "проверка|тестирование|валидация"
+- От лица пользователя для E2E: "Создать платеж" (НЕ "Проверка создания платежа")
+
+**STEPS:**
+❌ ЗАПРЕЩЕНО: "Попытаться", "Дождаться", "Проверить", "Убедиться"
+❌ ЗАПРЕЩЕНО: Описания состояний: "открытия модального окна", "загрузки списка"
+✅ ТОЛЬКО действия: "Нажать кнопку", "Ввести текст", "Выбрать файл"
+
+**PRECONDITION:**
+- E2E Tests: обычно "" (пустая строка)
+- Integration frontend Tests: ОБЯЗАТЕЛЬНО! Описание состояния UI (БЕЗ действий пользователя!)
+  ✅ Правильно: "Пользователь авторизован, на странице создания QR-кода"
+  ❌ Неправильно: "Нажать кнопку, ввести данные" (это steps!)
+- Integration backend Tests: ОБЯЗАТЕЛЬНО! Описание состояния сервера
+
+**EXPECTED:**
+✅ **Отображается** (UI), **Возвращается** (API), **Скрывается** (UI), **Создан/Удалён/Обновлён** (объекты)
+❌ **Обновляется**, **Удаляется** — НЕПРАВИЛЬНО!
+✅ Всегда начинается с **жирного** ключевого слова!
+
+**INTEGRATION FRONTEND - ОСОБЫЕ ПРАВИЛА:**
+🚨 КРИТИЧНО: steps = ТОЛЬКО пользовательские действия (Нажать, Ввести, Выбрать)
+🚨 КРИТИЧНО: Технические детали (API запросы) → в precondition или expected, НЕ в steps!
+✅ Правильно в steps: "Нажать кнопку 'Создать QR-код'"
+❌ Неправильно в steps: "Отправить GET /rest/stateful/corp/sbp/request_sbp_reg_tsp/list"
+`;
+
+        // ✅ БАЗОВЫЙ ПРОМПТ (для обратной совместимости, использует Генератор)
+        const BASE_SYSTEM_PROMPT = GENERATOR_SYSTEM_PROMPT;
 
 
 
@@ -13511,11 +13622,11 @@ create_shared_step({
                             }
                             // Добавляем новый ID в множество использованных
                             usedIds.add(testCaseId);
-
+                            
                             allTestCases.push({
                                 id: testCaseId, // ✅ Гарантированно уникальный ID
                                 title: testCase.title,
-                                steps: steps,
+                                steps: steps, 
                                 expected: testCase.expected,
                                 layer: testCase.layer,
                                 feature: testCase.feature,
@@ -13688,7 +13799,7 @@ create_shared_step({
             const examplesSection = buildExamplesSection(examples);
 
             // ✅ Форматируем логику и ограничения для промпта (если есть)
-            const logicConstraintsSection = logicConstraints
+            const logicConstraintsSection = logicConstraints 
                 ? formatLogicConstraintsForPrompt(logicConstraints)
                 : '';
 
@@ -13884,19 +13995,19 @@ ${isNegativePass ? `
                     const totalLimit = 15; // Общий лимит: 1-2 E2E + 8-12 Integration = 10-15
                     const maxIntegration = 12; // Максимум Integration тестов
                     const maxE2E = 2; // Максимум E2E тестов
-
+                    
                     // Фильтруем E2E (максимум 2)
                     const filteredE2E = e2eCases.slice(0, maxE2E);
                     if (e2eCases.length > maxE2E) {
                         console.warn(`[genForChunkOptimized] ⚠️ E2E тестов больше лимита (${e2eCases.length} > ${maxE2E}), оставляю первые ${maxE2E}`);
                     }
-
+                    
                     // Фильтруем Integration по приоритетам (максимум 12)
                     let filteredIntegration = integrationCases;
                     if (integrationCases.length > maxIntegration) {
                         console.warn(`[genForChunkOptimized] ⚠️ ПРЕВЫШЕН ЛИМИТ Integration! Получено ${integrationCases.length} (ожидалось ≤${maxIntegration})`);
                         console.warn(`[genForChunkOptimized] 💡 Применяю фильтрацию по приоритетам...`);
-
+                        
                         // Сортируем Integration тесты по приоритету:
                         // 1. Позитивные тесты (без слов "негатив", "ошибка", "невалид", "граничн" в title)
                         // 2. Негативные с параметризацией (есть examples)
@@ -13908,18 +14019,18 @@ ${isNegativePass ? `
                             const bIsPositive = !bTitle.includes('негатив') && !bTitle.includes('ошибка') && !bTitle.includes('невалид') && !bTitle.includes('граничн');
                             const aHasParams = Array.isArray(a.examples) && a.examples.length > 0;
                             const bHasParams = Array.isArray(b.examples) && b.examples.length > 0;
-
+                            
                             if (aIsPositive && !bIsPositive) return -1;
                             if (!aIsPositive && bIsPositive) return 1;
                             if (aHasParams && !bHasParams) return -1;
                             if (!aHasParams && bHasParams) return 1;
                             return 0;
                         });
-
+                        
                         filteredIntegration = sortedIntegration.slice(0, maxIntegration);
                         console.warn(`[genForChunkOptimized] ✅ Оставлено ${filteredIntegration.length} Integration тестов (приоритетные)`);
                     }
-
+                    
                     // Объединяем и проверяем общий лимит
                     cases = [...filteredE2E, ...filteredIntegration];
                     if (cases.length > totalLimit) {
@@ -13947,7 +14058,7 @@ ${isNegativePass ? `
                             console.log(`[genForChunkOptimized] ✅ Реестр отфильтровал ${beforeCount - cases.length} дублей (осталось ${cases.length})`);
                         }
                     }
-
+                    
                     if (e2eCases.length > maxE2E || integrationCases.length > maxIntegration || cases.length > totalLimit) {
                         console.warn(`[genForChunkOptimized] ✅ После фильтрации: ${filteredE2E.length} E2E + ${filteredIntegration.length} Integration = ${cases.length} тестов`);
                     }
@@ -13986,19 +14097,19 @@ ${isNegativePass ? `
                     const totalLimit = 15; // Общий лимит: 1-2 E2E + 8-12 Integration = 10-15
                     const maxIntegration = 12; // Максимум Integration тестов
                     const maxE2E = 2; // Максимум E2E тестов
-
+                    
                     // Фильтруем E2E (максимум 2)
                     const filteredE2E = e2eCases.slice(0, maxE2E);
                     if (e2eCases.length > maxE2E) {
                         console.warn(`[genForChunkOptimized] ⚠️ E2E тестов больше лимита (${e2eCases.length} > ${maxE2E}), оставляю первые ${maxE2E}`);
                     }
-
+                    
                     // Фильтруем Integration по приоритетам (максимум 12)
                     let filteredIntegration = integrationCases;
                     if (integrationCases.length > maxIntegration) {
                         console.warn(`[genForChunkOptimized] ⚠️ ПРЕВЫШЕН ЛИМИТ Integration! Получено ${integrationCases.length} (ожидалось ≤${maxIntegration})`);
                         console.warn(`[genForChunkOptimized] 💡 Применяю фильтрацию по приоритетам...`);
-
+                        
                         // Сортируем Integration тесты по приоритету:
                         // 1. Позитивные тесты (без слов "негатив", "ошибка", "невалид", "граничн" в title)
                         // 2. Негативные с параметризацией (есть examples)
@@ -14010,18 +14121,18 @@ ${isNegativePass ? `
                             const bIsPositive = !bTitle.includes('негатив') && !bTitle.includes('ошибка') && !bTitle.includes('невалид') && !bTitle.includes('граничн');
                             const aHasParams = Array.isArray(a.examples) && a.examples.length > 0;
                             const bHasParams = Array.isArray(b.examples) && b.examples.length > 0;
-
+                            
                             if (aIsPositive && !bIsPositive) return -1;
                             if (!aIsPositive && bIsPositive) return 1;
                             if (aHasParams && !bHasParams) return -1;
                             if (!aHasParams && bHasParams) return 1;
                             return 0;
                         });
-
+                        
                         filteredIntegration = sortedIntegration.slice(0, maxIntegration);
                         console.warn(`[genForChunkOptimized] ✅ Оставлено ${filteredIntegration.length} Integration тестов (приоритетные)`);
                     }
-
+                    
                     // Объединяем и проверяем общий лимит
                     cases = [...filteredE2E, ...filteredIntegration];
                     if (cases.length > totalLimit) {
@@ -14049,7 +14160,7 @@ ${isNegativePass ? `
                             console.log(`[genForChunkOptimized] ✅ Реестр отфильтровал ${beforeCount - cases.length} дублей (осталось ${cases.length})`);
                         }
                     }
-
+                    
                     if (e2eCases.length > maxE2E || integrationCases.length > maxIntegration || cases.length > totalLimit) {
                         console.warn(`[genForChunkOptimized] ✅ После фильтрации: ${filteredE2E.length} E2E + ${filteredIntegration.length} Integration = ${cases.length} тестов`);
                     }
@@ -14099,10 +14210,10 @@ ${isNegativePass ? `
             console.log(`[generate-test-cases-async] === Извлечение логики и ограничений ===`);
             let logicConstraints = null;
             try {
-                const requirementsText = Array.isArray(refinedReqs)
-                    ? refinedReqs.join('\n\n')
+                const requirementsText = Array.isArray(refinedReqs) 
+                    ? refinedReqs.join('\n\n') 
                     : (typeof refinedReqs === 'string' ? refinedReqs : '');
-
+                
                 if (requirementsText && requirementsText.trim().length > 100) {
                     logicConstraints = await extractLogicAndConstraints(requirementsText);
                     console.log(`[generate-test-cases-async] ✅ Извлечено ограничений: ${logicConstraints.validations.length} валидаций, ${logicConstraints.boundary_values.length} граничных значений, ${logicConstraints.negative_scenarios.length} негативных сценариев`);
@@ -14122,8 +14233,9 @@ ${isNegativePass ? `
             let allCases = [];
             const e2eTestsByStory = new Map(); // Для контекста в BATCH-режиме
 
-            // ✅ АГРЕССИВНАЯ ОПТИМИЗАЦИЯ: Сброс контекста КАЖДЫЙ chunk для скорости
-            let currentContextId = taskId;
+            // ✅ РАЗДЕЛЕНИЕ КОНТЕКСТА ПО ФАЗАМ: Используем разные taskId для разных фаз
+            // Это предотвращает накопление противоречивых инструкций в одном контексте
+            let currentContextId = `${taskId}:gen`; // Фаза генерации
             let previousFeature = null;
 
             for (let i = 0; i < storyChunks.length; i++) {
@@ -14258,16 +14370,16 @@ ${isNegativePass ? `
                 logicConstraints.dependencies.length > 0
             )) {
                 console.log(`[generate-test-cases-async] === ВТОРОЙ ПРОХОД: Генерация негативных и граничных тестов ===`);
-
+                
                 let negativeCases = [];
                 for (let i = 0; i < storyChunks.length; i++) {
                     const chunk = storyChunks[i];
                     const storyText = chunk[0].stories[0].text;
                     const currentFeature = chunk[0].text;
                     const mode = chunk[0].stories[0]._mode;
-
+                    
                     console.log(`[generate-test-cases-async] 🔄 Второй проход для Chunk ${i + 1}/${storyChunks.length}: "${storyText}"`);
-
+                    
                     try {
                         const negativeResult = await genForChunkOptimized(
                             chunk,
@@ -14275,14 +14387,14 @@ ${isNegativePass ? `
                             [], // existingE2E - не нужны для негативных тестов
                             modelStructure,
                             null, // reqStructure
-                            `${taskId}-negative-${i}`, // contextId для негативных тестов
+                            `${taskId}:negative-${i}`, // ✅ Фаза негативных тестов (отдельный контекст)
                             allCases, // existingCases
                             logicConstraints, // logicConstraints
                             true, // isNegativePass = true
                             includeBackendTests, // ✅ Передаём флаг включения backend тестов
                             signatureRegistry // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Передаём глобальный реестр сигнатур
                         );
-
+                        
                         if (negativeResult && negativeResult.length > 0) {
                             negativeCases.push(...negativeResult);
                             console.log(`[generate-test-cases-async] ✅ Второй проход для Chunk ${i + 1}: ${negativeResult.length} негативных тестов`);
@@ -14292,7 +14404,7 @@ ${isNegativePass ? `
                         // Продолжаем без негативных тестов для этого chunk
                     }
                 }
-
+                
                 if (negativeCases.length > 0) {
                     // ✅ ФИЛЬТРАЦИЯ: Удаляем Integration backend тесты из негативных, если флаг выключен
                     if (!includeBackendTests) {
@@ -14303,7 +14415,7 @@ ${isNegativePass ? `
                             console.log(`[generate-test-cases-async] 🚫 Удалено ${removedCount} Integration backend тестов из негативных (includeBackendTests=false)`);
                         }
                     }
-
+                    
                     // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Умное объединение негативных тестов через реестр
                     allCases = smartMergeTestCases(allCases, negativeCases, signatureRegistry);
                     console.log(`[generate-test-cases-async] ✅ Второй проход завершён: добавлено ${negativeCases.length} негативных/граничных тестов, всего: ${allCases.length}`);
