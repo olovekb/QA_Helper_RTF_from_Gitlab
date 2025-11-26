@@ -12101,24 +12101,25 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return patched;
         }
 
-        // ✅ КОРОТКИЙ КОНТЕКСТНО-ЗАВИСИМЫЙ ПРОМПТ
+        // ✅ УНИФИЦИРОВАННЫЙ КОНТЕКСТНЫЙ ПРОМПТ (не противоречит system prompt)
         function buildContextPrompt(chunk, existingE2E = []) {
-            const mode = chunk[0].stories[0]._mode;
+            const mode = chunk[0].stories[0]._mode || 'FULL';
             const feature = chunk[0].text;
             const story = chunk[0].stories[0].text;
-            const scenarios = chunk[0].stories[0].scenarios;
+            const scenarios = chunk[0].stories[0].scenarios || [];
+            const scenariosCount = scenarios.length;
 
             if (mode === 'FULL') {
                 return `
-🎯 ЗАДАЧА: Генерация E2E + Integration для Story "${story}"
+🎯 ЗАДАЧА: Генерация тестов для Story "${story}"
 
 КОНТЕКСТ:
 - Feature: "${feature}"
-- Story: "${story}" (${scenarios.length} Scenarios)
+- Story: "${story}" (${scenariosCount} Scenarios)
 
-ЗАДАНИЕ:
-1. Создай 1-2 E2E теста (сквозной путь пользователя через Story)
-2. Создай 2-3 Integration теста для КАЖДОГО Scenario (UI + API, позитив + негатив)
+ЗАДАНИЕ (следуй лимитам из SYSTEM PROMPT):
+1. Создай 1-2 E2E теста (сквозной путь пользователя через Story, БЕЗ технических деталей)
+2. Создай Integration тесты для Scenario (используй параметризацию для вариаций!)
 
 ПРИМЕР E2E (БЕЗ scenario!):
 {
@@ -12130,13 +12131,13 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
   "expected": "Отчёта BiZone успешно отправлен, отображается уведомление об успешной отправке"
 }
 
-ПРИМЕР Integration (SDK-специфичный!):
+ПРИМЕР Integration:
 {
   "title": "SDK BiZone начинает сбор данных при открытии формы авторизации",
   "layer": "Integration frontend Tests",
   "feature": "${feature}",
   "story": "${story}",
-  "scenario": "${scenarios[0]?.text}",
+  "scenario": "${scenarios[0]?.text || 'Scenario'}",
   "expected": "SDK инициализирован, DeviceModel и AppKey собраны"
 }
 
@@ -12144,15 +12145,20 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 `.trim();
             }
 
-            // Для BATCH-режима
+            // Для BATCH-режима (E2E уже есть)
             return `
-🎯 ЗАДАЧА: Integration тесты для ${scenarios.length} Scenarios (батч ${chunk[0].stories[0]._batchInfo})
+🎯 ЗАДАЧА: Integration тесты для ${scenariosCount} Scenarios (батч ${chunk[0].stories[0]._batchInfo || 'N/A'})
 
-E2E УЖЕ ЕСТЬ:
-${existingE2E.map(t => `- ${t.title}`).join('\n')}
+КОНТЕКСТ:
+- Feature: "${feature}"
+- Story: "${story}"
+- E2E тесты УЖЕ СОЗДАНЫ (не генерируй их снова!):
+${existingE2E.length > 0 ? existingE2E.map(t => `  - ${t.title}`).join('\n') : '  (список E2E не передан)'}
 
-ЗАДАНИЕ: Создай 2-3 Integration теста для КАЖДОГО Scenario
+ЗАДАНИЕ (следуй лимитам из SYSTEM PROMPT):
+Создай Integration тесты для Scenario (используй параметризацию для вариаций!)
 ❌ НЕ дублируй E2E-логику!
+❌ НЕ создавай E2E тесты (они уже есть)!
 `.trim();
         }
 
@@ -12363,19 +12369,43 @@ ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         }
 
 
-        // ✅ УПРОЩЁННЫЙ ПРОМПТ ДЛЯ ГЕНЕРАТОРА (только покрытие и структура, без детального стайл-гайда)
-        const GENERATOR_SYSTEM_PROMPT = `
+        // ✅ УНИФИЦИРОВАННАЯ ФУНКЦИЯ ДЛЯ ПОСТРОЕНИЯ SYSTEM PROMPT (учитывает режим и флаги)
+        function buildTestCaseSystemPrompt({
+            mode = 'FULL',
+            includeBackendTests = true,
+            scenariosCount = 0,
+            storiesCount = 0
+        }) {
+            const needsE2E = mode === 'FULL';
+            const backendSection = includeBackendTests
+                ? '- **Integration backend Tests**: Атомарные тесты API (указывают scenario из модели, привязаны к Story с соответствующим API)'
+                : '';
+
+            const e2eSection = needsE2E
+                ? '- **E2E Tests**: 🚨 ОБЯЗАТЕЛЬНО! 1-2 теста на КАЖДУЮ Story. Полные пользовательские сценарии через UI (без HTTP-методов/эндпоинтов)'
+                : '';
+
+            const tagsBackendRule = includeBackendTests
+                ? '- Integration backend Tests: ОБЯЗАТЕЛЬНО ["S"]'
+                : '';
+
+            // ✅ АДАПТИВНЫЙ ЛИМИТ: рассчитываем на основе количества Scenario
+            // Если Scenario много (6+), лимит увеличиваем, но с приоритетом на параметризацию
+            const baseIntegrationLimit = Math.min(12, Math.max(8, Math.ceil(scenariosCount * 1.5)));
+            const maxE2E = needsE2E ? Math.min(2, storiesCount) : 0;
+            const totalLimit = maxE2E + baseIntegrationLimit;
+
+            return `
 Ты — SDET, генерирующий тест-кейсы на основе requirements и тестовой модели.
 
-🎯 ТИПЫ ТЕСТОВ (ОБЯЗАТЕЛЬНО ГЕНЕРИРУЙ ВСЕ!):
-- **E2E Tests**: 🚨 ОБЯЗАТЕЛЬНО! 1-2 теста на КАЖДУЮ Story. Полные пользовательские сценарии через UI (без HTTP-методов/эндпоинтов)
-- **Integration frontend Tests**: Атомарные тесты UI-компонент (указывают scenario из модели)
-- **Integration backend Tests**: Атомарные тесты API (указывают scenario из модели, привязаны к Story с соответствующим API)
+🎯 ТИПЫ ТЕСТОВ (ГЕНЕРИРУЙ ТОЛЬКО УКАЗАННЫЕ!):
+${e2eSection ? e2eSection + '\n' : ''}- **Integration frontend Tests**: Атомарные тесты UI-компонент (указывают scenario из модели)
+${backendSection}
 
 🚨 ОБЯЗАТЕЛЬНЫЕ ПОЛЯ:
 - **id**: "tc-e2e-001", "tc-if-001", "tc-ib-001" (НЕ пустой!)
 - **feature**, **story**: Из тестовой модели
-- **scenario**: Для Integration тестов (из модели)
+- **scenario**: Для Integration тестов (из модели), НЕ для E2E!
 - **layer**: "E2E Tests" / "Integration frontend Tests" / "Integration backend Tests"
 - **tags**: ["D"] / ["M"] / ["S"] / ["D", "M"] (НЕ пустой!)
 - **priority**: "High" / "Medium" / "Low"
@@ -12391,9 +12421,19 @@ ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
 🚨 ПРАВИЛА ТЕГОВ:
 - E2E Tests: ["D"] / ["M"] / ["D", "M"] (НЕ "S"!)
-- Integration backend Tests: ОБЯЗАТЕЛЬНО ["S"]
+${tagsBackendRule}
 - Integration frontend Tests: ["D"] / ["M"] / ["D", "M"] (НЕ "S"!)
-`;
+
+⚡ АДАПТИВНЫЕ ЛИМИТЫ (на основе количества Scenario=${scenariosCount}, Stories=${storiesCount}):
+${needsE2E ? `- E2E Tests: максимум ${maxE2E} теста (1-2 на Story, приоритет основному Happy Path)` : '- E2E Tests: НЕ генерируй (уже есть в предыдущих итерациях)'}
+- Integration Tests: максимум ${baseIntegrationLimit} тестов (frontend${includeBackendTests ? ' + backend' : ''} вместе)
+- ⚡ Общий лимит: максимум ${totalLimit} тест-кейсов в ответе
+- 🎯 ПРИОРИТЕТ: Используй параметризацию для объединения похожих тестов!
+`.trim();
+        }
+
+        // ✅ БАЗОВЫЙ ПРОМПТ (для обратной совместимости, будет переопределен в genForChunkOptimized)
+        const BASE_SYSTEM_PROMPT = buildTestCaseSystemPrompt({ mode: 'FULL', includeBackendTests: true, scenariosCount: 0, storiesCount: 0 });
 
         // ✅ УПРОЩЁННЫЙ ПРОМПТ ДЛЯ ФОРМАТЕРА (только стайл-гайд, без правил покрытия)
         const FORMATTER_SYSTEM_PROMPT = `
@@ -12431,11 +12471,6 @@ ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 ❌ Неправильно в steps: "Отправить GET /rest/stateful/corp/sbp/request_sbp_reg_tsp/list"
 `;
 
-        // ✅ БАЗОВЫЙ ПРОМПТ (для обратной совместимости, использует Генератор)
-        const BASE_SYSTEM_PROMPT = GENERATOR_SYSTEM_PROMPT;
-
-
-
         // Подсчитываем статистику модели для COVENANT
         const S = modelStructure.reduce((sum, f) => sum + (f.stories || []).length, 0);
         const Sc = modelStructure.reduce((sum, f) =>
@@ -12444,24 +12479,46 @@ ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             sum + (f.stories || []).reduce((s, st) =>
                 s + (st.scenarios || []).reduce((sc, scn) => sc + (scn.codes?.length || 0), 0), 0), 0);
 
-        // ✅ УПРОЩЁННЫЙ COVENANT (статичный вместо динамического)
-        const COVENANT = `
+        // ✅ УНИФИЦИРОВАННЫЙ COVENANT (динамический, учитывает режим и лимиты)
+        function buildCovenant({
+            mode = 'FULL',
+            includeBackendTests = true,
+            scenariosCount = 0,
+            storiesCount = 0
+        }) {
+            const needsE2E = mode === 'FULL';
+            const baseIntegrationLimit = Math.min(12, Math.max(8, Math.ceil(scenariosCount * 1.5)));
+            const maxE2E = needsE2E ? Math.min(2, storiesCount) : 0;
+
+            const e2eRule = needsE2E
+                ? `🚨 E2E: ОБЯЗАТЕЛЬНО 1-2 теста на КАЖДУЮ Story (основной путь + критичный негатив)
+- БЕЗ E2E тестов = НЕПРАВИЛЬНО! Каждая Story ДОЛЖНА иметь минимум 1 E2E тест!`
+                : `🚨 E2E: НЕ генерируй (уже созданы в предыдущих итерациях)`;
+
+            const integrationRule = includeBackendTests
+                ? `- Integration Tests: ${baseIntegrationLimit} тестов максимум (frontend + backend вместе, позитив + негатив + граничные через параметризацию)`
+                : `- Integration Frontend: ${baseIntegrationLimit} тестов максимум (позитив + негатив + граничные через параметризацию)`;
+
+            return `
 ПРАВИЛА ПОКРЫТИЯ (СТРОГО СОБЛЮДАЙ!):
-🚨 E2E: ОБЯЗАТЕЛЬНО 1-2 теста на КАЖДУЮ Story (основной путь + критичный негатив)
-- БЕЗ E2E тестов = НЕПРАВИЛЬНО! Каждая Story ДОЛЖНА иметь минимум 1 E2E тест!
-- Integration Frontend: 2-3 теста на Scenario (позитив + негатив + граничные)
-- Integration Backend: 2-3 теста на Code backend (API endpoints)
+${e2eRule}
+${integrationRule}
 
 ═══════════════════════════════════════════════════════════════
 
-ФОРМУЛА: 
-Total = (Stories × 1.5) + (Scenarios × 2.5) ± 30%
+🎯 СТРАТЕГИЯ ПОКРЫТИЯ:
+1. ПРИОРИТЕТ #1: Позитивные тесты для каждого Code (обязательно!)
+2. ПРИОРИТЕТ #2: Негативные тесты с параметризацией (объединяй через examples!)
+3. ПРИОРИТЕТ #3: Граничные значения (объединяй в ОДИН тест с параметризацией!)
+4. ПРИОРИТЕТ #4: UI логика и зависимости (если осталось место)
 
 ПРОВЕРКА перед submit_cases:
-🚨 КРИТИЧНО: □ Каждая Story имеет ≥1 E2E? (БЕЗ E2E = ОШИБКА!)
-□ Каждый Scenario имеет ≥2 Integration?
+${needsE2E ? '🚨 КРИТИЧНО: □ Каждая Story имеет ≥1 E2E? (БЕЗ E2E = ОШИБКА!)' : ''}
+□ Integration тесты покрывают все Scenario (используй параметризацию для вариаций!)
 □ Expected конкретный во всех тестах?
+□ Нет дубликатов (одинаковые steps/expected/layer/story/scenario)?
 `.trim();
+        }
 
         // ✅ НОВОЕ: Добавляем информацию о shared steps в system prompt с полной структурой
         const sharedStepsSection = sharedStepsDetailsForPrompt && sharedStepsDetailsForPrompt.length > 0 ? `
@@ -12551,7 +12608,9 @@ create_shared_step({
 ═══════════════════════════════════════════════════════════════
 `.trim() : '';
 
-        const baseSystemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${COVENANT}${sharedStepsSection ? '\n\n' + sharedStepsSection : ''}`;
+        // ✅ Fallback COVENANT для baseSystemPrompt (используется в fixTestCasesAsync и других местах)
+        const fallbackCovenant = buildCovenant({ mode: 'FULL', includeBackendTests: true, scenariosCount: 0, storiesCount: 0 });
+        const baseSystemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${fallbackCovenant}${sharedStepsSection ? '\n\n' + sharedStepsSection : ''}`;
         const baseCaseModelOptions = {
             models: config.cloudruModels,
             temperature: 0,
@@ -13056,12 +13115,31 @@ create_shared_step({
                 ? formatLogicConstraintsForPrompt(logicConstraints)
                 : '';
 
+            // ✅ УНИФИЦИРОВАННЫЙ SYSTEM PROMPT (динамический, учитывает режим и флаги)
+            const scenariosCount = chunk.reduce((sum, f) => 
+                sum + (f.stories || []).reduce((s, st) => s + (st.scenarios || []).length, 0), 0);
+            const storiesCount = chunk.reduce((sum, f) => sum + (f.stories || []).length, 0);
+            
+            const dynamicSystemPrompt = buildTestCaseSystemPrompt({
+                mode,
+                includeBackendTests,
+                scenariosCount,
+                storiesCount
+            });
+
+            const dynamicCovenant = buildCovenant({
+                mode,
+                includeBackendTests,
+                scenariosCount,
+                storiesCount
+            });
+
             // ✅ Формируем system prompt с примерами и логикой
             // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Примеры в НАЧАЛЕ промпта как обязательные шаблоны
             const systemPromptWithExamples = `
-${BASE_SYSTEM_PROMPT}
+${dynamicSystemPrompt}
 
-${COVENANT}
+${dynamicCovenant}
 
 ═══════════════════════════════════════════════════════════════
 🚨🚨🚨 ОБЯЗАТЕЛЬНЫЕ ЭТАЛОННЫЕ ШАБЛОНЫ - ЧИТАЙ ПЕРВЫМ ДЕЛОМ! 🚨🚨🚨
@@ -13071,25 +13149,6 @@ ${COVENANT}
 Эти примеры - ЭТАЛОН формата. Строго следуй их структуре, стилю и формату!
 
 ${examplesSection}
-
-═══════════════════════════════════════════════════════════════
-⚡ ЛИМИТЫ НА КОЛИЧЕСТВО ТЕСТОВ (СТРОГО СОБЛЮДАЙ!)
-═══════════════════════════════════════════════════════════════
-
-🎯 ОПТИМАЛЬНОЕ ПОКРЫТИЕ (ОБЯЗАТЕЛЬНО ГЕНЕРИРУЙ ВСЕ ТИПЫ!):
-🚨 E2E Tests: **1-2 теста на Story** (только позитивный + 1 базовый негативный)
-- Основной упор на Integration тесты! E2E — только для основного Happy Path.
-- Integration Tests: **8-12 тестов на Scenario** (frontend + backend вместе!)
-- ⚡ Общий лимит: **10-15 тест-кейсов в ответе** (1-2 E2E + 8-12 Integration)
-- 🎯 ПРИОРИТЕТ: Integration тесты покрывают бизнес-логику (негативные, граничные значения, валидации)
-
-🚨 КРИТИЧНО: Если техники тест-дизайна требуют больше тестов, чем лимит:
-   1. ПРИОРИТЕТ #1: Позитивные тесты для каждого Code (обязательно!)
-   2. ПРИОРИТЕТ #2: Негативные тесты с параметризацией (объединяй через examples!)
-   3. ПРИОРИТЕТ #3: Граничные значения (объединяй в ОДИН тест с параметризацией!)
-   4. ПРИОРИТЕТ #4: UI логика и зависимости (если осталось место)
-   
-   ❌ НЕ превышай лимит 8-12 Integration тестов! Используй параметризацию для объединения!
 
 🚨 ОБЯЗАТЕЛЬНАЯ ПАРАМЕТРИЗАЦИЯ:
 - ❌ ЗАПРЕЩЕНО создавать дубликаты для разных значений (формат, размер, категория)
@@ -13118,7 +13177,6 @@ ${logicConstraintsSection}
 - ✅ Каждый тест-кейс должен иметь УНИКАЛЬНЫЙ title
 - ✅ Правильно определяй layer по содержанию (E2E = полный путь, Integration = атомарный тест)
 - ✅ Используй ТОЛЬКО feature/story/scenario/code из enum в tool definition!
-- ⚡ ПОМНИ ЛИМИТ: максимум 8-12 тест-кейсов в ответе!
 - 📚 Если забыл формат - вернись к примерам выше и изучи их структуру!
 `.trim();
 
@@ -13126,7 +13184,7 @@ ${logicConstraintsSection}
 ${contextPrompt}
 
 🚨🚨🚨 ВАЖНО: ПЕРЕД ГЕНЕРАЦИЕЙ ИЗУЧИ ЭТАЛОННЫЕ ПРИМЕРЫ В SYSTEM PROMPT! 🚨🚨🚨
-Примеры показывают ИДЕАЛЬНЫЙ формат тест-кейсов. Строго следуй их структуре!
+Примеры показывают ИДЕАЛЬНЫЙ формат тест-кейсов. Строго следуй их структуре и лимитам!
 
 Требования (релевантные):
 ${relevantReqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
@@ -13141,7 +13199,7 @@ ${isNegativePass ? `
 
 1. Найди в требованиях все поля с валидацией (Сумма, Назначение платежа, и т.д.).
    - Создай Integration frontend тесты на нарушение этих валидаций.
-${includeBackendTests ? '   - Создай Integration backend тесты на ошибки API (400, 500, таймаут).\n' : '   - ❌ НЕ создавай Integration backend тесты!\n'}
+${includeBackendTests ? '   - Создай Integration backend тесты на ошибки API (400, 500, таймаут).\n' : ''}
 
 2. Найди логику "Если... то... иначе...".
    - Создай тест на ветку "Иначе" (например, нет торговых точек → отобразить алерт).
@@ -13153,42 +13211,10 @@ ${includeBackendTests ? '   - Создай Integration backend тесты на �
    - Создай ОДИН Boundary Test с параметризацией: Min-1, Min, Max, Max+1 (через parameters + examples).
    - ❌ НЕ создавай 4 отдельных теста! Используй параметризацию!
 
-Не дублируй E2E. Делай это через Integration frontend (валидация UI)${includeBackendTests ? ' или Integration backend (ошибки API)' : ' (НЕ создавай Integration backend тесты!)'}.
+Не дублируй E2E. Делай это через Integration frontend (валидация UI)${includeBackendTests ? ' или Integration backend (ошибки API)' : ''}.
 
 🎯 ФОКУС: Только негативные и граничные тесты! Позитивные уже сгенерированы.
-${!includeBackendTests ? '🚨 КРИТИЧНО: НЕ создавай Integration backend тесты! Только E2E и Integration frontend!\n' : ''}
 ` : `
-🚨 КРИТИЧЕСКИ ВАЖНО - ОБЯЗАТЕЛЬНО ГЕНЕРИРУЙ E2E ТЕСТЫ:
-- Для КАЖДОЙ Story в chunk ОБЯЗАТЕЛЬНО создай 1-2 E2E теста (layer: "E2E Tests")
-- E2E тесты = полные пользовательские сценарии через UI (без технических деталей API)
-- E2E тесты НЕ должны содержать HTTP-методы, статус-коды, эндпоинты
-- E2E тесты должны описывать действия пользователя: "Нажать кнопку", "Ввести текст", "Выбрать категорию"
-- После E2E тестов создай Integration frontend тесты для каждого Scenario
-${includeBackendTests ? '- После Integration frontend создай Integration backend тесты для каждого Scenario с API\n' : '🚨 КРИТИЧНО: НЕ создавай Integration backend тесты! Только E2E и Integration frontend!\n'}
-`}
-
-🚨 ПРАВИЛА ТЕГОВ:
-- E2E тесты: tags = ['D'] или ['M'] или ['D', 'M'], НЕ используй 'S'!
-${includeBackendTests ? '- Integration backend: tags = [\'S\'] (обязательно)!\n' : '🚨 КРИТИЧНО: Integration backend тесты ЗАПРЕЩЕНЫ! НЕ создавай их!\n'}
-- Integration frontend: tags = ['D'] или ['M'] или ['D', 'M'], НЕ используй 'S'!
-
-🚨 ЗАПРЕТ ДУБЛИКАТОВ:
-- ❌ НЕ создавай два теста с одинаковыми steps/expected/layer/story/scenario!
-- ❌ НЕ копируй E2E тесты ради разных дат/данных — используй parameters или examples!
-- ✅ Каждый тест = уникальная комбинация "layer + story + scenario + steps + expected".
-- ✅ Если нужно проверить несколько значений → параметризуй внутри одного теста!
-
-🚨 КРИТИЧНО ДЛЯ E2E ТЕСТОВ:
-- Если два E2E теста имеют одинаковые шаги, но разные тайтлы (например, "при наличии sbpId" vs "при отсутствии sbpId"):
-  → Либо объедини их в ОДИН параметризованный тест с parameters/examples
-  → Либо добавь различия в precondition или steps (например, "Пользователь авторизован, sbpId отсутствует" в precondition)
-- ❌ НЕ создавай E2E тесты с одинаковыми шагами, но разными тайтлами без различий в precondition/steps!
-
-🚨 ПРАВИЛА PRECONDITION:
-- Integration frontend Tests: ОБЯЗАТЕЛЬНО добавь precondition с описанием состояния UI!
-${includeBackendTests ? '- Integration backend Tests: ОБЯЗАТЕЛЬНО добавь precondition с описанием состояния сервера!\n' : ''}
-${!includeBackendTests ? '🚨 КРИТИЧНО: НЕ создавай Integration backend тесты! Только E2E и Integration frontend!\n' : ''}
-
 🚨 КРИТИЧНО ДЛЯ INTEGRATION FRONTEND ТЕСТОВ:
 - ❌ НЕ используй технические шаги типа "Отправить GET **/rest/...**" или "Выполнить запрос" в поле steps!
 - ✅ Используй ТОЛЬКО пользовательские действия: "Нажать кнопку", "Ввести текст", "Выбрать значение"
@@ -13197,20 +13223,29 @@ ${!includeBackendTests ? '🚨 КРИТИЧНО: НЕ создавай Integrati
   * UI реакции: "**Отображается** страница...", "**Скрывается** форма..."
   * Технические реакции: "**Отправляется** GET **/rest/...**", "**Выполняется** POST **/api/...**"
   * Это нормально для интеграционных тестов, так как они проверяют взаимодействие фронтенда с бэкендом!
-- 📚 Смотри на идеальные примеры выше - они показывают правильный формат Integration frontend тестов!
 
-🚨 ПРАВИЛО ПРИВЯЗКИ BACKEND ТЕСТОВ:
-- Backend тесты: проверь, что story соответствует API из Code! Если API используется в другой Story → привяжи к правильной Story!
+🚨 ПРАВИЛА PRECONDITION:
+- Integration frontend Tests: ОБЯЗАТЕЛЬНО добавь precondition с описанием состояния UI!
+${includeBackendTests ? '- Integration backend Tests: ОБЯЗАТЕЛЬНО добавь precondition с описанием состояния сервера!\n' : ''}
 
 🚨 ПРАВИЛО SCENARIO:
-- Integration frontend и Integration backend тесты ОБЯЗАТЕЛЬНО должны ссылаться на scenario из тестовой модели, в которой описан соответствующий code.
+- Integration frontend и Integration backend тесты ОБЯЗАТЕЛЬНО должны ссылаться на scenario из тестовой модели.
 - E2E тесты НЕ должны иметь scenario.
 
-${isNegativePass ? `
-⚡⚡⚡ ВАЖНО: Сгенерируй 5-10 негативных/граничных тест-кейсов! Фокус на Integration тесты!
-` : `
-⚡⚡⚡ ВАЖНО: Сгенерируй максимум 10-15 тест-кейсов (1-2 E2E + 8-12 Integration)! Используй ПАРАМЕТРИЗАЦИЮ для вариаций данных!
+🚨 ЗАПРЕТ ДУБЛИКАТОВ:
+- ❌ НЕ создавай два теста с одинаковыми steps/expected/layer/story/scenario!
+- ❌ НЕ копируй E2E тесты ради разных дат/данных — используй parameters или examples!
+- ✅ Каждый тест = уникальная комбинация "layer + story + scenario + steps + expected".
+- ✅ Если нужно проверить несколько значений → параметризуй внутри одного теста!
+
+🚨 КРИТИЧНО ДЛЯ E2E ТЕСТОВ:
+- Если два E2E теста имеют одинаковые шаги, но разные тайтлы:
+  → Либо объедини их в ОДИН параметризованный тест с parameters/examples
+  → Либо добавь различия в precondition или steps
+- ❌ НЕ создавай E2E тесты с одинаковыми шагами, но разными тайтлами без различий в precondition/steps!
 `}
+
+⚡⚡⚡ ВАЖНО: Следуй лимитам из SYSTEM PROMPT! Используй ПАРАМЕТРИЗАЦИЮ для вариаций данных!
 `.trim();
 
             try {
