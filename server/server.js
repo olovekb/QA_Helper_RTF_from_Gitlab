@@ -894,6 +894,17 @@ const SYSTEM_ACTION_REGEX = new RegExp(
     'i'
 );
 
+function generatePrefixedId(prefix) {
+    return `${prefix}-${uuidv4()}`;
+}
+
+function ensurePrefixedId(originalId, prefix) {
+    if (typeof originalId === 'string' && originalId.startsWith(prefix)) {
+        return originalId;
+    }
+    return generatePrefixedId(prefix);
+}
+
 function ensureScenarioStepText(text, index) {
     let trimmed = String(text || '').trim();
     if (!trimmed) {
@@ -1134,7 +1145,7 @@ function repairStoryStructure(story) {
             continue;
         }
 
-        const scenarioId = originalScenario?.id || uuidv4();
+        const scenarioId = ensurePrefixedId(originalScenario?.id, 'sc');
         const scenarioRequirement = originalScenario?.requirement || story?.requirement;
         const normalizedScenarioText = ensureScenarioStepText(scenarioText, ++stepCounter);
 
@@ -1144,7 +1155,7 @@ function repairStoryStructure(story) {
             if (!normalized) continue;
             normalizedCodes.push({
                 ...code,
-                id: code?.id || uuidv4(),
+                id: ensurePrefixedId(code?.id, 'c'),
                 text: normalized,
                 requirement: code?.requirement || scenarioRequirement
             });
@@ -1163,7 +1174,7 @@ function repairStoryStructure(story) {
 
     if (!repairedScenarios.length) {
         repairedScenarios.push({
-            id: uuidv4(),
+            id: ensurePrefixedId(null, 'sc'),
             text: `Выполнить пользовательское действие`,
             requirement: story?.requirement,
             codes: []
@@ -5459,12 +5470,6 @@ ${contextSourcesSummary || '—'}
                 }
             }
         }
-
-        // ✅ НОВОЕ: Дедупликация Scenarios между Stories
-        cleanedModel = deduplicateScenariosAcrossStories(cleanedModel);
-
-        // ✅ НОВОЕ: Объединение избыточно детализированных Scenarios (fallback эвристика)
-        cleanedModel = mergeDetailedScenarios(cleanedModel);
 
         // ✅ НОВОЕ: Обогащение backend Code Expected Result
         cleanedModel = enrichBackendCodesWithExpectedResult(cleanedModel);
