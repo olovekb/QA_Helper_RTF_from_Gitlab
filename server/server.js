@@ -3667,25 +3667,115 @@ function deduplicateStoriesInFeature(feature) {
     if (!feature || !Array.isArray(feature.stories)) return;
     const normalizedMap = new Map();
     const dedupedStories = [];
+    const usedStoryIds = new Set();
 
     for (const story of feature.stories) {
         if (!story || !story.text) continue;
         const key = normalizeDomainTokens(story.text).join(' ') || story.text.trim().toLowerCase();
+        
+        // ✅ ИСПРАВЛЯЕМ ДУБЛИРУЮЩИЕСЯ ID: Если ID уже использован, генерируем новый
+        let storyId = story.id;
+        if (storyId && usedStoryIds.has(storyId)) {
+            console.warn(`[deduplicateStoriesInFeature] ⚠️ Обнаружен дублирующийся ID story "${storyId}" в Feature "${feature.text}", генерирую новый...`);
+            storyId = uuidv4();
+        }
+        if (storyId) usedStoryIds.add(storyId);
+
         if (!normalizedMap.has(key)) {
             const copy = {
                 ...story,
+                id: storyId || uuidv4(),
                 scenarios: Array.isArray(story.scenarios) ? [...story.scenarios] : []
             };
+            
+            // ✅ ДЕДУПЛИЦИРУЕМ SCENARIOS внутри Story
+            deduplicateScenariosInStory(copy);
+            
             normalizedMap.set(key, copy);
             dedupedStories.push(copy);
         } else {
             const target = normalizedMap.get(key);
             const incomingScenarios = Array.isArray(story.scenarios) ? story.scenarios : [];
             target.scenarios = (target.scenarios || []).concat(incomingScenarios);
+            
+            // ✅ ДЕДУПЛИЦИРУЕМ SCENARIOS после объединения
+            deduplicateScenariosInStory(target);
         }
     }
 
     feature.stories = dedupedStories;
+}
+
+// ✅ НОВАЯ ФУНКЦИЯ: Дедупликация scenarios внутри Story
+function deduplicateScenariosInStory(story) {
+    if (!story || !Array.isArray(story.scenarios)) return;
+    const normalizedMap = new Map();
+    const dedupedScenarios = [];
+    const usedScenarioIds = new Set();
+
+    for (const scenario of story.scenarios) {
+        if (!scenario || !scenario.text) continue;
+        const key = normalizeDomainTokens(scenario.text).join(' ') || scenario.text.trim().toLowerCase();
+        
+        // ✅ ИСПРАВЛЯЕМ ДУБЛИРУЮЩИЕСЯ ID: Если ID уже использован, генерируем новый
+        let scenarioId = scenario.id;
+        if (scenarioId && usedScenarioIds.has(scenarioId)) {
+            console.warn(`[deduplicateScenariosInStory] ⚠️ Обнаружен дублирующийся ID scenario "${scenarioId}" в Story "${story.text}", генерирую новый...`);
+            scenarioId = uuidv4();
+        }
+        if (scenarioId) usedScenarioIds.add(scenarioId);
+
+        if (!normalizedMap.has(key)) {
+            const copy = {
+                ...scenario,
+                id: scenarioId || uuidv4(),
+                codes: Array.isArray(scenario.codes) ? [...scenario.codes] : []
+            };
+            
+            // ✅ ДЕДУПЛИЦИРУЕМ CODES внутри Scenario
+            deduplicateCodesInScenario(copy);
+            
+            normalizedMap.set(key, copy);
+            dedupedScenarios.push(copy);
+        } else {
+            const target = normalizedMap.get(key);
+            const incomingCodes = Array.isArray(scenario.codes) ? scenario.codes : [];
+            target.codes = (target.codes || []).concat(incomingCodes);
+            
+            // ✅ ДЕДУПЛИЦИРУЕМ CODES после объединения
+            deduplicateCodesInScenario(target);
+        }
+    }
+
+    story.scenarios = dedupedScenarios;
+}
+
+// ✅ НОВАЯ ФУНКЦИЯ: Дедупликация codes внутри Scenario
+function deduplicateCodesInScenario(scenario) {
+    if (!scenario || !Array.isArray(scenario.codes)) return;
+    const normalizedMap = new Map();
+    const dedupedCodes = [];
+    const usedCodeIds = new Set();
+
+    for (const code of scenario.codes) {
+        if (!code || !code.text) continue;
+        const key = normalizeDomainTokens(code.text).join(' ') || code.text.trim().toLowerCase();
+        
+        // ✅ ИСПРАВЛЯЕМ ДУБЛИРУЮЩИЕСЯ ID: Если ID уже использован, генерируем новый
+        let codeId = code.id;
+        if (codeId && usedCodeIds.has(codeId)) {
+            console.warn(`[deduplicateCodesInScenario] ⚠️ Обнаружен дублирующийся ID code "${codeId}" в Scenario "${scenario.text}", генерирую новый...`);
+            codeId = uuidv4();
+        }
+        if (codeId) usedCodeIds.add(codeId);
+
+        if (!normalizedMap.has(key)) {
+            normalizedMap.set(key, { ...code, id: codeId || uuidv4() });
+            dedupedCodes.push(normalizedMap.get(key));
+        }
+    }
+
+    scenario.codes = dedupedCodes;
 }
 
 function mergeFeaturesByDomain(model) {
@@ -3693,6 +3783,49 @@ function mergeFeaturesByDomain(model) {
     const featuresWithStories = model.filter(f => Array.isArray(f?.stories) && f.stories.length > 0);
     if (featuresWithStories.length <= 1) return featuresWithStories;
 
+    // ✅ УЛУЧШЕННАЯ ЛОГИКА: Если Feature <= 3, объединяем их, если есть хотя бы один общий доменный токен
+    // Это более агрессивная стратегия для простых моделей
+    if (featuresWithStories.length <= 3) {
+        // Ищем общие доменные токены между всеми Feature
+        const allTokens = featuresWithStories.map(f => new Set(normalizeDomainTokens(f.text)));
+        const commonTokens = new Set();
+        
+        if (allTokens.length > 0) {
+            for (const token of allTokens[0]) {
+                if (allTokens.every(tokenSet => tokenSet.has(token))) {
+                    commonTokens.add(token);
+                }
+            }
+        }
+
+        // Если есть хотя бы один общий токен ИЛИ Feature <= 2, объединяем
+        if (commonTokens.size > 0 || featuresWithStories.length <= 2) {
+            const dominantToken = detectDominantDomainToken(featuresWithStories) || 
+                                 (commonTokens.size > 0 ? Array.from(commonTokens)[0] : null);
+
+            const canonicalFeature = featuresWithStories.find(f =>
+                dominantToken ? normalizeDomainTokens(f.text).includes(dominantToken) : true
+            ) || featuresWithStories[0];
+
+            const mergedFeature = {
+                id: canonicalFeature.id || uuidv4(),
+                text: canonicalFeature.text || canonicalFeature.name || (dominantToken || 'Основная функциональность'),
+                stories: []
+            };
+
+            for (const feature of featuresWithStories) {
+                const stories = Array.isArray(feature.stories) ? feature.stories : [];
+                mergedFeature.stories.push(...stories);
+            }
+
+            deduplicateStoriesInFeature(mergedFeature);
+            console.log(`[postProcessModel] ✅ Объединено ${featuresWithStories.length} Feature в одну "${mergedFeature.text}" (общих токенов: ${commonTokens.size})`);
+
+            return [mergedFeature];
+        }
+    }
+
+    // ✅ СТАРАЯ ЛОГИКА для больших моделей (>3 Feature)
     const dominantToken = detectDominantDomainToken(featuresWithStories);
     if (!dominantToken) return featuresWithStories;
 
@@ -3869,6 +4002,11 @@ function postProcessModel(model) {
 
     // Если все Feature описывают один домен, объединяем их
     model = mergeFeaturesByDomain(model);
+
+    // ✅ ПОСЛЕ ОБЪЕДИНЕНИЯ: Дедуплицируем Story внутри каждой Feature еще раз (на случай, если объединение создало дубли)
+    for (const feature of model) {
+        deduplicateStoriesInFeature(feature);
+    }
 
     return model;
 }
