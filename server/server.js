@@ -8936,8 +8936,30 @@ function mergeSimilarTests(similarTests) {
         diff.values.forEach(v => paramMap.get(diff.name).add(v));
     }
 
-    // Если нет различий для параметризации - не объединяем
-    if (paramMap.size === 0) return null;
+    // Если LLM сформировал одинаковые шаги, но разные ожидаемые результаты (или формулировки),
+    // всё равно схлопываем такие кейсы в один, добавляя параметр "Вариант результата".
+    let variantResultConfig = null;
+    if (paramMap.size === 0) {
+        const uniqueExpected = [];
+        for (const test of similarTests) {
+            const trimmed = String(test.expected || '').trim();
+            if (trimmed && !uniqueExpected.includes(trimmed)) {
+                uniqueExpected.push(trimmed);
+            }
+        }
+
+        if (uniqueExpected.length > 1) {
+            variantResultConfig = uniqueExpected.map((text, idx) => ({
+                label: `Вариант ${idx + 1}`,
+                text
+            }));
+        }
+    }
+
+    if (paramMap.size === 0 && !variantResultConfig) {
+        // Нет смысловых различий → нечего параметризовать
+        return null;
+    }
 
     // Формируем параметры
     const parameters = Array.from(paramMap.entries()).map(([name, values]) => ({
@@ -8945,11 +8967,26 @@ function mergeSimilarTests(similarTests) {
         values: Array.from(values).sort()
     }));
 
+    if (variantResultConfig) {
+        parameters.push({
+            name: 'Вариант результата',
+            values: variantResultConfig.map(v => v.label)
+        });
+    }
+
     // Формируем examples на основе исходных тестов
-    const examples = similarTests.map(test => {
+    const examples = similarTests.map((test, idx) => {
         const exampleParams = [];
         for (const param of parameters) {
-            // Извлекаем значение параметра из теста
+            if (variantResultConfig && param.name === 'Вариант результата') {
+                const trimmedExpected = String(test.expected || '').trim();
+                const variant = variantResultConfig.find(v => v.text === trimmedExpected) || variantResultConfig[idx];
+                if (variant) {
+                    exampleParams.push({ name: param.name, value: variant.label });
+                }
+                continue;
+            }
+
             const value = extractParameterValue(test, param.name);
             if (value) {
                 exampleParams.push({ name: param.name, value: value });
@@ -8977,6 +9014,10 @@ function mergeSimilarTests(similarTests) {
         param.values.forEach(val => {
             newExpected = newExpected.replace(new RegExp(val, 'gi'), `{${param.name}}`);
         });
+    }
+    if (variantResultConfig) {
+        newExpected = `Реакция системы зависит от параметра "Вариант результата":\n` +
+            variantResultConfig.map(v => `- ${v.label}: ${v.text}`).join('\n');
     }
 
     return {
@@ -9499,14 +9540,14 @@ async function generateTestCasesAsync(taskId, inputData) {
                 }
             });
 
-            scenarioStepMap.forEach((entries, key) => {
+            scenarioStepMap.forEach((entries) => {
                 if (entries.length <= 1) return;
                 const layer = entries[0].layer || '';
                 if (!layer.toLowerCase().includes('integration frontend')) return;
 
                 const expectedSet = new Set(entries.map(e => normalizeText(e.expected)));
                 const titleList = entries.map(e => `#${e.index} "${e.title}"`).join('; ');
-                issues.push(`Integration frontend тесты ${titleList} имеют полностью одинаковые шаги внутри одной story/scenario. Объедини их через parameters/examples вместо дублирования.`);
+                issues.push(`Integration frontend тесты ${titleList} имеют одинаковые precondition+steps внутри одной story/scenario. Такие проверки нужно объединять в ОДИН тест с parameters/examples (варианты ожидаемого результата), а не плодить дубли.`);
             });
 
             return issues;
@@ -12477,11 +12518,16 @@ ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 - **priority**: "High" / "Medium" / "Low"
 - **version**: "stable"
 
-📊 ПАРАМЕТРИЗАЦИЯ:
-✅ Используй parameters + examples для вариативности
-✅ Если кнопка/элемент в разных местах, но реакция одинаковая → ОДИН тест с параметризацией!
+            📊 ПАРАМЕТРИЗАЦИЯ:
+            ✅ Используй parameters + examples для вариативности
+            ✅ Если кнопка/элемент в разных местах, но реакция одинаковая → ОДИН тест с параметризацией!
             ❌ НЕ создавай дубликаты — параметризуй!
-            ❗ Если внутри одной story + scenario шаги полностью совпадают, а различается только expected/данные — ОБЪЕДИНИ через parameters или examples вместо множества тестов.
+            ❗ Если внутри одного feature/story/scenario полностью совпадают precondition+steps, НО отличаются данные или expected → это ОДИН тест. Объедини варианты в parameters/examples и распиши разницу внутри expected (списком по параметру).
+
+            🔻 НЕГАТИВЫ И ГРАНИЦЫ:
+            - Всегда анализируй требования на ошибки/отсутствие данных/HTTP-коды/невалидные состояния.
+            - На каждую story/scenario должен быть минимум один негатив или граничная проверка, если требования хоть где-то описывают ошибки/штатные отказы.
+            - Негативы делай Integration tests: UI → действия пользователя → ожидаемый технический ответ (код, сообщение, пустой список).
 
 🚨 ПРАВИЛА ТЕГОВ:
 - E2E Tests: ["D"] / ["M"] / ["D", "M"]
@@ -13206,6 +13252,12 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
 - ❌ НЕ копируй E2E тесты ради разных дат/данных — используй parameters или examples!
 - ✅ Каждый тест = уникальная комбинация "layer + story + scenario + steps + expected".
 - ✅ Если нужно проверить несколько значений → параметризуй внутри одного теста!
+- ✅ Если отличается только ожидаемый результат (например, разные коды/ответы сервиса), добавь параметр "Вариант результата" и опиши реакции списком внутри expected вместо дублей.
+
+⚠️ НЕГАТИВЫ И ГРАНИЦЫ:
+- На каждую story/scenario нужен как минимум один негатив или граничный кейс, если в требованиях упомянуты ошибки/коды/пустые ответы/некорректные состояния.
+- Негативы = Integration tests: шаги пользователя → техническая реакция (код ответа, сообщение об ошибке, отсутствие блока).
+- Если требований мало, всё равно проверь базовые негативы: пустые поля, неверные данные, недоступный backend, отсутствие sbpId, таймауты.
 - ✅ Если внутри одного scenario шаги полностью совпадают, а отличается только expected/данные — ОБЪЕДИНИ тесты и вынеси различия в parameters/examples.
 
 🚨 КРИТИЧНО ДЛЯ E2E ТЕСТОВ:
