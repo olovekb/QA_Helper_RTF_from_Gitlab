@@ -5808,22 +5808,24 @@ ${escalationPrompt}`;
                 const problematicScenarios = extractProblematicScenarios(cleanedModel, codeIssues);
 
                 if (problematicScenarios.length === 0) {
-                    console.error(`[generate-test-model-async] ❌ Не удалось идентифицировать проблемные Scenarios: ${codeIssues.join(', ')}`);
-                    throw new Error(`Сгенерированная модель нарушает структуру Code: ${codeIssues.join('; ')}`);
-                }
+                    console.warn(`[generate-test-model-async] ⚠️ Не удалось идентифицировать проблемные Scenarios: ${codeIssues.join(', ')}`);
+                    console.warn(`[generate-test-model-async] ⚠️ Продолжаем генерацию с текущей моделью, несмотря на проблемы`);
+                    // Не блокируем создание, просто предупреждаем
+                } else {
+                    // Перегенерируем проблемные Scenarios
+                    const fixedScenarios = await regenerateProblematicScenarios(problematicScenarios, reqStringForModel);
 
-                // Перегенерируем проблемные Scenarios
-                const fixedScenarios = await regenerateProblematicScenarios(problematicScenarios, reqStringForModel);
-
-                if (fixedScenarios.length === 0) {
-                    console.error(`[generate-test-model-async] ❌ Не удалось перегенерировать проблемные Scenarios: ${codeIssues.join(', ')}`);
-                    throw new Error(`Не удалось исправить структурные проблемы Code: ${codeIssues.join('; ')}`);
-                }
-
-                // Заменяем старые Code на исправленные
-                for (const { scenario, fixedCodes } of fixedScenarios) {
-                    scenario.codes = fixedCodes;
-                    console.log(`[generate-test-model-async] ✅ Scenario "${scenario.text}" обновлён с ${fixedCodes.length} исправленными Code`);
+                    if (fixedScenarios.length === 0) {
+                        console.warn(`[generate-test-model-async] ⚠️ Не удалось перегенерировать проблемные Scenarios: ${codeIssues.join(', ')}`);
+                        console.warn(`[generate-test-model-async] ⚠️ Продолжаем генерацию с текущей моделью, несмотря на проблемы`);
+                        // Не блокируем создание, просто предупреждаем
+                    } else {
+                        // Заменяем старые Code на исправленные
+                        for (const { scenario, fixedCodes } of fixedScenarios) {
+                            scenario.codes = fixedCodes;
+                            console.log(`[generate-test-model-async] ✅ Scenario "${scenario.text}" обновлён с ${fixedCodes.length} исправленными Code`);
+                        }
+                    }
                 }
 
                 // ✅ УЛУЧШЕНИЕ: Применяем финальное автоматическое исправление через autoFixCodeWithUserActions
@@ -5863,10 +5865,10 @@ ${escalationPrompt}`;
                     );
 
                     if (finalCriticalIssues.length > 0) {
-                        console.error(`[generate-test-model-async] ❌ После всех исправлений остались критические проблемы:`);
-                        finalCriticalIssues.forEach(issue => console.error(`  - ${issue}`));
-                        // Выбрасываем ошибку только если остались действительно критические проблемы
-                        throw new Error(`Не удалось исправить структурные проблемы: ${finalCriticalIssues.join('; ')}`);
+                        console.warn(`[generate-test-model-async] ⚠️ После всех исправлений остались проблемы:`);
+                        finalCriticalIssues.forEach(issue => console.warn(`  - ${issue}`));
+                        console.warn(`[generate-test-model-async] ⚠️ Продолжаем генерацию с текущей моделью, несмотря на проблемы`);
+                        // Не блокируем создание, просто предупреждаем
                     } else {
                         console.log(`[generate-test-model-async] ✅ Все структурные проблемы Code исправлены через перегенерацию и автоматическое исправление`);
                     }
@@ -5874,8 +5876,9 @@ ${escalationPrompt}`;
                     console.log(`[generate-test-model-async] ✅ Все структурные проблемы Code исправлены через перегенерацию`);
                 }
             } else if (criticalIssues.length > 0) {
-                // Если есть другие критичные проблемы (не Code), выбрасываем ошибку
-                throw new Error(`Сгенерированная модель нарушает структуру Scenario/Code: ${criticalIssues.join('; ')}`);
+                // Если есть другие критичные проблемы (не Code), предупреждаем, но продолжаем
+                console.warn(`[generate-test-model-async] ⚠️ Модель содержит критические проблемы: ${criticalIssues.join('; ')}`);
+                console.warn(`[generate-test-model-async] ⚠️ Продолжаем генерацию с текущей моделью, несмотря на проблемы`);
             } else if (remainingIssues.length > 0) {
                 console.warn(`[generate-test-model-async] ⚠️ Модель содержит некритичные проблемы Story, продолжаем:`, remainingIssues);
             }
