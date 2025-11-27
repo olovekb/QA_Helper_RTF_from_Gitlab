@@ -5812,18 +5812,18 @@ ${escalationPrompt}`;
                     console.warn(`[generate-test-model-async] ⚠️ Продолжаем генерацию с текущей моделью, несмотря на проблемы`);
                     // Не блокируем создание, просто предупреждаем
                 } else {
-                    // Перегенерируем проблемные Scenarios
-                    const fixedScenarios = await regenerateProblematicScenarios(problematicScenarios, reqStringForModel);
+                // Перегенерируем проблемные Scenarios
+                const fixedScenarios = await regenerateProblematicScenarios(problematicScenarios, reqStringForModel);
 
-                    if (fixedScenarios.length === 0) {
+                if (fixedScenarios.length === 0) {
                         console.warn(`[generate-test-model-async] ⚠️ Не удалось перегенерировать проблемные Scenarios: ${codeIssues.join(', ')}`);
                         console.warn(`[generate-test-model-async] ⚠️ Продолжаем генерацию с текущей моделью, несмотря на проблемы`);
                         // Не блокируем создание, просто предупреждаем
                     } else {
-                        // Заменяем старые Code на исправленные
-                        for (const { scenario, fixedCodes } of fixedScenarios) {
-                            scenario.codes = fixedCodes;
-                            console.log(`[generate-test-model-async] ✅ Scenario "${scenario.text}" обновлён с ${fixedCodes.length} исправленными Code`);
+                // Заменяем старые Code на исправленные
+                for (const { scenario, fixedCodes } of fixedScenarios) {
+                    scenario.codes = fixedCodes;
+                    console.log(`[generate-test-model-async] ✅ Scenario "${scenario.text}" обновлён с ${fixedCodes.length} исправленными Code`);
                         }
                     }
                 }
@@ -9197,6 +9197,9 @@ async function generateTestCasesAsync(taskId, inputData) {
                 return String(step || '');
             };
 
+            const normalizeText = (text) => String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+            const scenarioStepMap = new Map();
+
             testCases.forEach((tc, idx) => {
                 const tcNum = idx + 1;
                 const title = tc.title || '';
@@ -9204,6 +9207,21 @@ async function generateTestCasesAsync(taskId, inputData) {
                 const expected = tc.expected || '';
                 const layer = tc.layer || '';
                 const precondition = tc.precondition || '';
+                const scenarioText = tc.scenario || '';
+                const isIntegrationFrontend = typeof layer === 'string' && layer.toLowerCase().includes('integration frontend');
+
+                const normalizedStepTexts = steps.map(step => normalizeText(getStepText(step)));
+                const stepSignature = normalizedStepTexts.length > 0 ? normalizedStepTexts.join('||') : 'NO_STEPS';
+                const scenarioKey = `${(layer || '').toLowerCase()}||${normalizeText(tc.story || '')}||${normalizeText(scenarioText)}||${stepSignature}`;
+                if (!scenarioStepMap.has(scenarioKey)) {
+                    scenarioStepMap.set(scenarioKey, []);
+                }
+                scenarioStepMap.get(scenarioKey).push({
+                    index: tcNum,
+                    title,
+                    layer,
+                    expected: expected || ''
+                });
 
                 // ✅ КРИТИЧНО: Проверка пустых шагов
                 if (steps.length === 0) {
@@ -9213,6 +9231,26 @@ async function generateTestCasesAsync(taskId, inputData) {
                 // ✅ КРИТИЧНО: Проверка недостаточного количества шагов
                 if (layer === 'E2E Tests' && steps.length > 0 && steps.length < 3) {
                     issues.push(`Тест-кейс ${tcNum} "${title}": имеет недостаточно шагов (${steps.length}). Для E2E тестов требуется минимум 3 детализированных шага (например, "Авторизоваться в системе", "Перейти в раздел 'Платежи'", "Нажать кнопку 'Создать платеж'").`);
+                }
+                if (isIntegrationFrontend && steps.length > 0 && steps.length < 2) {
+                    issues.push(`Тест-кейс ${tcNum} "${title}": Integration frontend тест содержит только ${steps.length} шаг(а). Требуется минимум два пользовательских шага: добраться до формы/вкладки и выполнить целевое действие.`);
+                }
+
+                const normalizedScenario = normalizeText(scenarioText);
+                const normalizedTitle = normalizeText(title);
+                if (normalizedScenario) {
+                    normalizedStepTexts.forEach((stepText, stepIdx) => {
+                        if (stepText && stepText === normalizedScenario) {
+                            issues.push(`Тест-кейс ${tcNum} "${title}": шаг ${stepIdx + 1} дословно повторяет scenario "${scenarioText}". Шаг должен детализировать действие, а не копировать сценарий.`);
+                        }
+                    });
+                }
+                if (normalizedTitle) {
+                    normalizedStepTexts.forEach((stepText, stepIdx) => {
+                        if (stepText && stepText === normalizedTitle) {
+                            issues.push(`Тест-кейс ${tcNum} "${title}": шаг ${stepIdx + 1} дословно повторяет title. Шаг должен описывать конкретное действие пользователя.`);
+                        }
+                    });
                 }
 
                 // ✅ КРИТИЧНО: Проверка неконкретных шагов
@@ -9459,6 +9497,16 @@ async function generateTestCasesAsync(taskId, inputData) {
                         issues.push(`Тест-кейс ${tcNum} "${title}": есть parameters, но нет examples!`);
                     }
                 }
+            });
+
+            scenarioStepMap.forEach((entries, key) => {
+                if (entries.length <= 1) return;
+                const layer = entries[0].layer || '';
+                if (!layer.toLowerCase().includes('integration frontend')) return;
+
+                const expectedSet = new Set(entries.map(e => normalizeText(e.expected)));
+                const titleList = entries.map(e => `#${e.index} "${e.title}"`).join('; ');
+                issues.push(`Integration frontend тесты ${titleList} имеют полностью одинаковые шаги внутри одной story/scenario. Объедини их через parameters/examples вместо дублирования.`);
             });
 
             return issues;
@@ -12414,13 +12462,13 @@ ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             const totalLimit = maxE2E + baseIntegrationLimit;
 
             return `
-Ты — SDET, генерирующий тест-кейсы на основе requirements и тестовой модели.
+            Ты — SDET, генерирующий тест-кейсы на основе requirements и тестовой модели.
 
-🎯 ТИПЫ ТЕСТОВ:
-${e2eSection ? e2eSection + '\n' : ''}- **Integration frontend Tests**: Атомарные тесты UI-компонент. Дойти до формы/страницы/компонента, сделать минимум 1 действие (или более), получить ожидаемый результат. Указывают scenario из модели.
-${backendSection}
+            🎯 ТИПЫ ТЕСТОВ:
+            ${e2eSection ? e2eSection + '\n' : ''}- **Integration frontend Tests**: Атомарные тесты UI-компонент. ОБЯЗАТЕЛЬНО dойти до формы/страницы/компонента (первое действие) и выполнить целевое действие (второе действие). Минимум 2 шага: шаг 1 — привести UI в нужное состояние, шаг 2+ — выполнить действие пользователя, которое ведёт к проверке. NEVER копируй scenario или title в steps. Указывают scenario из модели.
+            ${backendSection}
 
-🚨 ОБЯЗАТЕЛЬНЫЕ ПОЛЯ:
+            🚨 ОБЯЗАТЕЛЬНЫЕ ПОЛЯ:
 - **id**: "tc-e2e-001", "tc-if-001", "tc-ib-001"
 - **feature**, **story**: Из тестовой модели
 - **scenario**: Для Integration тестов (из модели), НЕ для E2E!
@@ -12432,7 +12480,8 @@ ${backendSection}
 📊 ПАРАМЕТРИЗАЦИЯ:
 ✅ Используй parameters + examples для вариативности
 ✅ Если кнопка/элемент в разных местах, но реакция одинаковая → ОДИН тест с параметризацией!
-❌ НЕ создавай дубликаты — параметризуй!
+            ❌ НЕ создавай дубликаты — параметризуй!
+            ❗ Если внутри одной story + scenario шаги полностью совпадают, а различается только expected/данные — ОБЪЕДИНИ через parameters или examples вместо множества тестов.
 
 🚨 ПРАВИЛА ТЕГОВ:
 - E2E Tests: ["D"] / ["M"] / ["D", "M"]
@@ -13118,13 +13167,14 @@ ${includeBackendTests ? '   - Создай Integration backend тесты на �
 ` : `
 🚨 INTEGRATION FRONTEND ТЕСТЫ - КЛЮЧЕВЫЕ ПРАВИЛА:
 
-**СУТЬ:** Дойти до формы/страницы/компонента, сделать минимум 1 действие (или более), получить ожидаемый результат.
+**СУТЬ:** Дойти до формы/страницы/компонента, сделать действия пользователя и получить ожидаемый результат. Для Integration frontend Tests требуется минимум 2 шага (дойти до формы + выполнить целевое действие).
 
 **STEPS:**
 - ✅ ТОЛЬКО пользовательские действия: "Нажать кнопку", "Ввести текст", "Выбрать значение", "Выбрать дату"
-- ✅ Может быть 1 действие или несколько (например: "Выбрать дату" + "Ввести число" + "Нажать кнопку")
+- ✅ Для Integration frontend Tests: минимум 2 шага (шаг 1 — перейти/открыть нужную страницу/вкладку, шаг 2 и далее — выполнить целевое действие). Если нужно больше действий, добавь их.
 - ❌ НЕ используй технические действия: "Отправить GET", "Выполнить запрос", "Дождаться загрузки", "Дождаться начала загрузки данных", "Получить ответ" — это технические детали!
 - ❌ НЕ используй описания состояний: "Загрузить страницу", "Открыть приложение" — это не действия пользователя!
+- ❌ Шаги НЕ должны дублировать текст title или scenario. Раскрой сценарий детальными действиями.
 
 **PRECONDITION:**
 - ✅ ОБЯЗАТЕЛЬНО! Описание состояния UI БЕЗ действий: "Пользователь авторизован, на странице создания QR-кода"
@@ -13156,6 +13206,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
 - ❌ НЕ копируй E2E тесты ради разных дат/данных — используй parameters или examples!
 - ✅ Каждый тест = уникальная комбинация "layer + story + scenario + steps + expected".
 - ✅ Если нужно проверить несколько значений → параметризуй внутри одного теста!
+- ✅ Если внутри одного scenario шаги полностью совпадают, а отличается только expected/данные — ОБЪЕДИНИ тесты и вынеси различия в parameters/examples.
 
 🚨 КРИТИЧНО ДЛЯ E2E ТЕСТОВ:
 - Если два E2E теста имеют одинаковые шаги, но разные тайтлы:
