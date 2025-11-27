@@ -302,7 +302,7 @@ ${TEST_MODEL_EXAMPLE_TEXT}
 ${idealExampleBlock}
 
 🏛️ СТРУКТУРА
-- Feature = бизнес-домен/ценность системы.
+- Feature = бизнес-домен/ценность системы. В 9 из 10 документов это одна Feature (название продукта/подсистемы). Создавай несколько Feature только если требования ЯВНО описывают независимые подсистемы (напр. "Платежи" и "Переводы").
 - Story = пользовательская цель с бизнес-правилами (НЕ контролы, НЕ "Загрузка...", НЕ по разделам документа!). Определяй Story по бизнес-ценности для пользователя, а НЕ по структуре документа.
 - Scenario = одно простое пользовательское действие (НЕ техническое, НЕ процесс!). Текст начинается с глагола действия пользователя: "Нажать", "Ввести", "Выбрать", "Настроить", "Создать", "Сохранить", "Отменить". ❌ НЕ "Загрузить страницу", "Открыть приложение" - это технические действия! ❌ НЕ "Выполнить пользовательское действие" - это placeholder! ❌ НЕ "Настроить параметры... и создать..." - это процесс, разбей на отдельные Scenario!
 - Code = полная реакция системы на действие. Каждая реакция отдельным объектом, строго type: frontend | backend.
@@ -379,6 +379,7 @@ function buildModelUserPrompt({
 ПРАВИЛА РАБОТЫ С ЧАНКОМ:
 - Применяй те же DDT-правила, что и в SYSTEM PROMPT. Эталон обязателен.
 - ❌ НЕ смотри на структуру документа (разделы, подразделы) - это техническая структура!
+- ✅ Считай, что весь документ относится к одной Feature, пока в тексте явно не появятся независимые подсистемы. Не плодишь Feature ради каждого раздела.
 - ✅ Читай текст требований и понимай бизнес-ценность: "Что хочет получить пользователь?"
 - ✅ Анализируй действия пользователя и реакции системы, а НЕ структуру документа
 - Добавляй Story/Scenario/Code ТОЛЬКО если в тексте есть бизнес-ценность или действие.
@@ -3625,6 +3626,97 @@ function validateTestModel(model, reqStructure) {
  * @param {Array} model - Тестовая модель
  * @returns {Array} - Очищенная модель
  */
+const STOP_WORDS = new Set([
+    'и', 'по', 'для', 'при', 'над', 'под', 'без', 'про', 'надо', 'в', 'на', 'из', 'со', 'от', 'до', 'это', 'эта',
+    'эти', 'той', 'как', 'что', 'к', 'с', 'у', 'о', 'об', 'либо', 'через', 'все', 'весь', 'данный', 'данная',
+    'реализация', 'реализовать', 'модуль', 'система'
+]);
+
+function normalizeDomainTokens(text = '') {
+    return String(text)
+        .toLowerCase()
+        .replace(/[^a-zа-я0-9\s]/gi, ' ')
+        .split(/\s+/)
+        .filter(token => token.length >= 4 && !STOP_WORDS.has(token));
+}
+
+function detectDominantDomainToken(features) {
+    if (!Array.isArray(features) || features.length === 0) return null;
+    const frequency = new Map();
+
+    for (const feature of features) {
+        const tokens = new Set(normalizeDomainTokens(feature.text));
+        for (const token of tokens) {
+            frequency.set(token, (frequency.get(token) || 0) + 1);
+        }
+    }
+
+    const threshold = Math.max(2, Math.ceil(features.length * 0.7));
+    let bestToken = null;
+    let bestCount = 0;
+    for (const [token, count] of frequency.entries()) {
+        if (count >= threshold && count > bestCount) {
+            bestToken = token;
+            bestCount = count;
+        }
+    }
+    return bestToken;
+}
+
+function deduplicateStoriesInFeature(feature) {
+    if (!feature || !Array.isArray(feature.stories)) return;
+    const normalizedMap = new Map();
+    const dedupedStories = [];
+
+    for (const story of feature.stories) {
+        if (!story || !story.text) continue;
+        const key = normalizeDomainTokens(story.text).join(' ') || story.text.trim().toLowerCase();
+        if (!normalizedMap.has(key)) {
+            const copy = {
+                ...story,
+                scenarios: Array.isArray(story.scenarios) ? [...story.scenarios] : []
+            };
+            normalizedMap.set(key, copy);
+            dedupedStories.push(copy);
+        } else {
+            const target = normalizedMap.get(key);
+            const incomingScenarios = Array.isArray(story.scenarios) ? story.scenarios : [];
+            target.scenarios = (target.scenarios || []).concat(incomingScenarios);
+        }
+    }
+
+    feature.stories = dedupedStories;
+}
+
+function mergeFeaturesByDomain(model) {
+    if (!Array.isArray(model) || model.length <= 1) return model;
+    const featuresWithStories = model.filter(f => Array.isArray(f?.stories) && f.stories.length > 0);
+    if (featuresWithStories.length <= 1) return featuresWithStories;
+
+    const dominantToken = detectDominantDomainToken(featuresWithStories);
+    if (!dominantToken) return featuresWithStories;
+
+    const canonicalFeature = featuresWithStories.find(f =>
+        normalizeDomainTokens(f.text).includes(dominantToken)
+    ) || featuresWithStories[0];
+
+    const mergedFeature = {
+        id: canonicalFeature.id || uuidv4(),
+        text: canonicalFeature.text || canonicalFeature.name || dominantToken,
+        stories: []
+    };
+
+    for (const feature of featuresWithStories) {
+        const stories = Array.isArray(feature.stories) ? feature.stories : [];
+        mergedFeature.stories.push(...stories);
+    }
+
+    deduplicateStoriesInFeature(mergedFeature);
+    console.log(`[postProcessModel] ✅ Объединено ${featuresWithStories.length} Feature в одну "${mergedFeature.text}" по доменному токену "${dominantToken}"`);
+
+    return [mergedFeature];
+}
+
 function postProcessModel(model) {
     console.log('[postProcessModel] Начинаю постобработку модели...');
     let cleanedCount = 0;
@@ -3766,6 +3858,18 @@ function postProcessModel(model) {
     }
 
     console.log(`[postProcessModel] ✅ Очищено ${cleanedCount} Code(s)`);
+
+    // Фильтруем пустые Feature
+    model = (model || []).filter(feature => Array.isArray(feature?.stories) && feature.stories.length > 0);
+
+    // Дедуплицируем Story внутри каждой Feature
+    for (const feature of model) {
+        deduplicateStoriesInFeature(feature);
+    }
+
+    // Если все Feature описывают один домен, объединяем их
+    model = mergeFeaturesByDomain(model);
+
     return model;
 }
 
