@@ -481,7 +481,7 @@ function buildModelUserPrompt({
                 .filter(f => f && f.id && f.text)
                 .map(f => `"${f.text}" (ID: ${f.id})`)
                 .join(', ');
-            
+
             // Безопасное извлечение stories
             const storiesList = previousContext
                 .filter(f => f && f.stories && Array.isArray(f.stories))
@@ -490,7 +490,7 @@ function buildModelUserPrompt({
                     .map(s => `"${s.text}" (ID: ${s.id})`)
                 )
                 .join(', ');
-            
+
             return `
 🔄 КОНТЕКСТ ПРЕДЫДУЩИХ ЧАСТЕЙ (УЖЕ СОЗДАНО):
 
@@ -3637,18 +3637,18 @@ function validateTestModel(model, reqStructure) {
                 }
             }
         }
-        
+
         // ✅ Проверка 4.1: Scenario не содержит технических действий
         for (const story of generatedFeature.stories || []) {
             for (const scenario of story.scenarios || []) {
                 const scenarioText = normalizeText(scenario.text || '');
-                
+
                 // Проверка на "Загрузить страницу"
                 if (scenarioText.includes('загрузить страницу') || scenarioText.includes('загрузить') && scenarioText.includes('страниц')) {
                     report.errors.push(`Scenario "${scenario.text}" содержит техническое действие "Загрузить страницу" - это НЕ действие пользователя! Scenario должен начинаться с действия пользователя: "Нажать", "Ввести", "Выбрать"`);
                     report.valid = false;
                 }
-                
+
                 // Проверка на placeholder-формулировки
                 const placeholderPhrases = ['выполнить пользовательское действие', 'выполнить действие', 'сделать действие', 'произвести действие'];
                 for (const phrase of placeholderPhrases) {
@@ -3671,7 +3671,7 @@ function validateTestModel(model, reqStructure) {
                         report.errors.push(`Code с id "${code.id}" в Scenario "${scenario.text}" имеет id Scenario! Codes должны иметь id, начинающиеся с "c"!`);
                         report.valid = false;
                     }
-                    
+
                     // Проверка типа code по формулировке
                     const codeText = (code.text || '').toLowerCase();
                     if (codeText.startsWith('отправляется') && code.type !== 'frontend') {
@@ -3682,13 +3682,13 @@ function validateTestModel(model, reqStructure) {
                         report.errors.push(`Code "${code.text}" начинается с "Возвращается", но type="${code.type}" (должно быть "backend")!`);
                         report.valid = false;
                     }
-                    
+
                     // Проверка: Code не должен иметь type="integration" (только frontend или backend)
                     if (code.type === 'integration') {
                         report.errors.push(`Code "${code.text}" имеет type="integration" - это неправильно! Используй только "frontend" или "backend"!`);
                         report.valid = false;
                     }
-                    
+
                     // Проверка: Code не должен содержать действия пользователя
                     const userActions = ['нажать', 'переключиться', 'выбрать', 'ввести', 'кликнуть', 'открыть', 'загрузить страницу'];
                     for (const action of userActions) {
@@ -3697,7 +3697,7 @@ function validateTestModel(model, reqStructure) {
                             report.valid = false;
                         }
                     }
-                    
+
                     // Проверка: Code не должен содержать проверки/обнаружения (это действия, не реакции)
                     const checkPhrases = ['обнаружить', 'проверить', 'получить ошибку', 'получить успешный', 'получить ответ'];
                     for (const phrase of checkPhrases) {
@@ -3706,7 +3706,7 @@ function validateTestModel(model, reqStructure) {
                             report.valid = false;
                         }
                     }
-                    
+
                     const codeTextNormalized = normalizeText(code.text || '');
                     for (const phrase of invalidPhrases) {
                         if (codeTextNormalized.includes(phrase)) {
@@ -3788,7 +3788,7 @@ function deduplicateStoriesInFeature(feature) {
     for (const story of feature.stories) {
         if (!story || !story.text) continue;
         const key = normalizeDomainTokens(story.text).join(' ') || story.text.trim().toLowerCase();
-        
+
         // ✅ ИСПРАВЛЯЕМ ДУБЛИРУЮЩИЕСЯ ID: Если ID уже использован, генерируем новый
         let storyId = story.id;
         if (storyId && usedStoryIds.has(storyId)) {
@@ -3803,17 +3803,17 @@ function deduplicateStoriesInFeature(feature) {
                 id: storyId || uuidv4(),
                 scenarios: Array.isArray(story.scenarios) ? [...story.scenarios] : []
             };
-            
+
             // ✅ ДЕДУПЛИЦИРУЕМ SCENARIOS внутри Story
             deduplicateScenariosInStory(copy);
-            
+
             normalizedMap.set(key, copy);
             dedupedStories.push(copy);
         } else {
             const target = normalizedMap.get(key);
             const incomingScenarios = Array.isArray(story.scenarios) ? story.scenarios : [];
             target.scenarios = (target.scenarios || []).concat(incomingScenarios);
-            
+
             // ✅ ДЕДУПЛИЦИРУЕМ SCENARIOS после объединения
             deduplicateScenariosInStory(target);
         }
@@ -3832,7 +3832,7 @@ function deduplicateScenariosInStory(story) {
     for (const scenario of story.scenarios) {
         if (!scenario || !scenario.text) continue;
         const key = normalizeDomainTokens(scenario.text).join(' ') || scenario.text.trim().toLowerCase();
-        
+
         // ✅ ИСПРАВЛЯЕМ ДУБЛИРУЮЩИЕСЯ ID: Если ID уже использован, генерируем новый
         let scenarioId = scenario.id;
         if (scenarioId && usedScenarioIds.has(scenarioId)) {
@@ -3847,17 +3847,17 @@ function deduplicateScenariosInStory(story) {
                 id: scenarioId || uuidv4(),
                 codes: Array.isArray(scenario.codes) ? [...scenario.codes] : []
             };
-            
+
             // ✅ ДЕДУПЛИЦИРУЕМ CODES внутри Scenario
             deduplicateCodesInScenario(copy);
-            
+
             normalizedMap.set(key, copy);
             dedupedScenarios.push(copy);
         } else {
             const target = normalizedMap.get(key);
             const incomingCodes = Array.isArray(scenario.codes) ? scenario.codes : [];
             target.codes = (target.codes || []).concat(incomingCodes);
-            
+
             // ✅ ДЕДУПЛИЦИРУЕМ CODES после объединения
             deduplicateCodesInScenario(target);
         }
@@ -3876,7 +3876,7 @@ function deduplicateCodesInScenario(scenario) {
     for (const code of scenario.codes) {
         if (!code || !code.text) continue;
         const key = normalizeDomainTokens(code.text).join(' ') || code.text.trim().toLowerCase();
-        
+
         // ✅ ИСПРАВЛЯЕМ ДУБЛИРУЮЩИЕСЯ ID: Если ID уже использован, генерируем новый
         let codeId = code.id;
         if (codeId && usedCodeIds.has(codeId)) {
@@ -3905,7 +3905,7 @@ function mergeFeaturesByDomain(model) {
         // Ищем общие доменные токены между всеми Feature
         const allTokens = featuresWithStories.map(f => new Set(normalizeDomainTokens(f.text)));
         const commonTokens = new Set();
-        
+
         if (allTokens.length > 0) {
             for (const token of allTokens[0]) {
                 if (allTokens.every(tokenSet => tokenSet.has(token))) {
@@ -3916,8 +3916,8 @@ function mergeFeaturesByDomain(model) {
 
         // Если есть хотя бы один общий токен ИЛИ Feature <= 2, объединяем
         if (commonTokens.size > 0 || featuresWithStories.length <= 2) {
-            const dominantToken = detectDominantDomainToken(featuresWithStories) || 
-                                 (commonTokens.size > 0 ? Array.from(commonTokens)[0] : null);
+            const dominantToken = detectDominantDomainToken(featuresWithStories) ||
+                (commonTokens.size > 0 ? Array.from(commonTokens)[0] : null);
 
             const canonicalFeature = featuresWithStories.find(f =>
                 dominantToken ? normalizeDomainTokens(f.text).includes(dominantToken) : true
@@ -3983,15 +3983,15 @@ function postProcessModel(model) {
             }
             return true;
         });
-        
+
         for (const story of feature.stories || []) {
             // Удаляем технические Scenario
             story.scenarios = (story.scenarios || []).filter(scenario => {
                 const scenarioText = (scenario.text || '').toLowerCase();
-                const isTechnicalScenario = scenarioText.includes('загрузить страницу') || 
-                                          scenarioText.includes('загрузить') && scenarioText.includes('страниц');
+                const isTechnicalScenario = scenarioText.includes('загрузить страницу') ||
+                    scenarioText.includes('загрузить') && scenarioText.includes('страниц');
                 const isPlaceholder = scenarioText.includes('выполнить пользовательское действие') ||
-                                    scenarioText.includes('выполнить действие');
+                    scenarioText.includes('выполнить действие');
                 if (isTechnicalScenario || isPlaceholder) {
                     console.warn(`[postProcessModel] ⚠️ Удаляю технический/placeholder Scenario: "${scenario.text}"`);
                     cleanedCount++;
@@ -3999,7 +3999,7 @@ function postProcessModel(model) {
                 }
                 return true;
             });
-            
+
             for (const scenario of story.scenarios || []) {
                 for (const code of scenario.codes || []) {
                     const originalText = code.text || '';
@@ -4076,7 +4076,7 @@ function postProcessModel(model) {
                             code.type = 'frontend';
                         }
                     }
-                    
+
                     // ✅ Исправляем integration на frontend или backend
                     if (code.type === 'integration') {
                         const codeText = code.text.toLowerCase();
@@ -4086,12 +4086,12 @@ function postProcessModel(model) {
                             code.type = 'frontend';
                         }
                     }
-                    
+
                     // ✅ Удаляем Code с действиями пользователя/проверками (это не реакции системы!)
                     const codeText = (code.text || '').toLowerCase();
                     const invalidPhrases = ['обнаружить', 'проверить', 'получить ошибку', 'получить успешный', 'получить ответ', 'переключиться'];
                     const hasInvalidPhrase = invalidPhrases.some(phrase => codeText.includes(phrase));
-                    
+
                     if (hasInvalidPhrase) {
                         console.warn(`[postProcessModel] ⚠️ Удаляю Code с действием/проверкой (не реакция системы): "${code.text}"`);
                         const codeIndex = scenario.codes.indexOf(code);
@@ -5417,7 +5417,7 @@ ${contextSourcesSummary || '—'}
 
 
         const SYSTEM_PROMPT = buildModelSystemPrompt();
-        
+
 
 
         // === ЧАНКОВАНИЕ БОЛЬШИХ ТРЕБОВАНИЙ ===
@@ -5481,7 +5481,7 @@ ${contextSourcesSummary || '—'}
                         tools: combinedTools,
                         toolHandlers: contextToolHandlers,
                         finalToolNames: ['submit_test_model'],
-                        maxIterations: 10,  
+                        maxIterations: 10,
                         modelOptions: {
                             temperature: 0,
                             top_p: 0.9,
@@ -5958,7 +5958,7 @@ ${contextSourcesSummary || '—'}
         console.log('[generateTestModelAsync] Фаза 4: Постобработка модели');
         let cleanedModel = postProcessModel(repairedFinalModel);
 
-        // ✅ НОВОЕ: Перегенерация избыточно детализированных Scenarios через LLM
+        /*
         console.log(`[generate-test-model-async] Проверяю избыточно детализированные Scenarios...`);
         for (const feature of cleanedModel) {
             for (const story of (feature.stories || [])) {
@@ -5978,6 +5978,7 @@ ${contextSourcesSummary || '—'}
                 }
             }
         }
+            */
 
         // ✅ НОВОЕ: Обогащение backend Code Expected Result
         cleanedModel = enrichBackendCodesWithExpectedResult(cleanedModel);
@@ -6170,18 +6171,18 @@ ${escalationPrompt}`;
                     console.warn(`[generate-test-model-async] ⚠️ Продолжаем генерацию с текущей моделью, несмотря на проблемы`);
                     // Не блокируем создание, просто предупреждаем
                 } else {
-                // Перегенерируем проблемные Scenarios
-                const fixedScenarios = await regenerateProblematicScenarios(problematicScenarios, reqStringForModel);
+                    console.log(`[generate-test-model-async] SKIP: Перегенерация Code отключена .`);
+                    const fixedScenarios = [];
 
-                if (fixedScenarios.length === 0) {
+                    if (fixedScenarios.length === 0) {
                         console.warn(`[generate-test-model-async] ⚠️ Не удалось перегенерировать проблемные Scenarios: ${codeIssues.join(', ')}`);
                         console.warn(`[generate-test-model-async] ⚠️ Продолжаем генерацию с текущей моделью, несмотря на проблемы`);
                         // Не блокируем создание, просто предупреждаем
                     } else {
-                // Заменяем старые Code на исправленные
-                for (const { scenario, fixedCodes } of fixedScenarios) {
-                    scenario.codes = fixedCodes;
-                    console.log(`[generate-test-model-async] ✅ Scenario "${scenario.text}" обновлён с ${fixedCodes.length} исправленными Code`);
+                        // Заменяем старые Code на исправленные
+                        for (const { scenario, fixedCodes } of fixedScenarios) {
+                            scenario.codes = fixedCodes;
+                            console.log(`[generate-test-model-async] ✅ Scenario "${scenario.text}" обновлён с ${fixedCodes.length} исправленными Code`);
                         }
                     }
                 }
@@ -6291,11 +6292,11 @@ ${escalationPrompt}`;
             // Если столбец metrics не существует - сохраняем без метрик
             // Проверяем как русский, так и английский вариант ошибки
             const errorMsg = error.message || '';
-            const isMetricsColumnError = 
-                errorMsg.includes('столбец "metrics"') || 
+            const isMetricsColumnError =
+                errorMsg.includes('столбец "metrics"') ||
                 errorMsg.includes('column "metrics"') ||
                 (errorMsg.includes('metrics') && (errorMsg.includes('does not exist') || errorMsg.includes('doesn\'t exist')));
-            
+
             if (isMetricsColumnError) {
                 console.warn('[generateTestModelAsync] Столбец metrics не существует, сохраняю без метрик');
                 await db('generation_tasks').where('id', taskId).update(updateData);
@@ -7162,7 +7163,7 @@ async function fixTestCasesAsync({ taskId, testCases, fixPrompt, projectId, bear
 `;
 
     let systemPrompt = FORMATTER_SYSTEM_PROMPT;
-    
+
     // Добавляем идеальные примеры если есть
     if (perfectExamplesList.length > 0) {
         const examplesSection = `
@@ -7418,9 +7419,9 @@ ${userPrompt}`;
                 },
                 finalToolNames: ['submit_fixed_cases'],
                 modelOptions: {
-                        maxIterations: 5,
+                    maxIterations: 5,
                     temperature: 0,
-                        top_p: 0.1,
+                    top_p: 0.1,
                     max_tokens: 45000,
                     extra: { transforms: 'middle-out' }
                 },
@@ -8747,7 +8748,7 @@ function normalizeIntegrationFrontendSteps(testCase) {
     // Если есть технические шаги - переносим их в precondition
     if (technicalSteps.length > 0) {
         let precondition = testCase.precondition || '';
-        
+
         // Проверяем, есть ли уже заголовок "Предварительное условие"
         const hasHeader = /^предварительное условие/i.test(precondition.trim());
         if (!hasHeader && precondition) {
@@ -8755,28 +8756,28 @@ function normalizeIntegrationFrontendSteps(testCase) {
         } else if (!precondition) {
             precondition = 'Предварительное условие\n\n';
         }
-        
+
         // Извлекаем существующие пронумерованные строки
         const existingLines = precondition
             .replace(/^предварительное условие\s*\n*/i, '')
             .split('\n')
             .map(line => line.trim())
             .filter(line => line && !line.match(/^\d+\./)); // Убираем уже пронумерованные
-        
+
         // Находим максимальный номер
         const numberMatches = precondition.match(/\n(\d+)\./g);
-        let maxNumber = numberMatches 
+        let maxNumber = numberMatches
             ? Math.max(...numberMatches.map(m => parseInt(m.match(/\d+/)[0])))
             : 0;
-        
+
         // Добавляем технические шаги с правильной нумерацией
         const newLines = technicalSteps.map((step, i) => {
             maxNumber++;
             return `${maxNumber}. ${step}`;
         });
-        
+
         const updatedPrecondition = precondition.trim() + '\n' + newLines.join('\n');
-        
+
         const afterState = {
             id: testCase.id,
             title: testCase.title,
@@ -8852,7 +8853,7 @@ function smartMergeTestCases(originalCases, newCases, registry) {
 
         // ✅ УЛУЧШЕНО: Для E2E проверяем дубликаты по шагам, а не только по сигнатуре
         if (newCase.layer === 'E2E Tests') {
-            const duplicateBySteps = result.find(existing => 
+            const duplicateBySteps = result.find(existing =>
                 existing.layer === 'E2E Tests' && areE2EStepsDuplicate(existing, newCase)
             );
 
@@ -8860,7 +8861,7 @@ function smartMergeTestCases(originalCases, newCases, registry) {
                 // Найден дубликат по шагам - проверяем, можно ли объединить через параметры
                 const existingSteps = JSON.stringify(duplicateBySteps.steps || []);
                 const newSteps = JSON.stringify(newCase.steps || []);
-                
+
                 if (existingSteps === newSteps) {
                     // Шаги полностью идентичны - это дубликат
                     // Проверяем, отличаются ли только precondition или expected
@@ -8879,12 +8880,12 @@ function smartMergeTestCases(originalCases, newCases, registry) {
 
         // Проверяем дубликаты через реестр
         const duplicate = registry ? registry.checkDuplicate(newCase) : null;
-        
+
         if (duplicate) {
             // Найден дубликат - заменяем существующий
             const existingId = duplicate.existingId;
             const existingIndex = result.findIndex(tc => tc.id === existingId);
-            
+
             if (existingIndex !== -1) {
                 const existing = result[existingIndex];
                 const existingStepsCount = (existing.steps || []).length;
@@ -8893,7 +8894,7 @@ function smartMergeTestCases(originalCases, newCases, registry) {
                 const newExpectedLength = String(newCase.expected || '').length;
 
                 // Заменяем если новый кейс лучше (больше шагов или более полный expected)
-                if (newStepsCount > existingStepsCount || 
+                if (newStepsCount > existingStepsCount ||
                     (newStepsCount === existingStepsCount && newExpectedLength > existingExpectedLength)) {
                     result[existingIndex] = { ...newCase, id: existingId }; // Сохраняем оригинальный ID
                     if (registry) registry.replace(existingId, newCase);
@@ -9021,7 +9022,7 @@ function deduplicateTestCases(testCases, stage = 'final') {
 
         // ✅ УЛУЧШЕНО: Для E2E проверяем дубликаты по шагам ДО проверки сигнатуры
         if (testCase.layer === 'E2E Tests') {
-            const duplicateBySteps = uniqueCases.find(existing => 
+            const duplicateBySteps = uniqueCases.find(existing =>
                 existing.layer === 'E2E Tests' && areE2EStepsDuplicate(existing, testCase)
             );
 
@@ -9032,7 +9033,7 @@ function deduplicateTestCases(testCases, stage = 'final') {
                 const existingExpectedLength = String(duplicateBySteps.expected || '').length;
                 const newExpectedLength = String(testCase.expected || '').length;
 
-                if (newStepsCount > existingStepsCount || 
+                if (newStepsCount > existingStepsCount ||
                     (newStepsCount === existingStepsCount && newExpectedLength > existingExpectedLength)) {
                     // Новый лучше - заменяем
                     const existingIndex = uniqueCases.findIndex(tc => tc.id === duplicateBySteps.id);
@@ -9867,11 +9868,11 @@ async function generateTestCasesAsync(taskId, inputData) {
                     const technicalActions = steps.filter(step => {
                         const stepText = getStepText(step);
                         return /выполнить\s+(post|get|put|delete|patch)/i.test(stepText) ||
-                               /^дождаться/i.test(stepText) ||
-                               /^загрузить\s+страницу/i.test(stepText) ||
-                               /^открыть\s+приложение/i.test(stepText) ||
-                               /^отправить\s+(get|post|put|delete|patch)/i.test(stepText) ||
-                               /^получить\s+ответ/i.test(stepText);
+                            /^дождаться/i.test(stepText) ||
+                            /^загрузить\s+страницу/i.test(stepText) ||
+                            /^открыть\s+приложение/i.test(stepText) ||
+                            /^отправить\s+(get|post|put|delete|patch)/i.test(stepText) ||
+                            /^получить\s+ответ/i.test(stepText);
                     });
                     if (technicalActions.length > 0) {
                         issues.push(`Тест-кейс ${tcNum} "${title}": Integration frontend Tests содержит технические действия (${technicalActions.map(s => getStepText(s)).join(', ')}) - только UI-действия!`);
@@ -10681,7 +10682,7 @@ ${JSON.stringify(pc.testCase, null, 2)}
                                             fixedCases[oldCaseIndex] = fixedCase;
                                         } else {
                                             // Если не нашли - заменяем по индексу (fallback)
-                                        fixedCases[pc.index] = fixedCase;
+                                            fixedCases[pc.index] = fixedCase;
                                         }
 
                                         console.log(`[regenerateTestCasesWithFixes] ✅ Исправлен семантический дефект в тест-кейсе "${pc.testCase.title}" (ID: ${pc.testCase.id})`);
@@ -12420,7 +12421,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         function extractApiMocksFromText(text) {
             const source = safeTrim(text) ? text : '';
             if (!source) return [];
-            
+
             // ✅ ИСПРАВЛЕНИЕ: Ищем только эндпоинты, которые явно упоминаются в контексте тестирования
             // Игнорируем URL в примерах, ссылках на Confluence, общих описаниях
             const endpointRegex = /(?:GET|POST|PUT|DELETE|PATCH)?\s*(?:\*\*)?(\/[A-Za-z0-9_\-\/.]+(?:\?[^\s"'`)]+)?)/gi;
@@ -12430,18 +12431,18 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             while ((match = endpointRegex.exec(source)) !== null) {
                 const endpoint = normalizeEndpoint(match[1]);
                 if (!endpoint) continue;
-                
+
                 // ✅ ПРОПУСКАЕМ: URL в ссылках Confluence, общих примерах
                 const window = 600;
                 const contextStart = Math.max(0, match.index - window);
                 const contextEnd = Math.min(source.length, match.index + window);
                 const context = source.slice(contextStart, contextEnd);
-                
+
                 // Пропускаем, если это ссылка на Confluence или общий пример
                 if (/wiki\.|confluence|pages\.viewpage|http:\/\/|https:\/\//i.test(context)) {
                     continue;
                 }
-                
+
                 // Пропускаем, если эндпоинт упоминается только в общем контексте, без связи с тестированием
                 if (mocks.has(endpoint)) continue; // уже нашли мок для этого эндпоинта
 
@@ -12534,8 +12535,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                         .replace(/\?[^\s]+/g, '')
                         .toLowerCase();
                     // Ищем упоминание эндпоинта в тексте теста
-                    return testText.includes(normalizedEndpoint) || 
-                           testText.includes(mock.endpoint.toLowerCase());
+                    return testText.includes(normalizedEndpoint) ||
+                        testText.includes(mock.endpoint.toLowerCase());
                 });
 
                 if (relevantMocks.length === 0) {
@@ -12808,7 +12809,7 @@ ${needsE2E ? '🚨 КРИТИЧНО: □ Каждая Story имеет ≥1 E2E?
             models: config.cloudruModels,
             temperature: 0,
             top_p: 1,
-            max_tokens: 45000,  
+            max_tokens: 45000,
             extra: { transforms: 'middle-out' }
         };
 
@@ -13113,11 +13114,11 @@ ${needsE2E ? '🚨 КРИТИЧНО: □ Каждая Story имеет ≥1 E2E?
                             }
                             // Добавляем новый ID в множество использованных
                             usedIds.add(testCaseId);
-                            
+
                             allTestCases.push({
                                 id: testCaseId, // ✅ Гарантированно уникальный ID
                                 title: testCase.title,
-                                steps: steps, 
+                                steps: steps,
                                 expected: testCase.expected,
                                 layer: testCase.layer,
                                 feature: testCase.feature,
@@ -13275,36 +13276,36 @@ ${needsE2E ? '🚨 КРИТИЧНО: □ Каждая Story имеет ≥1 E2E?
 
             // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: ВСЕГДА загружаем примеры (статические + идеальные из БД)
             const examples = await selectExamples(chunk, mode, perfectExamples, db, projectId);
-            
+
             // ✅ ПРОВЕРКА: Убеждаемся, что примеры загружены (критично для качества генерации)
-            const totalExamples = (examples.e2e?.length || 0) + 
-                                 (examples.integration_fe?.length || 0) + 
-                                 (examples.integration_be?.length || 0) + 
-                                 (examples.parametrized?.length || 0);
-            
+            const totalExamples = (examples.e2e?.length || 0) +
+                (examples.integration_fe?.length || 0) +
+                (examples.integration_be?.length || 0) +
+                (examples.parametrized?.length || 0);
+
             if (totalExamples === 0) {
                 console.error(`[genForChunkOptimized] ❌ КРИТИЧЕСКАЯ ОШИБКА: Примеры не загружены! Это может привести к неправильному формату тестов!`);
                 throw new Error('Эталонные примеры не загружены. Проверьте файлы в server/config/examples/');
             }
-            
+
             console.log(`[genForChunkOptimized] 📚 Загружено ${totalExamples} эталонных примеров для chunk:`);
             if (examples.e2e?.length) console.log(`  - E2E: ${examples.e2e.length}`);
             if (examples.integration_fe?.length) console.log(`  - Integration Frontend: ${examples.integration_fe.length}`);
             if (examples.integration_be?.length) console.log(`  - Integration Backend: ${examples.integration_be.length}`);
             if (examples.parametrized?.length) console.log(`  - Параметризованные: ${examples.parametrized.length}`);
-            
+
             const examplesSection = buildExamplesSection(examples);
 
             // ✅ Форматируем логику и ограничения для промпта (если есть)
-            const logicConstraintsSection = logicConstraints 
+            const logicConstraintsSection = logicConstraints
                 ? formatLogicConstraintsForPrompt(logicConstraints)
                 : '';
 
             // ✅ УНИФИЦИРОВАННЫЙ SYSTEM PROMPT (динамический, учитывает режим и флаги)
-            const scenariosCount = chunk.reduce((sum, f) => 
+            const scenariosCount = chunk.reduce((sum, f) =>
                 sum + (f.stories || []).reduce((s, st) => s + (st.scenarios || []).length, 0), 0);
             const storiesCount = chunk.reduce((sum, f) => sum + (f.stories || []).length, 0);
-            
+
             const dynamicSystemPrompt = buildTestCaseSystemPrompt({
                 mode,
                 includeBackendTests,
@@ -13494,19 +13495,19 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                     const totalLimit = 15; // Общий лимит: 1-2 E2E + 8-12 Integration = 10-15
                     const maxIntegration = 12; // Максимум Integration тестов
                     const maxE2E = 2; // Максимум E2E тестов
-                    
+
                     // Фильтруем E2E (максимум 2)
                     const filteredE2E = e2eCases.slice(0, maxE2E);
                     if (e2eCases.length > maxE2E) {
                         console.warn(`[genForChunkOptimized] ⚠️ E2E тестов больше лимита (${e2eCases.length} > ${maxE2E}), оставляю первые ${maxE2E}`);
                     }
-                    
+
                     // Фильтруем Integration по приоритетам (максимум 12)
                     let filteredIntegration = integrationCases;
                     if (integrationCases.length > maxIntegration) {
                         console.warn(`[genForChunkOptimized] ⚠️ ПРЕВЫШЕН ЛИМИТ Integration! Получено ${integrationCases.length} (ожидалось ≤${maxIntegration})`);
                         console.warn(`[genForChunkOptimized] 💡 Применяю фильтрацию по приоритетам...`);
-                        
+
                         // Сортируем Integration тесты по приоритету:
                         // 1. Позитивные тесты (без слов "негатив", "ошибка", "невалид", "граничн" в title)
                         // 2. Негативные с параметризацией (есть examples)
@@ -13518,18 +13519,18 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                             const bIsPositive = !bTitle.includes('негатив') && !bTitle.includes('ошибка') && !bTitle.includes('невалид') && !bTitle.includes('граничн');
                             const aHasParams = Array.isArray(a.examples) && a.examples.length > 0;
                             const bHasParams = Array.isArray(b.examples) && b.examples.length > 0;
-                            
+
                             if (aIsPositive && !bIsPositive) return -1;
                             if (!aIsPositive && bIsPositive) return 1;
                             if (aHasParams && !bHasParams) return -1;
                             if (!aHasParams && bHasParams) return 1;
                             return 0;
                         });
-                        
+
                         filteredIntegration = sortedIntegration.slice(0, maxIntegration);
                         console.warn(`[genForChunkOptimized] ✅ Оставлено ${filteredIntegration.length} Integration тестов (приоритетные)`);
                     }
-                    
+
                     // Объединяем и проверяем общий лимит
                     cases = [...filteredE2E, ...filteredIntegration];
                     if (cases.length > totalLimit) {
@@ -13557,7 +13558,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                             console.log(`[genForChunkOptimized] ✅ Реестр отфильтровал ${beforeCount - cases.length} дублей (осталось ${cases.length})`);
                         }
                     }
-                    
+
                     if (e2eCases.length > maxE2E || integrationCases.length > maxIntegration || cases.length > totalLimit) {
                         console.warn(`[genForChunkOptimized] ✅ После фильтрации: ${filteredE2E.length} E2E + ${filteredIntegration.length} Integration = ${cases.length} тестов`);
                     }
@@ -13596,19 +13597,19 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                     const totalLimit = 15; // Общий лимит: 1-2 E2E + 8-12 Integration = 10-15
                     const maxIntegration = 12; // Максимум Integration тестов
                     const maxE2E = 2; // Максимум E2E тестов
-                    
+
                     // Фильтруем E2E (максимум 2)
                     const filteredE2E = e2eCases.slice(0, maxE2E);
                     if (e2eCases.length > maxE2E) {
                         console.warn(`[genForChunkOptimized] ⚠️ E2E тестов больше лимита (${e2eCases.length} > ${maxE2E}), оставляю первые ${maxE2E}`);
                     }
-                    
+
                     // Фильтруем Integration по приоритетам (максимум 12)
                     let filteredIntegration = integrationCases;
                     if (integrationCases.length > maxIntegration) {
                         console.warn(`[genForChunkOptimized] ⚠️ ПРЕВЫШЕН ЛИМИТ Integration! Получено ${integrationCases.length} (ожидалось ≤${maxIntegration})`);
                         console.warn(`[genForChunkOptimized] 💡 Применяю фильтрацию по приоритетам...`);
-                        
+
                         // Сортируем Integration тесты по приоритету:
                         // 1. Позитивные тесты (без слов "негатив", "ошибка", "невалид", "граничн" в title)
                         // 2. Негативные с параметризацией (есть examples)
@@ -13620,18 +13621,18 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                             const bIsPositive = !bTitle.includes('негатив') && !bTitle.includes('ошибка') && !bTitle.includes('невалид') && !bTitle.includes('граничн');
                             const aHasParams = Array.isArray(a.examples) && a.examples.length > 0;
                             const bHasParams = Array.isArray(b.examples) && b.examples.length > 0;
-                            
+
                             if (aIsPositive && !bIsPositive) return -1;
                             if (!aIsPositive && bIsPositive) return 1;
                             if (aHasParams && !bHasParams) return -1;
                             if (!aHasParams && bHasParams) return 1;
                             return 0;
                         });
-                        
+
                         filteredIntegration = sortedIntegration.slice(0, maxIntegration);
                         console.warn(`[genForChunkOptimized] ✅ Оставлено ${filteredIntegration.length} Integration тестов (приоритетные)`);
                     }
-                    
+
                     // Объединяем и проверяем общий лимит
                     cases = [...filteredE2E, ...filteredIntegration];
                     if (cases.length > totalLimit) {
@@ -13659,7 +13660,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                             console.log(`[genForChunkOptimized] ✅ Реестр отфильтровал ${beforeCount - cases.length} дублей (осталось ${cases.length})`);
                         }
                     }
-                    
+
                     if (e2eCases.length > maxE2E || integrationCases.length > maxIntegration || cases.length > totalLimit) {
                         console.warn(`[genForChunkOptimized] ✅ После фильтрации: ${filteredE2E.length} E2E + ${filteredIntegration.length} Integration = ${cases.length} тестов`);
                     }
@@ -13709,10 +13710,10 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
             console.log(`[generate-test-cases-async] === Извлечение логики и ограничений ===`);
             let logicConstraints = null;
             try {
-                const requirementsText = Array.isArray(refinedReqs) 
-                    ? refinedReqs.join('\n\n') 
+                const requirementsText = Array.isArray(refinedReqs)
+                    ? refinedReqs.join('\n\n')
                     : (typeof refinedReqs === 'string' ? refinedReqs : '');
-                
+
                 if (requirementsText && requirementsText.trim().length > 100) {
                     logicConstraints = await extractLogicAndConstraints(requirementsText);
                     console.log(`[generate-test-cases-async] ✅ Извлечено ограничений: ${logicConstraints.validations.length} валидаций, ${logicConstraints.boundary_values.length} граничных значений, ${logicConstraints.negative_scenarios.length} негативных сценариев`);
@@ -13874,7 +13875,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                 logicConstraints.dependencies.length > 0
             )) {
                 console.log(`[generate-test-cases-async] === ВТОРОЙ ПРОХОД: Генерация негативных и граничных тестов ===`);
-                
+
                 let negativeCases = [];
                 for (let i = 0; i < storyChunks.length; i++) {
                     const chunk = storyChunks[i];
@@ -13886,9 +13887,9 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                     const storyText = chunk[0].stories[0]?.text || '';
                     const currentFeature = chunk[0]?.text || '';
                     const mode = chunk[0].stories[0]?._mode || 'FULL';
-                    
+
                     console.log(`[generate-test-cases-async] 🔄 Второй проход для Chunk ${i + 1}/${storyChunks.length}: "${storyText}"`);
-                    
+
                     try {
                         const negativeResult = await genForChunkOptimized(
                             chunk,
@@ -13903,7 +13904,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                             includeBackendTests, // ✅ Передаём флаг включения backend тестов
                             signatureRegistry // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Передаём глобальный реестр сигнатур
                         );
-                        
+
                         if (negativeResult && negativeResult.length > 0) {
                             negativeCases.push(...negativeResult);
                             console.log(`[generate-test-cases-async] ✅ Второй проход для Chunk ${i + 1}: ${negativeResult.length} негативных тестов`);
@@ -13913,7 +13914,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                         // Продолжаем без негативных тестов для этого chunk
                     }
                 }
-                
+
                 if (negativeCases.length > 0) {
                     // ✅ ФИЛЬТРАЦИЯ: Удаляем Integration backend тесты из негативных, если флаг выключен
                     if (!includeBackendTests) {
@@ -13924,7 +13925,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                             console.log(`[generate-test-cases-async] 🚫 Удалено ${removedCount} Integration backend тестов из негативных (includeBackendTests=false)`);
                         }
                     }
-                    
+
                     // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Умное объединение негативных тестов через реестр
                     allCases = smartMergeTestCases(allCases, negativeCases, signatureRegistry);
                     console.log(`[generate-test-cases-async] ✅ Второй проход завершён: добавлено ${negativeCases.length} негативных/граничных тестов, всего: ${allCases.length}`);
@@ -13938,10 +13939,10 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
             // === sanitize → fixAgainstModel до аудита покрытия ===
             const idx = buildModelIndex(modelStructure);
             allCases = sanitize(allCases, undefined, modelStructure);
-            
+
             // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Нормализация Integration frontend тестов (перенос технических шагов в precondition)
             allCases = allCases.map(tc => normalizeIntegrationFrontendSteps(tc));
-            
+
             allCases = deduplicateTestCases(allCases, 'post-sanitize');
 
             // Обновляем progress после sanitize
