@@ -134,7 +134,7 @@ export function createContextToolset(options = {}) {
     } = options;
 
     const normalizedDefaultChunk = clamp(defaultChunk, 512, 50000);  // ✅ Увеличено для больших документов
-    const HARD_MAX_CHUNK_CHARS = 6000; // ✅ Ограничиваем размер возвращаемого чанка (≈1500 токенов)
+    const HARD_MAX_CHUNK_CHARS = 4000; // ✅ Ограничиваем размер возвращаемого чанка (≈1000 токенов) для предотвращения переполнения
     const MAX_CHUNKS_PER_SOURCE = 3;   // ✅ Не более 3 уникальных чанков на источник за весь диалог
 
     const sourceMap = new Map();
@@ -370,14 +370,20 @@ export function createContextToolset(options = {}) {
                 deliveredChunksBySource.set(sourceId, deliveredForSource);
             }
 
-            // ✅ Не отдаём один и тот же чанк несколько раз — возвращаем короткую подсказку
+            // ✅ КРИТИЧНО: Загружаем content ДО использования totalLength
+            const content = await resolveContent(source);
+            const totalLength = content.length;
+
+            // ✅ Защита от зацикливания: если тот же chunk запрашивается повторно
             if (deliveredChunkKeys.has(chunkKey)) {
+                console.warn(`[fetch_context_chunk] ⚠️ Повторный запрос того же chunk ${chunkKey}, возвращаю пустой ответ`);
                 return buildAlreadyProvidedResponse(source, offset, totalLength, deliveredForSource);
             }
 
             // ✅ Ограничиваем количество уникальных чанков на источник
             if (!deliveredForSource.some(entry => entry.key === chunkKey) &&
                 deliveredForSource.length >= MAX_CHUNKS_PER_SOURCE) {
+                console.warn(`[fetch_context_chunk] ⚠️ Достигнут лимит чанков для ${sourceId} (${MAX_CHUNKS_PER_SOURCE}), возвращаю пустой ответ`);
                 return buildLimitReachedResponse(source, offset, totalLength, deliveredForSource);
             }
 
@@ -387,9 +393,6 @@ export function createContextToolset(options = {}) {
                 console.log(`[fetch_context_chunk] ✅ CACHE HIT для ${cacheKey}`);
                 return chunkCache.get(cacheKey);
             }
-
-            const content = await resolveContent(source);
-            const totalLength = content.length;
 
             if (!totalLength) {
                 const result = {

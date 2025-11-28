@@ -41,8 +41,54 @@ export async function runInteractiveLLM({
 
     let fetchContextCallCount = 0;
     let totalToolCalls = 0;
+    // ✅ Отслеживание повторяющихся вызовов fetch_context_chunk для защиты от зацикливания
+    const fetchContextCallHistory = new Map(); // key: JSON.stringify(args) → count
 
     const estimateTokens = () => Math.ceil(JSON.stringify(conversation).length / APPROX_CHARS_PER_TOKEN);
+
+    // ✅ Функция очистки истории: оставляет system prompt + последние N сообщений
+    const compressHistory = (messages, keepLastN = 6) => {
+        if (messages.length <= keepLastN + 1) {
+            return messages; // Нечего сжимать
+        }
+
+        // Находим system prompt (обычно первое сообщение)
+        const systemMessages = messages.filter(m => m.role === 'system');
+        const nonSystemMessages = messages.filter(m => m.role !== 'system');
+
+        // Оставляем последние N сообщений
+        const recentMessages = nonSystemMessages.slice(-keepLastN);
+
+        // Удаляем дубликаты ошибок от инструментов (если есть несколько одинаковых ошибок подряд)
+        const deduplicated = [];
+        let lastError = null;
+        for (const msg of recentMessages) {
+            if (msg.role === 'tool' && msg.content) {
+                try {
+                    const content = JSON.parse(msg.content);
+                    if (content.error && content.error === lastError) {
+                        continue; // Пропускаем дубликат ошибки
+                    }
+                    lastError = content.error || null;
+                } catch {
+                    // Не JSON, пропускаем проверку
+                }
+            } else {
+                lastError = null; // Сбрасываем при не-ошибке
+            }
+            deduplicated.push(msg);
+        }
+
+        const compressed = [...systemMessages, ...deduplicated];
+        const originalSize = messages.length;
+        const compressedSize = compressed.length;
+        
+        if (compressedSize < originalSize) {
+            console.log(`[interactiveLLM] 🗜️ Сжата история: ${originalSize} → ${compressedSize} сообщений (удалено ${originalSize - compressedSize})`);
+        }
+
+        return compressed;
+    };
 
     const requestFinalAnswer = async (reason) => {
         if (reason) {
@@ -79,7 +125,18 @@ export async function runInteractiveLLM({
     };
 
     for (let iteration = 0; iteration < iterationLimit; iteration++) {
+        // ✅ Очистка истории перед каждой итерацией, если она слишком большая
         const estimatedTokens = estimateTokens();
+        const TOKEN_THRESHOLD_FOR_COMPRESSION = Math.floor(maxContextTokens * 0.7); // 70% от лимита
+        
+        if (estimatedTokens > TOKEN_THRESHOLD_FOR_COMPRESSION && conversation.length > 8) {
+            console.log(`[interactiveLLM] ⚠️ История большая (${estimatedTokens} токенов, ${conversation.length} сообщений), сжимаю...`);
+            const compressed = compressHistory(conversation, 6); // Оставляем последние 6 сообщений
+            conversation.length = 0;
+            conversation.push(...compressed);
+            console.log(`[interactiveLLM] ✅ После сжатия: ${estimateTokens()} токенов, ${conversation.length} сообщений`);
+        }
+
         if (estimatedTokens >= maxContextTokens) {
             return await requestFinalAnswer(`Лимит контекста превышен (${estimatedTokens} токенов ≥ ${maxContextTokens})`);
         }
@@ -176,6 +233,24 @@ export async function runInteractiveLLM({
                     // Отслеживаем вызовы fetch_context_chunk
                     if (toolName === 'fetch_context_chunk') {
                         fetchContextCallCount++;
+                        
+                        // ✅ Защита от повторяющихся вызовов с одинаковыми параметрами
+                        const callKey = JSON.stringify(handlerArgs);
+                        const repeatCount = (fetchContextCallHistory.get(callKey) || 0) + 1;
+                        fetchContextCallHistory.set(callKey, repeatCount);
+                        
+                        if (repeatCount >= 3) {
+                            console.warn(`[interactiveLLM] ⚠️ Обнаружен повторный вызов fetch_context_chunk с теми же параметрами (${repeatCount} раз), прерываю зацикливание`);
+                            conversation.push({
+                                role: 'tool',
+                                name: toolName,
+                                content: JSON.stringify({
+                                    error: `Этот контекст уже был запрошен ${repeatCount} раз. Используй уже полученный контекст из предыдущих ответов для генерации модели. НЕ запрашивай fetch_context_chunk повторно.`
+                                })
+                            });
+                            continue;
+                        }
+                        
                         if (fetchContextCallCount > MAX_FETCH_CONTEXT_CALLS) {
                             console.warn(`[interactiveLLM] ⚠️ Превышен лимит вызовов fetch_context_chunk (${fetchContextCallCount} > ${MAX_FETCH_CONTEXT_CALLS}), возвращаем ошибку`);
                             conversation.push({
@@ -197,13 +272,24 @@ export async function runInteractiveLLM({
                     });
                 } catch (err) {
                     console.error(`[interactiveLLM] ❌ Ошибка в обработчике инструмента "${toolName}": ${err.message}`);
-                    conversation.push({
-                        role: 'tool',
-                        name: toolName,
-                        content: JSON.stringify({
-                            error: err.message || 'Unhandled tool error'
-                        })
-                    });
+                    // ✅ Для повторяющихся ошибок не добавляем в историю, чтобы не раздувать её
+                    const errorKey = `${toolName}:${err.message}`;
+                    const errorCount = fetchContextCallHistory.get(errorKey) || 0;
+                    
+                    if (errorCount < 2) {
+                        // Добавляем ошибку только первые 2 раза
+                        fetchContextCallHistory.set(errorKey, errorCount + 1);
+                        conversation.push({
+                            role: 'tool',
+                            name: toolName,
+                            content: JSON.stringify({
+                                error: err.message || 'Unhandled tool error'
+                            })
+                        });
+                    } else {
+                        // После 2 раз просто логируем, но не добавляем в историю
+                        console.warn(`[interactiveLLM] ⚠️ Пропускаю повторяющуюся ошибку "${errorKey}" (уже ${errorCount + 1} раз), чтобы не раздувать историю`);
+                    }
                 }
             }
 

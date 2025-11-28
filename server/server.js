@@ -368,7 +368,7 @@ try {
     console.warn(`[server] ⚠️ Не удалось загрузить test-model-example.json: ${err.message}. Используем встроенный fallback.`);
 }
 
-function buildModelSystemPrompt(fullRequirementsText) {
+function buildModelSystemPrompt() {
     const idealExampleBlock = `
 ОБЯЗАТЕЛЬНЫЙ ЭТАЛОН СТРУКТУРЫ — ИСПОЛЬЗУЙ ЕГО КАК ШАБЛОН:
 
@@ -457,8 +457,7 @@ ${idealExampleBlock}
 📦 ВЫХОД
 - Чистый JSON-массив модели (как в эталоне), без комментариев и служебных полей.
 
-ТРЕБОВАНИЯ ДЛЯ ПОСТРОЕНИЯ МОДЕЛИ:
-${fullRequirementsText}
+⚠️ ВАЖНО: Требования будут переданы в отдельном сообщении. НЕ дублируй их в ответе.
 `.trim();
 }
 
@@ -5367,7 +5366,7 @@ async function generateTestModelAsync(taskId, inputData) {
         const contextToolset = createContextToolset({
             sources: sourceRegistry.getSources(),
             fetcher: contextFetcher,
-            defaultChunk: 40000  // ✅ Увеличено для очень больших документов (200k+ символов)
+            defaultChunk: 15000  // ✅ Оптимизировано: уменьшено с 40000 для предотвращения переполнения контекста
         });
 
         const interactiveTools = Array.isArray(contextToolset.tools) ? contextToolset.tools : [];
@@ -5417,7 +5416,7 @@ ${contextSourcesSummary || '—'}
         }
 
 
-        const SYSTEM_PROMPT = buildModelSystemPrompt(reqStringForModel);
+        const SYSTEM_PROMPT = buildModelSystemPrompt();
         
 
 
@@ -5624,6 +5623,18 @@ ${contextSourcesSummary || '—'}
                                 if (!recovered) {
                                     console.error(`[generate-test-model-async] ❌ Не удалось восстановить обрезанный JSON. Требуется повторная генерация с увеличенным max_tokens.`);
                                     partialModel = null;
+                                    // ✅ Устанавливаем флаг для эскалации
+                                    if (attempt < MAX_MODEL_ATTEMPTS_PER_CHUNK - 1) {
+                                        escalationPrompt = `
+🚨 КРИТИЧНО: JSON был обрезан и не восстановлен. Вероятно, модель не завершила генерацию из-за лимита токенов.
+
+ИСПРАВЛЕНИЕ:
+1. Немедленно вызови submit_test_model с ПОЛНОЙ моделью
+2. Если модель слишком большая - разбей на несколько Feature и отправь их по очереди
+3. НЕ отправляй обрезанный JSON - он будет отклонен
+
+Текущий размер JSON: ${args.model.length} символов. Убедись, что JSON завершен (закрыты все скобки и кавычки).`.trim();
+                                    }
                                 }
                             } else {
                                 partialModel = null;
