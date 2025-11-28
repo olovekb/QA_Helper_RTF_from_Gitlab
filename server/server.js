@@ -12865,31 +12865,6 @@ ${includeBackendTests ? `### 3. Integration Backend Tests (API Isolation)
         // ✅ БАЗОВЫЙ ПРОМПТ (для обратной совместимости, будет переопределен в genForChunkOptimized)
         const BASE_SYSTEM_PROMPT = buildTestCaseSystemPrompt({ mode: 'FULL', includeBackendTests: true, scenariosCount: 0, storiesCount: 0 });
 
-        // ✅ УПРОЩЁННЫЙ ПРОМПТ ДЛЯ ФОРМАТЕРА
-        const FORMATTER_SYSTEM_PROMPT = `
-Ты — Форматер тест-кейсов. Твоя задача — привести уже готовые тест-кейсы к идеальному формату.
-
-🚨 КРИТИЧНО: НЕ переизобретай структуру тест-кейса, только поправь формат!
-
-📝 ПРАВИЛА ФОРМАТА:
-
-**TITLE:** БЕЗ "проверка|тестирование|валидация", от лица пользователя для E2E
-
-**STEPS:** ТОЛЬКО действия ("Нажать", "Ввести", "Выбрать"), БЕЗ "Дождаться", "Проверить", "Получить"
-
-**PRECONDITION:**
-- E2E Tests: обычно "" (пустая строка)
-- Integration frontend Tests: ОБЯЗАТЕЛЬНО! Состояние UI БЕЗ действий ("Пользователь авторизован, на странице...")
-- Integration backend Tests: ОБЯЗАТЕЛЬНО! Состояние сервера/БД
-
-**EXPECTED:** Начинается с **жирного** ключевого слова (**Отображается**, **Возвращается**, **Скрывается**)
-
-**INTEGRATION FRONTEND:**
-- steps = ТОЛЬКО пользовательские действия (1 или более: "Нажать кнопку", "Выбрать дату" + "Ввести число" + "Нажать кнопку")
-- ❌ НЕ используй: "Отправить GET", "Дождаться загрузки", "Получить ответ" — это технические детали!
-- Технические детали → в precondition или expected, НЕ в steps!
-`;
-
         // Подсчитываем статистику модели для COVENANT
         const S = modelStructure.reduce((sum, f) => sum + (f.stories || []).length, 0);
         const Sc = modelStructure.reduce((sum, f) =>
