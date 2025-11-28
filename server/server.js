@@ -475,13 +475,29 @@ function buildModelUserPrompt({
         : 'Это полный текст документа.';
 
     // Формируем блок контекста, чтобы модель знала, что уже существует
-    const contextInfo = previousContext && previousContext.length > 0
-        ? `
+    const contextInfo = previousContext && Array.isArray(previousContext) && previousContext.length > 0
+        ? (() => {
+            // Безопасное извлечение features
+            const featuresList = previousContext
+                .filter(f => f && f.id && f.text)
+                .map(f => `"${f.text}" (ID: ${f.id})`)
+                .join(', ');
+            
+            // Безопасное извлечение stories
+            const storiesList = previousContext
+                .filter(f => f && f.stories && Array.isArray(f.stories))
+                .flatMap(f => f.stories
+                    .filter(s => s && s.id && s.text)
+                    .map(s => `"${s.text}" (ID: ${s.id})`)
+                )
+                .join(', ');
+            
+            return `
 🔄 КОНТЕКСТ ПРЕДЫДУЩИХ ЧАСТЕЙ (УЖЕ СОЗДАНО):
 
-Features: ${previousContext.map(f => `"${f.text}" (ID: ${f.id})`).join(', ')}
+Features: ${featuresList || 'нет'}
 
-Stories: ${previousContext.flatMap(f => f.stories.map(s => `"${s.text}" (ID: ${s.id})`)).join(', ')}
+Stories: ${storiesList || 'нет'}
 
 ПРАВИЛА СЛИЯНИЯ (ANTI-DUPLICATION):
 
@@ -491,7 +507,8 @@ Stories: ${previousContext.flatMap(f => f.stories.map(s => `"${s.text}" (ID: ${s
 
 3. Создавай новые ID только для абсолютно новых сущностей.
 
-`
+`;
+        })()
         : "Это начало работы. Создавай структуру с нуля.";
 
     return `
@@ -12297,9 +12314,14 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
         // ✅ ФИЛЬТРАЦИЯ ТРЕБОВАНИЙ ПО РЕЛЕВАНТНОСТИ
         function filterRelevantRequirements(requirements, chunk) {
-            const feature = chunk[0].text.toLowerCase();
-            const story = chunk[0].stories[0].text.toLowerCase();
-            const scenarios = chunk[0].stories[0].scenarios.map(s => s.text.toLowerCase());
+            // Защита от undefined
+            if (!chunk || !Array.isArray(chunk) || chunk.length === 0 || !chunk[0] || !chunk[0].stories || !Array.isArray(chunk[0].stories) || chunk[0].stories.length === 0) {
+                console.warn('[filterRelevantRequirements] Некорректная структура chunk, возвращаем все требования');
+                return requirements;
+            }
+            const feature = chunk[0].text?.toLowerCase() || '';
+            const story = chunk[0].stories[0]?.text?.toLowerCase() || '';
+            const scenarios = (chunk[0].stories[0]?.scenarios || []).map(s => s?.text?.toLowerCase()).filter(Boolean);
 
             const keywords = new Set([
                 ...feature.split(/\s+/),
@@ -12538,12 +12560,32 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return patched;
         }
 
+        // ✅ Функция-заглушка для некорректной структуры chunk
+        function buildContextPromptFallback(existingE2E = []) {
+            return `
+🎯 ЗАДАЧА: Генерация тестов (структура chunk некорректна, используем базовые значения)
+
+КОНТЕКСТ:
+- Feature: "Основная функциональность"
+- Story: "Базовый сценарий"
+
+ЗАДАНИЕ (следуй лимитам из SYSTEM PROMPT):
+1. Создай 1-2 E2E теста (сквозной путь пользователя)
+2. Создай Integration тесты для Scenario (используй параметризацию!)
+`;
+        }
+
         // ✅ УНИФИЦИРОВАННЫЙ КОНТЕКСТНЫЙ ПРОМПТ (не противоречит system prompt)
         function buildContextPrompt(chunk, existingE2E = []) {
-            const mode = chunk[0].stories[0]._mode || 'FULL';
-            const feature = chunk[0].text;
-            const story = chunk[0].stories[0].text;
-            const scenarios = chunk[0].stories[0].scenarios || [];
+            // Защита от undefined
+            if (!chunk || !Array.isArray(chunk) || chunk.length === 0 || !chunk[0] || !chunk[0].stories || !Array.isArray(chunk[0].stories) || chunk[0].stories.length === 0) {
+                console.warn('[buildContextPrompt] Некорректная структура chunk, используем значения по умолчанию');
+                return buildContextPromptFallback(existingE2E);
+            }
+            const mode = chunk[0].stories[0]?._mode || 'FULL';
+            const feature = chunk[0].text || '';
+            const story = chunk[0].stories[0]?.text || '';
+            const scenarios = chunk[0].stories[0]?.scenarios || [];
             const scenariosCount = scenarios.length;
 
             if (mode === 'FULL') {
@@ -12584,7 +12626,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
             // Для BATCH-режима (E2E уже есть)
             return `
-🎯 ЗАДАЧА: Integration тесты для ${scenariosCount} Scenarios (батч ${chunk[0].stories[0]._batchInfo || 'N/A'})
+🎯 ЗАДАЧА: Integration тесты для ${scenariosCount} Scenarios (батч ${chunk?.[0]?.stories?.[0]?._batchInfo || 'N/A'})
 
 КОНТЕКСТ:
 - Feature: "${feature}"
@@ -13199,7 +13241,13 @@ ${needsE2E ? '🚨 КРИТИЧНО: □ Каждая Story имеет ≥1 E2E?
             const allowedScenarios = collectAllowedScenarios(modelStructure); // Используем полную модель
 
             // ✅ Выбираем релевантные примеры для Few-Shot Learning
-            const mode = chunk[0].stories[0]._mode || 'FULL';
+            // Защита от undefined
+            let mode = 'FULL';
+            if (chunk && Array.isArray(chunk) && chunk.length > 0 && chunk[0] && chunk[0].stories && Array.isArray(chunk[0].stories) && chunk[0].stories.length > 0) {
+                mode = chunk[0].stories[0]?._mode || 'FULL';
+            } else {
+                console.warn('[genForChunkOptimized] Некорректная структура chunk, используем режим FULL');
+            }
             // ✅ Загружаем идеальные примеры из БД для улучшения генерации
             let perfectExamples = null;
             // projectId и skipAllureAPICalls уже объявлены в начале функции generateTestCasesAsync
@@ -13680,9 +13728,14 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
 
             for (let i = 0; i < storyChunks.length; i++) {
                 const chunk = storyChunks[i];
-                const storyText = chunk[0].stories[0].text;
-                const currentFeature = chunk[0].text; // Feature name
-                const mode = chunk[0].stories[0]._mode;
+                // Защита от undefined
+                if (!chunk || !Array.isArray(chunk) || chunk.length === 0 || !chunk[0] || !chunk[0].stories || !Array.isArray(chunk[0].stories) || chunk[0].stories.length === 0) {
+                    console.warn(`[generate-test-cases-async] Пропуск chunk ${i + 1}: некорректная структура`);
+                    continue;
+                }
+                const storyText = chunk[0].stories[0]?.text || '';
+                const currentFeature = chunk[0]?.text || ''; // Feature name
+                const mode = chunk[0].stories[0]?._mode || 'FULL';
                 const chunkProgress = 10 + Math.round((i / storyChunks.length) * 80);
 
                 // ✅ Сбрасываем контекст КАЖДЫЙ chunk для максимальной скорости
@@ -13814,9 +13867,14 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                 let negativeCases = [];
                 for (let i = 0; i < storyChunks.length; i++) {
                     const chunk = storyChunks[i];
-                    const storyText = chunk[0].stories[0].text;
-                    const currentFeature = chunk[0].text;
-                    const mode = chunk[0].stories[0]._mode;
+                    // Защита от undefined
+                    if (!chunk || !Array.isArray(chunk) || chunk.length === 0 || !chunk[0] || !chunk[0].stories || !Array.isArray(chunk[0].stories) || chunk[0].stories.length === 0) {
+                        console.warn(`[generate-test-cases-async] Пропуск chunk ${i + 1} во втором проходе: некорректная структура`);
+                        continue;
+                    }
+                    const storyText = chunk[0].stories[0]?.text || '';
+                    const currentFeature = chunk[0]?.text || '';
+                    const mode = chunk[0].stories[0]?._mode || 'FULL';
                     
                     console.log(`[generate-test-cases-async] 🔄 Второй проход для Chunk ${i + 1}/${storyChunks.length}: "${storyText}"`);
                     
