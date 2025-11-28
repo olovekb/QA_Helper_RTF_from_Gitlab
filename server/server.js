@@ -250,34 +250,114 @@ const __dirname = dirname(__filename);
 
 const FALLBACK_TEST_MODEL_EXAMPLE = `[
   {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
     "text": "Безбумажный офис",
     "stories": [
       {
+        "id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
         "text": "Регистрация в ББО",
         "scenarios": [
           {
-            "text": "Нажать на кнопку 'Безбумажный офис'",
+            "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+            "text": "Нажать на кнопку \"Безбумажный офис\"",
             "codes": [
-              { "text": "Отправляется GET **/stateful/personal/kuban/client/info/v2**", "type": "frontend" },
-              { "text": "Возвращается 200 OK с {email, phone, status}", "type": "backend" },
-              { "text": "Отображается страница 'Электронная почта не найдена'", "type": "frontend" }
+              {
+                "id": "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
+                "text": "Отправляется GET **/stateful/personal/kuban/client/info/v2**",
+                "type": "frontend"
+              },
+              {
+                "id": "6ba7b812-9dad-11d1-80b4-00c04fd430c9",
+                "text": "Возвращается 200 OK GET **/stateful/personal/kuban/client/info/v2** с {email, phone, status}",
+                "type": "backend"
+              },
+              {
+                "id": "6ba7b813-9dad-11d1-80b4-00c04fd430ca",
+                "text": "Отображается страница \"Электронная почта не найдена\" или \"Письмо отправлено\"",
+                "type": "frontend"
+              }
             ]
           },
           {
-            "text": "Нажать на кнопку 'Подтвердить'",
+            "id": "6ba7b814-9dad-11d1-80b4-00c04fd430cb",
+            "text": "Ввести электронную почту в поле \"Email\"",
             "codes": [
-              { "text": "Отображается лоадер на кнопке 'Подтвердить'", "type": "frontend" },
-              { "text": "Отправляется PUT **/nopaper/user** с параметрами email (string), phone (string)", "type": "frontend" },
-              { "text": "Возвращается 200 OK с {userId, status: 'pending'}", "type": "backend" },
-              { "text": "Отображается модальное окно ОТП", "type": "frontend" },
-              { "text": "Отправляется push-уведомление 'Требуется ввод кода'", "type": "integration" }
+              {
+                "id": "6ba7b815-9dad-11d1-80b4-00c04fd430cc",
+                "text": "Отображается поле \"Email\" с введённым значением",
+                "type": "frontend"
+              }
+            ]
+          },
+          {
+            "id": "6ba7b816-9dad-11d1-80b4-00c04fd430cd",
+            "text": "Нажать на кнопку \"Подтвердить\"",
+            "codes": [
+              {
+                "id": "6ba7b818-9dad-11d1-80b4-00c04fd430cf",
+                "text": "Отображается лоадер на кнопке \"Подтвердить\"",
+                "type": "frontend"
+              },
+              {
+                "id": "6ba7b819-9dad-11d1-80b4-00c04fd430d0",
+                "text": "Отправляется PUT **/nopaper/user** с параметрами email (string), phone (string)",
+                "type": "frontend"
+              },
+              {
+                "id": "6ba7b81a-9dad-11d1-80b4-00c04fd430d1",
+                "text": "Возвращается 200 OK PUT **/nopaper/user** с {userId, status: 'pending'}",
+                "type": "backend"
+              },
+              {
+                "id": "6ba7b81b-9dad-11d1-80b4-00c04fd430d2",
+                "text": "Отображается модальное окно ОТП",
+                "type": "frontend"
+              },
+              {
+                "id": "6ba7b81c-9dad-11d1-80b4-00c04fd430d3",
+                "text": "Отправляется push-уведомление \"Требуется ввод кода\"",
+                "type": "integration"
+              }
+            ]
+          },
+          {
+            "id": "6ba7b81d-9dad-11d1-80b4-00c04fd430d4",
+            "text": "Ввести код подтверждения из SMS",
+            "codes": [
+              {
+                "id": "6ba7b81e-9dad-11d1-80b4-00c04fd430d5",
+                "text": "Отображается поле \"Код подтверждения\" с введённым значением",
+                "type": "frontend"
+              }
+            ]
+          },
+          {
+            "id": "6ba7b81f-9dad-11d1-80b4-00c04fd430d6",
+            "text": "Нажать на кнопку \"Продолжить\"",
+            "codes": [
+              {
+                "id": "6ba7b820-9dad-11d1-80b4-00c04fd430d7",
+                "text": "Отправляется GET **/stateful/personal/kuban/noPaper/secretCodeAsync** с параметром code (string)",
+                "type": "frontend"
+              },
+              {
+                "id": "6ba7b821-9dad-11d1-80b4-00c04fd430d8",
+                "text": "Возвращается 200 OK GET **/stateful/personal/kuban/noPaper/secretCodeAsync** с {verified: true, token}",
+                "type": "backend"
+              },
+              {
+                "id": "6ba7b822-9dad-11d1-80b4-00c04fd430d9",
+                "text": "Отображается страница с актом признания ключа",
+                "type": "frontend"
+              }
             ]
           }
         ]
       }
     ]
   }
-]`.trim();
+]
+`.trim();
 
 let TEST_MODEL_EXAMPLE_TEXT = FALLBACK_TEST_MODEL_EXAMPLE;
 try {
@@ -290,16 +370,34 @@ try {
 
 function buildModelSystemPrompt(fullRequirementsText) {
     const idealExampleBlock = `
-ОБЯЗАТЕЛЬНЫЙ ЭТАЛОН — СНАЧАЛА ПРОЧТИ, ПОТОМ ГЕНЕРИРУЙ:
+ОБЯЗАТЕЛЬНЫЙ ЭТАЛОН СТРУКТУРЫ — ИСПОЛЬЗУЙ ЕГО КАК ШАБЛОН:
+
 \`\`\`json
 ${TEST_MODEL_EXAMPLE_TEXT}
 \`\`\`
+
 `.trim();
 
     return `
-Ты — Системный Архитектор и QA Lead. Генерируешь Domain Driven тестовую модель (Feature → Story → Scenario → Code) строго по требованиям. Всегда повторяй структуру и стиль эталона.
+Ты — Системный Архитектор и QA Lead. Твоя задача — преобразовать требования в Domain Driven тестовую модель (Feature → Story → Scenario → Code).
+
+Твоя главная цель — 100% покрытие требований (Happy Path + Negative Path + Edge Cases).
 
 ${idealExampleBlock}
+
+🧠 АЛГОРИТМ ГЛУБОКОГО АНАЛИЗА (ВЫПОЛНЯТЬ СКРЫТО):
+
+Перед генерацией JSON просканируй текст по матрице:
+
+1. **Сущности и CRUD:** Найди все объекты (Заявка, Ссылка, Настройка). Для каждого создай сценарии: Создание, Просмотр, Редактирование, Удаление.
+
+2. **Жизненный цикл (States):** Если есть статусы (Активна/Неактивна), найди сценарии смены статуса (Активация, Деактивация).
+
+3. **Точки входа:** Проверь все места: Меню, Вкладки, Модальные окна, Списки.
+
+4. **Валидация:** Найди ограничения полей (макс. длина, обязательность). Создай сценарии ошибок валидации.
+
+5. **API Binding:** Если в тексте упомянут API метод (даже в конце документа), он ОБЯЗАН быть использован в codes.
 
 🏛️ СТРУКТУРА
 - Feature = бизнес-домен/ценность системы. В 9 из 10 документов это одна Feature (название продукта/подсистемы). Создавай несколько Feature только если требования ЯВНО описывают независимые подсистемы (напр. "Платежи" и "Переводы").
@@ -368,60 +466,58 @@ function buildModelUserPrompt({
     reqChunk,
     chunkIdx,
     totalChunks,
+    previousContext, // <--- ВАЖНО: Передавай сюда результат работы extractContext()
     logicSection,
     interactiveInstructionBlock
 }) {
     const chunkNotice = totalChunks > 1
-        ? `ВНИМАНИЕ: часть ${chunkIdx + 1} из ${totalChunks}. Работай только с этим фрагментом, НЕ додумывай за другие чанки.`
-        : 'Документ умещается в один чанк — сгенерируй полную модель по всему тексту.';
+        ? `ВНИМАНИЕ: Это часть ${chunkIdx + 1} из ${totalChunks}.`
+        : 'Это полный текст документа.';
 
-    const chunkRules = `
-ПРАВИЛА РАБОТЫ С ЧАНКОМ:
-- Применяй те же DDT-правила, что и в SYSTEM PROMPT. Эталон обязателен.
-- ❌ НЕ смотри на структуру документа (разделы, подразделы) - это техническая структура!
-- ✅ Считай, что весь документ относится к одной Feature, пока в тексте явно не появятся независимые подсистемы. Не плодишь Feature ради каждого раздела.
-- ✅ Читай текст требований и понимай бизнес-ценность: "Что хочет получить пользователь?"
-- ✅ Анализируй действия пользователя и реакции системы, а НЕ структуру документа
-- Добавляй Story/Scenario/Code ТОЛЬКО если в тексте есть бизнес-ценность или действие.
-- ❌ НЕ создавай Story "Загрузка страницы..." или "Переключение между..." - это технические операции!
-- ❌ НЕ создавай Story по разделам документа - объединяй связанные требования по бизнес-смыслу!
-- ❌ НЕ создавай Scenario "Загрузить страницу..." или "Выполнить пользовательское действие" - это неправильно!
-- ❌ НЕ создавай Code с действиями пользователя ("Обнаружить", "Получить", "Переключиться") - Code = только реакции системы!
-- Если раздел оборван и действий нет — пропусти, не создавай заглушки или пустые массивы.
-- Не дублируй Scenario ради разных мест (модалка/страница) при одинаковой реакции системы.
-- Не переносись мысленно в другие чанки — описывай только то, что явно/неявно есть здесь.
-`.trim();
+    // Формируем блок контекста, чтобы модель знала, что уже существует
+    const contextInfo = previousContext && previousContext.length > 0
+        ? `
+🔄 КОНТЕКСТ ПРЕДЫДУЩИХ ЧАСТЕЙ (УЖЕ СОЗДАНО):
+
+Features: ${previousContext.map(f => `"${f.text}" (ID: ${f.id})`).join(', ')}
+
+Stories: ${previousContext.flatMap(f => f.stories.map(s => `"${s.text}" (ID: ${s.id})`)).join(', ')}
+
+ПРАВИЛА СЛИЯНИЯ (ANTI-DUPLICATION):
+
+1. Если в текущем тексте продолжается описание Feature, которая уже есть в списке выше — ИСПОЛЬЗУЙ ЕЁ СУЩЕСТВУЮЩИЙ ID и Text. Не создавай новую Feature-дубль.
+
+2. Если ты видишь сценарии для Story, которая уже есть в списке (например, "Валидация"), используй её ID и добавь новые scenarios в неё.
+
+3. Создавай новые ID только для абсолютно новых сущностей.
+
+`
+        : "Это начало работы. Создавай структуру с нуля.";
 
     return `
 ${chunkNotice}
 
-📋 ЗАДАНИЕ: Построй тестовую модель Feature → Story → Scenario → Code (Domain Driven Testing).
+${contextInfo}
 
-REQUIREMENTS:
+📋 ЗАДАНИЕ:
+
+Проанализируй текущий фрагмент текста и сгенерируй JSON-фрагмент модели.
+
+Обеспечь максимальную детализацию сценариев (включая ошибки и валидацию).
+
+REQUIREMENTS CHUNK:
+
 ${reqChunk}
 
-${logicSection ? `${logicSection}\n` : ''}${chunkRules}
+${logicSection ? `${logicSection}\n` : ''}
 
-ФОРМАТ ВЫВОДА:
+ФОРМАТ ВЫВОДА (JSON ONLY):
+
 [
   {
     "id": "uuid",
-    "text": "Feature",
-    "stories": [
-      {
-        "id": "uuid",
-        "text": "Story (бизнес-ценность)",
-        "scenarios": [
-          {
-            "id": "uuid",
-            "text": "Действие пользователя",
-            "codes": [
-              { "id": "uuid", "text": "Реакция системы", "type": "frontend|backend" }
-            ]
-          }
-        ]
-      }
-    ]
+    "text": "Feature Name",
+    "stories": [ ... ]
   }
 ]
 
@@ -449,6 +545,10 @@ const TEST_CASE_JSON_SCHEMA = {
                     story: { type: 'string', minLength: 1 },
                     scenario: { type: 'string' },
                     code: { type: 'string' },
+                    type: {
+                        type: 'string',
+                        enum: ['Positive', 'Negative']
+                    },
                     layer: {
                         type: 'string',
                         enum: [
@@ -4904,6 +5004,51 @@ Code должны описывать ПОВЕДЕНИЕ СИСТЕМЫ (что �
     return fixed;
 }
 
+// 1. Функция для извлечения контекста (для передачи в следующий промпт)
+function extractContext(currentModel) {
+    return currentModel.map(f => ({
+        id: f.id,
+        text: f.text,
+        stories: f.stories.map(s => ({ id: s.id, text: s.text }))
+    }));
+}
+
+// 2. Функция финальной склейки (Smart Merge)
+function mergeChunkResults(allChunksJson) {
+    const finalModel = [];
+
+    // allChunksJson - это массив массивов (результат каждого чанка)
+    allChunksJson.forEach(chunkArray => {
+        chunkArray.forEach(feature => {
+            // Ищем, есть ли уже такая Feature в финальной модели
+            let existingFeature = finalModel.find(f => f.text === feature.text);
+
+            if (!existingFeature) {
+                // Если нет - создаем новую (копируем структуру)
+                existingFeature = { ...feature, stories: [] };
+                finalModel.push(existingFeature);
+            }
+
+            // Мержим Stories
+            feature.stories.forEach(story => {
+                let existingStory = existingFeature.stories.find(s => s.text === story.text);
+
+                if (!existingStory) {
+                    // Если Story новая - добавляем
+                    existingStory = { ...story, scenarios: [] };
+                    existingFeature.stories.push(existingStory);
+                }
+
+                // Сценарии просто добавляем (Scenarios обычно уникальны для чанков)
+                // Можно добавить проверку на дубликаты по text, если нужно
+                existingStory.scenarios.push(...story.scenarios);
+            });
+        });
+    });
+
+    return finalModel;
+}
+
 async function generateTestModelAsync(taskId, inputData) {
     const startTime = Date.now();
     let regenerationCount = 0;
@@ -5240,7 +5385,8 @@ ${contextSourcesSummary || '—'}
 
         console.log(`[generate-test-model-async] Требования разбиты на ${reqChunks.length} чанк(ов), общий размер: ${totalSize} символов`);
 
-        const partialModels = [];
+        // ✅ Накопление результатов для передачи контекста между чанками
+        const accumulatedModel = [];
 
         const MAX_MODEL_ATTEMPTS_PER_CHUNK = 3; // ✅ Оптимизировано: стараемся завершать быстрее
 
@@ -5261,11 +5407,15 @@ ${contextSourcesSummary || '—'}
                 console.log(`[generate-test-model-async] Обработка чанка ${chunkIdx + 1}/${reqChunks.length}...`);
             }
 
+            // ✅ Извлекаем контекст предыдущих чанков для передачи в промпт
+            const previousContext = extractContext(accumulatedModel);
+
             const logicSectionForChunk = logicConstraints ? formatLogicConstraintsForPrompt(logicConstraints) : '';
             const userPrompt = buildModelUserPrompt({
                 reqChunk,
                 chunkIdx,
                 totalChunks: reqChunks.length,
+                previousContext, // ✅ Передаем контекст для предотвращения дублей
                 logicSection: logicSectionForChunk,
                 interactiveInstructionBlock
             });
@@ -5579,11 +5729,12 @@ ${contextSourcesSummary || '—'}
                 throw new Error(`Не удалось получить валидную модель для чанка ${chunkIdx + 1} после ${MAX_MODEL_ATTEMPTS_PER_CHUNK} попыток`);
             }
 
-            partialModels.push(validatedChunkModel);
+            // ✅ Добавляем результат в накопленную модель для передачи контекста в следующий чанк
+            accumulatedModel.push(validatedChunkModel);
         }
 
-        // Объединяем все частичные модели
-        if (partialModels.length === 0) {
+        // ✅ ОБЪЕДИНЯЕМ МОДЕЛИ С ПОМОЩЬЮ УМНОГО МЕРДЖА
+        if (accumulatedModel.length === 0) {
             console.error('[generate-test-model-async] Не удалось получить валидные модели ни из одного чанка');
             console.error('[generate-test-model-async] Попробуем создать базовую модель...');
 
@@ -5605,117 +5756,17 @@ ${contextSourcesSummary || '—'}
                 }]
             }];
 
-            partialModels.push(fallbackModel);
+            accumulatedModel.push(fallbackModel);
             console.log('[generate-test-model-async] Создана fallback модель');
         }
 
-        // ✅ ОБЪЕДИНЯЕМ МОДЕЛИ С ДЕДУПЛИКАЦИЕЙ Feature
-        // Объединяем Feature с одинаковым текстом, добавляя их Stories
-        const featureMap = new Map(); // text → feature
+        // ✅ ОБЪЕДИНЯЕМ МОДЕЛИ С ПОМОЩЬЮ УМНОГО МЕРДЖА
+        let mergedModel = mergeChunkResults(accumulatedModel);
 
-        for (const partialModel of partialModels) {
-            for (const feature of partialModel) {
-                const featureText = String(feature?.text || '').trim();
-
-                if (!featureText) {
-                    console.warn(`[generate-test-model-async] ⚠️ Пропущен Feature без текста`);
-                    continue;
-                }
-
-                if (featureMap.has(featureText)) {
-                    // Объединяем Stories существующего Feature с новым
-                    const existingFeature = featureMap.get(featureText);
-                    const existingStoryTexts = new Set(
-                        (existingFeature.stories || []).map(s => String(s?.text || '').trim())
-                    );
-
-                    // ✅ ФИЛЬТРАЦИЯ: Удаляем технические Story перед добавлением
-                    const TECHNICAL_STORY_PATTERNS = [
-                        /^реализовать/i,
-                        /^добавить\s+(контрол|кнопку|поле|вкладку|фильтр)/i,
-                        /^описание\s+(контрола|кнопки|поля|вкладки)/i,
-                        /^(контрол|кнопка|поле|вкладка|фильтр)\s+/i,
-                        /^вкладка\s+"/i,
-                        /^фильтр\s+"/i,
-                        /^действие\s+"/i
-                    ];
-
-                    // Добавляем только уникальные и НЕ технические Stories
-                    for (const story of (feature.stories || [])) {
-                        const storyText = String(story?.text || '').trim();
-
-                        if (!storyText) {
-                            console.warn(`[generate-test-model-async] ⚠️ Пропущена Story без текста в Feature "${featureText}"`);
-                            continue;
-                        }
-
-                        // Проверка на технические формулировки
-                        const isTechnical = TECHNICAL_STORY_PATTERNS.some(pattern => pattern.test(storyText));
-                        if (isTechnical) {
-                            console.warn(`[generate-test-model-async] ⚠️ Пропущена техническая Story "${storyText}" в Feature "${featureText}"`);
-                            continue;
-                        }
-
-                        if (!existingStoryTexts.has(storyText)) {
-                            existingFeature.stories.push(story);
-                            existingStoryTexts.add(storyText);
-                            console.log(`[generate-test-model-async] ✅ Добавлена Story "${storyText}" к Feature "${featureText}"`);
-                        } else {
-                            console.warn(`[generate-test-model-async] ⚠️ Пропущена дублирующая Story "${storyText}" в Feature "${featureText}"`);
-                        }
-                    }
-                } else {
-                    // ✅ ФИЛЬТРАЦИЯ: Удаляем технические Story перед созданием нового Feature
-                    const TECHNICAL_STORY_PATTERNS = [
-                        /^реализовать/i,
-                        /^добавить\s+(контрол|кнопку|поле|вкладку|фильтр)/i,
-                        /^описание\s+(контрола|кнопки|поля|вкладки)/i,
-                        /^(контрол|кнопка|поле|вкладка|фильтр)\s+/i,
-                        /^вкладка\s+"/i,
-                        /^фильтр\s+"/i,
-                        /^действие\s+"/i
-                    ];
-
-                    const filteredStories = (feature.stories || []).filter(story => {
-                        const storyText = String(story?.text || '').trim();
-                        if (!storyText) {
-                            console.warn(`[generate-test-model-async] ⚠️ Пропущена Story без текста в Feature "${featureText}"`);
-                            return false;
-                        }
-                        const isTechnical = TECHNICAL_STORY_PATTERNS.some(pattern => pattern.test(storyText));
-                        if (isTechnical) {
-                            console.warn(`[generate-test-model-async] ⚠️ Пропущена техническая Story "${storyText}" в Feature "${featureText}"`);
-                            return false;
-                        }
-                        return true;
-                    });
-
-                    // ✅ ГАРАНТИРУЕМ УНИКАЛЬНОСТЬ ID: Проверяем, что ID не используется в других Feature
-                    let featureId = feature.id || uuidv4();
-                    const existingIds = new Set(Array.from(featureMap.values()).map(f => f.id));
-                    if (existingIds.has(featureId)) {
-                        console.warn(`[generate-test-model-async] ⚠️ Обнаружен дублирующийся ID Feature "${featureId}", генерирую новый...`);
-                        featureId = uuidv4();
-                    }
-
-                    // Создаем новый Feature только с валидными Stories
-                    featureMap.set(featureText, {
-                        id: featureId,
-                        text: featureText,
-                        stories: filteredStories
-                    });
-                    console.log(`[generate-test-model-async] ✅ Создан новый Feature "${featureText}" (ID: ${featureId}) с ${filteredStories.length} валидными Stories`);
-                }
-            }
-        }
-
-        // Преобразуем Map в массив
-        let mergedModel = Array.from(featureMap.values());
-
-        console.log(`[generate-test-model-async] Объединено ${partialModels.length} чанков → ${mergedModel.length} уникальных Features`);
+        console.log(`[generate-test-model-async] Объединено ${accumulatedModel.length} чанков → ${mergedModel.length} уникальных Features`);
 
         // Подробная статистика по слиянию
-        if (partialModels.length > 1) {
+        if (accumulatedModel.length > 1) {
             const totalFeatures = mergedModel.length;
             const totalStories = mergedModel.reduce((sum, f) => sum + (f.stories || []).length, 0);
             const totalScenarios = mergedModel.reduce((sum, f) =>
@@ -5737,8 +5788,20 @@ ${contextSourcesSummary || '—'}
                 }
             }
 
-            console.log(`[generate-test-model-async] MERGED: ${partialModels.length} чанков → ${totalFeatures} Features, ${totalStories} Stories, ${totalScenarios} Scenarios (БЕЗ codes: ${scenariosWithoutCodesAfterMerge}), ${totalCodes} Codes`);
+            console.log(`[generate-test-model-async] MERGED: ${accumulatedModel.length} чанков → ${totalFeatures} Features, ${totalStories} Stories, ${totalScenarios} Scenarios (БЕЗ codes: ${scenariosWithoutCodesAfterMerge}), ${totalCodes} Codes`);
         }
+
+        // ✅ Старая логика объединения заменена на mergeChunkResults, но оставляем проверку на дубликаты Feature
+        // Для совместимости с существующим кодом проверяем дубликаты и предупреждаем
+        const featureTexts = new Set();
+        for (const feature of mergedModel) {
+            const featureText = String(feature?.text || '').trim();
+            if (featureTexts.has(featureText)) {
+                console.warn(`[generate-test-model-async] ⚠️ Обнаружен дублирующийся Feature "${featureText}" после mergeChunkResults`);
+            }
+            featureTexts.add(featureText);
+        }
+
 
         // ✅ Добавляем уникальные ID к каждому элементу модели (БЕЗ requirement!)
         // ✅ ГАРАНТИРУЕМ УНИКАЛЬНОСТЬ ВСЕХ ID
@@ -12726,61 +12789,77 @@ ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             storiesCount = 0
         }) {
             const needsE2E = mode === 'FULL';
-            const backendSection = includeBackendTests
-                ? '- **Integration backend Tests**: Атомарные тесты API (указывают scenario из модели, привязаны к Story с соответствующим API)'
-                : '';
 
-            const e2eSection = needsE2E
-                ? '- **E2E Tests**: 🚨 ОБЯЗАТЕЛЬНО! 1-2 теста на КАЖДУЮ Story. Полные пользовательские сценарии через UI (без HTTP-методов/эндпоинтов)'
-                : '';
-
-            const tagsBackendRule = includeBackendTests
-                ? '- Integration backend Tests: ОБЯЗАТЕЛЬНО ["S"]'
-                : '';
-
-            // ✅ АДАПТИВНЫЙ ЛИМИТ: рассчитываем на основе количества Scenario
-            // Если Scenario много (6+), лимит увеличиваем, но с приоритетом на параметризацию
-            const baseIntegrationLimit = Math.min(12, Math.max(8, Math.ceil(scenariosCount * 1.5)));
-            const maxE2E = needsE2E ? Math.min(2, storiesCount) : 0;
+            // ✅ Увеличенные лимиты, чтобы поместились негативы и границы
+            const baseIntegrationLimit = Math.max(10, Math.ceil(scenariosCount * 2));
+            const maxE2E = needsE2E ? Math.min(3, storiesCount) : 0;
             const totalLimit = maxE2E + baseIntegrationLimit;
 
             return `
-            Ты — SDET, генерирующий тест-кейсы на основе requirements и тестовой модели.
+Ты — Senior SDET. Твоя цель — создать исчерпывающий набор тест-кейсов (Test Suite) на основе предоставленной Тестовой Модели.
 
-            🎯 ТИПЫ ТЕСТОВ:
-            ${e2eSection ? e2eSection + '\n' : ''}- **Integration frontend Tests**: Атомарные тесты UI-компонент. ОБЯЗАТЕЛЬНО dойти до формы/страницы/компонента (первое действие) и выполнить целевое действие (второе действие). Минимум 2 шага: шаг 1 — привести UI в нужное состояние, шаг 2+ — выполнить действие пользователя, которое ведёт к проверке. NEVER копируй scenario или title в steps. Указывают scenario из модели.
-            ${backendSection}
+🎯 СТРАТЕГИЯ ПОКРЫТИЯ (COVERAGE STRATEGY):
+1. **Positive Coverage (Happy Path):** Покрой каждый успешный Scenario из модели.
+2. **Negative Coverage (Rainy Day):** 🚨 КРИТИЧНО! Для каждого поля ввода/API-параметра создай тесты на:
+   - Валидацию (пустое, макс. длина, спецсимволы).
+   - Ошибки бизнес-логики (недостаточно средств, дубль записи).
+   - Ошибки сервера (если описаны 4xx/5xx коды).
+   *Если в модели есть Code с ошибкой — тест ОБЯЗАТЕЛЕН.*
+3. **Parameterization First:** Если логика проверки одна, а данные разные (разные суммы, разные валидные email) — используй ОДИН тест с таблицей 'examples'. Не плоди дубли.
 
-            🚨 ОБЯЗАТЕЛЬНЫЕ ПОЛЯ:
-- **id**: "tc-e2e-001", "tc-if-001", "tc-ib-001"
-- **feature**, **story**: Из тестовой модели
-- **scenario**: Для Integration тестов (из модели), НЕ для E2E!
-- **layer**: "E2E Tests" / "Integration frontend Tests" / "Integration backend Tests"
-- **tags**: ["D"] / ["M"] / ["S"] / ["D", "M"]
-- **priority**: "High" / "Medium" / "Low"
-- **version**: "stable"
+🏗️ ТИПЫ ТЕСТОВ И СТРУКТУРА:
 
-            📊 ПАРАМЕТРИЗАЦИЯ:
-            ✅ Используй parameters + examples для вариативности
-            ✅ Если кнопка/элемент в разных местах, но реакция одинаковая → ОДИН тест с параметризацией!
-            ❌ НЕ создавай дубликаты — параметризуй!
-            ❗ Если внутри одного feature/story/scenario полностью совпадают precondition+steps, НО отличаются данные или expected → это ОДИН тест. Объедини варианты в parameters/examples и распиши разницу внутри expected (списком по параметру).
+### 1. E2E Tests (UI Flows) ${needsE2E ? '(ОБЯЗАТЕЛЬНО)' : '(ПРОПУСТИТЬ)'}
+- **Цель:** Пройти полный путь пользователя от входа до результата.
+- **Steps:** Только действия пользователя ("Нажать", "Ввести"). Минимум 3-5 шагов.
+- **Precondition:** Пусто или "Пользователь на Главной".
+- **Layer:** "E2E Tests"
+- **Tags:** ["D", "M"] (Smoke/Critical)
 
-            🔻 НЕГАТИВЫ И ГРАНИЦЫ:
-            - Всегда анализируй требования на ошибки/отсутствие данных/HTTP-коды/невалидные состояния.
-            - На каждую story/scenario должен быть минимум один негатив или граничная проверка, если требования хоть где-то описывают ошибки/штатные отказы.
-            - Негативы делай Integration tests: UI → действия пользователя → ожидаемый технический ответ (код, сообщение, пустой список).
+### 2. Integration Frontend Tests (UI Components)
+- **Цель:** Проверить конкретную форму/кнопку/поле.
+- **Precondition:** 🚨 СТРОГОЕ ПРАВИЛО: Всё, что нужно сделать ДО начала теста (авторизация, переход в раздел, открытие модалки), пиши СЮДА. Не трать шаги на "подготовку".
+- **Steps:** 1-2 атомарных действия ("Ввести '123'", "Нажать 'Save'").
+- **Expected:** Реакция интерфейса (**Отображается** ошибка, **Скрывается** лоадер).
+- **Layer:** "Integration frontend Tests"
 
-🚨 ПРАВИЛА ТЕГОВ:
-- E2E Tests: ["D"] / ["M"] / ["D", "M"]
-${tagsBackendRule}
-- Integration frontend Tests: ["D"] / ["M"] / ["D", "M"]
+${includeBackendTests ? `### 3. Integration Backend Tests (API Isolation)
+- **Цель:** Проверить ответ сервера без UI.
+- **Steps:** "Отправить запрос GET /url с параметрами..."
+- **Expected:** "**Возвращается 200 OK** с телом..."
+- **Layer:** "Integration backend Tests"
+- **Tags:** ["S"] (Всегда!)
+` : ''}
 
-⚡ ЛИМИТЫ:
-${needsE2E ? `- E2E Tests: максимум ${maxE2E} теста` : '- E2E Tests: НЕ генерируй'}
-- Integration Tests: максимум ${baseIntegrationLimit} тестов (frontend${includeBackendTests ? ' + backend' : ''} вместе)
-- Общий лимит: максимум ${totalLimit} тест-кейсов
-`.trim();
+🚫 ЗАПРЕТЫ (ANTI-PATTERNS):
+- ❌ Step: "Проверить, что..." (Это Expected!)
+- ❌ Step: "Открыть страницу X" (Если это Preparation — перенеси в Precondition!)
+- ❌ Precondition: Пусто (для Integration тестов). Всегда указывай контекст: "Пользователь на странице Х".
+- ❌ Mixing: Не смешивай позитивные и негативные кейсы в одной таблице 'examples', если у них разный Expected Result.
+
+📊 ФОРМАТ JSON (СТРОГО):
+{
+  "id": "tc-if-001",
+  "title": "Краткая суть без 'Проверка' (напр: 'Ввод суммы превышающей лимит')",
+  "feature": "...",
+  "story": "...",
+  "scenario": "...",  // ID сценария из модели (для Traceability)
+  "layer": "...",
+  "type": "Positive" | "Negative",
+  "tags": [...],
+  "priority": "High",
+  "precondition": "...",
+  "steps": [
+    { "action": "..." }
+  ],
+  "expected": "...",
+  "examples": [ ... ] // Опционально
+}
+
+⚡ ЛИМИТЫ ГЕНЕРАЦИИ:
+- Максимум ${totalLimit} тестов.
+- Приоритет: Сначала покрой все негативные кейсы и валидацию, затем Happy Path.
+            `.trim();
         }
 
         // ✅ БАЗОВЫЙ ПРОМПТ (для обратной совместимости, будет переопределен в genForChunkOptimized)
@@ -12827,11 +12906,11 @@ ${needsE2E ? `- E2E Tests: максимум ${maxE2E} теста` : '- E2E Tests
             storiesCount = 0
         }) {
             const needsE2E = mode === 'FULL';
-            const baseIntegrationLimit = Math.min(12, Math.max(8, Math.ceil(scenariosCount * 1.5)));
-            const maxE2E = needsE2E ? Math.min(2, storiesCount) : 0;
+            const baseIntegrationLimit = Math.max(10, Math.ceil(scenariosCount * 2));
+            const maxE2E = needsE2E ? Math.min(3, storiesCount) : 0;
 
             const e2eRule = needsE2E
-                ? `🚨 E2E: ОБЯЗАТЕЛЬНО 1-2 теста на КАЖДУЮ Story (основной путь + критичный негатив)
+                ? `🚨 E2E: ОБЯЗАТЕЛЬНО 1-3 теста на КАЖДУЮ Story (основной путь + критичный негатив)
 - БЕЗ E2E тестов = НЕПРАВИЛЬНО! Каждая Story ДОЛЖНА иметь минимум 1 E2E тест!`
                 : `🚨 E2E: НЕ генерируй (уже созданы в предыдущих итерациях)`;
 
