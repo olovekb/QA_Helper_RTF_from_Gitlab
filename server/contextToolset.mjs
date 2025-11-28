@@ -130,12 +130,12 @@ export function createContextToolset(options = {}) {
     const {
         sources = [],
         fetcher = null,
-        defaultChunk = 8000  // ✅ Увеличено с 4000 до 8000 для MiniMax-M2 (204K контекст)
+        defaultChunk = 8000  
     } = options;
 
-    const normalizedDefaultChunk = clamp(defaultChunk, 512, 50000);  // ✅ Увеличено для больших документов
-    const HARD_MAX_CHUNK_CHARS = 4000; // ✅ Ограничиваем размер возвращаемого чанка (≈1000 токенов) для предотвращения переполнения
-    const MAX_CHUNKS_PER_SOURCE = 3;   // ✅ Не более 3 уникальных чанков на источник за весь диалог
+    const normalizedDefaultChunk = clamp(defaultChunk, 512, 50000); 
+    const HARD_MAX_CHUNK_CHARS = 20000; 
+    const MAX_CHUNKS_PER_SOURCE = 10;  
 
     const sourceMap = new Map();
     const contentCache = new Map();
