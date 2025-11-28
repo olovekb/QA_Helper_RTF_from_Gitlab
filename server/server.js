@@ -368,6 +368,35 @@ try {
     console.warn(`[server] ⚠️ Не удалось загрузить test-model-example.json: ${err.message}. Используем встроенный fallback.`);
 }
 
+// ✅ Загружаем идеальные примеры тест-кейсов для Few-Shot Learning
+let IDEAL_E2E_EXAMPLES = '[]';
+let IDEAL_INTEGRATION_FE_EXAMPLES = '[]';
+let IDEAL_INTEGRATION_BE_EXAMPLES = '[]';
+
+try {
+    const e2eExamplesPath = join(__dirname, 'config', 'examples', 'e2e-examples.json');
+    IDEAL_E2E_EXAMPLES = readFileSync(e2eExamplesPath, 'utf-8').trim();
+    console.log(`[server] ✅ Загружены идеальные примеры E2E (${IDEAL_E2E_EXAMPLES.length} символов)`);
+} catch (err) {
+    console.warn(`[server] ⚠️ Не удалось загрузить e2e-examples.json: ${err.message}`);
+}
+
+try {
+    const integrationFeExamplesPath = join(__dirname, 'config', 'examples', 'integration-fe-examples.json');
+    IDEAL_INTEGRATION_FE_EXAMPLES = readFileSync(integrationFeExamplesPath, 'utf-8').trim();
+    console.log(`[server] ✅ Загружены идеальные примеры Integration Frontend (${IDEAL_INTEGRATION_FE_EXAMPLES.length} символов)`);
+} catch (err) {
+    console.warn(`[server] ⚠️ Не удалось загрузить integration-fe-examples.json: ${err.message}`);
+}
+
+try {
+    const integrationBeExamplesPath = join(__dirname, 'config', 'examples', 'integration-be-examples.json');
+    IDEAL_INTEGRATION_BE_EXAMPLES = readFileSync(integrationBeExamplesPath, 'utf-8').trim();
+    console.log(`[server] ✅ Загружены идеальные примеры Integration Backend (${IDEAL_INTEGRATION_BE_EXAMPLES.length} символов)`);
+} catch (err) {
+    console.warn(`[server] ⚠️ Не удалось загрузить integration-be-examples.json: ${err.message}`);
+}
+
 function buildModelSystemPrompt() {
     const idealExampleBlock = `
 ОБЯЗАТЕЛЬНЫЙ ЭТАЛОН СТРУКТУРЫ — ИСПОЛЬЗУЙ ЕГО КАК ШАБЛОН:
@@ -12678,8 +12707,8 @@ ${existingE2E.length > 0 ? existingE2E.map(t => `  - ${t.title}`).join('\n') : '
         }) {
             const needsE2E = mode === 'FULL';
 
-            // ✅ Увеличенные лимиты, чтобы поместились негативы и границы
-            const baseIntegrationLimit = Math.max(10, Math.ceil(scenariosCount * 2));
+            // ✅ Увеличенные лимиты для глубокого покрытия (4-5 тестов на сценарий)
+            const baseIntegrationLimit = Math.max(20, Math.ceil(scenariosCount * 5));
             const effectiveStoriesCount = needsE2E ? Math.max(1, storiesCount || 0) : storiesCount;
             const maxE2E = needsE2E ? Math.min(3, effectiveStoriesCount) : 0;
             const totalLimit = maxE2E + baseIntegrationLimit;
@@ -12695,12 +12724,20 @@ ${existingE2E.length > 0 ? existingE2E.map(t => `  - ${t.title}`).join('\n') : '
    - Ошибки сервера (если описаны 4xx/5xx коды).
    *Если в модели есть Code с ошибкой — тест ОБЯЗАТЕЛЕН.*
 3. **Parameterization First:** Если логика проверки одна, а данные разные (разные суммы, разные валидные email) — используй ОДИН тест с таблицей 'examples'. Не плоди дубли.
+4. **Deep Dive:** Для каждого сложного UI-сценария (форма, таблица, валидация) создай минимум 3-4 вариации (пустые поля, макс. длина, спецсимволы, XSS-пейлоады, граничные значения).
 
 🏗️ ТИПЫ ТЕСТОВ И СТРУКТУРА:
 
-### 1. E2E Tests (UI Flows) ${needsE2E ? '(ОБЯЗАТЕЛЬНО)' : '(ПРОПУСТИТЬ)'}
-- **Цель:** Пройти полный путь пользователя от входа до результата.
-- **Steps:** Только действия пользователя ("Нажать", "Ввести"). Минимум 3-5 шагов.
+### 1. E2E Tests (UI Flows) ${needsE2E ? `(ОБЯЗАТЕЛЬНО: ${maxE2E} шт.)` : '(ПРОПУСТИТЬ)'}
+- **Цель:** Пройти ПОЛНЫЙ путь пользователя от входа в систему до финального результата.
+- **Steps (СТРОГАЯ СТРУКТУРА):**
+  1. Начинай с авторизации ("Авторизоваться в системе как..." или "Авторизоваться в системе").
+  2. Опиши навигацию ("Перейти в раздел...", "Нажать вкладку...", "Выбрать проект...").
+  3. Опиши заполнение формы ("Заполнить поле...", "Выбрать...", "Установить чек-бокс...").
+  4. Заверши целевым действием ("Нажать 'Сохранить'", "Нажать 'Создать'", "Нажать 'Отправить'").
+- **E2E Rule:** 🚨 КРИТИЧНО! Если в сценарии модели нет шагов авторизации или навигации — ДОБАВЬ ИХ В E2E ТЕСТ САМ. Тест должен быть самодостаточным и описывать полный путь пользователя, даже если в модели указан только финальный шаг.
+- **Expected:** Опиши не только сообщение, но и изменение состояния системы ("Задача появляется в списке", "Файл сохранен", "Уведомление отображается").
+- **Пример структуры:** "Авторизоваться" → "Перейти" → "Создать" → "Заполнить" → "Сохранить" (минимум 5 шагов).
 - **Precondition:** Пусто или "Пользователь на Главной".
 - **Layer:** "E2E Tests"
 - **Tags:** ["D", "M"] (Smoke/Critical)
@@ -12708,23 +12745,50 @@ ${existingE2E.length > 0 ? existingE2E.map(t => `  - ${t.title}`).join('\n') : '
 ### 2. Integration Frontend Tests (UI Components)
 - **Цель:** Проверить конкретную форму/кнопку/поле.
 - **Precondition:** 🚨 СТРОГОЕ ПРАВИЛО: Всё, что нужно сделать ДО начала теста (авторизация, переход в раздел, открытие модалки), пиши СЮДА. Не трать шаги на "подготовку".
-- **Steps:** 1-2 атомарных действия ("Ввести '123'", "Нажать 'Save'").
+- **Steps:** ТОЛЬКО активные действия ("Нажать", "Ввести", "Кликнуть", "Выбрать"). Если тест только на отображение элемента по умолчанию — шаг должен быть "Открыть страницу/модалку".
+- ❌ ЗАПРЕТ: Не используй пассивные шаги: "Наблюдать", "Убедиться", "Проверить", "Ожидать" — это не действия пользователя!
 - **Expected:** Реакция интерфейса (**Отображается** ошибка, **Скрывается** лоадер).
 - **Layer:** "Integration frontend Tests"
 
 ${includeBackendTests ? `### 3. Integration Backend Tests (API Isolation)
 - **Цель:** Проверить ответ сервера без UI.
-- **Steps:** "Отправить запрос GET /url с параметрами..."
-- **Expected:** "**Возвращается 200 OK** с телом..."
+- **Steps:** "Отправить запрос GET /url с параметрами..." или "Выполнить GET **/url**"
+- **Expected:** "**Возвращается 200 OK** с телом..." или "**Возвращается** {{Код ответа}} с JSON: {{Содержимое ответа}}"
 - **Layer:** "Integration backend Tests"
 - **Tags:** ["S"] (Всегда!)
+` : ''}
+
+📚 ИДЕАЛЬНЫЕ ПРИМЕРЫ (FEW-SHOT LEARNING):
+
+🎯 E2E СТАНДАРТ КАЧЕСТВА:
+Используй эти примеры как шаблон для E2E тестов:
+
+\`\`\`json
+${IDEAL_E2E_EXAMPLES}
+\`\`\`
+
+🔧 INTEGRATION FRONTEND СТАНДАРТ КАЧЕСТВА:
+Используй эти примеры как шаблон для Integration Frontend тестов:
+
+\`\`\`json
+${IDEAL_INTEGRATION_FE_EXAMPLES}
+\`\`\`
+
+${includeBackendTests ? `🔧 INTEGRATION BACKEND СТАНДАРТ КАЧЕСТВА:
+Используй эти примеры как шаблон для Integration Backend тестов:
+
+\`\`\`json
+${IDEAL_INTEGRATION_BE_EXAMPLES}
+\`\`\`
 ` : ''}
 
 🚫 ЗАПРЕТЫ (ANTI-PATTERNS):
 - ❌ Step: "Проверить, что..." (Это Expected!)
 - ❌ Step: "Открыть страницу X" (Если это Preparation — перенеси в Precondition!)
+- ❌ Step: Пассивные действия ("Наблюдать", "Убедиться", "Ожидать", "Проверить") — это НЕ действия пользователя! Используй активные: "Нажать", "Ввести", "Кликнуть", "Выбрать", "Открыть".
 - ❌ Precondition: Пусто (для Integration тестов). Всегда указывай контекст: "Пользователь на странице Х".
 - ❌ Mixing: Не смешивай позитивные и негативные кейсы в одной таблице 'examples', если у них разный Expected Result.
+- ❌ JS Code в JSON: НЕ используй JavaScript-код или вычисления внутри JSON значений! Запрещено: .repeat(), конкатенация строк через плюс, функции типа Date.now() или Math.random(). Пиши ТОЛЬКО готовые статические строки, даже если они очень длинные. Пример ошибки: "url" + "a".repeat(1009). Правильно: полная готовая строка "url" + "aaa...aaa" (все 1009 символов буквы a).
 
 📊 ФОРМАТ JSON (СТРОГО):
 {
@@ -12744,6 +12808,8 @@ ${includeBackendTests ? `### 3. Integration Backend Tests (API Isolation)
   "expected": "...",
   "examples": [ ... ] // Опционально
 }
+
+⚠️ КРИТИЧНО: Все значения в JSON должны быть статическими строками! НЕ используй JavaScript-выражения (.repeat(), конкатенацию через +, функции). Если нужна длинная строка - напиши её полностью.
 
 ⚡ ЛИМИТЫ ГЕНЕРАЦИИ:
 - Максимум ${totalLimit} тестов.
@@ -12770,7 +12836,8 @@ ${includeBackendTests ? `### 3. Integration Backend Tests (API Isolation)
             storiesCount = 0
         }) {
             const needsE2E = mode === 'FULL';
-            const baseIntegrationLimit = Math.max(10, Math.ceil(scenariosCount * 2));
+            // ✅ Синхронизировано с buildTestCaseSystemPrompt: 4-5 тестов на сценарий
+            const baseIntegrationLimit = Math.max(20, Math.ceil(scenariosCount * 5));
             const effectiveStoriesCount = needsE2E ? Math.max(1, storiesCount || 0) : storiesCount;
             const maxE2E = needsE2E ? Math.min(3, effectiveStoriesCount) : 0;
 
