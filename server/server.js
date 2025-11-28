@@ -5006,11 +5006,36 @@ Code должны описывать ПОВЕДЕНИЕ СИСТЕМЫ (что �
 
 // 1. Функция для извлечения контекста (для передачи в следующий промпт)
 function extractContext(currentModel) {
-    return currentModel.map(f => ({
+    // Защита от undefined/null
+    if (!currentModel || !Array.isArray(currentModel)) {
+        console.warn(`[extractContext] currentModel не является массивом:`, typeof currentModel);
+        return [];
+    }
+
+    // currentModel - это массив массивов (результаты каждого чанка)
+    // Нужно "распаковать" их в плоский массив features
+    const allFeatures = [];
+    currentModel.forEach(chunkArray => {
+        if (Array.isArray(chunkArray)) {
+            chunkArray.forEach(f => {
+                if (f && f.id && f.text) {
+                    allFeatures.push(f);
+                }
+            });
+        }
+    });
+
+    // Извлекаем контекст из всех features
+    return allFeatures.map(f => ({
         id: f.id,
         text: f.text,
-        stories: f.stories.map(s => ({ id: s.id, text: s.text }))
-    }));
+        stories: (f.stories || []).map(s => {
+            if (s && s.id && s.text) {
+                return { id: s.id, text: s.text };
+            }
+            return null;
+        }).filter(Boolean) // Убираем null значения
+    })).filter(f => f && f.id && f.text); // Оставляем только валидные features (даже без stories)
 }
 
 // 2. Функция финальной склейки (Smart Merge)
