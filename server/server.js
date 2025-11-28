@@ -12591,197 +12591,6 @@ ${existingE2E.length > 0 ? existingE2E.map(t => `  - ${t.title}`).join('\n') : '
         }
 
 
-        function countChunkNodes(modelChunk) {
-            let scenarios = 0, codes = 0;
-            for (const f of modelChunk) for (const st of (f.stories || [])) {
-                for (const sc of (st.scenarios || [])) {
-                    scenarios++;
-                    codes += (sc.codes || []).length;
-                }
-            }
-            return { scenarios, codes };
-        }
-
-        function auditCoverage(model, cases) {
-            // Минимумы: 1 E2E на Story, 2-3 Integration на Scenario
-            const needE2EByStory = new Map();
-            const needSc = new Map(); // scenario -> remaining Integration
-
-            for (const f of model) for (const st of (f.stories || [])) {
-                needE2EByStory.set(st.text, 1);
-                for (const sc of (st.scenarios || [])) {
-                    needSc.set(sc.text, 3);
-                }
-            }
-
-            for (const tc of (cases || [])) {
-                const layer = String(tc.layer || '');
-                if (layer === 'E2E Tests' && tc.story) {
-                    const rest = needE2EByStory.get(tc.story);
-                    if (rest != null) needE2EByStory.set(tc.story, Math.max(0, rest - 1));
-                }
-                if (layer.startsWith('Integration') && tc.scenario) {
-                    const rest = needSc.get(tc.scenario);
-                    if (rest != null) needSc.set(tc.scenario, Math.max(0, rest - 1));
-                }
-            }
-
-            const missingE2E = [...needE2EByStory].filter(([, n]) => n > 0).map(([story, need]) => ({ story, need }));
-            const missingSc = [...needSc].filter(([, n]) => n > 0).map(([scenario, need]) => ({ scenario, need }));
-
-            return { missingE2E, missingSc };
-        }
-
-        // Догенерация только недостающего покрытия
-        async function gapFill(model, reqs, missing, systemPrompt) {
-            const { missingE2E, missingSc } = missing;
-            if (!missingE2E.length && !missingSc.length) return [];
-
-            // Собрать минимальный chunk только с нужными story/scenario/code
-            const featureText = (model[0] && model[0].text) || 'Feature';
-            const chunk = [{ text: featureText, stories: [] }];
-            const needStories = new Set(missingE2E.map(x => x.story));
-            const needScens = new Set(missingSc.map(x => x.scenario));
-            const needCodes = new Set();
-
-            for (const f of model) for (const st of (f.stories || [])) {
-                const keepStory = needStories.has(st.text)
-                    || (st.scenarios || []).some(sc =>
-                        needScens.has(sc.text) ||
-                        (sc.codes || []).some(cd => needCodes.has(cd.text))
-                    );
-                if (!keepStory) continue;
-
-                const scenarios = (st.scenarios || []).filter(sc =>
-                    needScens.has(sc.text)
-                ).map(sc => ({
-                    ...sc,
-                    codes: sc.codes || []
-                }));
-
-                chunk[0].stories.push({ text: st.text, scenarios });
-            }
-
-            // ✅ ИСПРАВЛЕНО: Используем ПОЛНУЮ модель для enum, а не только chunk
-            const allowedForChunk = collectAllowedCodes(model);
-            const allowedScenarios = collectAllowedScenarios(model);
-
-            const mustLines = [
-                ...missingE2E.map(m => `E2E для story "${m.story}" ×${m.need}`),
-                ...missingSc.map(m => `Integration для scenario "${m.scenario}" ×${m.need}`)
-            ];
-            const userPrompt = `
-Сгенерируй ТОЛЬКО недостающее покрытие для следующего куска модели.
-Модель (кусок):
-${JSON.stringify(chunk, null, 2)}
-
-Нужно добрать:
-${mustLines.map(l => `- ${l}`).join('\n')}
-
-Требования:
-${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
-
-Ответ — ТОЛЬКО чистый JSON-массив без Markdown.
-`.trim();
-
-            const submissionTool = buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios);
-            const ai = await runTestCaseLLM({
-                userPrompt,
-                submissionTool,
-                modelOverrides: {
-                    temperature: 0.25,
-                    top_p: 0.9,
-                    max_tokens: 40000,
-                    extra: { transforms: 'middle-out' }
-                }
-            });
-
-            const args = extractToolArgs(ai, "submit_cases");
-            if (args && Array.isArray(args.cases)) return args.cases;
-
-            const content = ai.choices?.[0]?.message?.content || '';
-            const rawJsonCandidate = extractJsonArray(content);
-            if (!rawJsonCandidate) return [];
-            try {
-                const jsonText = cleanupJsonText(rawJsonCandidate);
-                const parsed = JSON5.parse(jsonText);
-                return Array.isArray(parsed) ? parsed : [];
-            } catch (e) {
-                console.warn('[gapFill] JSON parse failed (strict). Falling back. Error:', e.message);
-                try {
-                    // fallback: strip everything until first '[' and after last ']'
-                    const t = cleanupJsonText(rawJsonCandidate);
-                    const parsed = JSON5.parse(t);
-                    return Array.isArray(parsed) ? parsed : [];
-                } catch (e2) {
-                    console.error('[gapFill] Fallback parse failed:', e2.message);
-                    console.log('--- RAW AI RESPONSE (gapFill ultimate fail) ---\n', content, '\n-----------------------------------------');
-                    return [];
-                }
-            }
-        }
-
-        // Разбивка требований на чанки по размеру (для больших документов)
-        function splitRequirements(reqs, maxCharsPerChunk = 120000) {
-            if (!Array.isArray(reqs) || reqs.length === 0) return [[]];
-
-            const chunks = [];
-            let currentChunk = [];
-            let currentSize = 0;
-
-            for (const req of reqs) {
-                const reqSize = String(req || '').length;
-
-                // Если одно требование больше лимита - разобьем его на параграфы
-                if (reqSize > maxCharsPerChunk) {
-                    if (currentChunk.length > 0) {
-                        chunks.push(currentChunk);
-                        currentChunk = [];
-                        currentSize = 0;
-                    }
-
-                    // Разбиваем большое требование на части по параграфам
-                    const paragraphs = String(req).split(/\n\n+/);
-                    let tempReq = '';
-
-                    for (const para of paragraphs) {
-                        if ((tempReq.length + para.length) > maxCharsPerChunk && tempReq) {
-                            currentChunk.push(tempReq.trim());
-                            chunks.push(currentChunk);
-                            currentChunk = [];
-                            currentSize = 0;
-                            tempReq = para;
-                        } else {
-                            tempReq += (tempReq ? '\n\n' : '') + para;
-                        }
-                    }
-
-                    if (tempReq.trim()) {
-                        currentChunk.push(tempReq.trim());
-                        currentSize = tempReq.length;
-                    }
-                } else {
-                    // Обычное требование
-                    if ((currentSize + reqSize) > maxCharsPerChunk && currentChunk.length > 0) {
-                        chunks.push(currentChunk);
-                        currentChunk = [req];
-                        currentSize = reqSize;
-                    } else {
-                        currentChunk.push(req);
-                        currentSize += reqSize;
-                    }
-                }
-            }
-
-            if (currentChunk.length > 0) {
-                chunks.push(currentChunk);
-            }
-
-            return chunks.length > 0 ? chunks : [[]];
-        }
-
-
-        // ✅ УНИФИЦИРОВАННАЯ ФУНКЦИЯ ДЛЯ ПОСТРОЕНИЯ SYSTEM PROMPT (учитывает режим и флаги)
         function buildTestCaseSystemPrompt({
             mode = 'FULL',
             includeBackendTests = true,
@@ -12792,7 +12601,8 @@ ${reqs.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
             // ✅ Увеличенные лимиты, чтобы поместились негативы и границы
             const baseIntegrationLimit = Math.max(10, Math.ceil(scenariosCount * 2));
-            const maxE2E = needsE2E ? Math.min(3, storiesCount) : 0;
+            const effectiveStoriesCount = needsE2E ? Math.max(1, storiesCount || 0) : storiesCount;
+            const maxE2E = needsE2E ? Math.min(3, effectiveStoriesCount) : 0;
             const totalLimit = maxE2E + baseIntegrationLimit;
 
             return `
@@ -12882,7 +12692,8 @@ ${includeBackendTests ? `### 3. Integration Backend Tests (API Isolation)
         }) {
             const needsE2E = mode === 'FULL';
             const baseIntegrationLimit = Math.max(10, Math.ceil(scenariosCount * 2));
-            const maxE2E = needsE2E ? Math.min(3, storiesCount) : 0;
+            const effectiveStoriesCount = needsE2E ? Math.max(1, storiesCount || 0) : storiesCount;
+            const maxE2E = needsE2E ? Math.min(3, effectiveStoriesCount) : 0;
 
             const e2eRule = needsE2E
                 ? `🚨 E2E: ОБЯЗАТЕЛЬНО 1-3 теста на КАЖДУЮ Story (основной путь + критичный негатив)
@@ -12901,8 +12712,8 @@ ${integrationRule}
 ═══════════════════════════════════════════════════════════════
 
 🎯 СТРАТЕГИЯ ПОКРЫТИЯ:
-1. ПРИОРИТЕТ #1: Позитивные тесты для каждого Code (обязательно!)
-2. ПРИОРИТЕТ #2: Негативные тесты с параметризацией (объединяй через examples!)
+1. ПРИОРИТЕТ #1: Негативные тесты (валидация, ошибки бизнес-логики, серверные ответы). Сначала закрывай все ошибки!
+2. ПРИОРИТЕТ #2: Позитивные тесты для каждого Code (happy path, подтверждение успешных цепочек).
 3. ПРИОРИТЕТ #3: Граничные значения (объединяй в ОДИН тест с параметризацией!)
 4. ПРИОРИТЕТ #4: UI логика и зависимости (если осталось место)
 
@@ -12914,14 +12725,12 @@ ${needsE2E ? '🚨 КРИТИЧНО: □ Каждая Story имеет ≥1 E2E?
 `.trim();
         }
 
-        // ✅ Fallback COVENANT для baseSystemPrompt (используется в fixTestCasesAsync и других местах)
-        const fallbackCovenant = buildCovenant({ mode: 'FULL', includeBackendTests: true, scenariosCount: 0, storiesCount: 0 });
-        const baseSystemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${fallbackCovenant}`;
+        const baseSystemPrompt = BASE_SYSTEM_PROMPT;
         const baseCaseModelOptions = {
             models: config.cloudruModels,
             temperature: 0,
             top_p: 1,
-            max_tokens: 45000,  // ✅ Безопасное значение для MiniMax-M2 (лимит 196K токенов)
+            max_tokens: 45000,  
             extra: { transforms: 'middle-out' }
         };
 
