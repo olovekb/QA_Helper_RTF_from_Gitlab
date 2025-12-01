@@ -392,6 +392,113 @@ const ScenarioIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" he
 const CodeFileIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>;
 
 
+// Компонент для отображения diff изменений модели
+const ModelDiffView = ({ diff }) => {
+    if (!diff) return null;
+
+    const renderDiffSection = (title, items, type) => {
+        if (!items || items.length === 0) return null;
+
+        return (
+            <div style={{ marginBottom: '12px' }}>
+                <h5 style={{ 
+                    margin: '0 0 8px 0', 
+                    fontSize: '0.9em', 
+                    color: type === 'added' ? 'var(--accent-green)' : type === 'removed' ? 'var(--danger-red)' : 'var(--accent-orange)',
+                    fontWeight: 600
+                }}>
+                    {title} ({items.length})
+                </h5>
+                <div style={{ 
+                    paddingLeft: '12px',
+                    fontSize: '0.85em',
+                    maxHeight: '150px',
+                    overflowY: 'auto'
+                }}>
+                    {items.map((item, idx) => (
+                        <div key={idx} style={{ 
+                            marginBottom: '4px',
+                            padding: '4px 8px',
+                            background: type === 'added' 
+                                ? 'rgba(63, 185, 80, 0.1)' 
+                                : type === 'removed' 
+                                    ? 'rgba(248, 81, 73, 0.1)' 
+                                    : 'rgba(211, 157, 52, 0.1)',
+                            borderRadius: '4px',
+                            borderLeft: `3px solid ${type === 'added' ? 'var(--accent-green)' : type === 'removed' ? 'var(--danger-red)' : 'var(--accent-orange)'}`
+                        }}>
+                            {type === 'modified' ? (
+                                <div>
+                                    <div style={{ color: 'var(--text-secondary)', textDecoration: 'line-through' }}>
+                                        {item.old || item.old?.text || 'N/A'}
+                                    </div>
+                                    <div style={{ color: 'var(--text-primary)', marginTop: '4px' }}>
+                                        → {item.new || item.new?.text || 'N/A'}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div style={{ color: 'var(--text-primary)' }}>
+                                    {item.text || item.id}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    };
+
+    return (
+        <div>
+            <div style={{ 
+                display: 'grid', 
+                gridTemplateColumns: 'repeat(3, 1fr)', 
+                gap: '12px',
+                marginBottom: '16px',
+                fontSize: '0.85em'
+            }}>
+                <div style={{ textAlign: 'center' }}>
+                    <div style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>Features</div>
+                    <div style={{ color: 'var(--text-primary)', fontWeight: 'bold' }}>
+                        {diff.metrics.old.featuresCount} → {diff.metrics.new.featuresCount}
+                    </div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                    <div style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>Stories</div>
+                    <div style={{ color: 'var(--text-primary)', fontWeight: 'bold' }}>
+                        {diff.metrics.old.storiesCount} → {diff.metrics.new.storiesCount}
+                    </div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                    <div style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>Scenarios</div>
+                    <div style={{ color: 'var(--text-primary)', fontWeight: 'bold' }}>
+                        {diff.metrics.old.scenariosCount} → {diff.metrics.new.scenariosCount}
+                    </div>
+                </div>
+            </div>
+
+            {renderDiffSection('➕ Добавлено', [
+                ...diff.added.features,
+                ...diff.added.stories,
+                ...diff.added.scenarios,
+                ...diff.added.codes
+            ], 'added')}
+            {renderDiffSection('✏️ Изменено', [
+                ...diff.modified.features,
+                ...diff.modified.stories,
+                ...diff.modified.scenarios,
+                ...diff.modified.codes
+            ], 'modified')}
+            {renderDiffSection('➖ Удалено', [
+                ...diff.removed.features,
+                ...diff.removed.stories,
+                ...diff.removed.scenarios,
+                ...diff.removed.codes
+            ], 'removed')}
+        </div>
+    );
+};
+
 const TreeVisualizer = ({ treeData }) => {
     const nodeWidth = 220;
     const nodeHeight = 50;
@@ -609,6 +716,12 @@ export default function TestModelGeneratorModal({
     const [localGeneratedModel, setLocalGeneratedModel] = useState(null);
     const [isGenerating, setIsGenerating] = useState(false);
     const [isGeneratingXmind, setIsGeneratingXmind] = useState(false);
+    const [generationMode, setGenerationMode] = useState('create'); // 'create' | 'refine'
+    const [reviewComment, setReviewComment] = useState('');
+    const [modelVersion, setModelVersion] = useState(1);
+    const [modelHistory, setModelHistory] = useState([]); // [{ version, model, timestamp, comment }]
+    const [modelDiff, setModelDiff] = useState(null); // diff между v1 и v2
+    const [showDiffView, setShowDiffView] = useState(false);
 
     // Функция для подсчета всех узлов в дереве
     const countAllNodes = (treeData) => {
@@ -1117,11 +1230,23 @@ export default function TestModelGeneratorModal({
             setTreeData(newTree);
             setLocalGeneratedModel(generatedModel);
             
+            // Сохраняем v1 в историю при первой генерации
+            if (modelVersion === 1 && modelHistory.length === 0) {
+                const v1Snapshot = {
+                    version: 1,
+                    model: generatedModel,
+                    timestamp: new Date().toISOString(),
+                    comment: 'Первичная генерация'
+                };
+                setModelHistory([v1Snapshot]);
+                idbSet('modelHistory', [v1Snapshot]).catch(console.warn);
+            }
+            
             // Сохраняем в IndexedDB
             idbSet('testModelTree', newTree).catch(console.warn);
             console.log('Тестовая модель загружена в редактор');
         }
-    }, [modelGenerationStatus, generatedModel]);
+    }, [modelGenerationStatus, generatedModel, modelVersion, modelHistory.length]);
 
     const findNodeAndParent = (nodes, path, parent = null) => {
         const [head, ...tail] = path;
@@ -1198,6 +1323,12 @@ export default function TestModelGeneratorModal({
         idbSet('testModelTree', null).catch(console.warn); // ✅ Очищаем старый treeData
         console.log('TestModelGeneratorModal: ✅ Очищены все данные перед новой генерацией модели');
         
+        // Сбрасываем версию и историю при новой генерации
+        setModelVersion(1);
+        setModelHistory([]);
+        setModelDiff(null);
+        setShowDiffView(false);
+        
         // Запрашиваем разрешение на уведомления
         if (window.Notification && Notification.permission === 'default') {
             await Notification.requestPermission();
@@ -1233,6 +1364,16 @@ export default function TestModelGeneratorModal({
             setTreeData(newTree);
 
             setLocalGeneratedModel(data);
+            
+            // Сохраняем v1 в историю
+            const v1Snapshot = {
+                version: 1,
+                model: data,
+                timestamp: new Date().toISOString(),
+                comment: 'Первичная генерация'
+            };
+            setModelHistory([v1Snapshot]);
+            idbSet('modelHistory', [v1Snapshot]).catch(console.warn);
 
         } catch (error) {
             console.error('Ошибка при генерации тестовой модели:', error);
@@ -1240,6 +1381,112 @@ export default function TestModelGeneratorModal({
             setLocalGeneratedModel(null);
         } finally {
             setIsGeneratingModel(false);
+        }
+    };
+
+    // Обработчик доработки модели
+    const handleRefineModel = async () => {
+        if (!localGeneratedModel || localGeneratedModel.length === 0) {
+            alert('Сначала сгенерируйте модель');
+            return;
+        }
+
+        // Комментарий опционален, но желателен
+        if (!reviewComment.trim()) {
+            if (!window.confirm('Комментарий ревьюера не указан. Продолжить доработку без конкретных замечаний?')) {
+                return;
+            }
+        }
+
+        setIsGeneratingModel(true);
+        setModelGenerationStatus('processing');
+        setModelGenerationProgress(0);
+
+        try {
+            const currentModel = convertTreeToModel(treeData);
+            const oldModel = localGeneratedModel || currentModel;
+            
+            // Сохраняем baseline метрики
+            const baselineMetrics = calculateBaselineMetrics(oldModel);
+            
+            // Парсим комментарий на список проблем (issues)
+            const issues = reviewComment.trim()
+                .split('\n')
+                .map(line => line.trim())
+                .filter(line => line.length > 0);
+
+            const requirementsPayload = buildRequirementsPayload({ includeRequirements: true });
+            const payload = {
+                ...requirementsPayload,
+                oldModel: oldModel,
+                reviewNotes: reviewComment.trim() || '',
+                issues: issues,
+                baselineMetrics: baselineMetrics,
+                requirements: requirementsPayload.requirements || ''
+            };
+
+            const { data } = await axios.post(
+                `${config.serverUrl}/refine-test-model`,
+                payload
+            );
+
+            // Валидация результата
+            const validation = validateRefinedModel(oldModel, data.refinedModel, issues);
+            
+            if (!validation.isValid) {
+                const criticalErrors = validation.errors.filter(e => e.type === 'critical');
+                if (criticalErrors.length > 0) {
+                    alert(`❌ Критические ошибки валидации:\n${criticalErrors.map(e => e.message).join('\n')}\n\nМодель не была обновлена.`);
+                    setIsGeneratingModel(false);
+                    setModelGenerationStatus(null);
+                    return;
+                }
+            }
+
+            // Вычисляем diff
+            const diff = calculateModelDiff(oldModel, data.refinedModel);
+            setModelDiff(diff);
+
+            // Обновляем модель
+            const newTree = buildTreeWithIds(data.refinedModel);
+            setTreeData(newTree);
+            setLocalGeneratedModel(data.refinedModel);
+
+            // Сохраняем v2 в историю
+            const v2Snapshot = {
+                version: modelVersion + 1,
+                model: data.refinedModel,
+                timestamp: new Date().toISOString(),
+                comment: reviewComment.trim() || 'Доработка модели',
+                diff: diff,
+                validation: validation
+            };
+            setModelHistory(prev => [...prev, v2Snapshot]);
+            setModelVersion(modelVersion + 1);
+            
+            // Сохраняем в IndexedDB
+            idbSet('generatedTestModel', data.refinedModel).catch(console.warn);
+            idbSet('testModelTree', newTree).catch(console.warn);
+            idbSet('modelHistory', [...modelHistory, v2Snapshot]).catch(console.warn);
+
+            // Показываем предупреждения, если есть
+            const warnings = validation.errors.filter(e => e.type === 'warning');
+            if (warnings.length > 0) {
+                console.warn('Предупреждения валидации:', warnings);
+            }
+
+            // Показываем diff view
+            setShowDiffView(true);
+            setReviewComment(''); // Очищаем комментарий
+
+            alert(`✅ Модель доработана!\n\nДобавлено: ${diff.added.features.length} Feature, ${diff.added.stories.length} Story, ${diff.added.scenarios.length} Scenario\nИзменено: ${diff.modified.features.length} Feature, ${diff.modified.stories.length} Story, ${diff.modified.scenarios.length} Scenario`);
+
+        } catch (error) {
+            console.error('Ошибка при доработке модели:', error);
+            alert('Не удалось доработать модель: ' + (error.response?.data?.error || error.message));
+        } finally {
+            setIsGeneratingModel(false);
+            setModelGenerationStatus(null);
         }
     };
 
@@ -1369,6 +1616,233 @@ export default function TestModelGeneratorModal({
 
     // ✅ State для чекбокса "С интеграционными бекенд тестами"
     const [includeBackendTests, setIncludeBackendTests] = useState(true); // По умолчанию включено
+
+    // Функция для вычисления baseline метрик модели
+    const calculateBaselineMetrics = (model) => {
+        if (!Array.isArray(model) || model.length === 0) {
+            return {
+                featuresCount: 0,
+                storiesCount: 0,
+                scenariosCount: 0,
+                codesCount: 0,
+                featureIds: [],
+                storyIds: [],
+                scenarioIds: [],
+                codeIds: [],
+                codeTexts: []
+            };
+        }
+
+        const featureIds = [];
+        const storyIds = [];
+        const scenarioIds = [];
+        const codeIds = [];
+        const codeTexts = [];
+
+        model.forEach(feature => {
+            if (feature.id) featureIds.push(feature.id);
+            (feature.stories || []).forEach(story => {
+                if (story.id) storyIds.push(story.id);
+                (story.scenarios || []).forEach(scenario => {
+                    if (scenario.id) scenarioIds.push(scenario.id);
+                    (scenario.codes || []).forEach(code => {
+                        if (code.id) codeIds.push(code.id);
+                        if (code.text) codeTexts.push(code.text);
+                    });
+                });
+            });
+        });
+
+        return {
+            featuresCount: featureIds.length,
+            storiesCount: storyIds.length,
+            scenariosCount: scenarioIds.length,
+            codesCount: codeIds.length,
+            featureIds,
+            storyIds,
+            scenarioIds,
+            codeIds,
+            codeTexts
+        };
+    };
+
+    // Функция для вычисления diff между двумя версиями модели
+    const calculateModelDiff = (oldModel, newModel) => {
+        const oldMetrics = calculateBaselineMetrics(oldModel);
+        const newMetrics = calculateBaselineMetrics(newModel);
+
+        const diff = {
+            added: {
+                features: [],
+                stories: [],
+                scenarios: [],
+                codes: []
+            },
+            removed: {
+                features: [],
+                stories: [],
+                scenarios: [],
+                codes: []
+            },
+            modified: {
+                features: [],
+                stories: [],
+                scenarios: [],
+                codes: []
+            },
+            metrics: {
+                old: oldMetrics,
+                new: newMetrics
+            }
+        };
+
+        // Находим удаленные и измененные элементы
+        const findInModel = (model, id, type) => {
+            for (const feature of model || []) {
+                if (type === 'feature' && feature.id === id) return feature;
+                for (const story of feature.stories || []) {
+                    if (type === 'story' && story.id === id) return story;
+                    for (const scenario of story.scenarios || []) {
+                        if (type === 'scenario' && scenario.id === id) return scenario;
+                        for (const code of scenario.codes || []) {
+                            if (type === 'code' && code.id === id) return code;
+                        }
+                    }
+                }
+            }
+            return null;
+        };
+
+        // Проверяем features
+        oldMetrics.featureIds.forEach(id => {
+            const oldFeature = findInModel(oldModel, id, 'feature');
+            const newFeature = findInModel(newModel, id, 'feature');
+            if (!newFeature) {
+                diff.removed.features.push({ id, text: oldFeature?.text });
+            } else if (oldFeature?.text !== newFeature?.text) {
+                diff.modified.features.push({ id, old: oldFeature?.text, new: newFeature?.text });
+            }
+        });
+
+        // Проверяем stories
+        oldMetrics.storyIds.forEach(id => {
+            const oldStory = findInModel(oldModel, id, 'story');
+            const newStory = findInModel(newModel, id, 'story');
+            if (!newStory) {
+                diff.removed.stories.push({ id, text: oldStory?.text });
+            } else if (oldStory?.text !== newStory?.text) {
+                diff.modified.stories.push({ id, old: oldStory?.text, new: newStory?.text });
+            }
+        });
+
+        // Проверяем scenarios
+        oldMetrics.scenarioIds.forEach(id => {
+            const oldScenario = findInModel(oldModel, id, 'scenario');
+            const newScenario = findInModel(newModel, id, 'scenario');
+            if (!newScenario) {
+                diff.removed.scenarios.push({ id, text: oldScenario?.text });
+            } else if (oldScenario?.text !== newScenario?.text) {
+                diff.modified.scenarios.push({ id, old: oldScenario?.text, new: newScenario?.text });
+            }
+        });
+
+        // Проверяем codes
+        oldMetrics.codeIds.forEach(id => {
+            const oldCode = findInModel(oldModel, id, 'code');
+            const newCode = findInModel(newModel, id, 'code');
+            if (!newCode) {
+                diff.removed.codes.push({ id, text: oldCode?.text });
+            } else if (oldCode?.text !== newCode?.text || oldCode?.type !== newCode?.type) {
+                diff.modified.codes.push({ 
+                    id, 
+                    old: { text: oldCode?.text, type: oldCode?.type },
+                    new: { text: newCode?.text, type: newCode?.type }
+                });
+            }
+        });
+
+        // Находим добавленные элементы
+        newMetrics.featureIds.forEach(id => {
+            if (!oldMetrics.featureIds.includes(id)) {
+                const feature = findInModel(newModel, id, 'feature');
+                diff.added.features.push({ id, text: feature?.text });
+            }
+        });
+
+        newMetrics.storyIds.forEach(id => {
+            if (!oldMetrics.storyIds.includes(id)) {
+                const story = findInModel(newModel, id, 'story');
+                diff.added.stories.push({ id, text: story?.text });
+            }
+        });
+
+        newMetrics.scenarioIds.forEach(id => {
+            if (!oldMetrics.scenarioIds.includes(id)) {
+                const scenario = findInModel(newModel, id, 'scenario');
+                diff.added.scenarios.push({ id, text: scenario?.text });
+            }
+        });
+
+        newMetrics.codeIds.forEach(id => {
+            if (!oldMetrics.codeIds.includes(id)) {
+                const code = findInModel(newModel, id, 'code');
+                diff.added.codes.push({ id, text: code?.text, type: code?.type });
+            }
+        });
+
+        return diff;
+    };
+
+    // Функция валидации модели после правок
+    const validateRefinedModel = (oldModel, newModel, issues = []) => {
+        const oldMetrics = calculateBaselineMetrics(oldModel);
+        const newMetrics = calculateBaselineMetrics(newModel);
+        const diff = calculateModelDiff(oldModel, newModel);
+
+        const validationErrors = [];
+
+        // Проверка: критические элементы не должны исчезнуть без причины
+        if (diff.removed.features.length > 0 && issues.length === 0) {
+            validationErrors.push({
+                type: 'critical',
+                message: `Удалены Feature без указания причины: ${diff.removed.features.map(f => f.text).join(', ')}`
+            });
+        }
+
+        if (diff.removed.stories.length > 3) {
+            validationErrors.push({
+                type: 'warning',
+                message: `Удалено слишком много Story (${diff.removed.stories.length}). Возможно, это ошибка.`
+            });
+        }
+
+        // Проверка: новая модель должна быть валидной структурно
+        if (newMetrics.featuresCount === 0) {
+            validationErrors.push({
+                type: 'critical',
+                message: 'Модель не содержит ни одной Feature'
+            });
+        }
+
+        // Проверка покрытия: если были проблемы со статусами, они должны быть исправлены
+        const statusIssues = issues.filter(i => i.includes('статус') || i.includes('status') || i.includes('polling'));
+        if (statusIssues.length > 0 && newMetrics.scenariosCount < oldMetrics.scenariosCount) {
+            validationErrors.push({
+                type: 'warning',
+                message: 'Количество Scenario уменьшилось, но были проблемы со статусами. Проверьте, что они исправлены.'
+            });
+        }
+
+        return {
+            isValid: validationErrors.filter(e => e.type === 'critical').length === 0,
+            errors: validationErrors,
+            diff,
+            metrics: {
+                old: oldMetrics,
+                new: newMetrics
+            }
+        };
+    };
 
     const handleSubmitForCases = async (e) => {
         e.preventDefault();
@@ -1515,20 +1989,56 @@ export default function TestModelGeneratorModal({
                     )}
 
             <div className="modal-header">
-                <h2>Редактор тестовой модели</h2>
+                <h2>Редактор тестовой модели {modelVersion > 1 && <span style={{ fontSize: '0.8em', color: 'var(--text-secondary)' }}>(v{modelVersion})</span>}</h2>
                 <div className="header-actions">
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginRight: '12px' }}>
+                        <label style={{ fontSize: '0.9em', color: 'var(--text-secondary)', marginRight: '8px' }}>
+                            Режим:
+                        </label>
+                        <select
+                            value={generationMode}
+                            onChange={(e) => setGenerationMode(e.target.value)}
+                            disabled={isBusy || modelGenerationStatus === 'processing'}
+                            style={{
+                                background: 'var(--bg-tertiary)',
+                                border: '1px solid var(--border-primary)',
+                                color: 'var(--text-primary)',
+                                borderRadius: '4px',
+                                padding: '6px 12px',
+                                fontSize: '0.9em',
+                                cursor: (isBusy || modelGenerationStatus === 'processing') ? 'not-allowed' : 'pointer'
+                            }}
+                        >
+                            <option value="create">Создать с нуля</option>
+                            <option value="refine" disabled={!localGeneratedModel || localGeneratedModel.length === 0}>Доработать текущую</option>
+                        </select>
+                    </div>
                     <button
                         type="button"
                         className="button-base button-accent"
-                        onClick={handleGenerateModel}
-                        disabled={isBusy || modelGenerationStatus === 'processing'}
+                        onClick={generationMode === 'create' ? handleGenerateModel : handleRefineModel}
+                        disabled={isBusy || modelGenerationStatus === 'processing' || (generationMode === 'refine' && (!localGeneratedModel || localGeneratedModel.length === 0))}
                         style={{
-                            opacity: (isBusy || modelGenerationStatus === 'processing') ? 0.6 : 1,
-                            cursor: (isBusy || modelGenerationStatus === 'processing') ? 'not-allowed' : 'pointer'
+                            opacity: (isBusy || modelGenerationStatus === 'processing' || (generationMode === 'refine' && (!localGeneratedModel || localGeneratedModel.length === 0))) ? 0.6 : 1,
+                            cursor: (isBusy || modelGenerationStatus === 'processing' || (generationMode === 'refine' && (!localGeneratedModel || localGeneratedModel.length === 0))) ? 'not-allowed' : 'pointer'
                         }}
                     >
-                        {modelGenerationStatus === 'processing' ? `🔄 Генерация... ${modelGenerationProgress}%` : '🧱 Сгенерировать модель по требованиям'}
+                        {modelGenerationStatus === 'processing' 
+                            ? `🔄 ${generationMode === 'create' ? 'Генерация' : 'Доработка'}... ${modelGenerationProgress}%` 
+                            : generationMode === 'create' 
+                                ? '🧱 Сгенерировать модель по требованиям'
+                                : '🔧 Доработать модель'}
                     </button>
+                    {modelDiff && (
+                        <button
+                            type="button"
+                            className="button-base button-secondary"
+                            onClick={() => setShowDiffView(!showDiffView)}
+                            disabled={isBusy}
+                        >
+                            {showDiffView ? '📋 Скрыть изменения' : '📊 Показать изменения'}
+                        </button>
+                    )}
                     <button
                         type="button"
                         className="button-base button-secondary"
@@ -1556,6 +2066,63 @@ export default function TestModelGeneratorModal({
                 <div ref={editorPaneRef} className="editor-pane" style={{ width: `${editorWidth}px` }}>
                     <DragDropContext onDragEnd={onDragEnd}>
                         <form onSubmit={handleSubmitForCases} className="modal-form">
+                            {generationMode === 'refine' && (
+                                <div style={{ 
+                                    padding: '12px 16px', 
+                                    borderBottom: '1px solid var(--border-primary)',
+                                    backgroundColor: 'var(--bg-tertiary)'
+                                }}>
+                                    <label style={{ 
+                                        display: 'block', 
+                                        marginBottom: '8px', 
+                                        fontSize: '0.9em', 
+                                        color: 'var(--text-secondary)',
+                                        fontWeight: 600
+                                    }}>
+                                        Комментарий ревьюера (опционально):
+                                    </label>
+                                    <textarea
+                                        value={reviewComment}
+                                        onChange={(e) => setReviewComment(e.target.value)}
+                                        placeholder="Например: слишком толстые Story, нет сценариев по статусам, убрать дубли Code по методам статуса..."
+                                        disabled={isBusy || modelGenerationStatus === 'processing'}
+                                        style={{
+                                            width: '100%',
+                                            minHeight: '80px',
+                                            padding: '8px',
+                                            background: 'var(--bg-secondary)',
+                                            border: '1px solid var(--border-primary)',
+                                            borderRadius: '4px',
+                                            color: 'var(--text-primary)',
+                                            fontSize: '0.9em',
+                                            fontFamily: 'inherit',
+                                            resize: 'vertical'
+                                        }}
+                                    />
+                                    <div style={{ 
+                                        marginTop: '8px', 
+                                        fontSize: '0.85em', 
+                                        color: 'var(--text-secondary)',
+                                        fontStyle: 'italic'
+                                    }}>
+                                        💡 Укажите конкретные проблемы для более точной доработки
+                                    </div>
+                                </div>
+                            )}
+                            {showDiffView && modelDiff && (
+                                <div style={{ 
+                                    padding: '12px 16px', 
+                                    borderBottom: '1px solid var(--border-primary)',
+                                    backgroundColor: 'var(--bg-tertiary)',
+                                    maxHeight: '300px',
+                                    overflowY: 'auto'
+                                }}>
+                                    <h4 style={{ margin: '0 0 12px 0', fontSize: '1em', color: 'var(--text-primary)' }}>
+                                        📊 Изменения модели (v{modelVersion - 1} → v{modelVersion})
+                                    </h4>
+                                    <ModelDiffView diff={modelDiff} />
+                                </div>
+                            )}
                             <div className="modal-body">
                                 <Droppable droppableId="root-droppable" type="FEATURE">
                                     {(provided) => (
