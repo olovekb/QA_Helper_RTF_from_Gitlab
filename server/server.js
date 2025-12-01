@@ -589,6 +589,24 @@ function buildRefineModelUserPrompt({ oldModel, reviewNotes, issues, requirement
         ? issues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')
         : 'Не указаны';
 
+    // Безопасное преобразование requirements в строку
+    let requirementsText = '';
+    if (requirements) {
+        if (typeof requirements === 'string') {
+            requirementsText = requirements;
+        } else if (Array.isArray(requirements)) {
+            requirementsText = requirements.join('\n\n---\n\n');
+        } else if (typeof requirements === 'object') {
+            requirementsText = JSON.stringify(requirements, null, 2);
+        } else {
+            requirementsText = String(requirements);
+        }
+    }
+
+    const requirementsPreview = requirementsText 
+        ? `\nИСХОДНЫЕ ТРЕБОВАНИЯ (для контекста):\n${requirementsText.length > 1000 ? requirementsText.substring(0, 1000) + '...' : requirementsText}`
+        : '';
+
     return `
 📋 ЗАДАНИЕ: Доработать тестовую модель на основе замечаний ревьюера.
 
@@ -602,8 +620,7 @@ ${reviewNotes || 'Нет конкретных замечаний'}
 
 СПИСОК ПРОБЛЕМ (ISSUES):
 ${issuesList}
-
-${requirements ? `\nИСХОДНЫЕ ТРЕБОВАНИЯ (для контекста):\n${requirements.substring(0, 1000)}...` : ''}
+${requirementsPreview}
 
 🔧 ИНСТРУКЦИИ:
 1. Проанализируй замечания и список проблем
