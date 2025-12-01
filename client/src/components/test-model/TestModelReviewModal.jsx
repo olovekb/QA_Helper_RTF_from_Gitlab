@@ -868,43 +868,152 @@ export function TestCaseCard({
                                     <Droppable droppableId={`steps-${testCase.id}`} type="STEP">
                                         {(dropProv) => (
                                             <div ref={dropProv.innerRef} {...dropProv.droppableProps}>
-                                                {testCase.steps.map((step, idx) => (
-                                                    <Draggable
-                                                        key={idx}
-                                                        draggableId={`step-${testCase.id}-${idx}`}
-                                                        index={idx}
-                                                    >
-                                                        {(dragProv) => (
-                                                            <div
-                                                                ref={dragProv.innerRef}
-                                                                {...dragProv.draggableProps}
-                                                                {...dragProv.dragHandleProps}
-                                                                className={`array-item ${typeof step === 'string' ? '' : 'shared-step-item'
-                                                                    }`}
-                                                            >
-                                                                {typeof step === 'string' ? (
-                                                                    <textarea
-                                                                        value={step}
-                                                                        placeholder={`Шаг ${idx + 1}`}
-                                                                        onChange={(e) => {
-                                                                            const arr = [...testCase.steps];
-                                                                            arr[idx] = e.target.value;
-                                                                            handleFieldChange('steps', arr);
-                                                                        }}
-                                                                    />
-                                                                ) : (
-                                                                    <div className="shared-step-label">{step.text}</div>
-                                                                )}
-                                                                <button
-                                                                    className="remove-item-btn"
-                                                                    onClick={() => removeArrayItem('steps', idx)}
+                                                {testCase.steps.map((step, idx) => {
+                                                    // Определяем, является ли тест E2E (для поддержки промежуточных ожидаемых результатов)
+                                                    const isE2E = testCase.layer === 'E2E Tests';
+                                                    
+                                                    // Нормализуем step: может быть строкой, объектом с sharedStepId, или объектом с action/expectedResult
+                                                    const stepAction = typeof step === 'string' 
+                                                        ? step 
+                                                        : (step?.action || step?.text || '');
+                                                    const stepExpectedResult = typeof step === 'object' && step?.expectedResult 
+                                                        ? step.expectedResult 
+                                                        : '';
+                                                    const isSharedStep = typeof step === 'object' && step?.sharedStepId;
+                                                    
+                                                    return (
+                                                        <Draggable
+                                                            key={idx}
+                                                            draggableId={`step-${testCase.id}-${idx}`}
+                                                            index={idx}
+                                                        >
+                                                            {(dragProv) => (
+                                                                <div
+                                                                    ref={dragProv.innerRef}
+                                                                    {...dragProv.draggableProps}
+                                                                    className={`array-item ${isSharedStep ? 'shared-step-item' : ''}`}
+                                                                    style={{ 
+                                                                        display: 'flex', 
+                                                                        flexDirection: 'column', 
+                                                                        gap: '8px',
+                                                                        padding: '12px',
+                                                                        border: '1px solid var(--border-primary)',
+                                                                        borderRadius: '6px',
+                                                                        marginBottom: '8px'
+                                                                    }}
                                                                 >
-                                                                    −
-                                                                </button>
-                                                            </div>
-                                                        )}
-                                                    </Draggable>
-                                                ))}
+                                                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                                                                        <span 
+                                                                            {...dragProv.dragHandleProps}
+                                                                            style={{ 
+                                                                                cursor: 'grab', 
+                                                                                padding: '4px 8px',
+                                                                                color: 'var(--text-secondary)',
+                                                                                fontSize: '14px'
+                                                                            }}
+                                                                        >
+                                                                            ⠿
+                                                                        </span>
+                                                                        {isSharedStep ? (
+                                                                            <div className="shared-step-label" style={{ flex: 1 }}>{step.text}</div>
+                                                                        ) : (
+                                                                            <textarea
+                                                                                value={stepAction}
+                                                                                placeholder={`Шаг ${idx + 1}`}
+                                                                                onChange={(e) => {
+                                                                                    const arr = [...testCase.steps];
+                                                                                    if (typeof arr[idx] === 'string') {
+                                                                                        arr[idx] = e.target.value;
+                                                                                    } else if (typeof arr[idx] === 'object') {
+                                                                                        arr[idx] = { ...arr[idx], action: e.target.value };
+                                                                                    } else {
+                                                                                        arr[idx] = e.target.value;
+                                                                                    }
+                                                                                    handleFieldChange('steps', arr);
+                                                                                }}
+                                                                                style={{
+                                                                                    flex: 1,
+                                                                                    minHeight: '60px',
+                                                                                    padding: '8px',
+                                                                                    background: 'var(--bg-secondary)',
+                                                                                    border: '1px solid var(--border-primary)',
+                                                                                    borderRadius: '4px',
+                                                                                    color: 'var(--text-primary)',
+                                                                                    fontSize: '0.9em',
+                                                                                    fontFamily: 'inherit',
+                                                                                    resize: 'vertical'
+                                                                                }}
+                                                                            />
+                                                                        )}
+                                                                        <button
+                                                                            className="remove-item-btn"
+                                                                            onClick={() => removeArrayItem('steps', idx)}
+                                                                            style={{
+                                                                                background: 'var(--btn-secondary-bg)',
+                                                                                border: '1px solid var(--border-primary)',
+                                                                                color: 'var(--danger-red)',
+                                                                                borderRadius: '4px',
+                                                                                cursor: 'pointer',
+                                                                                padding: '4px 8px',
+                                                                                fontSize: '16px',
+                                                                                lineHeight: 1
+                                                                            }}
+                                                                        >
+                                                                            ×
+                                                                        </button>
+                                                                    </div>
+                                                                    {/* Промежуточный ожидаемый результат (только для E2E и не для shared steps) */}
+                                                                    {isE2E && !isSharedStep && (
+                                                                        <div style={{ 
+                                                                            marginLeft: '32px',
+                                                                            padding: '8px',
+                                                                            background: 'rgba(88, 166, 255, 0.1)',
+                                                                            borderLeft: '3px solid var(--accent-blue)',
+                                                                            borderRadius: '4px'
+                                                                        }}>
+                                                                            <label style={{ 
+                                                                                display: 'block', 
+                                                                                fontSize: '0.85em', 
+                                                                                color: 'var(--text-secondary)',
+                                                                                marginBottom: '4px',
+                                                                                fontWeight: 600
+                                                                            }}>
+                                                                                Промежуточный ожидаемый результат (опционально):
+                                                                            </label>
+                                                                            <textarea
+                                                                                value={stepExpectedResult}
+                                                                                placeholder="Например: Разворачивается блок..., Появляется поле..."
+                                                                                onChange={(e) => {
+                                                                                    const arr = [...testCase.steps];
+                                                                                    if (typeof arr[idx] === 'string') {
+                                                                                        arr[idx] = { action: arr[idx], expectedResult: e.target.value };
+                                                                                    } else if (typeof arr[idx] === 'object') {
+                                                                                        arr[idx] = { ...arr[idx], expectedResult: e.target.value };
+                                                                                    } else {
+                                                                                        arr[idx] = { action: '', expectedResult: e.target.value };
+                                                                                    }
+                                                                                    handleFieldChange('steps', arr);
+                                                                                }}
+                                                                                style={{
+                                                                                    width: '100%',
+                                                                                    minHeight: '50px',
+                                                                                    padding: '6px',
+                                                                                    background: 'var(--bg-primary)',
+                                                                                    border: '1px solid var(--border-primary)',
+                                                                                    borderRadius: '4px',
+                                                                                    color: 'var(--text-primary)',
+                                                                                    fontSize: '0.85em',
+                                                                                    fontFamily: 'inherit',
+                                                                                    resize: 'vertical'
+                                                                                }}
+                                                                            />
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                        </Draggable>
+                                                    );
+                                                })}
                                                 {dropProv.placeholder}
                                             </div>
                                         )}
@@ -912,7 +1021,12 @@ export function TestCaseCard({
                                 </DragDropContext>
                                 <button
                                     className="add-item-btn"
-                                    onClick={() => addArrayItem('steps', '')}
+                                    onClick={() => {
+                                        // Для E2E тестов создаем объект с action, для Integration - строку
+                                        const isE2E = testCase.layer === 'E2E Tests';
+                                        const newStep = isE2E ? { action: '' } : '';
+                                        addArrayItem('steps', newStep);
+                                    }}
                                 >
                                     + Добавить шаг
                                 </button>
@@ -4101,7 +4215,27 @@ export default function TestModelReviewModal({
             codeNode: c.code || undefined,              // <— не «code», чтобы не конфликтовало
             title: (c.title || '').trim(),
             precondition: (c.precondition || '').trim(),
-            steps: (c.steps || []).map(s => typeof s === 'string' ? s : { sharedStepId: s.sharedStepId }),
+            steps: (c.steps || []).map(s => {
+                // Нормализуем шаг: поддерживаем строки, объекты с sharedStepId, объекты с action/expectedResult
+                if (typeof s === 'string') {
+                    return s;
+                } else if (typeof s === 'object' && s !== null) {
+                    if (s.sharedStepId) {
+                        // Shared step - сохраняем как есть
+                        return { sharedStepId: s.sharedStepId };
+                    } else if (s.action || s.expectedResult) {
+                        // Шаг с action и/или expectedResult (для E2E тестов)
+                        const normalized = {};
+                        if (s.action) normalized.action = s.action;
+                        if (s.expectedResult) normalized.expectedResult = s.expectedResult;
+                        return normalized;
+                    } else if (s.text) {
+                        // Обратная совместимость: объект с text преобразуем в строку
+                        return s.text;
+                    }
+                }
+                return String(s || '');
+            }),
             expected: (c.expected || '').trim(),
             tags: (c.tags || []).filter(Boolean),
             layer: c.layer,

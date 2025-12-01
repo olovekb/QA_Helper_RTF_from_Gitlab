@@ -529,6 +529,36 @@ ${idealExampleBlock}
 - Для каждой явно указанной ошибки создай ОТДЕЛЬНЫЙ негативный Scenario.
 - НЕ придумывай дополнительные коды ошибок и тексты, которых нет в требованиях.
 
+**ОДИН ИСХОД = ОДИН SCENARIO (КРИТИЧНО!):**
+- Если для одного и того же пользовательского действия или API-метода в требованиях описано несколько возможных исходов (успех, несколько типов ошибок, разные тексты модальных окон), КАЖДЫЙ исход должен быть оформлен ОТДЕЛЬНЫМ Scenario.
+- ❌ Нельзя в одном Scenario смешивать:
+  - успешный ответ и ошибки,
+  - несколько разных ошибок (разные тексты/коды) одновременно.
+- ✅ Один Scenario = один текст модального окна / одно состояние переключателя / один код ответа.
+- Примеры:
+  - Успешное POST /upload → отдельный Scenario.
+  - Ошибка формата → отдельный Scenario.
+  - Ошибка по размеру → отдельный Scenario.
+  - Успешный DELETE и 404 Image not found → разные Scenario.
+
+**ЯВНЫЕ БИЗНЕС-УСЛОВИЯ В СЦЕНАРИЯХ:**
+- В каждом Scenario ОБЯЗАТЕЛЬНО указывай бизнес-условия, которые определяют ветку:
+  - состояние переключателей/кнопок до действия ("переключатель ... в состоянии 'Выключен'"),
+  - наличие/отсутствие подходящих счетов/карт/вкладов,
+  - особенности ответа сервера (пустой объект, пустой массив, errorCode, пустое тело и т.п.).
+- Эти условия НЕ допускается опускать, если они есть в требованиях — по ним строятся отдельные тесты.
+
+**BACKEND-КОДЫ ПО КАЖДОЙ ОШИБКЕ:**
+- Для каждого описанного в требованиях варианта ошибки сервера (HTTP-код, errorText/сообщение) создай отдельный backend Code:
+  - с точным методом и URL,
+  - с конкретным кодом (200/400/404/500 и т.п.),
+  - с ключевыми полями тела ответа (errorCode, errorText и т.п.).
+
+**ЧИСТОТА CODE-ТЕКСТОВ:**
+- frontend-Code: «кнопка в активном/неактивном состоянии», «отображается модалка с текстом …».
+- backend-Code: «Возвращается 200/400/404 … с JSON {...}».
+- Избегай action-формулировок типа «Выбирается файл…» в Code; действия пользователя должны жить в шагах тестов, Code — описывать состояние/ответ системы.
+
 📦 ВЫХОД
 - Чистый JSON-массив модели (как в эталоне), без комментариев и служебных полей.
 
@@ -690,7 +720,7 @@ Stories: ${storiesList || 'нет'}
         })()
         : totalChunks === 1 
             ? "Это полный документ. Создавай структуру с нуля."
-            : "Это начало работы. Создавай структуру с нуля.";
+        : "Это начало работы. Создавай структуру с нуля.";
 
     return `
 ${chunkNotice}
@@ -2008,6 +2038,83 @@ function buildPlatformMap(platOptions) {
     return m;
 }
 
+/**
+ * Преобразует структуру шагов из Allure (с expectedResultId) в наш формат (с action/expectedResult)
+ * @param {Object} stepsRaw - Структура шагов из Allure API
+ * @param {string} layer - Слой тестирования (для проверки E2E)
+ * @returns {Array} - Массив шагов в нашем формате
+ */
+function convertAllureStepsToFormat(stepsRaw, layer) {
+    if (!stepsRaw || !stepsRaw.scenario || !stepsRaw.scenario.root || !stepsRaw.scenario.scenarioSteps) {
+        return [];
+    }
+
+    const isE2E = layer === 'E2E Tests';
+    const stepOrder = stepsRaw.scenario.root.children || [];
+    const scenarioSteps = stepsRaw.scenario.scenarioSteps || {};
+    const sharedSteps = stepsRaw.sharedSteps || {};
+    const sharedStepScenarioSteps = stepsRaw.sharedStepScenarioSteps || {};
+
+    const convertedSteps = [];
+
+    for (const stepId of stepOrder) {
+        const step = scenarioSteps[stepId];
+        if (!step) continue;
+
+        // Обработка shared step
+        if (step.sharedStepId) {
+            const sharedStep = sharedSteps[step.sharedStepId];
+            if (sharedStep) {
+                // Для shared step сохраняем как объект с sharedStepId
+                convertedSteps.push({
+                    sharedStepId: step.sharedStepId,
+                    text: sharedStep.body || ''
+                });
+            }
+            continue;
+        }
+
+        // Обычный шаг
+        const stepBody = step.body || '';
+        
+        // Если это E2E и у шага есть expectedResultId, извлекаем ожидаемый результат
+        if (isE2E && step.expectedResultId) {
+            const expectedResultContainer = scenarioSteps[step.expectedResultId];
+            if (expectedResultContainer && expectedResultContainer.children) {
+                // Извлекаем текст ожидаемого результата из дочерних шагов
+                const expectedResultChildren = expectedResultContainer.children || [];
+                const expectedResultTexts = expectedResultChildren
+                    .map(childId => {
+                        const childStep = scenarioSteps[childId];
+                        return childStep?.body || '';
+                    })
+                    .filter(text => text.trim().length > 0);
+
+                if (expectedResultTexts.length > 0) {
+                    // Объединяем все тексты ожидаемого результата в одну строку
+                    const expectedResultText = expectedResultTexts.join('\n');
+                    convertedSteps.push({
+                        action: stepBody,
+                        expectedResult: expectedResultText
+                    });
+                    continue;
+                }
+            }
+        }
+
+        // Если нет expectedResult или это не E2E, сохраняем как строку или объект с action
+        if (isE2E && stepBody) {
+            // Для E2E сохраняем как объект с action (даже без expectedResult)
+            convertedSteps.push({ action: stepBody });
+        } else {
+            // Для Integration тестов сохраняем как строку
+            convertedSteps.push(stepBody);
+        }
+    }
+
+    return convertedSteps;
+}
+
 // Функция фильтрации тест-кейсов
 async function filterCases(allCases, jiraIssue, projectId) {
     console.log(`filterCases принял: ${jiraIssue} ${projectId}`)
@@ -2024,7 +2131,7 @@ async function filterCases(allCases, jiraIssue, projectId) {
             }
 
             // Запускаем запросы параллельно
-            const [tags, steps, expectedResult, status, layer, precondition, customFields] = await Promise.all([
+            const [tags, stepsRaw, expectedResult, status, layer, precondition, customFields] = await Promise.all([
                 getCaseTags(id),
                 getTestCaseSteps(id),
                 getTestCaseExpectedResult(id),
@@ -2033,6 +2140,10 @@ async function filterCases(allCases, jiraIssue, projectId) {
                 getTestCasePrecondition(id),
                 getTestCaseCustomFields(id, projectId)
             ]);
+            
+            // ✅ Преобразуем структуру Allure (с expectedResultId) в наш формат (с action/expectedResult)
+            const steps = convertAllureStepsToFormat(stepsRaw, layer);
+            
             filteredCases.push({ id, name, issue, tags, steps, expectedResult, layer, status, precondition, customFields });
         })
     );
@@ -2133,7 +2244,7 @@ app.post('/api/ai-recommendation', async (req, res) => {
             const projectId = testCase.projectId;
             const [
                 tags,
-                steps,
+                stepsRaw,
                 expectedResult,
                 status,
                 layer,
@@ -2150,6 +2261,10 @@ app.post('/api/ai-recommendation', async (req, res) => {
                 getTestCaseCustomFields(id, projectId),
                 getCaseIssue(id)
             ]);
+            
+            // ✅ Преобразуем структуру Allure (с expectedResultId) в наш формат (с action/expectedResult)
+            const steps = convertAllureStepsToFormat(stepsRaw, layer);
+            
             // Обновляем объект, сохраняя все поля, что пришли от клиента и дополняем недостающие.
             testCase = {
                 ...testCase,
@@ -6796,14 +6911,17 @@ app.post('/api/create-test-cases', async (req, res) => {
                 const params = { testCaseId };
 
                 if (typeof step === 'object' && step.sharedStepId) {
+                    // Shared step - используем sharedStepId
                     params.sharedStepId = step.sharedStepId;
                 } else {
-                    // ✅ Извлекаем текст шага и гарантируем, что это строка
+                    // ✅ Извлекаем текст шага (action) и гарантируем, что это строка
+                    // Поддерживаем форматы: строка, объект с action, объект с text (для обратной совместимости)
                     let stepText;
                     if (typeof step === 'string') {
                         stepText = step;
                     } else if (typeof step === 'object' && step !== null) {
-                        stepText = step.text || '';
+                        // Приоритет: action > text (для обратной совместимости)
+                        stepText = step.action || step.text || '';
                     } else {
                         stepText = String(step || '');
                     }
@@ -6822,20 +6940,27 @@ app.post('/api/create-test-cases', async (req, res) => {
                     added.id;
                 lastStepId = stepId;
 
-                // ✅ Если у шага есть expectedResult, добавляем его
-                if (typeof step === 'object' && step.expectedResult) {
-                    try {
-                        // ✅ Гарантируем, что expectedResult - строка
-                        const expectedResultRaw = step.expectedResult;
-                        const expectedResultText = typeof expectedResultRaw === 'string'
-                            ? fixPlaceholderEscaping(expectedResultRaw)
-                            : String(expectedResultRaw || '');
-                        if (expectedResultText && expectedResultText.trim()) {
-                            await addExpectedResultToStep(testCaseId, stepId, expectedResultText);
+                // ✅ Если у шага есть expectedResult (только для E2E тестов, не для shared steps), добавляем его
+                if (typeof step === 'object' && step.expectedResult && !step.sharedStepId) {
+                    // ✅ Проверяем, что это E2E тест (промежуточные ожидаемые результаты только для E2E)
+                    const isE2E = c.layer === 'E2E Tests';
+                    if (isE2E) {
+                        try {
+                            // ✅ Гарантируем, что expectedResult - строка
+                            const expectedResultRaw = step.expectedResult;
+                            const expectedResultText = typeof expectedResultRaw === 'string'
+                                ? fixPlaceholderEscaping(expectedResultRaw)
+                                : String(expectedResultRaw || '');
+                            if (expectedResultText && expectedResultText.trim()) {
+                                await addExpectedResultToStep(testCaseId, stepId, expectedResultText);
+                                console.log(`[create-test-cases] ✅ Добавлен промежуточный Expected Result к шагу ${stepId} для E2E ТК ${testCaseId}`);
+                            }
+                        } catch (expectedErr) {
+                            console.error(`[create-test-cases] ❌ Ошибка при добавлении Expected Result к шагу для ТК ${testCaseId}:`, expectedErr.message);
+                            // Не прерываем создание тест-кейса, продолжаем дальше
                         }
-                    } catch (expectedErr) {
-                        console.error(`[create-test-cases] ❌ Ошибка при добавлении Expected Result к шагу для ТК ${testCaseId}:`, expectedErr.message);
-                        // Не прерываем создание тест-кейса, продолжаем дальше
+                    } else {
+                        console.warn(`[create-test-cases] ⚠️ Пропущен expectedResult для шага в не-E2E тесте (layer: ${c.layer}). Промежуточные ожидаемые результаты поддерживаются только для E2E тестов.`);
                     }
                 }
             }
@@ -8766,12 +8891,12 @@ class GlobalSignatureRegistry {
      * Извлекает текст из шага
      */
     stepToText(step) {
+        // Поддерживаем форматы: строка, объект с action, объект с text (для обратной совместимости)
         if (typeof step === 'string') return step;
-        if (step && typeof step === 'object') {
-            if (step.text) return step.text;
-            if (step.body) return step.body;
+        if (typeof step === 'object' && step !== null) {
+            return step.action || step.text || step.body || String(step);
         }
-        return JSON.stringify(step ?? '');
+        return String(step || '');
     }
 
     /**
@@ -9110,7 +9235,10 @@ function areE2EStepsDuplicate(test1, test2) {
     if (test1.feature !== test2.feature || test1.story !== test2.story) return false;
 
     const normalizeStep = (step) => {
-        const text = typeof step === 'string' ? step : (step?.text || step?.body || String(step));
+        // Поддерживаем форматы: строка, объект с action, объект с text (для обратной совместимости)
+        const text = typeof step === 'string' 
+            ? step 
+            : (step?.action || step?.text || step?.body || String(step));
         return text.toLowerCase().trim().replace(/\s+/g, ' ');
     };
 
@@ -9243,6 +9371,12 @@ function deduplicateTestCases(testCases, stage = 'final') {
         .trim();
 
     const stepToText = (step) => {
+        // Поддерживаем форматы: строка, объект с action, объект с text (для обратной совместимости)
+        if (typeof step === 'string') return step;
+        if (typeof step === 'object' && step !== null) {
+            return step.action || step.text || step.body || String(step);
+        }
+        return String(step || '');
         if (typeof step === 'string') return step;
         if (step && typeof step === 'object') {
             if (step.text) return step.text;
@@ -9884,11 +10018,12 @@ async function generateTestCasesAsync(taskId, inputData) {
 
             // ✅ Вспомогательная функция для извлечения текста шага
             const getStepText = (step) => {
+                // Поддерживаем форматы: строка, объект с action, объект с text (для обратной совместимости)
                 if (typeof step === 'string') {
                     return step;
                 } else if (typeof step === 'object' && step !== null) {
-                    // Может быть объектом с text, sharedStepId, или expectedResult
-                    return step.text || step.body || String(step);
+                    // Может быть объектом с action, text, sharedStepId, или expectedResult
+                    return step.action || step.text || step.body || String(step);
                 }
                 return String(step || '');
             };
@@ -11512,6 +11647,83 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
                 // Обрабатываем шаги
                 const processedSteps = (tc.steps || []).map(step => {
+                    // Поддерживаем форматы: строка, объект с sharedStepId, объект с action/expectedResult
+                    if (typeof step === 'object' && step !== null) {
+                        // Если это shared step, сохраняем как есть
+                        if (step.sharedStepId) {
+                            return step;
+                        }
+                        // Если это объект с action/expectedResult, обрабатываем action
+                        if (step.action) {
+                            let processedAction = step.action;
+                            let stepModified = false;
+
+                            // Для каждого параметра ищем его упоминания в action
+                            parameterNames.forEach(paramName => {
+                                // Проверяем, не использован ли уже формат {{Название параметра}}
+                                if (processedAction.includes(`{{${paramName}}}`)) {
+                                    return; // Уже в правильном формате
+                                }
+
+                                // Различные варианты упоминания параметра (в порядке приоритета)
+                                const patterns = [
+                                    // 1. "из параметра X", "параметр X", "X из параметров", "из таблицы параметров X"
+                                    {
+                                        pattern: new RegExp(`(?:из\\s+(?:таблицы\\s+)?)?параметра?\\s+["']?${escapeRegex(paramName)}["']?`, 'gi'),
+                                        replacement: `{{${paramName}}}`
+                                    },
+                                    {
+                                        pattern: new RegExp(`["']?${escapeRegex(paramName)}["']?\\s+(?:из\\s+(?:таблицы\\s+)?)?параметра?`, 'gi'),
+                                        replacement: `{{${paramName}}}`
+                                    },
+                                    // 2. Упоминание в скобках: "(X)", "[X]", "{X}"
+                                    {
+                                        pattern: new RegExp(`\\(["']?${escapeRegex(paramName)}["']?\\)`, 'gi'),
+                                        replacement: `{{${paramName}}}`
+                                    },
+                                    {
+                                        pattern: new RegExp(`\\["'?${escapeRegex(paramName)}["']?\\]`, 'gi'),
+                                        replacement: `{{${paramName}}}`
+                                    },
+                                    // 3. Прямое упоминание в контексте "поля X", "значение X", "X из" (только если название достаточно уникальное)
+                                    {
+                                        pattern: new RegExp(`(?:поля|значение|значения|параметр)\\s+["']?${escapeRegex(paramName)}["']?`, 'gi'),
+                                        replacement: (match) => {
+                                            // Сохраняем контекст, заменяя только название параметра
+                                            return match.replace(new RegExp(escapeRegex(paramName), 'gi'), `{{${paramName}}}`);
+                                        }
+                                    }
+                                ];
+
+                                // Пробуем заменить по паттернам (в порядке приоритета)
+                                for (const { pattern, replacement } of patterns) {
+                                    if (pattern.test(processedAction)) {
+                                        const beforeReplace = processedAction;
+                                        if (typeof replacement === 'function') {
+                                            processedAction = processedAction.replace(pattern, replacement);
+                                        } else {
+                                            processedAction = processedAction.replace(pattern, replacement);
+                                        }
+
+                                        if (beforeReplace !== processedAction) {
+                                            stepModified = true;
+                                            totalReplacements++;
+                                        }
+                                        break; // Заменяем только один раз на параметр
+                                    }
+                                }
+                            });
+
+                            // Если action был изменен, возвращаем обновленный объект
+                            if (stepModified) {
+                                return { ...step, action: processedAction };
+                            }
+                            return step;
+                        }
+                        // Другие объекты сохраняем как есть
+                        return step;
+                    }
+                    // Если это строка, обрабатываем параметры
                     if (typeof step !== 'string') {
                         return step;
                     }
@@ -11575,6 +11787,11 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                         }
                     });
 
+                    // Если шаг был изменен, возвращаем обновленную строку
+                    // Если это был объект с action/expectedResult, нужно обновить action
+                    if (stepModified && typeof step === 'object' && step !== null && step.action) {
+                        return { ...step, action: processedStep };
+                    }
                     return processedStep;
                 });
 
@@ -11600,12 +11817,12 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         ];
 
         function stepToText(step) {
+            // Поддерживаем форматы: строка, объект с action, объект с text (для обратной совместимости)
             if (typeof step === 'string') return step;
-            if (step && typeof step === 'object') {
-                if (typeof step.text === 'string') return step.text;
-                if (typeof step.body === 'string') return step.body;
+            if (typeof step === 'object' && step !== null) {
+                return step.action || step.text || step.body || String(step);
             }
-            return String(step ?? '');
+            return String(step || '');
         }
 
         function escapeRegex(str) {
@@ -12991,12 +13208,21 @@ ${existingE2E.length > 0 ? existingE2E.map(t => `  - ${t.title}`).join('\n') : '
    - Ошибки сервера (если описаны 4xx/5xx коды).
    *Если в модели есть Code с ошибкой — тест ОБЯЗАТЕЛЕН.*
    - Каждый Negative тест проверяет ОДИН тип ошибки и ОДИН ожидаемый результат.
-3. **Parameterization First:** Если логика проверки одна, а данные разные (разные суммы, разные валидные email) — используй ОДИН тест с таблицей 'examples'. Не плоди дубли.
-4. **Deep Dive:** Для каждого сложного UI-сценария (форма, таблица, валидация) создай минимум 3-4 вариации (пустые поля, макс. длина, спецсимволы, XSS-пейлоады, граничные значения).
-5. **Backend Coverage (API):**
+3. **Один тест = один исход (КРИТИЧНО!):**
+   - Каждый тест-кейс проверяет ОДИН конкретный исход:
+     - один успешный результат, ИЛИ
+     - одну конкретную ошибку/одно модальное окно.
+   - ❌ Нельзя описывать в одном expected несколько разных ошибок или комбинации "сначала ошибка А, потом ошибка Б".
+   - ✅ Для каждого текста ошибки или состояния из требований создай отдельный Negative/Positive тест.
+4. **Parameterization First:** Если логика проверки одна, а данные разные (разные суммы, разные валидные email) — используй ОДИН тест с таблицей 'examples'. Не плоди дубли.
+5. **Deep Dive:** Для каждого сложного UI-сценария (форма, таблица, валидация) создай минимум 3-4 вариации (пустые поля, макс. длина, спецсимволы, XSS-пейлоады, граничные значения).
+6. **Backend Coverage (API):**
    - Для КАЖДОГО backend Code из тестовой модели (code.type = "backend") ОБЯЗАТЕЛЬНО создай как минимум ОДИН Integration backend тест.
    - Если backend Code описывает ошибку (4xx/5xx или поле error в ответе) — СОЗДАЙ ОТДЕЛЬНЫЙ Negative Integration backend тест для этой ошибки.
    - НЕ объединяй несколько разных ошибок (разные коды/тексты) в один тест. На каждую ошибку — отдельный тест-кейс.
+7. **Anti-duplication:**
+   - Не создавай два теста с одинаковыми feature + story + scenario + layer + type и одинаковым expected.
+   - Если отличаются только входные данные (категория, формат файла, размер и т.п.) при одинаковом expected, используй один тест с таблицей 'examples'.
 
 🏗️ ТИПЫ ТЕСТОВ И СТРУКТУРА:
 
@@ -13008,16 +13234,30 @@ ${existingE2E.length > 0 ? existingE2E.map(t => `  - ${t.title}`).join('\n') : '
   3. Опиши заполнение формы ("Заполнить поле...", "Выбрать...", "Установить чек-бокс...").
   4. Заверши целевым действием ("Нажать 'Сохранить'", "Нажать 'Создать'", "Нажать 'Отправить'").
 - **E2E Rule:** 🚨 КРИТИЧНО! Если в сценарии модели нет шагов авторизации или навигации — ДОБАВЬ ИХ В E2E ТЕСТ САМ. Тест должен быть самодостаточным и описывать полный путь пользователя, даже если в модели указан только финальный шаг.
-- **Expected:** Опиши не только сообщение, но и изменение состояния системы ("Задача появляется в списке", "Файл сохранен", "Уведомление отображается").
+- **Промежуточные ожидаемые результаты (ТОЛЬКО для E2E):** 
+  - ✅ РАЗРЕШЕНО: Добавлять промежуточный ожидаемый результат к отдельным шагам для проверки промежуточных состояний системы.
+  - Используй это для объединения похожих E2E тестов с разными промежуточными проверками в один тест.
+  - Пример: Если несколько E2E тестов имеют одинаковые шаги, но разные промежуточные проверки (например, "Разворачивается блок X" после шага 3, или "Появляется поле Y" после шага 4), объедини их в один E2E тест с промежуточными ожидаемыми результатами.
+  - Промежуточный ожидаемый результат описывает реакцию системы на конкретный шаг: "Разворачивается блок...", "Появляется поле...", "Отображается сообщение...", "Изменяется состояние...".
+  - ❌ НЕ используй промежуточные ожидаемые результаты для Integration тестов (только для E2E).
+- **Expected:** Опиши не только сообщение, но и изменение состояния системы ("Задача появляется в списке", "Файл сохранен", "Уведомление отображается"). Это финальный ожидаемый результат всего теста.
 - **Пример структуры:** "Авторизоваться" → "Перейти" → "Создать" → "Заполнить" → "Сохранить" (минимум 5 шагов).
 - **Precondition:** Пусто или "Пользователь на Главной".
 - **Layer:** "E2E Tests"
 - **Tags:** ["D", "M"] (Smoke/Critical)
+- **E2E тесты НЕ должны содержать HTTP-методы/URL/коды ответов.** Проверка конкретных запросов/ответов — только в Integration backend тестах.
 
 ### 2. Integration Frontend Tests (UI Components)
 - **Цель:** Проверить конкретную форму/кнопку/поле.
-- **Precondition:** 🚨 СТРОГОЕ ПРАВИЛО: Всё, что нужно сделать ДО начала теста (авторизация, переход в раздел, открытие модалки), пиши СЮДА. Не трать шаги на "подготовку".
+- **Precondition (ОБЯЗАТЕЛЬНО):**
+  - Явно опиши все бизнес-условия ветки:
+    - на какой странице/в каком блоке находится пользователь,
+    - состояние переключателей/кнопок ("... в состоянии 'Выключен'"),
+    - есть ли подходящие счета/карты/вклады для ветки.
+  - Всё, что не является непосредственным действием пользователя в тесте, но влияет на исход, должно быть в precondition.
+  - 🚨 СТРОГОЕ ПРАВИЛО: Всё, что нужно сделать ДО начала теста (авторизация, переход в раздел, открытие модалки), пиши СЮДА. Не трать шаги на "подготовку".
 - **Steps:** ТОЛЬКО активные действия ("Нажать", "Ввести", "Кликнуть", "Выбрать"). Если тест только на отображение элемента по умолчанию — шаг должен быть "Открыть страницу/модалку".
+  - В большинстве случаев: 1–2 действия (как в эталоне: «Нажать на переключатель…»).
 - ❌ ЗАПРЕТ: Не используй пассивные шаги: "Наблюдать", "Убедиться", "Проверить", "Ожидать" — это не действия пользователя!
 - **Expected:** Реакция интерфейса (**Отображается** ошибка, **Скрывается** лоадер).
 - **Layer:** "Integration frontend Tests"
@@ -13066,39 +13306,49 @@ ${IDEAL_INTEGRATION_BE_EXAMPLES}
 - ❌ Expected: Несколько разных ошибок или уведомлений в одном тесте (например, "отображается ошибка A, затем ошибка B"). Если по сценарию возможно несколько разных ошибок — создай ОТДЕЛЬНЫЕ Negative тесты для каждой ошибки.
 - ❌ JS Code в JSON: НЕ используй JavaScript-код или вычисления внутри JSON значений! Запрещено: .repeat(), конкатенация строк через плюс, функции типа Date.now() или Math.random(). Пиши ТОЛЬКО готовые статические строки, даже если они очень длинные. Пример ошибки: "url" + "a".repeat(1009). Правильно: полная готовая строка "url" + "aaa...aaa" (все 1009 символов буквы a).
 - ❌ Параметры в title/expected/precondition: НЕ используй значения параметров ({{параметр}}) в полях "title", "expected" и "precondition". Параметры через {{}} используй ТОЛЬКО в "steps". В title/expected/precondition пиши обобщённые описания без конкретных значений.
+- ❌ Title: Не допускай, чтобы шаг = дословная копия title или scenario. Шаг должен детализировать действие, а не копировать название.
 
 📊 ФОРМАТ JSON (СТРОГО):
 {
   "id": "tc-if-001",
   "title": "Краткая суть без 'Проверка' (напр: 'Ввод суммы превышающей лимит')",
-  "feature": "...",
-  "story": "...",
-  "scenario": "...",  // ID сценария из модели (например, "sc1a2b3c4-..."), НИКОГДА не текст сценария
+  "feature": "...",  // бизнес-фича/раздел (например, «Настройки», «Блок "Изображение"»)
+  "story": "...",  // бизнес-история (как в Allure: [D] Включение отправки и получение переводов по СБП)
+  "scenario": "...",  // ТЕКСТ сценария из тестовой модели (значение поля text), НИКОГДА не ID вида "sc1a2b3c4-..."
   "layer": "...",
   "type": "Positive" | "Negative",
   "tags": [...],
   "priority": "High",
-  "precondition": "...",
+  "precondition": "...",  // Явно опиши все бизнес-условия ветки: состояние переключателей, наличие счетов/карт, на какой странице пользователь
   "steps": [
-    { "action": "..." }
+    { "action": "..." }  // Для E2E тестов можно добавить промежуточный ожидаемый результат:
+    // { "action": "...", "expectedResult": "Промежуточный ожидаемый результат для этого шага" }
+    // ❌ НЕ используй expectedResult в steps для Integration тестов (только для E2E)!
   ],
-  "expected": "...",
+  "expected": "...",  // Финальный ожидаемый результат всего теста (ОДИН исход: один успех ИЛИ одна ошибка)
   "examples": [ ... ] // Опционально
 }
 
 ⚠️ КРИТИЧНО: Все значения в JSON должны быть статическими строками! НЕ используй JavaScript-выражения (.repeat(), конкатенацию через +, функции). Если нужна длинная строка - напиши её полностью.
 
 📋 Traceability:
-- Поле "scenario" ДОЛЖНО содержать ID сценария из тестовой модели (строка, начинающаяся с "sc").
-- ❌ ЗАПРЕТ: Не подставляй в "scenario" текст сценария ("Нажать на кнопку...") или произвольные описания.
-- Если для какого-то теста невозможно однозначно определить ID сценария — НЕ СОЗДАВАЙ этот тест.
+- Поле "scenario" ДОЛЖНО содержать ровно текст сценария из тестовой модели (значение поля text из Scenario).
+- ЗАПРЕЩЕНО указывать в "scenario" технический ID вида "sc...".
+- Если для какого-то теста невозможно однозначно определить текст сценария из модели — НЕ СОЗДАВАЙ этот тест.
 
 🔧 Параметризация:
 - Параметры через {{}} используй ТОЛЬКО в поле "steps" (например, "Ввести {{email}}").
-- ❌ ЗАПРЕТ: НЕ используй {{параметр}} в "title", "expected" и "precondition".
+- ❌ ЗАПРЕТ: НЕ используй {{параметр}} в "title", "expected", "precondition" и "expectedResult" (промежуточном ожидаемом результате).
 - В "title" пиши обобщённое описание: "Ввод невалидного email" (НЕ "Ввод {{email}}")
 - В "expected" пиши обобщённое описание: "Отображается ошибка валидации" (НЕ "Отображается ошибка для {{email}}")
 - В "precondition" пиши обобщённое описание: "Пользователь на странице регистрации" (НЕ "Пользователь на странице {{url}}")
+- В "expectedResult" (промежуточном ожидаемом результате для шага) пиши обобщённое описание: "Разворачивается блок настроек" (НЕ "Разворачивается блок {{название}}")
+
+📝 Промежуточные ожидаемые результаты для E2E (ВАЖНО):
+- Используй промежуточные ожидаемые результаты ТОЛЬКО для E2E тестов (layer: "E2E Tests").
+- ❌ НЕ используй expectedResult в steps для Integration тестов.
+- Промежуточный ожидаемый результат описывает реакцию системы на конкретный шаг: "Разворачивается блок...", "Появляется поле...", "Отображается сообщение...", "Изменяется состояние...".
+- Используй это для объединения похожих E2E тестов с разными промежуточными проверками в один тест, чтобы не плодить дубли.
 
 ⚡ ЛИМИТЫ ГЕНЕРАЦИИ:
 - Максимум ${totalLimit} тестов.
