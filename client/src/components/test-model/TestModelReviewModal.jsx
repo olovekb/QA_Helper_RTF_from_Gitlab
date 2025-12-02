@@ -776,8 +776,83 @@ export function TestCaseCard({
     const addArrayItem = (field, newItem) =>
         handleFieldChange(field, [...(testCase[field] || []), newItem]);
 
-    const removeArrayItem = (field, idx) =>
+    // Состояние для отображения полей expectedResult для каждого шага (только для UI)
+    // Инициализируем Map: показываем поле, если у шага уже есть expectedResult
+    const [stepExpectedResultVisible, setStepExpectedResultVisible] = React.useState(() => {
+        const initialMap = new Map();
+        if (testCase.steps && Array.isArray(testCase.steps)) {
+            testCase.steps.forEach((step, idx) => {
+                if (typeof step === 'object' && step !== null && step.expectedResult) {
+                    initialMap.set(idx, true);
+                }
+            });
+        }
+        return initialMap;
+    });
+
+    // Обновляем состояние при изменении testCase (если шаги изменились извне)
+    React.useEffect(() => {
+        if (testCase.steps && Array.isArray(testCase.steps)) {
+            const newMap = new Map();
+            testCase.steps.forEach((step, idx) => {
+                if (typeof step === 'object' && step !== null && step.expectedResult) {
+                    newMap.set(idx, true);
+                } else if (stepExpectedResultVisible.get(idx)) {
+                    // Сохраняем текущее состояние, если шаг не изменился
+                    newMap.set(idx, stepExpectedResultVisible.get(idx));
+                }
+            });
+            // Обновляем только если есть изменения
+            const hasChanges = newMap.size !== stepExpectedResultVisible.size ||
+                Array.from(newMap.keys()).some(key => newMap.get(key) !== stepExpectedResultVisible.get(key));
+            if (hasChanges) {
+                setStepExpectedResultVisible(newMap);
+            }
+        }
+    }, [testCase.steps]);
+
+    const toggleStepExpectedResult = (stepIdx) => {
+        const newMap = new Map(stepExpectedResultVisible);
+        const currentValue = newMap.get(stepIdx) || false;
+        newMap.set(stepIdx, !currentValue);
+        setStepExpectedResultVisible(newMap);
+        
+        // Если показываем и у шага еще нет expectedResult, создаем объект
+        if (!currentValue) {
+            const arr = [...testCase.steps];
+            if (typeof arr[stepIdx] === 'string') {
+                arr[stepIdx] = { action: arr[stepIdx], expectedResult: '' };
+                handleFieldChange('steps', arr);
+            } else if (typeof arr[stepIdx] === 'object' && arr[stepIdx] && !arr[stepIdx].expectedResult) {
+                arr[stepIdx] = { ...arr[stepIdx], expectedResult: '' };
+                handleFieldChange('steps', arr);
+            }
+        } else {
+            // Если скрываем и expectedResult пустой, удаляем поле (преобразуем обратно в строку)
+            const arr = [...testCase.steps];
+            if (typeof arr[stepIdx] === 'object' && arr[stepIdx] && arr[stepIdx].action && !arr[stepIdx].expectedResult) {
+                arr[stepIdx] = arr[stepIdx].action;
+                handleFieldChange('steps', arr);
+            }
+        }
+    };
+
+    const removeArrayItem = (field, idx) => {
+        // Если удаляем шаг, обновляем состояние видимости expectedResult
+        if (field === 'steps') {
+            const newMap = new Map();
+            stepExpectedResultVisible.forEach((value, key) => {
+                if (key < idx) {
+                    newMap.set(key, value);
+                } else if (key > idx) {
+                    newMap.set(key - 1, value); // Сдвигаем индексы
+                }
+                // key === idx - пропускаем (удаляем)
+            });
+            setStepExpectedResultVisible(newMap);
+        }
         handleFieldChange(field, (testCase[field] || []).filter((_, i) => i !== idx));
+    };
 
     const handleLinkChange = (linkIndex, linkField, value) => {
         const newLinks = [...(testCase.links || [])];
@@ -862,6 +937,30 @@ export function TestCaseCard({
                                         const arr = Array.from(testCase.steps);
                                         const [moved] = arr.splice(source.index, 1);
                                         arr.splice(destination.index, 0, moved);
+                                        
+                                        // Обновляем состояние видимости expectedResult при перестановке шагов
+                                        const newMap = new Map();
+                                        stepExpectedResultVisible.forEach((value, key) => {
+                                            if (key === source.index) {
+                                                newMap.set(destination.index, value);
+                                            } else if (source.index < destination.index) {
+                                                // Движение вниз
+                                                if (key < source.index || key > destination.index) {
+                                                    newMap.set(key, value);
+                                                } else if (key > source.index && key <= destination.index) {
+                                                    newMap.set(key - 1, value);
+                                                }
+                                            } else {
+                                                // Движение вверх
+                                                if (key < destination.index || key > source.index) {
+                                                    newMap.set(key, value);
+                                                } else if (key >= destination.index && key < source.index) {
+                                                    newMap.set(key + 1, value);
+                                                }
+                                            }
+                                        });
+                                        setStepExpectedResultVisible(newMap);
+                                        
                                         handleFieldChange('steps', arr);
                                     }}
                                 >
@@ -880,6 +979,11 @@ export function TestCaseCard({
                                                         ? step.expectedResult 
                                                         : '';
                                                     const isSharedStep = typeof step === 'object' && step?.sharedStepId;
+                                                    
+                                                    // Проверяем, нужно ли показывать поле expectedResult
+                                                    const showExpectedResult = stepExpectedResultVisible.get(idx) !== undefined 
+                                                        ? stepExpectedResultVisible.get(idx)
+                                                        : !!stepExpectedResult; // По умолчанию показываем, если уже есть значение
                                                     
                                                     return (
                                                         <Draggable
@@ -945,6 +1049,26 @@ export function TestCaseCard({
                                                                                 }}
                                                                             />
                                                                         )}
+                                                                        {/* Кнопка для добавления/удаления ожидаемого результата (только для E2E и не для shared steps) */}
+                                                                        {isE2E && !isSharedStep && (
+                                                                            <button
+                                                                                onClick={() => toggleStepExpectedResult(idx)}
+                                                                                style={{
+                                                                                    background: showExpectedResult ? 'var(--accent-blue)' : 'var(--btn-secondary-bg)',
+                                                                                    border: '1px solid var(--border-primary)',
+                                                                                    color: showExpectedResult ? 'white' : 'var(--accent-blue)',
+                                                                                    borderRadius: '4px',
+                                                                                    cursor: 'pointer',
+                                                                                    padding: '4px 8px',
+                                                                                    fontSize: '12px',
+                                                                                    whiteSpace: 'nowrap',
+                                                                                    fontWeight: showExpectedResult ? 600 : 400
+                                                                                }}
+                                                                                title={showExpectedResult ? 'Скрыть ожидаемый результат' : 'Добавить ожидаемый результат'}
+                                                                            >
+                                                                                {showExpectedResult ? '✓ ОР' : '+ ОР'}
+                                                                            </button>
+                                                                        )}
                                                                         <button
                                                                             className="remove-item-btn"
                                                                             onClick={() => removeArrayItem('steps', idx)}
@@ -962,8 +1086,8 @@ export function TestCaseCard({
                                                                             ×
                                                                         </button>
                                                                     </div>
-                                                                    {/* Промежуточный ожидаемый результат (только для E2E и не для shared steps) */}
-                                                                    {isE2E && !isSharedStep && (
+                                                                    {/* Промежуточный ожидаемый результат (только для E2E, не для shared steps, и только если showExpectedResult = true) */}
+                                                                    {isE2E && !isSharedStep && showExpectedResult && (
                                                                         <div style={{ 
                                                                             marginLeft: '32px',
                                                                             padding: '8px',

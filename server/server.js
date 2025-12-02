@@ -2973,7 +2973,16 @@ app.post('/api/jira/ai-fill-fields', async (req, res) => {
         if (!pat || !projectKey) {
             return res.status(400).json({ error: 'pat и projectKey обязательны' });
         }
-        const stepsStr = Array.isArray(steps) ? steps.join('\n- ') : (steps ?? '');
+        // ✅ Исправляем обработку steps: извлекаем текст из объектов
+        const stepsStr = Array.isArray(steps) 
+            ? steps.map(s => {
+                if (typeof s === 'string') return s;
+                if (typeof s === 'object' && s !== null) {
+                    return s.action || s.text || s.body || '';
+                }
+                return String(s || '');
+            }).filter(Boolean).join('\n- ')
+            : (steps ?? '');
         // 1) Метаданные JIRA
         const options = await fetchJiraMeta(pat, projectKey);
         const { Severity: sevOptions, Platform: platOptions, Symptom: sympOptions } = options;
@@ -9824,7 +9833,14 @@ function mergeSimilarTests(similarTests) {
 function extractParameterValue(test, paramName) {
     const title = String(test.title || '').toLowerCase();
     const expected = String(test.expected || '').toLowerCase();
-    const steps = (test.steps || []).join(' ').toLowerCase();
+    // ✅ Исправляем обработку steps: извлекаем текст из объектов
+    const steps = (test.steps || []).map(s => {
+        if (typeof s === 'string') return s;
+        if (typeof s === 'object' && s !== null) {
+            return s.action || s.text || s.body || '';
+        }
+        return String(s || '');
+    }).filter(Boolean).join(' ').toLowerCase();
     const allText = `${title} ${expected} ${steps}`;
 
     if (paramName === 'Размер ИНН') {
@@ -10118,7 +10134,15 @@ async function generateTestCasesAsync(taskId, inputData) {
                 // ✅ НОВАЯ ПРОВЕРКА 1.6: E2E тесты не должны содержать детали HTTP-запросов, API-эндпоинтов, статус-кодов
                 if (layer === 'E2E Tests') {
                     const hasApiDetails = /(GET|POST|PUT|DELETE|PATCH)\s+\/[^"'\s]+|http:\/\/|https:\/\/|эндпоинт|endpoint|api|статус\s*[-_]?код|status\s*code|deal\.|previousBankRegNumber|operationCode|status\s*\d{3}|\b200\b|\b400\b|\b404\b|\b500\b/gi;
-                    const titleStepsExpected = `${title} ${steps.join(' ')} ${expected}`;
+                    // ✅ Исправляем обработку steps: извлекаем текст из объектов
+                    const stepsText = steps.map(step => {
+                        if (typeof step === 'string') return step;
+                        if (typeof step === 'object' && step !== null) {
+                            return step.action || step.text || step.body || '';
+                        }
+                        return String(step || '');
+                    }).filter(Boolean).join(' ');
+                    const titleStepsExpected = `${title} ${stepsText} ${expected}`;
                     if (hasApiDetails.test(titleStepsExpected)) {
                         issues.push(`Тест-кейс ${tcNum} "${title}": E2E тест содержит детали HTTP-запросов, API-эндпоинтов или статус-коды - E2E тесты это Black Box тестирование, не должны содержать технические детали! Если нужна проверка с техническими деталями - это Integration тест!`);
                     }
@@ -12077,7 +12101,19 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                     }
 
                     // ✅ ИСПРАВЛЕНО: очищаем Steps от слова "Проверить"
-                    let steps = Array.isArray(x.steps) ? x.steps.map(s => trimText(s, 600)).slice(0, 40) : [];
+                    // ✅ Исправляем обработку steps: извлекаем текст из объектов перед trimText
+                    let steps = Array.isArray(x.steps) ? x.steps.map(s => {
+                        // Сначала извлекаем текст из объекта, затем применяем trimText
+                        let stepText;
+                        if (typeof s === 'string') {
+                            stepText = s;
+                        } else if (typeof s === 'object' && s !== null) {
+                            stepText = s.action || s.text || s.body || '';
+                        } else {
+                            stepText = String(s || '');
+                        }
+                        return trimText(stepText, 600);
+                    }).slice(0, 40) : [];
                     steps = steps.map(step => {
                         if (typeof step === 'string' && step.toLowerCase().startsWith('проверить')) {
                             console.warn(`[sanitize] ⚠️ Шаг начинается с "Проверить": "${step}"`);
