@@ -999,27 +999,32 @@ export function TestCaseCard({
                                                                     style={{ 
                                                                         display: 'flex', 
                                                                         flexDirection: 'column', 
-                                                                        gap: '8px',
+                                                                        gap: '12px',
                                                                         padding: '12px',
-                                                                        border: '1px solid var(--border-primary)',
+                                                                        border: '1px solid var(--on-border-light, #bdd4ff36)',
                                                                         borderRadius: '6px',
-                                                                        marginBottom: '8px'
+                                                                        marginBottom: '8px',
+                                                                        backgroundColor: 'var(--bg-base-secondary, #2c343f)'
                                                                     }}
                                                                 >
                                                                     <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-                                                                        <span 
+                                                                        <div
                                                                             {...dragProv.dragHandleProps}
                                                                             style={{ 
-                                                                                cursor: 'grab', 
-                                                                                padding: '4px 8px',
-                                                                                color: 'var(--text-secondary)',
-                                                                                fontSize: '14px'
+                                                                                cursor: 'grab',
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                padding: '4px',
+                                                                                color: 'var(--on-text-secondary, #8b949e)',
+                                                                                fontSize: '16px',
+                                                                                flexShrink: 0
                                                                             }}
+                                                                            title="Перетащите для изменения порядка"
                                                                         >
-                                                                            ⠿
-                                                                        </span>
+                                                                            <DragHandleIcon />
+                                                                        </div>
                                                                         {isSharedStep ? (
-                                                                            <div className="shared-step-label" style={{ flex: 1 }}>{step.text}</div>
+                                                                            <div className="shared-step-label" style={{ flex: 1, padding: '8px', color: 'var(--on-text-secondary, #8b949e)', fontStyle: 'italic' }}>{step.text}</div>
                                                                         ) : (
                                                                             <textarea
                                                                                 value={stepAction}
@@ -1038,14 +1043,15 @@ export function TestCaseCard({
                                                                                 style={{
                                                                                     flex: 1,
                                                                                     minHeight: '60px',
-                                                                                    padding: '8px',
-                                                                                    background: 'var(--bg-secondary)',
-                                                                                    border: '1px solid var(--border-primary)',
-                                                                                    borderRadius: '4px',
-                                                                                    color: 'var(--text-primary)',
-                                                                                    fontSize: '0.9em',
+                                                                                    padding: '8px 12px',
+                                                                                    background: 'var(--bg-base-primary, #1b2129)',
+                                                                                    border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                                                    borderRadius: '6px',
+                                                                                    color: 'var(--on-text-primary, #f6fafef5)',
+                                                                                    fontSize: '13px',
                                                                                     fontFamily: 'inherit',
-                                                                                    resize: 'vertical'
+                                                                                    resize: 'vertical',
+                                                                                    boxSizing: 'border-box'
                                                                                 }}
                                                                             />
                                                                         )}
@@ -1054,17 +1060,29 @@ export function TestCaseCard({
                                                                             <button
                                                                                 onClick={() => toggleStepExpectedResult(idx)}
                                                                                 style={{
-                                                                                    background: showExpectedResult ? 'var(--accent-blue)' : 'var(--btn-secondary-bg)',
-                                                                                    border: '1px solid var(--border-primary)',
-                                                                                    color: showExpectedResult ? 'white' : 'var(--accent-blue)',
-                                                                                    borderRadius: '4px',
+                                                                                    background: showExpectedResult ? 'var(--on-support-aldebaran, #7aa8ff)' : 'var(--bg-base-primary, #1b2129)',
+                                                                                    border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                                                    color: showExpectedResult ? 'white' : 'var(--on-support-aldebaran, #7aa8ff)',
+                                                                                    borderRadius: '6px',
                                                                                     cursor: 'pointer',
-                                                                                    padding: '4px 8px',
+                                                                                    padding: '6px 12px',
                                                                                     fontSize: '12px',
                                                                                     whiteSpace: 'nowrap',
-                                                                                    fontWeight: showExpectedResult ? 600 : 400
+                                                                                    fontWeight: showExpectedResult ? 600 : 400,
+                                                                                    flexShrink: 0,
+                                                                                    transition: 'all 0.2s'
                                                                                 }}
                                                                                 title={showExpectedResult ? 'Скрыть ожидаемый результат' : 'Добавить ожидаемый результат'}
+                                                                                onMouseEnter={(e) => {
+                                                                                    if (!showExpectedResult) {
+                                                                                        e.currentTarget.style.background = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))';
+                                                                                    }
+                                                                                }}
+                                                                                onMouseLeave={(e) => {
+                                                                                    if (!showExpectedResult) {
+                                                                                        e.currentTarget.style.background = 'var(--bg-base-primary, #1b2129)';
+                                                                                    }
+                                                                                }}
                                                                             >
                                                                                 {showExpectedResult ? '✓ ОР' : '+ ОР'}
                                                                             </button>
@@ -1073,14 +1091,23 @@ export function TestCaseCard({
                                                                             className="remove-item-btn"
                                                                             onClick={() => removeArrayItem('steps', idx)}
                                                                             style={{
-                                                                                background: 'var(--btn-secondary-bg)',
-                                                                                border: '1px solid var(--border-primary)',
-                                                                                color: 'var(--danger-red)',
-                                                                                borderRadius: '4px',
+                                                                                background: 'var(--bg-base-primary, #1b2129)',
+                                                                                border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                                                color: 'var(--on-support-capella, #ff584d)',
+                                                                                borderRadius: '6px',
                                                                                 cursor: 'pointer',
-                                                                                padding: '4px 8px',
+                                                                                padding: '6px 12px',
                                                                                 fontSize: '16px',
-                                                                                lineHeight: 1
+                                                                                lineHeight: 1,
+                                                                                flexShrink: 0,
+                                                                                minWidth: '32px',
+                                                                                transition: 'all 0.2s'
+                                                                            }}
+                                                                            onMouseEnter={(e) => {
+                                                                                e.currentTarget.style.background = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))';
+                                                                            }}
+                                                                            onMouseLeave={(e) => {
+                                                                                e.currentTarget.style.background = 'var(--bg-base-primary, #1b2129)';
                                                                             }}
                                                                         >
                                                                             ×
@@ -1089,18 +1116,17 @@ export function TestCaseCard({
                                                                     {/* Промежуточный ожидаемый результат (только для E2E, не для shared steps, и только если showExpectedResult = true) */}
                                                                     {isE2E && !isSharedStep && showExpectedResult && (
                                                                         <div style={{ 
-                                                                            marginLeft: '32px',
-                                                                            padding: '8px',
-                                                                            background: 'rgba(88, 166, 255, 0.1)',
-                                                                            borderLeft: '3px solid var(--accent-blue)',
-                                                                            borderRadius: '4px'
+                                                                            display: 'flex',
+                                                                            flexDirection: 'column',
+                                                                            gap: '8px',
+                                                                            paddingLeft: '32px'
                                                                         }}>
                                                                             <label style={{ 
                                                                                 display: 'block', 
-                                                                                fontSize: '0.85em', 
-                                                                                color: 'var(--text-secondary)',
-                                                                                marginBottom: '4px',
-                                                                                fontWeight: 600
+                                                                                fontSize: '13px', 
+                                                                                fontWeight: '500',
+                                                                                color: 'var(--on-text-primary, #f6fafef5)',
+                                                                                marginBottom: '4px'
                                                                             }}>
                                                                                 Промежуточный ожидаемый результат (опционально):
                                                                             </label>
@@ -1120,15 +1146,16 @@ export function TestCaseCard({
                                                                                 }}
                                                                                 style={{
                                                                                     width: '100%',
-                                                                                    minHeight: '50px',
-                                                                                    padding: '6px',
-                                                                                    background: 'var(--bg-primary)',
-                                                                                    border: '1px solid var(--border-primary)',
-                                                                                    borderRadius: '4px',
-                                                                                    color: 'var(--text-primary)',
-                                                                                    fontSize: '0.85em',
+                                                                                    minHeight: '60px',
+                                                                                    padding: '8px 12px',
+                                                                                    background: 'var(--bg-base-primary, #1b2129)',
+                                                                                    border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                                                    borderRadius: '6px',
+                                                                                    color: 'var(--on-text-primary, #f6fafef5)',
+                                                                                    fontSize: '13px',
                                                                                     fontFamily: 'inherit',
-                                                                                    resize: 'vertical'
+                                                                                    resize: 'vertical',
+                                                                                    boxSizing: 'border-box'
                                                                                 }}
                                                                             />
                                                                         </div>
