@@ -1,50 +1,33 @@
 [
   {
-    "id": "d4e5f6a7-b8c9-0123-def0-234567890123",
-    "title": "GET **/stateful/personal/kuban/client/info/v2** возвращает параметры email и isEmailConfirmed",
+    "id": "be-api-001",
+    "title": "Валидация входных параметров метода POST /api/v1/transfer",
     "layer": "Integration backend Tests",
-    "feature": "Безбумажный офис",
-    "story": "Регистрация в ББО",
-    "scenario": "Нажать на кнопку \"Безбумажный офис\"",
-    "precondition": "",
+    "feature": "Переводы",
+    "story": "Перевод по номеру карты",
+    "precondition": "Сервис доступен",
     "steps": [
-      "Выполнить GET **/stateful/personal/kuban/client/info/v2**"
+      "Отправить POST /api/v1/transfer с телом запроса: {{Body}}"
     ],
-    "expected": "**Возвращается** 200 OK с JSON, содержащим параметры \"email\" и \"isEmailConfirmed\"",
-    "tags": ["S"],
-    "priority": "High",
-    "version": "stable"
-  },
-  {
-    "id": "e5f6a7b8-c9d0-1234-ef01-345678901234",
-    "title": "POST **/confirm/code/check** возвращает ответ с кодом {{Код ответа}}",
-    "layer": "Integration backend Tests",
-    "feature": "Безбумажный офис",
-    "story": "Регистрация в ББО",
-    "scenario": "Ввести ОТП-код",
-    "precondition": "",
-    "steps": [
-      "Выполнить POST **/confirm/code/check** с телом запроса: {\"code\": \"{{ОТП-код}}\"}"
+    "expected": "API возвращает соответствующий код ошибки согласно типу невалидных данных",
+    "tags": [
+      "S"
     ],
-    "expected": "**Возвращается** {{Код ответа}} с JSON: {{Содержимое ответа}}",
-    "tags": ["S"],
     "priority": "High",
     "version": "stable",
     "parameters": [
       {
-        "name": "ОТП-код",
-        "values": ["Корректный код", "Некорректный код", "Истёкший код"]
-      },
-      {
-        "name": "Код ответа",
-        "values": ["200", "400", "403"]
-      },
-      {
-        "name": "Содержимое ответа",
+        "name": "Body",
         "values": [
-          "{status: 'success', message: 'Код подтверждён'}",
-          "{error: 'Неверный код подтверждения'}",
-          "{error: 'Код истёк'}"
+          "{}",
+          "{\"amount\": -100}"
+        ]
+      },
+      {
+        "name": "Status Code",
+        "values": [
+          "400",
+          "422"
         ]
       }
     ],
@@ -52,107 +35,44 @@
       {
         "parameters": [
           {
-            "name": "ОТП-код",
-            "value": "Корректный код"
+            "name": "Body",
+            "value": "{}"
           },
           {
-            "name": "Код ответа",
-            "value": "200"
-          },
-          {
-            "name": "Содержимое ответа",
-            "value": "{status: 'success', message: 'Код подтверждён'}"
+            "name": "Status Code",
+            "value": "400"
           }
         ]
       },
       {
         "parameters": [
           {
-            "name": "ОТП-код",
-            "value": "Некорректный код"
+            "name": "Body",
+            "value": "{\"amount\": -100}"
           },
           {
-            "name": "Код ответа",
-            "value": "400"
-          },
-          {
-            "name": "Содержимое ответа",
-            "value": "{error: 'Неверный код подтверждения'}"
+            "name": "Status Code",
+            "value": "422"
           }
         ]
       }
     ]
   },
   {
-    "id": "f6a7b8c9-d0e1-2345-f012-456789012345",
-    "title": "GET **/template/get_by_id** возвращает шаблон платежа по **doc_type=payment**",
+    "id": "be-api-002",
+    "title": "GET /api/v1/users/me возвращает корректный профиль",
     "layer": "Integration backend Tests",
-    "feature": "Оплата по QR-коду",
-    "story": "Получение шаблона платежа",
-    "scenario": "Получить шаблон платежа по doc_type",
-    "precondition": "в БД есть шаблон с doc_type=payment",
+    "feature": "Профиль",
+    "story": "Получение данных",
+    "precondition": "Пользователь авторизован",
     "steps": [
-      "Выполнить GET **/template/get_by_id** с параметром **doc_type=payment**"
+      "Отправить GET /api/v1/users/me"
     ],
-    "expected": "**Возвращается** 200 OK с JSON: {id, type, amount, date}",
-    "tags": ["S"],
+    "expected": "Возвращается 200 OK, тело содержит поля: id, email, phone, roles",
+    "tags": [
+      "S"
+    ],
     "priority": "High",
     "version": "stable"
-  },
-  {
-    "id": "a7b8c9d0-e1f2-3456-7890-123456789012",
-    "title": "POST **/rest/personal/bio/auth** возвращает ответ с кодом {{Код ответа}} при неуспешной аутентификации",
-    "layer": "Integration backend Tests",
-    "feature": "Авторизация по биометрии",
-    "story": "Авторизовываться по биометрии",
-    "scenario": "Проверять наличие доступности входа по биометрии",
-    "precondition": "1. Сервер доступен\n2. Пользователь ранее зарегистрировал пин-код и авторизовался в приложении с помощью биометрии\n3. Подменить ответ запроса **/rest/personal/bio/auth** на {{Код ответа}} с телом: {{Содержимое ответа}}",
-    "steps": [
-      "Выполнить POST **/rest/personal/bio/auth** с заголовком Authorization: sysuser и deviceid (значения из localStorage)"
-    ],
-    "expected": "**Возвращается** {{Код ответа}} с JSON: {{Содержимое ответа}}",
-    "tags": ["S"],
-    "priority": "High",
-    "version": "stable",
-    "parameters": [
-      {
-        "name": "Код ответа",
-        "values": ["401", "400", "500"]
-      },
-      {
-        "name": "Содержимое ответа",
-        "values": [
-          "{error: 'Unauthorized'}",
-          "{error: 'Bad Request', code: 'auth.biofail'}",
-          "{error: 'Internal Server Error'}"
-        ]
-      }
-    ],
-    "examples": [
-      {
-        "parameters": [
-          {
-            "name": "Код ответа",
-            "value": "401"
-          },
-          {
-            "name": "Содержимое ответа",
-            "value": "{error: 'Unauthorized'}"
-          }
-        ]
-      },
-      {
-        "parameters": [
-          {
-            "name": "Код ответа",
-            "value": "400"
-          },
-          {
-            "name": "Содержимое ответа",
-            "value": "{error: 'Bad Request', code: 'auth.biofail'}"
-          }
-        ]
-      }
-    ]
   }
 ]

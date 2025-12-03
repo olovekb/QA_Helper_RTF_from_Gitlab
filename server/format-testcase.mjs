@@ -133,9 +133,32 @@ export async function formatTestCase(testCase) {
     }
 
     // Форматируем шаги тест-кейса с учётом вложенных шагов и нумерации
-    if (testCase.steps?.scenarioSteps) {
+    // Используем stepsRaw (сырая структура Allure), если она есть и валидна
+    // API Allure может вернуть структуру с root/scenarioSteps на верхнем уровне (новая) или внутри scenario (старая)
+    let stepsToFormat = null;
+    
+    if (testCase.stepsRaw && typeof testCase.stepsRaw === 'object' && !Array.isArray(testCase.stepsRaw)) {
+        const hasOldStructure = testCase.stepsRaw.scenario && testCase.stepsRaw.scenario.root;
+        const hasNewStructure = testCase.stepsRaw.root && testCase.stepsRaw.scenarioSteps;
+        
+        if (hasOldStructure || hasNewStructure) {
+            // Преобразуем структуру Allure в формат для formatSteps (с root на верхнем уровне)
+            stepsToFormat = {
+                root: testCase.stepsRaw.scenario?.root || testCase.stepsRaw.root || { children: [] },
+                scenarioSteps: testCase.stepsRaw.scenario?.scenarioSteps || testCase.stepsRaw.scenarioSteps || {},
+                sharedSteps: testCase.stepsRaw.sharedSteps || {},
+                sharedStepScenarioSteps: testCase.stepsRaw.sharedStepScenarioSteps || {},
+                attachments: testCase.stepsRaw.attachments || {}
+            };
+        }
+    } else if (testCase.steps && typeof testCase.steps === 'object' && !Array.isArray(testCase.steps) && testCase.steps.scenarioSteps) {
+        // Если steps уже в нужном формате
+        stepsToFormat = testCase.steps;
+    }
+    
+    if (stepsToFormat && stepsToFormat.scenarioSteps && Object.keys(stepsToFormat.scenarioSteps).length > 0) {
         result += chalk.bold('Шаги тест-кейса:\n');
-        const stepsResult = await formatSteps(testCase.steps); // Получаем шаги в строку
+        const stepsResult = await formatSteps(stepsToFormat); // Получаем шаги в строку
         result += stepsResult; // Добавляем шаги к итоговому результату
     } else {
         result += chalk.bold(`Шаги тест-кейса: ${chalk.red('Нет шагов')}\n`);

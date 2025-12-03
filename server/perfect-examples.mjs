@@ -135,9 +135,7 @@ export async function getAllPerfectExamplesByLayer(projectId, db) {
     const layerLimits = {
         'E2E Tests': 5,
         'Integration frontend Tests': 5,
-        'Integration backend Tests': 5,
-        'Unit frontend Tests': 3,
-        'Unit backend Tests': 3
+        'Integration backend Tests': 5
     };
 
     for (const ex of examples) {

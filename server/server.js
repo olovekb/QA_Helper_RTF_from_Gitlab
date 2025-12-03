@@ -6,6 +6,7 @@ import JSON5 from 'json5';
 import knex from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 import compression from 'compression';
+import AdmZip from 'adm-zip';
 
 const CONFLUENCE_BASE_URL = process.env.CONFLUENCE_BASE || 'https://confluence.artsofte.ru';
 
@@ -128,10 +129,11 @@ async function makeDirectOpenRouterCall(messages, apiKey, opts) {
         ...(response_format && { response_format })
     };
 
+    // ⚠️ ВАЖНО: config импортируется позже в файле, поэтому используем только apiKey из параметра
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
-            'Authorization': `Bearer ${apiKey || config.openRouterAiKey}`,
+            'Authorization': `Bearer ${apiKey || process.env.OPENROUTER_API_KEY || ''}`,
             'Content-Type': 'application/json',
             'HTTP-Referer': 'https://test-inspector.abanking.ru',
             'X-Title': 'Allure Test Inspector'
@@ -199,12 +201,16 @@ import config from './config.json' assert { type: 'json'};
 import http from 'http';
 import https from 'https';
 import { prepareContextWithAI } from './contextRefiner.mjs';
-import { callWithCloudRuFallback } from './cloudruClient.mjs';
+import { callWithCloudRuFallback, callCloudRuAPI } from './cloudruClient.mjs';
+
 import { createContextSourceRegistry, createContextToolset } from './contextToolset.mjs';
 import { runInteractiveLLM } from './interactiveLLM.mjs';
 import { selectExamples, buildExamplesSection } from './config/example-selector.js';
 import { registerDebugRoutes } from './debug-routes.mjs';
 import { extractLogicAndConstraints, formatLogicConstraintsForPrompt } from './logic-extractor.mjs';
+import RULES from './config/rules/core-rules.js';
+import { validateAndFixTestCases, validateE2ECoverage } from './post-processors/validate-and-fix.js';
+import { aggregateToParametrized } from './post-processors/aggregate-to-parametrized.js';
 
 // ═══════════════════════════════════════════════════════════════
 // НОВЫЕ МОДУЛИ - АРХИТЕКТУРНЫЕ УЛУЧШЕНИЯ
@@ -397,7 +403,174 @@ try {
     console.warn(`[server] ⚠️ Не удалось загрузить integration-be-examples.json: ${err.message}`);
 }
 
-function buildModelSystemPrompt() {
+/**
+ * Извлекает глобальный контекст из требований (сущности, роли, правила)
+ * Этап 1 архитектуры "Skeleton & Flesh": создание "Карты Местности"
+ * @param {string} fullText - Полный текст требований
+ * @returns {Promise<Object>} Глобальный контекст с ролями, сущностями, правилами
+ */
+async function extractGlobalContext(fullText) {
+    if (!fullText || typeof fullText !== 'string' || !fullText.trim()) {
+        console.warn('[extractGlobalContext] Пустой текст, возвращаю пустой контекст');
+        return {
+            roles: [],
+            entities: [],
+            screens: [],
+            global_rules: []
+        };
+    }
+
+    try {
+        console.log('[extractGlobalContext] 🗺️ Начинаю извлечение глобального контекста...');
+
+        const GLOBAL_CONTEXT_PROMPT = `
+Твоя роль: Архитектор тестовой модели.
+
+Прочитай весь текст требований. Выпиши ТОЛЬКО факты, которые ЯВНО написаны в тексте. НЕ придумывай ничего от себя!
+
+Извлеки:
+
+1. **Пользовательские Роли:** Все типы пользователей (Admin, User, Manager, и т.д.), которые упоминаются в требованиях.
+
+2. **Экраны/Страницы:** Все экраны, страницы, формы, модальные окна, которые упоминаются в требованиях.
+
+3. **Сущности:** Все бизнес-сущности (Заявка, Клиент, Кредит, Платеж, Счет, и т.д.), которые упоминаются в требованиях.
+
+4. **Глобальные Правила:** 
+   - Правила валидации (формат ИНН, формат дат, минимальные/максимальные суммы)
+   - Статусные модели (статусы заявки, статусы платежа)
+   - Бизнес-правила, которые применяются глобально (например, "Кредит не может быть меньше 50k", "ИНН должен быть 12 цифр")
+   - Правила авторизации/доступа (если упоминаются)
+
+🚨 КРИТИЧЕСКИ ВАЖНО: Извлекай ТОЛЬКО то, что ЯВНО написано в тексте. НЕ придумывай стандартные правила (например, не добавляй "HTTP 200 OK" если его нет в тексте).
+
+ФОРМАТ ОТВЕТА (строгий JSON):
+{
+  "roles": ["Роль 1", "Роль 2"],
+  "entities": ["Сущность 1", "Сущность 2"],
+  "screens": ["Экран 1", "Экран 2"],
+  "global_rules": [
+    "Правило 1 (например: ИНН должен быть 12 цифр)",
+    "Правило 2 (например: Кредит не может быть меньше 50000)"
+  ]
+}
+`;
+
+        const messages = [
+            {
+                role: 'system',
+                content: 'Ты — архитектор тестовой модели. Извлекай ТОЛЬКО факты из текста. Отвечай строго в формате JSON без дополнительных пояснений.'
+            },
+            {
+                role: 'user',
+                content: `${GLOBAL_CONTEXT_PROMPT}
+
+═══════════════════════════════════════════════════════════════
+ТРЕБОВАНИЯ (ПОЛНЫЙ ТЕКСТ):
+═══════════════════════════════════════════════════════════════
+
+${fullText.substring(0, 300000)}${fullText.length > 100000 ? '\n\n... (текст обрезан для оптимизации)' : ''}
+
+═══════════════════════════════════════════════════════════════
+Верни ТОЛЬКО JSON без markdown и пояснений.
+═══════════════════════════════════════════════════════════════`
+            }
+        ];
+
+        // ✅ Используем ТОЛЬКО Cloud.ru API (без fallback на OpenRouter)
+        const response = await callCloudRuAPI(messages, {
+            temperature: 0.0,
+            max_tokens: 2000,
+            response_format: {
+                type: 'json_object'
+            }
+        });
+
+        const content = response.choices?.[0]?.message?.content || '';
+
+        if (!content) {
+            console.warn('[extractGlobalContext] Пустой ответ от модели');
+            return getEmptyGlobalContext();
+        }
+
+        // Парсим JSON из ответа
+        let extracted;
+        try {
+            const cleaned = content
+                .replace(/```json\s*/gi, '')
+                .replace(/```\s*/g, '')
+                .trim();
+
+            extracted = JSON.parse(cleaned);
+        } catch (parseError) {
+            console.warn('[extractGlobalContext] Ошибка парсинга JSON:', parseError.message);
+            console.warn('[extractGlobalContext] Содержимое ответа:', content.substring(0, 500));
+            return getEmptyGlobalContext();
+        }
+
+        // Валидируем структуру
+        const result = {
+            roles: Array.isArray(extracted.roles) ? extracted.roles : [],
+            entities: Array.isArray(extracted.entities) ? extracted.entities : [],
+            screens: Array.isArray(extracted.screens) ? extracted.screens : [],
+            global_rules: Array.isArray(extracted.global_rules) ? extracted.global_rules : []
+        };
+
+        console.log(`[extractGlobalContext] ✅ Извлечено: ${result.roles.length} ролей, ${result.entities.length} сущностей, ${result.screens.length} экранов, ${result.global_rules.length} глобальных правил`);
+
+        return result;
+
+    } catch (error) {
+        console.error('[extractGlobalContext] Ошибка при извлечении глобального контекста:', error.message);
+        return getEmptyGlobalContext();
+    }
+}
+
+/**
+ * Возвращает пустой глобальный контекст
+ */
+function getEmptyGlobalContext() {
+    return {
+        roles: [],
+        entities: [],
+        screens: [],
+        global_rules: []
+    };
+}
+
+function buildModelSystemPrompt(globalContext = null) {
+    const globalContextSection = globalContext && (
+        globalContext.roles.length > 0 ||
+        globalContext.entities.length > 0 ||
+        globalContext.screens.length > 0 ||
+        globalContext.global_rules.length > 0
+    ) ? `
+═══════════════════════════════════════════════════════════════
+🗺️ GLOBAL CONTEXT (RULES & ENTITIES) - ГЛОБАЛЬНЫЙ КОНТЕКСТ СИСТЕМЫ
+═══════════════════════════════════════════════════════════════
+
+⚠️ ВАЖНО: Эти правила и сущности применяются КО ВСЕЙ СИСТЕМЕ. Учитывай их при генерации модели!
+
+${globalContext.roles.length > 0 ? `👥 ПОЛЬЗОВАТЕЛЬСКИЕ РОЛИ:
+${globalContext.roles.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+` : ''}
+
+${globalContext.entities.length > 0 ? `📦 БИЗНЕС-СУЩНОСТИ:
+${globalContext.entities.map((e, i) => `${i + 1}. ${e}`).join('\n')}
+` : ''}
+
+${globalContext.screens.length > 0 ? `🖥️ ЭКРАНЫ/СТРАНИЦЫ:
+${globalContext.screens.map((s, i) => `${i + 1}. ${s}`).join('\n')}
+` : ''}
+
+${globalContext.global_rules.length > 0 ? `📋 ГЛОБАЛЬНЫЕ ПРАВИЛА:
+${globalContext.global_rules.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+
+🚨 КРИТИЧНО: Если в тексте чанка встречается упоминание этих правил (например, поле "ИНН" или сущность "Заявка"), применяй соответствующие глобальные правила из этого контекста!
+` : ''}
+
+═══════════════════════════════════════════════════════════════
+` : '';
 
     return `
 Твоя роль: Lead QA Automation Engineer.
@@ -406,8 +579,12 @@ function buildModelSystemPrompt() {
 ТВОЙ ГЛАВНЫЙ ПРИНЦИП: "NO HALLUCINATIONS".
 Ты НЕ имеешь права придумывать HTTP-коды (400, 404, 500), имена полей JSON, тексты ошибок или API-методы, если их НЕТ в тексте требований буква в букву.
 ТВОЙ ВТОРОЙ ПРИНЦИП: "ATOMICITY OVER COMPLETENESS" (Атомарность важнее полноты одного сценария). Лучше создать несколько маленьких сценариев, чем 1 большой смешанный
-ВХОДНЫЕ ДАННЫЕ: Текст требований.
+ВХОДНЫЕ ДАННЫЕ: Текст требований + Глобальный контекст системы (если есть).
 ВЫХОДНЫЕ ДАННЫЕ: JSON массив с тестовой моделью.
+
+🏗️ АРХИТЕКТУРА "SKELETON & FLESH":
+Эта генерация создает "скелет" модели (Features → Stories → Scenarios → Codes).
+E2E тесты будут сгенерированы ОТДЕЛЬНО после склейки полной модели, чтобы они могли проходить через несколько фич.
 
 СТРУКТУРА МОДЕЛИ (ИЕРАРХИЯ):
 1. Feature (Бизнес-фича)
@@ -425,11 +602,13 @@ function buildModelSystemPrompt() {
    - Если в дополнительных логических ограничениях (ниже в промпте) встречаются негативные примеры (таймаут, пустой ответ и т.п.), НО в исходном тексте требований этих случаев нет, НЕ добавляй такие негативные сценарии в модель.
 
 2. 🎯 ГРАНУЛЯРНОСТЬ SCENARIO:
-   - Один Scenario = ОДНО действие пользователя (Нажать, Ввести, Выбрать).
+   - Один Scenario = ОДНО действие пользователя (Нажать, Ввести) ИЛИ ОДНО значимое действие системы (Рассчитать, Загрузить, Проверить).
    - НЕ объединяй действия! "Ввести данные и нажать отправить" — это ДВА сценария (или сценарий заполнения + сценарий отправки в разных Story).
    - Каждый вариант исхода (Успех, Ошибка, Отмена) — это ОТДЕЛЬНЫЙ Scenario.
    - Если в требованиях упомянута кнопка "Отмена", "Назад" или возможность "прервать/отменить" процесс — это ОБЯЗАТЕЛЬНО отдельный Scenario! Не забывай "минорные" действия.
    - НЕЛЬЗЯ в одном Scenario описывать и успешный ответ, и таймаут, и пустой/ошибочный ответ одновременно. Если в требованиях есть несколько исходов для одного действия — каждый исход оформи отдельным Scenario.
+   - System Reactions (Реакции системы): Если ввод данных вызывает сложные вычисления на бэкенде (расчет цены, ставки, фильтрация), создай ОТДЕЛЬНЫЙ сценарий для проверки этого расчета.
+Пример: Scenario "Рассчитать ставку и платеж (валидные данные)".
    - State Verification (Проверка состояния): Если требование описывает поведение элемента без явного действия пользователя (например, "Чекбокс заблокирован при условии X"), создай сценарий вида: "Проверить состояние [Элемента] (Условие X)". Это тоже Scenario! Никогда не оставляй Story без сценариев.
 3. 🛠️ СТРУКТУРА CODE (РЕАКЦИИ):
    - Code.type = "frontend" (UI изменения, отправка запросов, переходы).
@@ -440,8 +619,19 @@ function buildModelSystemPrompt() {
 4. 💡 БИЗНЕС-ЛОГИКА И УСЛОВИЯ:
    - Если есть условия (например, "доступно только для юрлиц"), создай Scenario для "доступно" и Scenario для "недоступно".
    - В Scenario "недоступно" Code должен описывать отсутствие элемента или его неактивность.
-
-5. 🚫 ЗАПРЕТ НА СМЕШИВАНИЕ ИСХОДОВ (ATOMICITY RULE):
+5. 🔄 DEDUPLICATION BY CODES (Дедупликация по реакциям):
+   Если два или более Scenario имеют ИДЕНТИЧНЫЕ Codes (одинаковое поведение системы), 
+   объедини их в ОДИН Scenario с обобщённым названием.
+   
+   ❌ ПЛОХО (дубли по Codes):
+   Scenario 1: "Ввести сумму меньше 50 000 ₽" -> Codes: ["Поле красное", "Кнопка блокируется"]
+   Scenario 2: "Ввести сумму больше 5 000 000 ₽" -> Codes: ["Поле красное", "Кнопка блокируется"]
+   
+   ✅ ХОРОШО (объединено):
+   Scenario: "Ввести сумму вне допустимого диапазона" -> Codes: ["Поле красное", "Кнопка блокируется"]
+   
+   ПРАВИЛО: Если Codes идентичны — Scenario ОДИН. Детализация условий (меньше/больше) — на уровне тест-кейсов через параметризацию.
+6. 🚫 ЗАПРЕТ НА СМЕШИВАНИЕ ИСХОДОВ (ATOMICITY RULE):
    - Строго соблюдай принцип атомарности: Один Scenario = Один конкретный исход.
    - ЗАПРЕЩЕНО описывать в одном Scenario и успешное выполнение, и ошибку/недоступность.
    - Если видишь условие "Если X, то доступно, иначе недоступно" — это ВСЕГДА два разных Scenario.
@@ -690,6 +880,11 @@ ${contextInfo}
 ПРИНЦИП "NO HALLUCINATIONS":
 - Используй только те факты, которые есть в ЭТОМ куске текста или логически вытекают из него.
 - Не придумывай HTTP-коды (400, 500), если они явно не написаны. Пиши "Ошибка сервера", "Ошибка валидации".
+
+⚠️ ИСПОЛЬЗОВАНИЕ GLOBAL CONTEXT:
+- В System Prompt выше есть раздел "GLOBAL CONTEXT (RULES & ENTITIES)" с глобальными правилами системы.
+- Если в текущем чанке встречаются упоминания сущностей, ролей или правил из Global Context (например, поле "ИНН", сущность "Заявка", роль "Admin") — применяй соответствующие глобальные правила!
+- Например, если в Global Context есть правило "ИНН должен быть 12 цифр", а в текущем чанке упоминается поле "ИНН" — применяй это правило валидации.
 
 ВХОДНЫЕ ТРЕБОВАНИЯ (CHUNK):
 ---
@@ -2056,13 +2251,17 @@ function buildPlatformMap(platOptions) {
  * @returns {Array} - Массив шагов в нашем формате
  */
 function convertAllureStepsToFormat(stepsRaw, layer) {
-    if (!stepsRaw || !stepsRaw.scenario || !stepsRaw.scenario.root || !stepsRaw.scenario.scenarioSteps) {
+    // API Allure возвращает структуру с root и scenarioSteps на верхнем уровне
+    // Поддерживаем обе структуры: старую (с scenario) и новую (без scenario)
+    const root = stepsRaw?.scenario?.root || stepsRaw?.root;
+    const scenarioSteps = stepsRaw?.scenario?.scenarioSteps || stepsRaw?.scenarioSteps;
+    
+    if (!stepsRaw || !root || !scenarioSteps) {
         return [];
     }
 
     const isE2E = layer === 'E2E Tests';
-    const stepOrder = stepsRaw.scenario.root.children || [];
-    const scenarioSteps = stepsRaw.scenario.scenarioSteps || {};
+    const stepOrder = root.children || [];
     const sharedSteps = stepsRaw.sharedSteps || {};
     const sharedStepScenarioSteps = stepsRaw.sharedStepScenarioSteps || {};
 
@@ -2152,10 +2351,38 @@ async function filterCases(allCases, jiraIssue, projectId) {
                 getTestCaseCustomFields(id, projectId)
             ]);
 
+            // Логируем детальную информацию только для проблемных тест-кейсов (уменьшаем шум)
+            if ((id === 168712 || id === 168807 || id === 168813) && (!stepsRaw || Array.isArray(stepsRaw) || !stepsRaw.scenario)) {
+                const stepsRawKeys = stepsRaw && typeof stepsRaw === 'object' ? Object.keys(stepsRaw).join(', ') : 'нет ключей';
+                console.log(`[DEBUG DETAIL] Тест-кейс ${id} (${name}):`);
+                console.log(`  - Тип: ${typeof stepsRaw}, Ключи: [${stepsRawKeys}]`);
+                if (stepsRaw && typeof stepsRaw === 'object' && Object.keys(stepsRaw).length > 0) {
+                    console.log(`  - Структура (первые 800 символов):`, JSON.stringify(stepsRaw, null, 2).substring(0, 800));
+                }
+            }
+
             // ✅ Преобразуем структуру Allure (с expectedResultId) в наш формат (с action/expectedResult)
             const steps = convertAllureStepsToFormat(stepsRaw, layer);
 
-            filteredCases.push({ id, name, issue, tags, steps, expectedResult, layer, status, precondition, customFields });
+            // Сохраняем сырые шаги для formatTestCaseAsJson и formatTestCase
+            // API Allure может вернуть структуру с root/scenarioSteps на верхнем уровне (новая) или внутри scenario (старая)
+            const hasValidStructure = stepsRaw && typeof stepsRaw === 'object' && !Array.isArray(stepsRaw) && 
+                ((stepsRaw.scenario && stepsRaw.scenario.root && stepsRaw.scenario.scenarioSteps) || 
+                 (stepsRaw.root && stepsRaw.scenarioSteps));
+            const validStepsRaw = hasValidStructure ? stepsRaw : null;
+            filteredCases.push({ 
+                id, 
+                name, 
+                issue, 
+                tags, 
+                steps, 
+                stepsRaw: validStepsRaw,  // Сохраняем только валидную структуру или null
+                expectedResult, 
+                layer, 
+                status, 
+                precondition, 
+                customFields 
+            });
         })
     );
 
@@ -2182,17 +2409,15 @@ app.post('/api/analyze', async (req, res) => {
         clearInterval(spinnerInterval);
         console.log(`Отсортированные тест-кейсы по выбранной задаче Jira: ${filteredCases.length}`);
 
-        // Форматируем и сохраняем результаты
-        let result = '';
+        // Форматируем и сохраняем результаты в JSON для статического анализа
         let jsonResult = [];
 
         for (const caseItem of filteredCases) {
-            result += await formatTestCase(caseItem);
             jsonResult.push(await formatTestCaseAsJson(caseItem)); // Ждём результат от каждой функции
         }
 
-        // Вывод результатов
-        console.log(result);
+        // Вывод краткой информации
+        console.log(`Обработано тест-кейсов для анализа: ${jsonResult.length}`);
         const htmlReport = await staticAnalysis(jsonResult, projectId); // Генерация анализа
 
         // Возвращаем форматированный результат в ответе
@@ -5624,6 +5849,22 @@ async function generateTestModelAsync(taskId, inputData) {
             console.warn(`[generate-test-model-async] ⚠️ ВНИМАНИЕ: Требования очень короткие (${reqStringForModel.length} символов). Возможно, контент не загружен.`);
         }
 
+        // ✅ ЭТАП 1: GLOBAL CONTEXT EXTRACTION (Skeleton & Flesh архитектура)
+        console.log('[generateTestModelAsync] 🗺️ Этап 1: Извлечение глобального контекста (Global Context Extraction)...');
+        await db('generation_tasks').where('id', taskId).update({
+            progress: 5,
+            updated_at: new Date()
+        });
+
+        let globalContext = null;
+        try {
+            globalContext = await extractGlobalContext(reqStringForModel);
+            console.log(`[generateTestModelAsync] ✅ Глобальный контекст извлечен: ${globalContext.roles.length} ролей, ${globalContext.entities.length} сущностей, ${globalContext.screens.length} экранов, ${globalContext.global_rules.length} правил`);
+        } catch (error) {
+            console.warn('[generateTestModelAsync] ⚠️ Ошибка при извлечении глобального контекста, продолжаем без него:', error.message);
+            globalContext = getEmptyGlobalContext();
+        }
+
         // ✅ ФАЗА 1: ПРЕПРОЦЕССИНГ REQUIREMENTS - Извлечение структуры Feature → Story
         console.log('[generateTestModelAsync] Фаза 1: Извлечение структуры requirements');
         await db('generation_tasks').where('id', taskId).update({
@@ -5823,7 +6064,7 @@ async function generateTestModelAsync(taskId, inputData) {
         }
 
 
-        const SYSTEM_PROMPT = buildModelSystemPrompt();
+        const SYSTEM_PROMPT = buildModelSystemPrompt(globalContext);
 
 
 
@@ -11054,362 +11295,6 @@ async function generateTestCasesAsync(taskId, inputData) {
             return result;
         }
 
-        // ✅ НОВАЯ ФУНКЦИЯ: Перегенерация тест-кейсов с исправлениями
-        async function regenerateTestCasesWithFixes(testCases, validationResult, modelStructure, requirements, systemPrompt, baseCaseModelOptions, allowedCodes, allowedScenarios, buildSubmitCasesToolStrict, runTestCaseLLM, skipAllureAPICalls = false) {
-            if (!validationResult.regenerationNeeded || validationResult.regenerationTasks.length === 0) {
-                return testCases;
-            }
-
-            console.log(`[regenerateTestCasesWithFixes] Запуск перегенерации для исправления ${validationResult.regenerationTasks.length} проблем...`);
-
-            let fixedCases = [...testCases];
-
-            for (const task of validationResult.regenerationTasks) {
-                try {
-                    if (task.type === 'remove_duplicates') {
-                        // Удаляем дубликаты, оставляя только первый
-                        const indicesToRemove = task.duplicateGroup.indices
-                            .slice(1) // Все кроме первого
-                            .filter(idx => Number.isInteger(idx) && idx >= 0 && idx < testCases.length);
-
-                        if (indicesToRemove.length === 0) {
-                            console.log('[regenerateTestCasesWithFixes] ⚠️ Нет валидных индексов для удаления дублей');
-                            continue;
-                        }
-
-                        // Используем ссылки на исходные тест-кейсы, чтобы не зависеть от изменения индексов
-                        const duplicatesToRemove = new Set(indicesToRemove.map(idx => testCases[idx]));
-                        const beforeCount = fixedCases.length;
-                        fixedCases = fixedCases.filter(tc => !duplicatesToRemove.has(tc));
-                        const removedCount = beforeCount - fixedCases.length;
-
-                        console.log(`[regenerateTestCasesWithFixes] ✅ Удалено ${removedCount} дубликатов (отмечено ${indicesToRemove.length})`);
-                    } else if (task.type === 'fix_pairwise') {
-                        // Исправляем pairwise для конкретного тест-кейса
-                        // ⚠️ ВАЖНО: Пропускаем в debug режиме, т.к. это вызов Allure API
-                        if (skipAllureAPICalls) {
-                            console.log(`[regenerateTestCasesWithFixes] ⚠️ Пропускаю pairwise generation (debug режим)`);
-                        } else {
-                            const tc = task.testCase;
-                            if (tc.parameters && tc.parameters.length > 0) {
-                                try {
-                                    const pairwiseExamples = await generatePairwiseExamples(2, tc.parameters); // ✅ 2 = pairwise
-                                    if (pairwiseExamples && pairwiseExamples.length > 0) {
-                                        const index = fixedCases.findIndex(c => c.title === tc.title);
-                                        if (index !== -1) {
-                                            fixedCases[index].examples = pairwiseExamples;
-                                            console.log(`[regenerateTestCasesWithFixes] ✅ Исправлен pairwise для "${tc.title}" (${pairwiseExamples.length} примеров)`);
-                                        }
-                                    }
-                                } catch (err) {
-                                    console.error(`[regenerateTestCasesWithFixes] Ошибка генерации pairwise для "${tc.title}":`, err.message);
-                                }
-                            }
-                        }
-                    } else if (task.type === 'fix_semantic_errors') {
-                        // ✅ НОВАЯ ОБРАБОТКА: Исправление семантических ошибок (заголовки, expected, precondition)
-                        console.log(`[regenerateTestCasesWithFixes] Исправление семантических ошибок: ${task.issues.length} проблем...`);
-
-                        // Находим проблемные тест-кейсы по сообщениям об ошибках
-                        const problematicCases = [];
-                        task.issues.forEach(issue => {
-                            // Извлекаем номер тест-кейса из сообщения об ошибке
-                            const match = issue.match(/Тест-кейс\s+(\d+)\s+/);
-                            if (match) {
-                                const tcIndex = parseInt(match[1]) - 1; // Индексация с 0
-                                if (tcIndex >= 0 && tcIndex < testCases.length) {
-                                    problematicCases.push({
-                                        index: tcIndex,
-                                        testCase: testCases[tcIndex],
-                                        issue: issue
-                                    });
-                                }
-                            }
-                        });
-
-                        // Группируем по типам ошибок
-                        const e2eTitleIssues = problematicCases.filter(pc => pc.issue.includes('"Полный цикл"') || pc.issue.includes('слово "E2E"'));
-                        const e2eTechnicalIssues = problematicCases.filter(pc => pc.issue.includes('детали HTTP-запросов') || pc.issue.includes('параметризацию с техническими вариантами'));
-                        const titlePlaceholderIssues = problematicCases.filter(pc => pc.issue.includes('плейсхолдер {{Параметр}}'));
-                        const expectedVerbIssues = problematicCases.filter(pc => pc.issue.includes('глагола действия'));
-                        const preconditionConflictIssues = problematicCases.filter(pc => pc.issue.includes('конфликт precondition'));
-
-                        // Формируем промпт для исправления
-                        let fixPrompt = `🚨 КРИТИЧЕСКИЕ СЕМАНТИЧЕСКИЕ ОШИБКИ В ТЕСТ-КЕЙСАХ! 🚨\n\n`;
-
-                        if (e2eTitleIssues.length > 0) {
-                            fixPrompt += `\n❌ ПРОБЛЕМА 1: Заголовки E2E тестов содержат "Полный цикл"\n`;
-                            fixPrompt += `ПРАВИЛО: Заголовки E2E тестов должны быть информативными названиями сценария БЕЗ фразы "Полный цикл".\n`;
-                            fixPrompt += `✅ ПРАВИЛЬНО: "Создание документа с выбором типа операции"\n`;
-                            fixPrompt += `❌ НЕПРАВИЛЬНО: "Полный цикл создания документа"\n\n`;
-                            e2eTitleIssues.forEach(pc => {
-                                fixPrompt += `- Тест-кейс "${pc.testCase.title}": нужно убрать "Полный цикл" из заголовка\n`;
-                            });
-                        }
-
-                        if (e2eTechnicalIssues.length > 0) {
-                            fixPrompt += `\n❌ ПРОБЛЕМА 1.6: E2E тесты содержат технические детали (HTTP-запросы, API-эндпоинты, статус-коды, параметризация технических вариантов)\n`;
-                            fixPrompt += `ПРАВИЛО: E2E тесты — это Black Box тестирование на уровне пользовательского контекста (C1)! Они НЕ должны содержать технические детали!\n`;
-                            fixPrompt += `✅ ПРАВИЛЬНО для E2E: Только пользовательские действия ("Нажать", "Ввести", "Выбрать"), проверка результата с точки зрения пользователя\n`;
-                            fixPrompt += `❌ НЕПРАВИЛЬНО для E2E: Детали HTTP-запросов, API-эндпоинты, статус-коды, параметры запросов (deal.dealMode, previousBankRegNumber)\n`;
-                            fixPrompt += `❌ НЕПРАВИЛЬНО для E2E: Параметризация с техническими вариантами (коды операций, статусы, параметры API) — это Integration тесты!\n`;
-                            fixPrompt += `РЕШЕНИЕ: Если нужна проверка с техническими деталями или параметризация технических вариантов — это Integration тест!\n\n`;
-                            e2eTechnicalIssues.forEach(pc => {
-                                fixPrompt += `- Тест-кейс "${pc.testCase.title}": убрать технические детали или перенести в Integration тест\n`;
-                            });
-                        }
-
-                        if (titlePlaceholderIssues.length > 0) {
-                            fixPrompt += `\n❌ ПРОБЛЕМА 1.5: Заголовки содержат плейсхолдеры {{Параметр}}\n`;
-                            fixPrompt += `ПРАВИЛО: Заголовки тест-кейсов НЕ должны содержать плейсхолдеры {{Параметр}}! Параметры указываются в поле parameters, а {{Параметр}} используется ТОЛЬКО в steps и expected.\n`;
-                            fixPrompt += `✅ ПРАВИЛЬНО: "Создание документа с выбором типа операции"\n`;
-                            fixPrompt += `✅ ПРАВИЛЬНО: "Создание документа с параметрами dealMode и previousBankRegNumber"\n`;
-                            fixPrompt += `❌ НЕПРАВИЛЬНО: "Создание документа с {{Тип операции}}"\n`;
-                            fixPrompt += `❌ НЕПРАВИЛЬНО: "Создание документа с параметрами {{dealMode}} и {{previousBankRegNumber}}"\n\n`;
-                            titlePlaceholderIssues.forEach(pc => {
-                                fixPrompt += `- Тест-кейс "${pc.testCase.title}": нужно убрать {{Параметр}} из заголовка, использовать информативное название без плейсхолдеров\n`;
-                            });
-                        }
-
-                        if (expectedVerbIssues.length > 0) {
-                            fixPrompt += `\n❌ ПРОБЛЕМА 2: Ожидаемый результат начинается с глагола действия (инфинитив)\n`;
-                            fixPrompt += `ПРАВИЛО: Ожидаемый результат должен описывать УЖЕ ВЫПОЛНЕННОЕ действие, используя причастие прошедшего времени или результат.\n`;
-                            fixPrompt += `✅ ПРАВИЛЬНО: "Создан документ", "Добавлен элемент", "Отображается поле"\n`;
-                            fixPrompt += `❌ НЕПРАВИЛЬНО: "Создать документ", "Добавить элемент", "Отобразить поле"\n\n`;
-                            expectedVerbIssues.forEach(pc => {
-                                fixPrompt += `- Тест-кейс "${pc.testCase.title}": expected "${pc.testCase.expected?.substring(0, 50)}..." - нужно заменить инфинитив на причастие прошедшего времени\n`;
-                            });
-                        }
-
-                        if (preconditionConflictIssues.length > 0) {
-                            fixPrompt += `\n❌ ПРОБЛЕМА 3: Конфликт precondition и шагов (авторизация)\n`;
-                            fixPrompt += `ПРАВИЛО: Если в precondition указано "Пользователь авторизован в системе", то в шагах НЕ должно быть "Авторизоваться в системе".\n`;
-                            fixPrompt += `РЕШЕНИЕ для E2E тестов:\n`;
-                            fixPrompt += `1. Либо убрать precondition и оставить шаг авторизации в начале\n`;
-                            fixPrompt += `2. Либо убрать шаг авторизации и оставить precondition\n\n`;
-                            preconditionConflictIssues.forEach(pc => {
-                                fixPrompt += `- Тест-кейс "${pc.testCase.title}": precondition "${pc.testCase.precondition?.substring(0, 50)}..." конфликтует с шагом авторизации\n`;
-                            });
-                        }
-
-                        fixPrompt += `\n🚨 ВАЖНО: Исправь ВСЕ указанные тест-кейсы согласно правилам выше!\n`;
-
-                        // Перегенерируем проблемные тест-кейсы
-                        for (const pc of problematicCases.slice(0, 10)) { // Ограничиваем до 10 для производительности
-                            try {
-                                const matchingChunk = findMatchingModelChunk(pc.testCase, modelStructure);
-                                if (matchingChunk) {
-                                    const allowedCodes = collectAllowedCodes(matchingChunk);
-                                    const allowedScenarios = collectAllowedScenarios(matchingChunk);
-
-                                    const submissionTool = buildSubmitCasesToolStrict(allowedCodes, allowedScenarios);
-                                    const retryPrompt = `${systemPrompt}\n\n${fixPrompt}\n\n═══════════════════════════════════════════════════════════════
-🚨 КРИТИЧЕСКИ ВАЖНО: СОХРАНЕНИЕ ОРИГИНАЛЬНОГО ID
-═══════════════════════════════════════════════════════════════
-
-ПРОБЛЕМНЫЙ ТЕСТ-КЕЙС ДЛЯ ИСПРАВЛЕНИЯ:
-${JSON.stringify(pc.testCase, null, 2)}
-
-🚨 КРИТИЧНО: 
-1. ОБЯЗАТЕЛЬНО сохрани оригинальный ID тест-кейса "${pc.testCase.id}" в исправленной версии!
-2. НЕ создавай новый тест-кейс - ИСПРАВЛЯЙ существующий!
-3. Исправленный тест-кейс ДОЛЖЕН иметь ТОТ ЖЕ ID: "${pc.testCase.id}"
-4. Исправленный тест-кейс ДОЛЖЕН иметь ТО ЖЕ название (title): "${pc.testCase.title}"
-5. Изменяй ТОЛЬКО проблемные поля (steps, expected, precondition), остальное оставляй БЕЗ ИЗМЕНЕНИЙ!
-
-❌ ЗАПРЕЩЕНО:
-- Создавать новый тест-кейс с другим ID
-- Менять название (title) тест-кейса
-- Менять feature, story, scenario (если не требуется явно)
-
-✅ ПРАВИЛЬНО:
-- Вернуть ОДИН исправленный тест-кейс с ID="${pc.testCase.id}"
-- Сохранить все поля БЕЗ изменений, кроме исправленных проблемных полей
-- Улучшить шаги, expected или precondition согласно указанным проблемам`;
-
-                                    const retryAi = await runTestCaseLLM({
-                                        userPrompt: retryPrompt,
-                                        submissionTool,
-                                        modelOverrides: {
-                                            temperature: 0,
-                                            top_p: 1,
-                                            max_tokens: 45000,  // ✅ Безопасное значение для MiniMax-M2
-                                            extra: { transforms: 'middle-out' }
-                                        }
-                                    });
-
-                                    const retryArgs = extractToolArgs(retryAi, 'submit_cases');
-                                    if (retryArgs && retryArgs.cases && retryArgs.cases.length > 0) {
-                                        // ✅ КРИТИЧНО: Заменяем старый тест-кейс на исправленный, сохраняя оригинальный ID
-                                        const fixedCase = retryArgs.cases[0];
-                                        fixedCase.id = pc.testCase.id; // Сохраняем оригинальный ID
-
-                                        // Ищем старый тест-кейс в fixedCases по ID или по логической сигнатуре
-                                        let oldCaseIndex = fixedCases.findIndex(tc => tc.id === pc.testCase.id);
-
-                                        // Если не нашли по ID, ищем по логической сигнатуре
-                                        if (oldCaseIndex === -1) {
-                                            const found = findTestCaseBySignature(fixedCases, pc.testCase);
-                                            if (found) {
-                                                oldCaseIndex = found.index;
-                                            }
-                                        }
-
-                                        if (oldCaseIndex !== -1) {
-                                            // ✅ ЗАМЕНЯЕМ старый тест-кейс на исправленный
-                                            fixedCases[oldCaseIndex] = fixedCase;
-                                        } else {
-                                            // Если не нашли - заменяем по индексу (fallback)
-                                            fixedCases[pc.index] = fixedCase;
-                                        }
-
-                                        console.log(`[regenerateTestCasesWithFixes] ✅ Исправлен семантический дефект в тест-кейсе "${pc.testCase.title}" (ID: ${pc.testCase.id})`);
-                                    } else {
-                                        console.warn(`[regenerateTestCasesWithFixes] ⚠️ Не удалось исправить семантический дефект в "${pc.testCase.title}", оставляем исходный`);
-                                    }
-                                } else {
-                                    console.warn(`[regenerateTestCasesWithFixes] ⚠️ Не найден соответствующий чанк для "${pc.testCase.title}", оставляем исходный`);
-                                }
-                            } catch (err) {
-                                console.error(`[regenerateTestCasesWithFixes] Ошибка при исправлении семантического дефекта в "${pc.testCase.title}":`, err.message);
-                            }
-                        }
-
-                    } else if (task.type === 'improve_coverage' || task.type === 'improve_model_coverage') {
-                        // Генерируем дополнительные тест-кейсы для недостающего покрытия
-                        console.log(`[regenerateTestCasesWithFixes] Генерация дополнительных тест-кейсов для улучшения покрытия...`);
-
-                        const missingScenarios = task.missingScenarios || [];
-                        if (missingScenarios.length > 0) {
-                            // Создаем промпт для генерации недостающих тест-кейсов
-                            const userPrompt = `
-Требуется сгенерировать дополнительные тест-кейсы для следующего недостающего покрытия:
-
-${task.type === 'improve_model_coverage'
-                                    ? `Недостающие Scenarios:\n${missingScenarios.map(sc => `- ${sc.feature} → ${sc.story} → ${sc.scenario}`).join('\n')}`
-                                    : `Недостающие требования:\n${(task.missingRequirementIds || []).map(id => `- ${id}`).join('\n')}`
-                                }
-
-Требования:
-${Array.isArray(requirements) ? requirements.join('\n\n') : requirements}
-
-Модель:
-${JSON.stringify(modelStructure, null, 2)}
-
-Сгенерируй тест-кейсы для всех недостающих элементов. ОБЯЗАТЕЛЬНО:
-1. Используй только существующие feature/story/scenario из модели
-2. Для Integration тестов указывай scenario
-3. Для E2E тестов указывай story
-4. Избегай дубликатов с существующими тест-кейсами
-`.trim();
-
-                            const submissionTool = buildSubmitCasesToolStrict(allowedCodes, allowedScenarios);
-                            const ai = await runTestCaseLLM({
-                                systemPrompt,
-                                userPrompt,
-                                submissionTool,
-                                modelOverrides: {
-                                    temperature: 0.1,
-                                    top_p: 0.95,
-                                    max_tokens: 45000  // ✅ Безопасное значение для MiniMax-M2
-                                }
-                            });
-
-                            // Извлекаем новые тест-кейсы из ответа
-                            const extractCasesFromResponse = (ai) => {
-                                const allTestCases = [];
-
-                                if (ai.choices?.[0]?.message?.tool_calls) {
-                                    for (const toolCall of ai.choices[0].message.tool_calls) {
-                                        if (toolCall.function?.name === 'submit_cases') {
-                                            try {
-                                                const args = JSON.parse(toolCall.function.arguments || '{}');
-                                                if (args.cases && Array.isArray(args.cases)) {
-                                                    allTestCases.push(...args.cases);
-                                                }
-                                            } catch (e) {
-                                                console.error(`[regenerateTestCasesWithFixes] Ошибка парсинга tool_call:`, e.message);
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if (allTestCases.length === 0) {
-                                    const content = ai.choices?.[0]?.message?.content || '';
-                                    if (content.trim()) {
-                                        try {
-                                            const rawJsonCandidate = extractJsonArray(content);
-                                            if (rawJsonCandidate) {
-                                                // ✅ ИСПРАВЛЕНО: Проверяем, является ли rawJsonCandidate уже валидным JSON (из JSON.stringify)
-                                                // Если это валидный JSON, не применяем cleanupJsonText
-                                                let jsonText = rawJsonCandidate;
-                                                let parsed = null;
-
-                                                // Пробуем сначала распарсить как есть (если это уже валидный JSON из JSON.stringify)
-                                                try {
-                                                    parsed = JSON5.parse(jsonText);
-                                                } catch (e1) {
-                                                    // Если не получилось, применяем cleanupJsonText
-                                                    jsonText = cleanupJsonText(rawJsonCandidate);
-                                                    try {
-                                                        parsed = JSON5.parse(jsonText);
-                                                    } catch (e2) {
-                                                        // Если и после cleanup не получилось, логируем детали ошибки
-                                                        console.error(`[regenerateTestCasesWithFixes] Ошибка парсинга JSON после cleanup: ${e2.message}`);
-                                                        if (e2.index !== undefined) {
-                                                            const errorPos = e2.index;
-                                                            console.error(`[regenerateTestCasesWithFixes] Позиция ошибки: символ '${jsonText[errorPos] || '?'}' на позиции ${errorPos}`);
-                                                            console.error(`[regenerateTestCasesWithFixes] Контекст ошибки: ${jsonText.substring(Math.max(0, errorPos - 50), Math.min(jsonText.length, errorPos + 50))}`);
-                                                        }
-                                                        throw e2;
-                                                    }
-                                                }
-
-                                                const cases = Array.isArray(parsed) ? parsed : (parsed?.cases || []);
-                                                allTestCases.push(...cases);
-                                            }
-                                        } catch (e) {
-                                            console.error(`[regenerateTestCasesWithFixes] Ошибка парсинга content:`, e.message);
-                                        }
-                                    }
-                                }
-
-                                return allTestCases;
-                            };
-
-                            const newCases = extractCasesFromResponse(ai);
-                            if (newCases.length > 0) {
-                                // Проверяем на дубликаты перед добавлением
-                                const existingTitles = new Set(fixedCases.map(tc => tc.title?.toLowerCase().trim()));
-                                const uniqueNewCases = newCases.filter(tc => !existingTitles.has(tc.title?.toLowerCase().trim()));
-
-                                fixedCases.push(...uniqueNewCases);
-                                console.log(`[regenerateTestCasesWithFixes] ✅ Добавлено ${uniqueNewCases.length} новых тест-кейсов для покрытия`);
-                            }
-                        }
-                    }
-                } catch (err) {
-                    console.error(`[regenerateTestCasesWithFixes] Ошибка при обработке задачи ${task.type}:`, err.message);
-                }
-            }
-
-            return fixedCases;
-        }
-
-        function getRequirementPriority(key) {
-            const priorities = {
-                authorization: 'Critical',
-                qrPayment: 'High',
-                sbpTopup: 'High',
-                transfers: 'High',
-                categoryPayment: 'Medium',
-                requisitesPayment: 'Medium',
-                repeatOperations: 'Medium',
-                trayRestore: 'Medium',
-                mainPage: 'Low'
-            };
-            return priorities[key] || 'Medium';
-        }
 
         // НОВАЯ ФУНКЦИЯ: Догенерация тест-кейсов для недостающих требований (асинхронная версия)
         async function gapFillRequirements(requirements, missingRequirements, systemPrompt, modelStructure) {
@@ -13033,20 +12918,6 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return endpoint;
         }
 
-        function deriveFileNameFromLink(link) {
-            if (!link) return 'mock.json';
-            try {
-                const url = new URL(link);
-                const pathname = url.pathname || '';
-                const parts = pathname.split('/').filter(Boolean);
-                if (parts.length === 0) return 'mock.json';
-                return parts[parts.length - 1] || 'mock.json';
-            } catch {
-                const fallbackParts = link.split('/').filter(Boolean);
-                return fallbackParts.length ? fallbackParts[fallbackParts.length - 1] : 'mock.json';
-            }
-        }
-
         function extractInlineJsonSnippet(context, maxLength = 1200) {
             if (!context) return null;
             const fencedMatch = context.match(/```(?:json)?([\s\S]{10,2000}?)```/i);
@@ -13173,76 +13044,6 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return `Предварительное условие\n\n${enumerated.join('\n')}`;
         }
 
-        function applyMockPreconditions(testCases, storyMockHints) {
-            if (!Array.isArray(testCases) || !storyMockHints || storyMockHints.size === 0) {
-                return testCases;
-            }
-
-            let updated = 0;
-            const patched = testCases.map(tc => {
-                if (!tc || tc.layer !== 'Integration frontend Tests' || !tc.story) {
-                    return tc;
-                }
-                const mocks = storyMockHints.get(tc.story);
-                if (!mocks || mocks.length === 0) {
-                    return tc;
-                }
-
-                // ✅ ИСПРАВЛЕНИЕ: Проверяем, используется ли эндпоинт в тесте
-                // Собираем все текстовые поля теста для проверки
-                const testText = [
-                    tc.steps || [],
-                    tc.expected || '',
-                    tc.scenario || '',
-                    tc.precondition || '',
-                    tc.title || ''
-                ].flat().join(' ').toLowerCase();
-
-                // Фильтруем моки: оставляем только те, которые упоминаются в тесте
-                const relevantMocks = mocks.filter(mock => {
-                    if (!mock || !mock.endpoint) return false;
-                    // Нормализуем endpoint для поиска (убираем **, параметры запроса)
-                    const normalizedEndpoint = mock.endpoint
-                        .replace(/\*\*/g, '')
-                        .replace(/\?[^\s]+/g, '')
-                        .toLowerCase();
-                    // Ищем упоминание эндпоинта в тексте теста
-                    return testText.includes(normalizedEndpoint) ||
-                        testText.includes(mock.endpoint.toLowerCase());
-                });
-
-                if (relevantMocks.length === 0) {
-                    return tc;
-                }
-
-                const existingPrecondition = tc.precondition || '';
-                const missingMocks = relevantMocks.filter(mock => !existingPrecondition.includes(mock.endpoint));
-                if (missingMocks.length === 0) {
-                    return tc;
-                }
-
-                // ✅ ОГРАНИЧЕНИЕ: Максимум 5 моков на тест (чтобы не раздувать precondition)
-                const limitedMocks = missingMocks.slice(0, 5);
-
-                const entryStep = buildEntryPointPreconditionStep(existingPrecondition);
-                const mockSteps = limitedMocks
-                    .map(formatMockStep)
-                    .filter(Boolean);
-                if (mockSteps.length === 0) {
-                    return tc;
-                }
-
-                tc.precondition = formatPreconditionBlock([entryStep, ...mockSteps]);
-                updated++;
-                return tc;
-            });
-
-            if (updated > 0) {
-                console.log(`[applyMockPreconditions] ✅ Добавлено mock-precondition для ${updated} Integration frontend тестов`);
-            }
-
-            return patched;
-        }
 
         // ✅ Функция-заглушка для некорректной структуры chunk
         function buildContextPromptFallback(existingE2E = []) {
@@ -13346,89 +13147,355 @@ ${existingE2E.length > 0 ? existingE2E.map(t => `  - ${t.title}`).join('\n') : '
             mode = 'FULL',
             includeBackendTests = true,
             scenariosCount = 0,
-            storiesCount = 0
+            storiesCount = 0,
+            featuresCount = 1,
+            targetLayer = null
         }) {
-            const needsE2E = mode === 'FULL';
-            const baseIntegrationLimit = Math.max(20, Math.ceil(scenariosCount * 5));
-            const effectiveStoriesCount = needsE2E ? Math.max(1, storiesCount || 0) : storiesCount;
-            const maxE2E = needsE2E ? Math.min(3, effectiveStoriesCount) : 0;
-            const totalLimit = maxE2E + baseIntegrationLimit;
-        
-            return `
-        Ты — Senior SDET. Твоя цель — создать исчерпывающий набор тест-кейсов (Test Suite) на основе предоставленной Тестовой Модели.
-        
-        🎯 СТРАТЕГИЯ ПОКРЫТИЯ:
-        1. ПРИОРИТЕТ #1: Integration Tests (Frontend/Backend). Покрой каждую валидацию, ошибку и граничное значение ИМЕННО ЗДЕСЬ.
-        2. ПРИОРИТЕТ #2: E2E Tests. Только 1-2 сценария на фичу! Только "Полный путь от начала до конца".
-        
-        🔥 ЖЕЛЕЗНЫЕ ПРАВИЛА (IRONCLAD RULES) — НАРУШЕНИЕ НЕДОПУСТИМО:
-        
-        1. 🚫 **NO {{}} IN EXPECTED/TITLE/PRECONDITION (АБСОЛЮТНЫЙ ЗАПРЕТ):**
-           - Плейсхолдеры \`{{param}}\` разрешены **ТОЛЬКО** внутри массива \`steps\`.
-           - В \`expected\` и \`precondition\` писать \`{{param}}\` ЗАПРЕЩЕНО.
-           - ❌ ПЛОХО: Expected: "{{Error Message}}"
-           - ✅ ХОРОШО: Expected: "Отображается сообщение об ошибке, соответствующее типу невалидных данных (см. Examples)"
-           - ❌ ПЛОХО: Precondition: "Введена сумма {{amount}}"
-           - ✅ ХОРОШО: Precondition: "Открыта форма калькулятора" (Ввод суммы — это первый шаг теста!)
-        
-        2. 🚫 **NO ACTIONS IN PRECONDITION (Чистота контекста):**
-           - Precondition — это "ГДЕ я нахожусь" (Контекст).
-           - Steps — это "ЧТО я делаю" (Действие).
-           - ЗАПРЕЩЕНО писать в Precondition действия, которые являются частью проверяемого сценария.
-           - ❌ ПЛОХО: Precondition: "Пользователь ввел сумму 50000"
-           - ✅ ХОРОШО: Precondition: "Пользователь находится на форме". Step 1: "Ввести сумму 50000".
-        
-        3. 🚫 **E2E SCOPE LIMIT (Не дроби E2E):**
-           - E2E тест должен проверять ПОЛНЫЙ бизнес-процесс (Happy Path).
-           - ЗАПРЕЩЕНО создавать E2E тесты на:
-             - Проверку валидации одного поля (Это Integration!).
-             - Проверку текста ошибки (Это Integration!).
-             - Проверку цвета кнопки (Это Integration!).
-           - E2E тест должен быть ДЛИННЫМ (Авторизация -> Выбор -> Заполнение -> Отправка -> Результат).
-        
-        4. 🧩 **DATA-DRIVEN EXPECTED (Человеческий язык):**
-           - В параметризованных тестах Expected должен описывать ЛОГИКУ, а не подставлять значение.
-           - Пример: Вместо "Отображается {{status}}", пиши "Статус заявки меняется в соответствии с условиями (см. таблицу)".
-        
-        🏗️ СТРУКТУРА ПО СЛОЯМ:
-        
-        ### 1. E2E Tests (UI Flows) ${needsE2E ? `(СТРОГО 1-2 теста на Feature)` : '(ПРОПУСТИТЬ)'}
-        - **Цель:** Пройти ПОЛНЫЙ путь пользователя (Happy Path + Critical Error flow).
-        - **Steps:** Авторизация -> Навигация -> Заполнение -> Отправка -> Проверка финала.
-        - **Промежуточные проверки:** ОБЯЗАТЕЛЬНО добавляй проверки важных состояний (расчеты, появление форм) в steps.
-        - **Precondition:** "Пользователь на стартовой странице".
-        
-        ### 2. Integration Frontend Tests (UI Components & Validation)
-        - **Цель:** Вся "грязь" здесь: валидация полей, граничные значения, сообщения об ошибках, поведение кнопок.
-        - **Steps:** Короткие (1-3 шага). "Открыть форму -> Ввести невалидное -> Проверить ошибку".
-        - **Precondition:** "Форма открыта".
-        
-        ${includeBackendTests ? `### 3. Integration Backend Tests
-        - **Цель:** API проверки (без UI).` : ''}
-        
-        📊 ФОРМАТ JSON (СТРОГО):
-        {
-          "id": "tc-if-001",
-          "title": "...",
-          "layer": "...",
-          "precondition": "...", 
-          "steps": [
-            "Строка шага",
-            { "text": "Шаг с проверкой (E2E only)", "expectedResult": "Проверка" }
-          ],
-          "expected": "...",
-          "examples": [],
-          "parameters": []
+            // ═══════════════════════════════════════════════════════════════
+            // РАСЧЕТ ЛИМИТОВ (ИСПОЛЬЗУЕМ RULES)
+            // ═══════════════════════════════════════════════════════════════
+            const needsE2E = mode === 'FULL' || mode === 'BATCH';
+            const effectiveFeaturesCount = Math.max(1, featuresCount);
+            
+            // E2E: Используем лимиты из RULES
+            const e2eQuantity = RULES.testCases['E2E Tests'].quantity;
+            const minE2E = needsE2E ? effectiveFeaturesCount * e2eQuantity.min : 0;  // 🔥 МИНИМУМ 1 на Feature
+            const maxE2E = needsE2E ? Math.min(e2eQuantity.max, effectiveFeaturesCount * e2eQuantity.max) : 0;
+            
+            // Integration: Используем лимиты из RULES
+            const integrationFeQuantity = RULES.testCases['Integration frontend Tests'].quantity;
+            const baseIntegrationLimit = Math.max(integrationFeQuantity.min * storiesCount, Math.ceil(scenariosCount * 5));
+            // ═══════════════════════════════════════════════════════════════
+            // СЕКЦИЯ 1: РОЛЬ
+            // ═══════════════════════════════════════════════════════════════
+            const roleSection = `
+Ты — Senior SDET. Генерируй тест-кейсы СТРОГО по правилам.
+
+Целевой слой: **${targetLayer || 'ALL LAYERS'}**
+
+`.trim();
+
+            // ═══════════════════════════════════════════════════════════════
+            // СЕКЦИЯ 2: СЛОИ И ЛИМИТЫ
+            // ═══════════════════════════════════════════════════════════════
+            const layersSection = `
+## 📊 СЛОИ ТЕСТИРОВАНИЯ И ЛИМИТЫ
+
+### 1. E2E Tests ${needsE2E ? '(ОБЯЗАТЕЛЬНО!)' : '(не требуется)'}
+
+${needsE2E ? `
+- **Количество:** МИНИМУМ ${minE2E}, максимум ${maxE2E} (1-2 на Feature)
+
+- **scenario:** ❌ НЕ УКАЗЫВАТЬ
+
+- **code:** ❌ НЕ УКАЗЫВАТЬ
+
+- **steps:** Объекты с expectedResult: \`{ "text": "Действие", "expectedResult": "Промежуточный результат" }\`
+
+- **tags:** Комбинация [M, D, A, PWA] + Smoke для критичных
+
+- **parameters:** ❌ ЗАПРЕЩЕНО
+
+- **Что тестировать:** Сквозные бизнес-процессы (Happy Path + Critical Errors)
+
+` : '- Не генерировать в этом режиме'}
+
+### 2. Integration frontend Tests
+
+- **Количество:** ${RULES.testCases['Integration frontend Tests'].quantity.min}-${RULES.testCases['Integration frontend Tests'].quantity.max} на Story
+
+- **scenario:** ✅ ОБЯЗАТЕЛЬНО из тест-модели
+
+- **code:** ❌ НЕ УКАЗЫВАТЬ (Codes из модели используются только для формирования expected!)
+
+- **steps:** Строки: \`["Нажать кнопку", "Ввести значение"]\`
+
+- **steps ЗАПРЕЩЕНО:** "Отправить GET", "200 OK", технические детали
+
+- **tags:** Комбинация [${RULES.testCases['Integration frontend Tests'].tagsAllowed.join(', ')}]
+
+- **parameters:** ✅ Обязательно для однотипных проверок
+
+- **Что тестировать:** UI валидация, состояния кнопок, отображение данных
+
+${includeBackendTests ? `
+
+### 3. Integration backend Tests
+
+- **Количество:** ${RULES.testCases['Integration backend Tests'].quantity.min}-${RULES.testCases['Integration backend Tests'].quantity.max} на Story (если есть backend Codes в модели)
+
+- **scenario:** ✅ ОБЯЗАТЕЛЬНО из тест-модели
+
+- **code:** ❌ НЕ УКАЗЫВАТЬ
+
+- **steps:** Строки: \`["Отправить POST /api/transfer с {{Body}}"]\`
+
+- **tags:** ТОЛЬКО [${RULES.testCases['Integration backend Tests'].tagsAllowed.join(', ')}]
+
+- **parameters:** ✅ Для разных статус-кодов
+
+- **Что тестировать:** API контракты, коды ответов
+
+` : ''}
+
+`.trim();
+
+            // ═══════════════════════════════════════════════════════════════
+            // СЕКЦИЯ 3: ТЕГИ (ПЛАТФОРМЫ) - ИСПОЛЬЗУЕМ RULES
+            // ═══════════════════════════════════════════════════════════════
+            const e2eTags = RULES.testCases['E2E Tests'].tagsAllowed.join(', ');
+            const integrationFeTags = RULES.testCases['Integration frontend Tests'].tagsAllowed.join(', ');
+            const integrationBeTags = RULES.testCases['Integration backend Tests'].tagsAllowed.join(', ');
+            
+            const tagsSection = `
+## 🏷️ ТЕГИ (ПЛАТФОРМЫ) - ОБЯЗАТЕЛЬНО!
+
+| Тег | Значение | Для слоёв |
+|-----|----------|-----------|
+| **M** | ${RULES.tags.platforms.M.description} | E2E, Integration frontend |
+| **D** | ${RULES.tags.platforms.D.description} | E2E, Integration frontend |
+| **A** | ${RULES.tags.platforms.A.description} | E2E, Integration frontend |
+| **PWA** | ${RULES.tags.platforms.PWA.description} | E2E, Integration frontend |
+| **S** | ${RULES.tags.platforms.S.description} | ТОЛЬКО Integration backend |
+| **Smoke** | ${RULES.tags.special.Smoke.description} | ТОЛЬКО E2E |
+
+### Правила проставления тегов:
+
+- **E2E Tests:** Обязательно указать платформы [${e2eTags}]. Добавить Smoke если критичный Happy Path.
+
+- **Integration frontend Tests:** Обязательно указать платформы [${integrationFeTags}].
+
+- **Integration backend Tests:** ТОЛЬКО тег [${integrationBeTags}]. Никаких M, D, A, PWA!
+
+\`\`\`json
+// E2E пример:
+"tags": ["M", "D", "A", "PWA", "Smoke"]
+
+// Integration frontend пример:
+"tags": ["M", "D", "A", "PWA"]
+
+// Integration backend пример:
+"tags": ["S"]
+\`\`\`
+
+`.trim();
+
+            // ═══════════════════════════════════════════════════════════════
+            // СЕКЦИЯ 4: ЖЕЛЕЗНЫЕ ПРАВИЛА
+            // ═══════════════════════════════════════════════════════════════
+            const ironRulesSection = `
+## 🔥 ЖЕЛЕЗНЫЕ ПРАВИЛА (НАРУШЕНИЕ = ПРОВАЛ)
+
+### 1. 🚫 NO {{}} IN TITLE/EXPECTED/PRECONDITION
+
+Плейсхолдеры \`{{param}}\` разрешены **ТОЛЬКО** в:
+
+- \`steps\` (шаги)
+
+- \`parameters\` и \`examples\` (таблица данных)
+
+❌ ЗАПРЕЩЕНО:
+
+\`\`\`json
+"title": "Ввод суммы {{amount}}"           // ❌
+"expected": "Отображается ошибка {{error}}" // ❌
+"precondition": "Пользователь на странице {{page}}" // ❌
+\`\`\`
+
+✅ ПРАВИЛЬНО:
+
+\`\`\`json
+"title": "Проверка валидации суммы (параметризованный)"
+"expected": "Отображается сообщение об ошибке валидации"
+"precondition": "Открыта форма перевода"
+"steps": ["Ввести {{Сумма}} в поле 'Сумма'"]
+\`\`\`
+
+### 2. 🚫 NO ACTIONS IN PRECONDITION
+
+- **Precondition** = ГДЕ я нахожусь (состояние системы)
+
+- **Steps** = ЧТО я делаю (действия)
+
+❌ ПЛОХО: \`"precondition": "Авторизоваться и открыть форму"\`
+
+✅ ХОРОШО: \`"precondition": "Пользователь авторизован, открыта форма перевода"\`
+
+### 3. 🚫 CODE НЕ ЗАПИСЫВАЕТСЯ В ТЕСТ-КЕЙС
+
+Поле \`code\` в тест-кейсе **НЕ ЗАПОЛНЯЕТСЯ**!
+
+Codes из тест-модели используются **ТОЛЬКО** для понимания что писать в \`expected\`.
+
+### 4. ✅ E2E = ДЛИННАЯ ЦЕПОЧКА
+
+E2E тест — это ПОЛНЫЙ бизнес-путь (3+ экранов). Не дроби его!
+
+Промежуточные проверки — через \`expectedResult\` в steps.
+
+`.trim();
+
+            // ═══════════════════════════════════════════════════════════════
+            // СЕКЦИЯ 5: КАК ИСПОЛЬЗОВАТЬ CODES ИЗ МОДЕЛИ
+            // ═══════════════════════════════════════════════════════════════
+            const codeUsageSection = `
+## 🔗 КАК ИСПОЛЬЗОВАТЬ CODES ИЗ ТЕСТ-МОДЕЛИ
+
+Codes в Scenario — это техническая реализация. Используй их ТАК:
+
+### Для Integration frontend:
+
+1. Найди Scenario в модели
+
+2. Посмотри на **frontend** Codes
+
+3. Используй их текст для формирования \`expected\`
+
+Пример:
+
+\`\`\`
+// В модели:
+Scenario: "Нажать кнопку 'Оплатить'"
+Codes: [
+  { "text": "Отправляется POST /api/pay", "type": "frontend" },
+  { "text": "Отображается лоадер", "type": "frontend" }
+]
+
+// В тест-кейсе:
+{
+  "steps": ["Нажать кнопку 'Оплатить'"],
+  "expected": "**Отображается** лоадер. **Отправляется** POST /api/pay"
+  // code: НЕ УКАЗЫВАЕМ!
+}
+\`\`\`
+
+### Для Integration backend:
+
+1. Найди Scenario в модели
+
+2. Посмотри на **backend** Codes
+
+3. Используй их для формирования \`expected\`
+
+Пример:
+
+\`\`\`
+// В модели:
+Codes: [{ "text": "Возвращается 200 OK с {transactionId}", "type": "backend" }]
+
+// В тест-кейсе:
+{
+  "steps": ["Отправить POST /api/pay с {{Body}}"],
+  "expected": "Возвращается 200 OK, тело содержит transactionId"
+  // code: НЕ УКАЗЫВАЕМ!
+}
+\`\`\`
+
+`.trim();
+
+            // ═══════════════════════════════════════════════════════════════
+            // СЕКЦИЯ 6: ПАРАМЕТРИЗАЦИЯ
+            // ═══════════════════════════════════════════════════════════════
+            const parametrizationSection = `
+## 🔄 ПАРАМЕТРИЗАЦИЯ (ОБЪЕДИНЯЙ ДУБЛИ!)
+
+### Когда параметризовать:
+
+✅ Одинаковые шаги, разные входные данные
+
+✅ Граничные значения (min, max, min-1, max+1)
+
+✅ Разные форматы (валидный/невалидный email)
+
+✅ Разные статус-коды для backend
+
+### Когда НЕ параметризовать:
+
+❌ E2E тесты (никогда!)
+
+❌ Разная логика (разные шаги)
+
+❌ Разные результаты по смыслу
+
+### ПРАВИЛЬНЫЙ ФОРМАТ (из схемы):
+
+\`\`\`json
+{
+  "title": "Проверка валидации email",
+  "steps": ["Ввести {{Email}} в поле 'Email'", "Нажать 'Отправить'"],
+  "expected": "Система реагирует согласно типу ввода",
+  "parameters": [
+    { "name": "Email", "values": ["test", "@mail.ru", "valid@mail.ru"] }
+  ],
+  "examples": [
+    { "parameters": [{ "name": "Email", "value": "test" }] },
+    { "parameters": [{ "name": "Email", "value": "@mail.ru" }] },
+    { "parameters": [{ "name": "Email", "value": "valid@mail.ru" }] }
+  ]
+}
+\`\`\`
+
+⚠️ ВАЖНО: \`examples\` содержит массив объектов с полем \`parameters\`!
+
+`.trim();
+
+            // ═══════════════════════════════════════════════════════════════
+            // СЕКЦИЯ 7: ФОРМАТ JSON
+            // ═══════════════════════════════════════════════════════════════
+            const jsonFormatSection = `
+## 📋 ФОРМАТ JSON (СТРОГО ПО СХЕМЕ)
+
+\`\`\`json
+{
+  "cases": [
+    {
+      "id": "uuid",
+      "title": "Статичный заголовок без {{}}",
+      "layer": "Integration frontend Tests",
+      "feature": "Название фичи из модели",
+      "story": "Название story из модели",
+      "scenario": "Название scenario из модели",  // ❌ для E2E не указывать!
+      "precondition": "Состояние системы (не действия!)",
+      "steps": [
+        "Простой шаг строкой",
+        { "text": "Шаг с проверкой", "expectedResult": "Промежуточный результат" }
+      ],
+      "expected": "Финальный ожидаемый результат (статичный текст)",
+      "tags": ["M", "D", "A", "PWA"],
+      "priority": "High",
+      "version": "stable",
+      "parameters": [
+        { "name": "Параметр", "values": ["значение1", "значение2"] }
+      ],
+      "examples": [
+        { "parameters": [{ "name": "Параметр", "value": "значение1" }] }
+      ]
+    }
+  ]
+}
+\`\`\`
+
+`.trim();
+
+            // ═══════════════════════════════════════════════════════════════
+            // СБОРКА
+            // ═══════════════════════════════════════════════════════════════
+            return [
+                roleSection,
+                layersSection,
+                tagsSection,
+                ironRulesSection,
+                codeUsageSection,
+                parametrizationSection,
+                jsonFormatSection
+            ].join('\n\n');
         }
         
-        ⚡ ЛИМИТЫ: Максимум ${totalLimit} тестов.
-        `.trim();
-        }
-        
+
 
 
         // ✅ БАЗОВЫЙ ПРОМПТ (для обратной совместимости, будет переопределен в genForChunkOptimized)
-        const BASE_SYSTEM_PROMPT = buildTestCaseSystemPrompt({ mode: 'FULL', includeBackendTests: true, scenariosCount: 0, storiesCount: 0 });
+        const BASE_SYSTEM_PROMPT = buildTestCaseSystemPrompt({ mode: 'FULL', includeBackendTests: true, scenariosCount: 0, storiesCount: 0, featuresCount: 1 });
 
         // Подсчитываем статистику модели для COVENANT
         const S = modelStructure.reduce((sum, f) => sum + (f.stories || []).length, 0);
@@ -13437,45 +13504,57 @@ ${existingE2E.length > 0 ? existingE2E.map(t => `  - ${t.title}`).join('\n') : '
         const C = modelStructure.reduce((sum, f) =>
             sum + (f.stories || []).reduce((s, st) =>
                 s + (st.scenarios || []).reduce((sc, scn) => sc + (scn.codes?.length || 0), 0), 0), 0);
+        const F = modelStructure.length; // Количество Features
 
         function buildCovenant({
             mode = 'FULL',
             includeBackendTests = true,
             scenariosCount = 0,
-            storiesCount = 0
+            storiesCount = 0,
+            featuresCount = 1
         }) {
-            const needsE2E = mode === 'FULL';
-            const baseIntegrationLimit = Math.max(20, Math.ceil(scenariosCount * 5));
-            const effectiveStoriesCount = needsE2E ? Math.max(1, storiesCount || 0) : storiesCount;
-            const maxE2E = needsE2E ? Math.min(3, effectiveStoriesCount) : 0;
-
-            const e2eRule = needsE2E
-                ? `🚨 E2E: ОБЯЗАТЕЛЬНО 1-3 теста на КАЖДУЮ Story (основной путь + критичный негатив)`
-                : `🚨 E2E: НЕ генерируй (уже созданы)`;
-
-            const integrationRule = includeBackendTests
-                ? `- Integration Tests: ${baseIntegrationLimit} тестов максимум (frontend + backend)`
-                : `- Integration Frontend: ${baseIntegrationLimit} тестов максимум`;
-
+            const needsE2E = mode === 'FULL' || mode === 'BATCH';
+            const effectiveFeaturesCount = Math.max(1, featuresCount);
+            
+            // E2E: Используем лимиты из RULES
+            const e2eQuantity = RULES.testCases['E2E Tests'].quantity;
+            const minE2E = needsE2E ? effectiveFeaturesCount * e2eQuantity.min : 0;
+            const maxE2E = needsE2E ? Math.min(e2eQuantity.max, effectiveFeaturesCount * e2eQuantity.max) : 0;
+            
+            // Integration: Используем лимиты из RULES
+            const integrationFeQuantity = RULES.testCases['Integration frontend Tests'].quantity;
+            const baseIntegrationLimit = Math.max(integrationFeQuantity.min * storiesCount, Math.ceil(scenariosCount * 5));
+            const e2eTagsList = RULES.testCases['E2E Tests'].tagsAllowed.join(', ');
+            const integrationFeTagsList = RULES.testCases['Integration frontend Tests'].tagsAllowed.join(', ');
+            const integrationBeTagsList = RULES.testCases['Integration backend Tests'].tagsAllowed.join(', ');
+            
             return `
-ПРАВИЛА ПОКРЫТИЯ (СТРОГО СОБЛЮДАЙ!):
-${e2eRule}
-${integrationRule}
-
 ═══════════════════════════════════════════════════════════════
-
-🎯 СТРАТЕГИЯ ПОКРЫТИЯ:
-1. ПРИОРИТЕТ #1: Positive Coverage (Happy Path). Покрой каждый успешный Scenario.
-2. ПРИОРИТЕТ #2: Negative Coverage. Создай отдельные тесты на каждую ошибку.
-3. ПРИОРИТЕТ #3: Parameterization. Объединяй вариации данных в 'examples'.
-
-ПРОВЕРКА перед submit_cases:
-${needsE2E ? '🚨 КРИТИЧНО: □ Каждая Story имеет ≥1 E2E?' : ''}
-□ Expected конкретный во всех тестах? (НЕТ {{}} в expected!)
-□ Precondition и Steps разделены? (Precondition = состояние ДО)
-□ Нет дубликатов?
+🛡️ THE COVENANT (ФИНАЛЬНЫЙ ЧЕК-ЛИСТ ПЕРЕД ГЕНЕРАЦИЕЙ)
+═══════════════════════════════════════════════════════════════
+📏 ЛИМИТЫ:
+${needsE2E ? `□ E2E: МИНИМУМ ${minE2E}, максимум ${maxE2E} тестов` : '□ E2E: Не генерировать'}
+□ Integration frontend: ~${baseIntegrationLimit} тестов (${integrationFeQuantity.min}-${integrationFeQuantity.max} на Story)
+${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration backend Tests'].quantity.min}-${RULES.testCases['Integration backend Tests'].quantity.max} на Story (если есть backend Codes)` : '□ Integration backend: Не генерировать'}
+🏷️ ТЕГИ (ПРОВЕРЬ КАЖДЫЙ ТЕСТ!):
+□ E2E → tags: [${e2eTagsList}]
+□ Integration frontend → tags: [${integrationFeTagsList}]
+□ Integration backend → tags: ТОЛЬКО [${integrationBeTagsList}]
+🔥 ЖЕЛЕЗНЫЕ ПРАВИЛА (ПРОВЕРЬ КАЖДЫЙ ТЕСТ!):
+□ [TITLE] НЕТ {{param}} в заголовке
+□ [EXPECTED] НЕТ {{param}} в expected
+□ [PRECONDITION] НЕТ действий, только состояние
+□ [CODE] Поле code НЕ заполнено (❌ запрещено!)
+□ [SCENARIO] E2E тесты НЕ имеют scenario
+□ [E2E] E2E = длинная цепочка (3+ экранов)
+□ [PARAMS] Дубли объединены через parameters/examples
+🎯 ПРИОРИТЕТЫ:
+1. Сначала Integration (глубокое покрытие)
+2. В конце E2E (сквозные пути)
+═══════════════════════════════════════════════════════════════
 `.trim();
         }
+
 
 
         const baseSystemPrompt = BASE_SYSTEM_PROMPT;
@@ -13917,6 +13996,235 @@ ${needsE2E ? '🚨 КРИТИЧНО: □ Каждая Story имеет ≥1 E2E?
             return allTestCases;
         }
 
+        /**
+         * ✅ ЭТАП 3: Генерация E2E тестов из полной модели (Skeleton & Flesh архитектура)
+         * Генерирует сквозные E2E сценарии, которые проходят через несколько фич
+         * @param {Object} options - Опции генерации
+         * @param {Array} options.fullTestModel - Полная тестовая модель (все Features)
+         * @param {Array} options.requirements - Требования
+         * @param {Array} options.existingTestCases - Существующие тест-кейсы (для избежания дублей)
+         * @param {boolean} options.includeBackendTests - Флаг включения backend тестов
+         * @param {string} options.taskId - ID задачи
+         * @param {Array} options.sharedStepsDetailsForPrompt - Shared steps для промпта
+         * @param {Object} options.signatureRegistry - Реестр сигнатур для дедупликации
+         * @returns {Promise<Array>} Массив E2E тест-кейсов
+         */
+        async function generateE2ETests({
+            fullTestModel,
+            requirements,
+            existingTestCases = [],
+            includeBackendTests = true,
+            taskId,
+            sharedStepsDetailsForPrompt = [],
+            signatureRegistry = null
+        }) {
+            if (!fullTestModel || !Array.isArray(fullTestModel) || fullTestModel.length === 0) {
+                console.warn('[generateE2ETests] ⚠️ Полная модель пуста, пропускаем генерацию E2E');
+                return [];
+            }
+
+            try {
+                console.log(`[generateE2ETests] 🏗️ Начинаю генерацию E2E тестов из полной модели (${fullTestModel.length} фич)`);
+
+                // Подсчитываем статистику модели
+                const storiesCount = fullTestModel.reduce((sum, f) => sum + (f.stories || []).length, 0);
+                const scenariosCount = fullTestModel.reduce((sum, f) =>
+                    sum + (f.stories || []).reduce((s, st) => s + (st.scenarios || []).length, 0), 0);
+
+                // ✅ Загружаем идеальные примеры E2E из БД
+                let perfectExamples = null;
+                if (projectId) {
+                    try {
+                        perfectExamples = await getAllPerfectExamplesByLayer(projectId, db);
+                        console.log(`[generateE2ETests] Загружено идеальных примеров E2E из БД: ${(perfectExamples['E2E Tests'] || []).length}`);
+                    } catch (err) {
+                        console.warn(`[generateE2ETests] Ошибка загрузки идеальных примеров:`, err.message);
+                    }
+                }
+
+                // Формируем примеры для E2E
+                const e2eExamples = (perfectExamples?.['E2E Tests'] || []).slice(0, 3);
+                const examplesSection = e2eExamples.length > 0
+                    ? `\n═══════════════════════════════════════════════════════════════
+🚨 ОБЯЗАТЕЛЬНЫЕ ЭТАЛОННЫЕ ШАБЛОНЫ E2E ТЕСТОВ:
+═══════════════════════════════════════════════════════════════
+
+${JSON.stringify(e2eExamples, null, 2)}
+
+🚨 Строго следуй формату этих примеров!
+`
+                    : '';
+
+                // Формируем системный промпт для E2E генерации
+                const e2eSystemPrompt = `
+Твоя роль: E2E-агент. Твоя задача — создать сквозные E2E тесты на основе ПОЛНОЙ тестовой модели системы.
+
+🏗️ АРХИТЕКТУРА "SKELETON & FLESH" - ЭТАП 3:
+Ты видишь ВСЮ систему целиком (все Features, все Stories, все Scenarios).
+Твоя задача — создать 5-10 сквозных E2E сценариев, которые проходят через НЕСКОЛЬКО фич.
+
+🎯 ПРАВИЛА ГЕНЕРАЦИИ E2E ТЕСТОВ:
+
+1. **СКВОЗНЫЕ СЦЕНАРИИ:**
+   - E2E тест должен проходить через НЕСКОЛЬКО фич (например: Создать в Фиче А → Оплатить в Фиче Б → Проверить статус в Фиче В)
+   - НЕ создавай E2E тесты, которые проверяют только одну фичу (это Integration тесты!)
+
+2. **ПОЛНЫЙ ПУТЬ ПОЛЬЗОВАТЕЛЯ:**
+   - E2E тест должен начинаться с авторизации (используй shared step "Авторизоваться в системе" если доступен)
+   - Затем навигация по системе
+   - Затем выполнение бизнес-операции
+   - Затем проверка результата
+
+3. **ПРОМЕЖУТОЧНЫЕ ПРОВЕРКИ:**
+   - ОБЯЗАТЕЛЬНО добавляй проверки важных состояний в steps с expectedResult
+   - Например: { "text": "Нажать кнопку 'Подтвердить'", "expectedResult": "Отображается модальное окно подтверждения" }
+
+4. **КОЛИЧЕСТВО:**
+   - Генерируй 5-10 E2E тестов на всю систему
+   - Каждый тест должен быть уникальным и покрывать разный бизнес-процесс
+
+5. **ПАРАМЕТРИЗАЦИЯ:**
+   - Если видишь несколько похожих E2E тестов с разными данными — объединяй их в один параметризованный тест
+   - Используй parameters и examples для вариаций данных
+
+🚨 КРИТИЧЕСКИ ВАЖНО:
+- E2E тесты НЕ должны содержать технические детали (HTTP-методы, статус-коды, эндпоинты)
+- E2E тесты — это Black Box тестирование с точки зрения пользователя
+- Каждый E2E тест должен иметь минимум 3 шага
+- Precondition: "Пользователь не авторизован" или "Пользователь на стартовой странице"
+
+${examplesSection}
+
+📊 ФОРМАТ JSON (СТРОГО):
+{
+  "id": "tc-e2e-001",
+  "title": "Название сквозного сценария",
+  "layer": "E2E Tests",
+  "precondition": "Пользователь не авторизован",
+  "steps": [
+    "Авторизоваться в системе",
+    "Перейти в раздел '...'",
+    { "text": "Выполнить действие", "expectedResult": "Промежуточный результат" },
+    "Завершающее действие"
+  ],
+  "expected": "**Отображается** финальный результат",
+  "feature": "Название основной фичи",
+  "story": "Название story",
+  "priority": "High",
+  "tags": ["M"],
+  "version": "stable",
+  "parameters": [],
+  "examples": []
+}
+`.trim();
+
+                // Формируем user prompt с полной моделью
+                const sharedStepsSection = sharedStepsDetailsForPrompt.length > 0
+                    ? `\n═══════════════════════════════════════════════════════════════
+ДОСТУПНЫЕ SHARED STEPS:
+═══════════════════════════════════════════════════════════════
+${sharedStepsDetailsForPrompt.map(ss => `- "${ss.name}": ${ss.steps.join(' → ')}`).join('\n')}
+`
+                    : '';
+
+                const userPrompt = `
+${sharedStepsSection}
+
+═══════════════════════════════════════════════════════════════
+ПОЛНАЯ ТЕСТОВАЯ МОДЕЛЬ СИСТЕМЫ (ВСЕ FEATURES):
+═══════════════════════════════════════════════════════════════
+
+${JSON.stringify(fullTestModel, null, 2)}
+
+═══════════════════════════════════════════════════════════════
+ТРЕБОВАНИЯ:
+═══════════════════════════════════════════════════════════════
+
+${Array.isArray(requirements) ? requirements.join('\n\n') : (requirements || '')}
+
+═══════════════════════════════════════════════════════════════
+
+🚨 ЗАДАНИЕ:
+Сгенерируй 5-10 сквозных E2E тестов, которые проходят через НЕСКОЛЬКО фич.
+Каждый тест должен быть уникальным бизнес-процессом.
+
+Верни ТОЛЬКО JSON массив тест-кейсов (без markdown, без пояснений).
+`.trim();
+
+                // Собираем allowed codes/scenarios из полной модели
+                const allowedCodes = collectAllowedCodes(fullTestModel);
+                const allowedScenarios = collectAllowedScenarios(fullTestModel);
+                const allowedFeatures = fullTestModel.map(f => f.text).filter(Boolean);
+                const allowedStories = fullTestModel.flatMap(f => (f.stories || []).map(s => s.text).filter(Boolean));
+
+                // Создаем tool для submit_cases
+                const submitTool = buildSubmitCasesToolStrict(allowedCodes, allowedScenarios, null);
+
+                // Вызываем LLM для генерации E2E тестов
+                // ✅ Используем только Cloud.ru API (без fallback на OpenRouter)
+                const messages = [
+                    { role: 'system', content: e2eSystemPrompt },
+                    { role: 'user', content: userPrompt }
+                ];
+
+                console.log(`[generateE2ETests] 📤 Отправка запроса в Cloud.ru API для генерации E2E тестов...`);
+
+                // ✅ Используем прямой вызов Cloud.ru API через runTestCaseLLM (он использует callWithCloudRuFallback, но это нормально для E2E)
+                // Для критичных операций можно было бы использовать callCloudRuAPI напрямую, но runTestCaseLLM предоставляет удобную инфраструктуру
+                const response = await runTestCaseLLM({
+                    taskContextId: `${taskId}:e2e-generation`,
+                    systemPrompt: e2eSystemPrompt,
+                    userPrompt,
+                    submissionTool: submitTool,
+                    persistContext: true,
+                    responseFormat: TEST_CASE_RESPONSE_FORMAT
+                });
+
+                // Извлекаем тест-кейсы из ответа
+                let e2eTestCases = [];
+                if (response && response.choices && response.choices.length > 0) {
+                    const content = response.choices[0]?.message?.content || '';
+                    if (content) {
+                        // ✅ extractCasesFromResponse принимает response и existingCases (опционально)
+                        e2eTestCases = extractCasesFromResponse(response, existingTestCases);
+                        console.log(`[generateE2ETests] ✅ Извлечено ${e2eTestCases.length} тестов из ответа LLM`);
+                    }
+                }
+
+                // Фильтруем только E2E тесты
+                e2eTestCases = e2eTestCases.filter(tc => tc.layer === 'E2E Tests');
+                console.log(`[generateE2ETests] ✅ Отфильтровано ${e2eTestCases.length} E2E тестов`);
+
+                // ✅ Фильтрация дублей через реестр
+                if (signatureRegistry && e2eTestCases.length > 0) {
+                    const beforeCount = e2eTestCases.length;
+                    const filteredE2E = [];
+                    for (const testCase of e2eTestCases) {
+                        const signature = signatureRegistry.computeSignature(testCase);
+                        const duplicate = signatureRegistry.findDuplicate(signature, testCase);
+                        if (!duplicate) {
+                            signatureRegistry.register(signature, testCase);
+                            filteredE2E.push(testCase);
+                        } else {
+                            console.log(`[generateE2ETests] 🚫 Пропущен дубликат E2E теста "${testCase.title}"`);
+                        }
+                    }
+                    e2eTestCases = filteredE2E;
+                    if (beforeCount > e2eTestCases.length) {
+                        console.log(`[generateE2ETests] ✅ Реестр отфильтровал ${beforeCount - e2eTestCases.length} дублей E2E (осталось ${e2eTestCases.length})`);
+                    }
+                }
+
+                console.log(`[generateE2ETests] ✅ Генерация завершена: ${e2eTestCases.length} уникальных E2E тестов`);
+                return e2eTestCases;
+
+            } catch (error) {
+                console.error(`[generateE2ETests] ❌ Ошибка генерации E2E тестов:`, error.message);
+                console.error(`[generateE2ETests] Stack trace:`, error.stack);
+                return [];
+            }
+        }
+
         // ✅ ОПТИМИЗИРОВАННАЯ ВЕРСИЯ: ONE-SHOT с fallback + Few-Shot Learning + Logic Extraction
         async function genForChunkOptimized(chunk, requirements, existingE2E = [], modelStructure, reqStructure = null, contextId = null, existingCases = [], logicConstraints = null, isNegativePass = false, includeBackendTests = true, signatureRegistry = null) {
             const contextPrompt = buildContextPrompt(chunk, existingE2E);
@@ -13926,14 +14234,22 @@ ${needsE2E ? '🚨 КРИТИЧНО: □ Каждая Story имеет ≥1 E2E?
             const allowedForChunk = collectAllowedCodes(modelStructure); // Используем полную модель
             const allowedScenarios = collectAllowedScenarios(modelStructure); // Используем полную модель
 
-            // ✅ Выбираем релевантные примеры для Few-Shot Learning
+            // ✅ ЭТАП 3: Skeleton & Flesh - Чанки генерируют ТОЛЬКО Integration тесты (E2E будут сгенерированы отдельно)
             // Защита от undefined
-            let mode = 'FULL';
+            let mode = 'CHUNK'; // ✅ По умолчанию CHUNK (только Integration тесты)
             if (chunk && Array.isArray(chunk) && chunk.length > 0 && chunk[0] && chunk[0].stories && Array.isArray(chunk[0].stories) && chunk[0].stories.length > 0) {
-                mode = chunk[0].stories[0]?._mode || 'FULL';
+                // Если в chunk явно указан режим FULL - используем его (для обратной совместимости)
+                const chunkMode = chunk[0].stories[0]?._mode;
+                if (chunkMode === 'FULL' || chunkMode === 'BATCH') {
+                    mode = chunkMode;
+                } else {
+                    mode = 'CHUNK'; // ✅ По умолчанию CHUNK (E2E будут генерироваться отдельно)
+                }
             } else {
-                console.warn('[genForChunkOptimized] Некорректная структура chunk, используем режим FULL');
+                console.warn('[genForChunkOptimized] Некорректная структура chunk, используем режим CHUNK (только Integration)');
             }
+
+            console.log(`[genForChunkOptimized] 🏗️ Режим генерации: ${mode} (${mode === 'CHUNK' ? 'только Integration тесты, E2E будут сгенерированы отдельно' : 'FULL/BATCH режим - генерируем все типы тестов'})`);
             // ✅ Загружаем идеальные примеры из БД для улучшения генерации
             let perfectExamples = null;
             // projectId и skipAllureAPICalls уже объявлены в начале функции generateTestCasesAsync
@@ -13979,19 +14295,23 @@ ${needsE2E ? '🚨 КРИТИЧНО: □ Каждая Story имеет ≥1 E2E?
             const scenariosCount = chunk.reduce((sum, f) =>
                 sum + (f.stories || []).reduce((s, st) => s + (st.scenarios || []).length, 0), 0);
             const storiesCount = chunk.reduce((sum, f) => sum + (f.stories || []).length, 0);
+            const featuresCount = chunk.length; // Количество Features в chunk
 
             const dynamicSystemPrompt = buildTestCaseSystemPrompt({
                 mode,
                 includeBackendTests,
                 scenariosCount,
-                storiesCount
+                storiesCount,
+                featuresCount,
+                targetLayer: null // null = все слои
             });
 
             const dynamicCovenant = buildCovenant({
                 mode,
                 includeBackendTests,
                 scenariosCount,
-                storiesCount
+                storiesCount,
+                featuresCount
             });
 
             // ✅ Формируем system prompt с примерами и логикой
@@ -14610,6 +14930,50 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                 console.log(`[generate-test-cases-async] ⚠️ Нет ограничений логики для второго прохода, пропускаем`);
             }
 
+            // ✅ ЭТАП 3: Генерация E2E тестов из полной модели (Skeleton & Flesh архитектура)
+            console.log(`[generate-test-cases-async] 🏗️ === ЭТАП 3: Генерация E2E тестов из полной модели ===`);
+            await db('generation_tasks').where('id', taskId).update({
+                progress: 55,
+                updated_at: new Date()
+            });
+
+            try {
+                const e2eTests = await generateE2ETests({
+                    fullTestModel: modelStructure,
+                    requirements: refinedReqs,
+                    existingTestCases: allCases,
+                    includeBackendTests,
+                    taskId,
+                    sharedStepsDetailsForPrompt,
+                    signatureRegistry
+                });
+
+                if (e2eTests && e2eTests.length > 0) {
+                    // ✅ Фильтруем E2E тесты, если они уже есть (на случай дублей)
+                    const existingE2EIds = new Set(
+                        allCases
+                            .filter(tc => tc.layer === 'E2E Tests')
+                            .map(tc => tc.id)
+                    );
+
+                    const newE2ETests = e2eTests.filter(tc => !existingE2EIds.has(tc.id));
+
+                    if (newE2ETests.length > 0) {
+                        // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: Умное объединение E2E тестов через реестр
+                        allCases = smartMergeTestCases(allCases, newE2ETests, signatureRegistry);
+                        console.log(`[generate-test-cases-async] ✅ ЭТАП 3 завершён: добавлено ${newE2ETests.length} E2E тестов из полной модели, всего: ${allCases.length}`);
+                    } else {
+                        console.log(`[generate-test-cases-async] ⚠️ ЭТАП 3: все E2E тесты уже были сгенерированы в чанках`);
+                    }
+                } else {
+                    console.log(`[generate-test-cases-async] ⚠️ ЭТАП 3: E2E тесты не были сгенерированы`);
+                }
+            } catch (e2eError) {
+                console.error(`[generate-test-cases-async] ❌ Ошибка генерации E2E тестов (ЭТАП 3):`, e2eError.message);
+                console.error(`[generate-test-cases-async] Продолжаем без E2E тестов из полной модели`);
+                // Продолжаем выполнение - E2E тесты не критичны для завершения процесса
+            }
+
             // === sanitize → fixAgainstModel до аудита покрытия ===
             const idx = buildModelIndex(modelStructure);
             allCases = sanitize(allCases, undefined, modelStructure);
@@ -14629,6 +14993,47 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
 
             // Заменяем упоминания параметров в шагах на формат {{Название параметра}} для Allure TestOps
             allCases = injectParameterPlaceholders(allCases);
+
+            // ✅ POST-PROCESSORS: Валидация и исправление тест-кейсов
+            console.log(`[generate-test-cases-async] 🔧 === POST-PROCESSING: Валидация и исправление ===`);
+            try {
+                const { testCases: validatedCases, issues } = validateAndFixTestCases(allCases, modelStructure);
+                if (issues.length > 0) {
+                    console.log(`[post-process] ✅ Исправлено проблем: ${issues.length}`);
+                    issues.slice(0, 10).forEach(i => console.log(`  - ${i}`));
+                    if (issues.length > 10) {
+                        console.log(`  ... и ещё ${issues.length - 10} проблем`);
+                    }
+                }
+                allCases = validatedCases;
+
+                // Проверка E2E покрытия
+                const e2eCoverage = validateE2ECoverage(allCases, modelStructure);
+                if (!e2eCoverage.valid) {
+                    console.warn(`[post-process] ⚠️ Недостаточно E2E тестов для фич:`, e2eCoverage.missingE2E.map(m => m.feature).join(', '));
+                } else {
+                    console.log(`[post-process] ✅ E2E покрытие: все фичи имеют минимум 1 E2E тест`);
+                }
+            } catch (postProcessError) {
+                console.error(`[post-process] ❌ Ошибка post-processing:`, postProcessError.message);
+                // Продолжаем без post-processing
+            }
+
+            // ✅ POST-PROCESSORS: Агрегация дублей в параметризованные
+            console.log(`[generate-test-cases-async] 🔄 === POST-PROCESSING: Агрегация дублей ===`);
+            try {
+                const beforeAggregation = allCases.length;
+                allCases = aggregateToParametrized(allCases);
+                const afterAggregation = allCases.length;
+                if (beforeAggregation !== afterAggregation) {
+                    console.log(`[post-process] ✅ Агрегация: было ${beforeAggregation} тестов, стало ${afterAggregation} (объединено ${beforeAggregation - afterAggregation} дублей)`);
+                } else {
+                    console.log(`[post-process] ✅ Агрегация: дублей не найдено`);
+                }
+            } catch (aggregationError) {
+                console.error(`[post-process] ❌ Ошибка агрегации:`, aggregationError.message);
+                // Продолжаем без агрегации
+            }
 
             // ✅ НОВАЯ ВАЛИДАЦИЯ: Проверка пирамиды
             const pyramidValidation = validateTestPyramid(allCases, modelStructure);
@@ -15523,6 +15928,237 @@ app.post('/api/cancel-generation/:taskId', async (req, res) => {
         res.json({ success: true, message: 'Задача отменена' });
     } catch (error) {
         console.error('Ошибка отмены задачи:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * Генерация XMind файла из структуры test model
+ * @param {Array} testModel - Массив features в формате test model: [{id, text, stories: [{id, text, scenarios: [{id, text, codes: [{id, text, type}]}]}]}]
+ * @param {string} projectName - Название проекта (для root topic)
+ * @returns {Buffer} - ZIP архив с XMind файлом
+ */
+function generateXMindFile(testModel, projectName = 'Test Model') {
+    const STYLE_IDS = {
+        e2e: 'b-e2e',
+        integration: 'b-int',
+        unit: 'b-unit',
+    };
+
+    const SHEET_BOUNDARY_STYLES = [
+        {
+            id: 'b-e2e', class: 'org.xmind.ui.boundary',
+            properties: { 'svg:stroke': '#22c55e', 'svg:fill': '#dcfce7' }
+        },
+        {
+            id: 'b-int', class: 'org.xmind.ui.boundary',
+            properties: { 'svg:stroke': '#38bdf8', 'svg:fill': '#e0f2fe' }
+        },
+        {
+            id: 'b-unit', class: 'org.xmind.ui.boundary',
+            properties: { 'svg:stroke': '#a78bfa', 'svg:fill': '#ede9fe' }
+        },
+    ];
+
+    const BOUNDARY_STYLE = {
+        e2e: { 'svg:fill': '#DCFCE7', 'svg:stroke': '#22C55E' },
+        integration: { 'svg:fill': '#E0F2FE', 'svg:stroke': '#38BDF8' },
+        unit: { 'svg:fill': '#EDE9FE', 'svg:stroke': '#A78BFA' },
+    };
+
+    const TYPE_MARKERS = {
+        feature: "tag-blue",
+        story: "tag-orange",
+        scenario: "tag-purple",
+        code: "tag-yellow",
+    };
+
+    const withTypeMeta = (topic, type) => ({
+        ...topic,
+        labels: [...(topic.labels || []), type.toUpperCase()],
+        markers: [...(topic.markers || []), { markerId: TYPE_MARKERS[type] }],
+    });
+
+    const generateIdLocal = () => Math.random().toString(36).substr(2, 9);
+
+    // Проверяем формат входных данных
+    if (!Array.isArray(testModel)) {
+        throw new Error('testModel must be an array of features');
+    }
+
+    // Строим иерархию из формата test model
+    const featureTopics = testModel.map((feature) => {
+        const featureName = feature.text || feature.id || 'Unnamed Feature';
+        const stories = feature.stories || [];
+
+        const storyTopics = stories.map((story) => {
+            const storyName = story.text || story.id || 'Unnamed Story';
+            const scenarios = story.scenarios || [];
+
+            const scenarioTopics = scenarios.map((scenario) => {
+                const scenarioName = scenario.text || scenario.id || 'Unnamed Scenario';
+                const codes = scenario.codes || [];
+
+                // Создаем children из codes
+                const codeTopics = codes.map((code) => {
+                    const codeName = code.text || code.id || 'Unnamed Code';
+                    const codeType = code.type || 'frontend';
+                    
+                    const codeMarkers = [];
+                    if (codeType === 'frontend') codeMarkers.push({ markerId: "flag-green" });
+                    if (codeType === 'backend') codeMarkers.push({ markerId: "flag-purple" });
+
+                    const codeTopic = {
+                        id: code.id || generateIdLocal(),
+                        class: "topic",
+                        title: codeName,
+                        markers: codeMarkers.length ? codeMarkers : undefined,
+                    };
+
+                    return withTypeMeta(codeTopic, "code");
+                });
+
+                const scenarioTopic = {
+                    id: scenario.id || generateIdLocal(),
+                    class: "topic",
+                    title: scenarioName,
+                    branch: "folded",
+                    markers: [{ markerId: "people-blue" }],
+                    children: { attached: codeTopics },
+                };
+
+                return withTypeMeta(scenarioTopic, "scenario");
+            });
+
+            const storyTopic = {
+                id: story.id || generateIdLocal(),
+                class: "topic",
+                title: storyName,
+                branch: "folded",
+                children: { attached: scenarioTopics },
+            };
+
+            return withTypeMeta(storyTopic, "story");
+        });
+
+        const featureTopic = {
+            id: feature.id || generateIdLocal(),
+            class: "topic",
+            title: featureName,
+            branch: "folded",
+            children: { attached: storyTopics },
+        };
+
+        return withTypeMeta(featureTopic, "feature");
+    });
+
+    // content.json
+    const contentJson = [
+        {
+            id: generateIdLocal(),
+            class: "sheet",
+            title: "Тест-модель",
+            rootTopic: {
+                id: generateIdLocal(),
+                class: "topic",
+                title: projectName,
+                structureClass: "org.xmind.ui.timeline.horizontal",
+                children: { attached: featureTopics },
+            },
+            theme: {
+                map: { id: "423cea10-5cf2-4b9c-a86a-10cba3fa1981", properties: { "svg:fill": "#ffffff" } },
+                centralTopic: { id: "c8f9a13b-cef1-4f3b-96aa-09472b8358f0", properties: { "svg:fill": "#3949AB" } },
+                mainTopic: { id: "50792793-7789-468b-9722-4e2ec235f632", properties: { "svg:fill": "#EEEEEE" } },
+                subTopic: { id: "a36e6db3-7a1f-4996-8f4b-f6bcffceeb5f", properties: { "svg:fill": "#EEEEEE" } },
+            },
+            styles: SHEET_BOUNDARY_STYLES,
+        },
+    ];
+
+    // metadata.json
+    const metadataJson = {
+        dataStructureVersion: "2",
+        creator: { name: "Allure Test Inspector", version: "1.0.0" },
+        layoutEngineVersion: "3",
+    };
+
+    // manifest.json
+    const manifestJson = {
+        "file-entries": { "content.json": {}, "metadata.json": {} },
+    };
+
+    // Упаковка в ZIP
+    const zip = new AdmZip();
+    zip.addFile("content.json", Buffer.from(JSON.stringify(contentJson, null, 2), 'utf8'));
+    zip.addFile("metadata.json", Buffer.from(JSON.stringify(metadataJson, null, 2), 'utf8'));
+    zip.addFile("manifest.json", Buffer.from(JSON.stringify(manifestJson, null, 2), 'utf8'));
+
+    return zip.toBuffer();
+}
+
+// API эндпоинт для генерации XMind файла
+// Принимает test model в формате: [{id, text, stories: [{id, text, scenarios: [{id, text, codes: [{id, text, type}]}]}]}]
+app.post('/api/generate-xmind', async (req, res) => {
+    try {
+        // Поддерживаем оба формата для обратной совместимости
+        let testModel = req.body.testModel || req.body.treeData;
+        const projectName = req.body.projectName;
+
+        // Если передан treeData (старый формат UI), преобразуем в test model формат
+        if (testModel && !Array.isArray(testModel) && typeof testModel === 'object') {
+            // Преобразуем treeData в test model формат
+            testModel = Object.entries(testModel).map(([featureName, featureData]) => {
+                const stories = Object.entries(featureData.stories || {}).map(([storyName, storyData]) => {
+                    const scenarios = Object.entries(storyData.scenarios || {}).map(([scenarioName, scenarioData]) => {
+                        const codes = Object.entries(scenarioData.codes || {}).map(([codeName, codeData]) => {
+                            // Определяем type из cases или используем дефолт
+                            const hasFE = (codeData.cases || []).some(c => (c.layer || "").toLowerCase().includes("frontend"));
+                            const hasBE = (codeData.cases || []).some(c => (c.layer || "").toLowerCase().includes("backend"));
+                            const codeType = codeData.type || (hasFE && hasBE ? 'integration' : hasFE ? 'frontend' : hasBE ? 'backend' : 'frontend');
+                            
+                            return {
+                                id: codeName,
+                                text: codeName,
+                                type: codeType
+                            };
+                        });
+                        
+                        return {
+                            id: scenarioName,
+                            text: scenarioName,
+                            codes
+                        };
+                    });
+                    
+                    return {
+                        id: storyName,
+                        text: storyName,
+                        scenarios
+                    };
+                });
+                
+                return {
+                    id: featureName,
+                    text: featureName,
+                    stories
+                };
+            });
+        }
+
+        if (!testModel || !Array.isArray(testModel)) {
+            return res.status(400).json({ 
+                error: 'testModel is required and must be an array of features. Format: [{id, text, stories: [{id, text, scenarios: [{id, text, codes: [{id, text, type}]}]}]}]' 
+            });
+        }
+
+        const xmindBuffer = generateXMindFile(testModel, projectName || 'Test Model');
+        const filename = `${(projectName || 'test-model').replace(/[^a-zA-Z0-9-_]/g, '_')}-${Date.now()}.xmind`;
+
+        res.setHeader('Content-Type', 'application/vnd.xmind.xmind');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(xmindBuffer);
+    } catch (error) {
+        console.error('Ошибка при генерации XMind файла:', error);
         res.status(500).json({ error: error.message });
     }
 });

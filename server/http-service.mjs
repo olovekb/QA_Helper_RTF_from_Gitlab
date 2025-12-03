@@ -230,10 +230,32 @@ export async function getTestCaseSteps(testCaseId) {
     //  const response = await fetch(url, { headers: HEADERS });
     const response = await fetchWithAuth(url);
     if (!response.ok) {
-        console.error(`Ошибка получения шагов для тест-кейса ${testCaseId}: ${response.statusText}`);
-        return [];  // Если ошибка, возвращаем пустой массив
+        const errorText = await response.text();
+        // Логируем только для первых 3 ошибок, чтобы не засорять консоль
+        if (testCaseId % 100 === 0 || testCaseId < 169000) {
+            console.error(`Ошибка получения шагов для тест-кейса ${testCaseId}: ${response.status} ${response.statusText}. Ответ: ${errorText.substring(0, 100)}`);
+        }
+        return null;  // Возвращаем null при ошибке, чтобы отличать от пустого ответа
     }
-    return response.json();
+    const data = await response.json();
+    
+    // Детальное логирование для проблемных тест-кейсов
+    if (testCaseId === 168712 || testCaseId === 168807 || testCaseId === 168813) {
+        console.log(`\n[DEBUG STEPS API] Тест-кейс ${testCaseId}:`);
+        console.log(`  - Статус ответа: ${response.status} ${response.statusText}`);
+        console.log(`  - Тип данных: ${typeof data}, Является массивом: ${Array.isArray(data)}`);
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+            console.log(`  - Ключи в ответе: [${Object.keys(data).join(', ')}]`);
+            console.log(`  - Полная структура (первые 1000 символов):`);
+            console.log(JSON.stringify(data, null, 2).substring(0, 1000));
+        }
+    }
+    
+    // Если ответ пустой объект или не содержит нужной структуры, возвращаем null
+    if (!data || (typeof data === 'object' && Object.keys(data).length === 0)) {
+        return null;
+    }
+    return data;
 }
 
 
@@ -640,62 +662,15 @@ export async function addStepToTestCase(testCaseId, { body, sharedStepId, afterI
  * @param {number} testCaseId - ID тест-кейса
  * @param {number} stepId - ID шага, к которому добавляется Expected Result
  * @param {string} expectedResultText - Текст ожидаемого результата
- * @returns {Promise<Object>} - Созданный Expected Result с полями id и expectedResultId
+ * @returns {Promise<Object>} - Созданный Expected Result с полями id
  */
 export async function addExpectedResultToStep(testCaseId, stepId, expectedResultText) {
     if (!expectedResultText || !expectedResultText.trim()) {
         throw new Error('expectedResultText is required');
     }
     
-    // 1. Создаем контейнер "Expected Result" (родительский шаг)
-    const containerPayload = {
-        testCaseId,
-        bodyJson: {
-            type: "doc",
-            content: [
-                {
-                    type: "paragraph",
-                    content: [
-                        {
-                            type: "text",
-                            text: "Expected Result"
-                        }
-                    ]
-                }
-            ]
-        }
-    };
-    
-    const containerResp = await fetchWithAuth(`${BASE_URL}/testcase/step?withExpectedResult=false`, {
-        method: 'POST',
-        body: JSON.stringify(containerPayload),
-    });
-    
-    if (!containerResp.ok) {
-        const txt = await containerResp.text();
-        throw new Error(`Allure POST Expected Result container failed ${containerResp.status}: ${txt}`);
-    }
-    
-    const container = await containerResp.json();
-    // ✅ Из curl примера: ответ содержит createdStepId в корне
-    // Структура: { createdStepId: 123, scenario: { scenarioSteps: { "123": {...} } } }
-    let containerId = container.createdStepId;
-    if (!containerId && container.scenario?.scenarioSteps) {
-        // Если createdStepId нет в корне, берем первый ключ из scenarioSteps
-        const stepKeys = Object.keys(container.scenario.scenarioSteps);
-        if (stepKeys.length > 0) {
-            containerId = parseInt(stepKeys[0]);
-        }
-    }
-    if (!containerId) {
-        containerId = container.id;
-    }
-    
-    if (!containerId) {
-        throw new Error(`Не удалось извлечь ID контейнера Expected Result из ответа: ${JSON.stringify(container).substring(0, 500)}`);
-    }
-    
-    // 2. Создаем дочерний шаг с текстом результата
+    // ✅ ИСПРАВЛЕНО: Создаем Expected Result как дочерний шаг основного шага
+    // Используем parentId для связи с основным шагом (это правильный способ в Allure API)
     const resultPayload = {
         testCaseId,
         bodyJson: {
@@ -712,7 +687,7 @@ export async function addExpectedResultToStep(testCaseId, stepId, expectedResult
                 }
             ]
         },
-        parentId: containerId  // ✅ Связываем с контейнером
+        parentId: stepId  // ✅ Связываем напрямую с основным шагом
     };
     
     const resultResp = await fetchWithAuth(`${BASE_URL}/testcase/step?withExpectedResult=false`, {
@@ -722,7 +697,7 @@ export async function addExpectedResultToStep(testCaseId, stepId, expectedResult
     
     if (!resultResp.ok) {
         const txt = await resultResp.text();
-        throw new Error(`Allure POST Expected Result text failed ${resultResp.status}: ${txt}`);
+        throw new Error(`Allure POST Expected Result failed ${resultResp.status}: ${txt}`);
     }
     
     const result = await resultResp.json();
@@ -738,24 +713,13 @@ export async function addExpectedResultToStep(testCaseId, stepId, expectedResult
         resultId = result.id;
     }
     
-    // 3. Связываем основной шаг с контейнером через PATCH
-    // ✅ Из curl примера: используется PATCH /testcase/{testCaseId}/step/{stepId}
-    const updateResp = await fetchWithAuth(`${BASE_URL}/testcase/${testCaseId}/step/${stepId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-            expectedResultId: containerId
-        }),
-    });
-    
-    if (!updateResp.ok) {
-        const txt = await updateResp.text();
-        throw new Error(`Allure PATCH step expectedResultId failed ${updateResp.status}: ${txt}`);
+    if (!resultId) {
+        throw new Error(`Не удалось извлечь ID Expected Result из ответа: ${JSON.stringify(result).substring(0, 500)}`);
     }
     
     return {
-        containerId,
         resultId,
-        expectedResultId: containerId
+        stepId
     };
 }
 
