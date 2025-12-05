@@ -646,12 +646,7 @@ export default function CodeErrorPage({ projects }) {
         if (!debProject || !debPat) return;
         setIsMetaLoading(true); setMetaError('');
         try {
-            // Передаем issueTypeId = '12811' для типа задачи "Баг-репорт", чтобы получить правильные allowedValues для Platform
-            const { data } = await axios.post(`${config.serverUrl}/jira/meta`, { 
-                projectKey: debProject, 
-                pat: debPat,
-                issueTypeId: '12811'  // ID типа задачи "Баг-репорт"
-            });
+            const { data } = await axios.post(`${config.serverUrl}/jira/meta`, { projectKey: debProject, pat: debPat });
             setFieldOptions(data.options); setFieldIds(data.fieldIds);
         } catch (e) {
             setMetaError(e.response?.data?.error || e.message);

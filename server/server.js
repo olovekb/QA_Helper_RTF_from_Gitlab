@@ -2842,7 +2842,8 @@ app.post('/api/jira/create-issue', async (req, res) =>
 app.post('/api/jira/meta', async (req, res) =>
 {
     const jiraBase = 'https://jira.abanking.ru';
-    const { pat, projectKey, issueTypeId = '12811' } = req.body;     // issueTypeId по умолчанию 12811 (Баг-репорт)
+    const issueKey = 'SBK-33974';               // берём из вашего CURL
+    const { pat, projectKey } = req.body;     // передаёте с фронта
 
     if (!pat || !projectKey) {
         return res.status(400).json({ error: 'PAT и projectKey обязательны' });
@@ -2854,25 +2855,15 @@ app.post('/api/jira/meta', async (req, res) =>
     };
 
     try {
-        // 1) Получаем метаданные полей для создания задачи типа "Баг-репорт" (12811)
-        // Используем createmeta вместо editmeta, чтобы получить правильные allowedValues для типа задачи
-        const createRes = await fetch(
-            `${jiraBase}/rest/api/2/issue/createmeta?projectKeys=${encodeURIComponent(projectKey)}&issuetypeIds=${issueTypeId}&expand=projects.issuetypes.fields`,
+        // 1) Получаем метаданные полей для указанного issueKey
+        const editRes = await fetch(
+            `${jiraBase}/rest/api/2/issue/${encodeURIComponent(issueKey)}/editmeta`,
             { headers }
         );
-        if (!createRes.ok) {
-            throw new Error(`createmeta вернул ${createRes.status}`);
+        if (!editRes.ok) {
+            throw new Error(`editmeta вернул ${editRes.status}`);
         }
-        const createMeta = await createRes.json();
-        
-        // Извлекаем поля из createmeta
-        const project = createMeta.projects?.[0];
-        const issueType = project?.issuetypes?.find(it => String(it.id) === String(issueTypeId));
-        const fields = issueType?.fields || {};
-        
-        if (!issueType) {
-            throw new Error(`Тип задачи с ID ${issueTypeId} не найден в проекте ${projectKey}`);
-        }
+        const { fields } = await editRes.json();
 
         // сопоставление UI-ключа → имя поля в Jira
         const customFieldNames = {
@@ -2894,7 +2885,7 @@ app.post('/api/jira/meta', async (req, res) =>
                 .find(([_, meta]) => meta.name === jiraName);
 
             if (!entry) {
-                console.warn(`[META] Поле "${jiraName}" не найдено в createmeta`);
+                console.warn(`[META] Поле "${jiraName}" не найдено в editmeta`);
                 options[key] = [];
                 continue;
             }
