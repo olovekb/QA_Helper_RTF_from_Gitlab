@@ -1,8 +1,8 @@
 {
     "baseUrl":  "https://abanking.qatools.cloud/api",
     "allureToken":  "__REDACTED__",
-    "serverUrl":  "http://localhost:5000/api",
-    "TIAUrl":  "http://localhost:5001",
+    "serverUrl":  "https://test-inspector.abanking.ru/api/api",
+    "TIAUrl":  "https://test-inspector.abanking.ru/tia-api",
     "projectId":  "",
     "jiraIssue":  "",
     "url":  "https://abanking.qatools.cloud",
