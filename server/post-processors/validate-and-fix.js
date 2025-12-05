@@ -161,3 +161,4 @@ export function validateE2ECoverage(testCases, modelStructure) {
         missingE2E
     };
 }
+
