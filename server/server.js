@@ -2881,6 +2881,35 @@ app.post('/api/jira/meta', async (req, res) =>
 
         // 2) Извлекаем id полей и их опции
         for (const [key, jiraName] of Object.entries(customFieldNames)) {
+            // Хардкод для Platform с правильными ID
+            if (key === 'Platform') {
+                const entry = Object.entries(fields)
+                    .find(([_, meta]) => meta.name === jiraName);
+                
+                if (entry) {
+                    const [fieldId] = entry;
+                    fieldIds[key] = fieldId;
+                } else {
+                    console.warn(`[META] Поле "${jiraName}" не найдено в editmeta`);
+                }
+                
+                // Хардкод правильных ID для Platform
+                options[key] = [
+                    { id: '15960', name: 'Backend' },
+                    { id: '15961', name: 'Devops' },
+                    { id: '15962', name: 'Desktop' },
+                    { id: '15963', name: 'Adaptive' },
+                    { id: '15964', name: 'Mobile' },
+                    { id: '15965', name: 'Native (disabled)' },
+                    { id: '15966', name: 'Native-Android' },
+                    { id: '15967', name: 'Native-IOS' },
+                    { id: '15968', name: 'PWA' },
+                    { id: '15969', name: '1C' },
+                    { id: '-1', name: '' }
+                ];
+                continue;
+            }
+
             const entry = Object.entries(fields)
                 .find(([_, meta]) => meta.name === jiraName);
 
