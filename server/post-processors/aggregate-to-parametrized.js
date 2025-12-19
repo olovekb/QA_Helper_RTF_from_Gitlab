@@ -176,3 +176,5 @@ function generalizeTitle(titles) {
     return titles[0].replace(/\d+|"[^"]+"|'[^']+'/g, '...') + ' (параметризованный)';
 }
 
+
+

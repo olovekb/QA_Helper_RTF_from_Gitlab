@@ -5,6 +5,7 @@ import axios from 'axios';
 import config from '../config.json';
 import TestModelGeneratorModal from './test-model/TestModelGeneratorModal';
 import TestModelReviewModal from './test-model/TestModelReviewModal';
+import BDDReviewModal from './bdd/BDDReviewModal';
 
 // CSS для анимаций
 const animationStyles = `
@@ -91,7 +92,16 @@ const GlobalGenerationWindow = ({
   setReviewModalOpen,
   onClearTestCases,
   onClearTestModel,
-  clearReviewState
+  clearReviewState,
+  // BDD генерация
+  handleGenerateBDD,
+  bddTaskId,
+  bddProgress,
+  bddStatus,
+  bddReviewModalOpen,
+  setBddReviewModalOpen,
+  bddResult,
+  onRegenerateBDD
 }) => {
   const location = useLocation();
   
@@ -277,8 +287,8 @@ const GlobalGenerationWindow = ({
   };
 
   // Определяем, есть ли активная генерация или сохраненные результаты
-  const hasActiveGeneration = generationStatus === 'processing' || modelGenerationStatus === 'processing';
-  const hasCompletedGeneration = generationStatus === 'completed' || modelGenerationStatus === 'completed';
+  const hasActiveGeneration = generationStatus === 'processing' || modelGenerationStatus === 'processing' || bddStatus === 'processing';
+  const hasCompletedGeneration = generationStatus === 'completed' || modelGenerationStatus === 'completed' || bddStatus === 'completed';
   const hasAnyGeneration = hasActiveGeneration || hasCompletedGeneration;
 
   return (
@@ -320,7 +330,82 @@ const GlobalGenerationWindow = ({
               🗑️ Очистить модель
             </button>
           )}
+          
+          {/* Кнопка генерации BDD тестов - независимо от тестовой модели */}
+          {handleGenerateBDD && (
+            <button 
+              onClick={() => {
+                // Если есть готовые результаты - открываем превью, иначе запускаем генерацию
+                if (bddStatus === 'completed' && bddResult) {
+                  console.log('BDD: Открываем превью существующих результатов');
+                  setBddReviewModalOpen(true);
+                } else {
+                  console.log('BDD: Запуск генерации BDD тестов');
+                  handleGenerateBDD();
+                }
+              }}
+              className="btn btn-secondary"
+              disabled={hasActiveGeneration && bddStatus !== 'completed'}
+              style={{ 
+                backgroundColor: bddStatus === 'completed' ? '#238636' : bddStatus === 'processing' ? '#58a6ff' : '#a371f7',
+                borderColor: bddStatus === 'completed' ? '#2ea043' : bddStatus === 'processing' ? '#58a6ff' : '#a371f7',
+                color: 'white',
+                cursor: (hasActiveGeneration && bddStatus !== 'completed') ? 'not-allowed' : 'pointer',
+                opacity: (hasActiveGeneration && bddStatus !== 'completed') ? 0.6 : 1,
+                fontWeight: 500,
+                minWidth: '180px'
+              }}
+              title={bddStatus === 'completed' ? 'Открыть превью BDD тестов' : 'Создать BDD тесты (Gherkin) с дедупликацией шагов из требований'}
+            >
+              {bddStatus === 'processing' 
+                ? `🔄 BDD генерация... ${bddProgress || 0}%`
+                : bddStatus === 'completed'
+                ? '✅ BDD тесты созданы'
+                : '📝 Создать BDD тесты'
+              }
+            </button>
+          )}
         </div>
+        
+        {/* Прогресс-бар для BDD генерации */}
+        {bddStatus === 'processing' && (
+          <div style={{ 
+            marginBottom: 16,
+            padding: 16, 
+            backgroundColor: 'rgba(13, 17, 23, 0.95)', 
+            border: '1px solid #30363d',
+            borderRadius: 8,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.2)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{
+                  width: 12,
+                  height: 12,
+                  backgroundColor: '#58a6ff',
+                  borderRadius: '50%',
+                  animation: 'pulse 1.5s infinite'
+                }} />
+                <h4 style={{ margin: 0, color: '#c9d1d9', fontSize: 14, fontWeight: 600 }}>Генерация BDD тестов</h4>
+              </div>
+              <span style={{ fontSize: 14, fontWeight: 'bold', color: '#58a6ff' }}>{bddProgress}%</span>
+            </div>
+            <div style={{ 
+              width: '100%', 
+              height: 8, 
+              backgroundColor: '#21262d', 
+              borderRadius: 4,
+              overflow: 'hidden'
+            }}>
+              <div style={{ 
+                width: `${bddProgress}%`, 
+                height: '100%', 
+                backgroundColor: '#58a6ff',
+                transition: 'width 0.3s ease'
+              }} />
+            </div>
+          </div>
+        )}
 
       {/* Прогресс-бар для генерации тест-кейсов */}
       {(generationStatus === 'processing' && !isGenerationMinimized) && (
@@ -601,6 +686,14 @@ const GlobalGenerationWindow = ({
         onCasesCountChange={(count) => {
           setTestCasesCount(count);
         }}
+      />
+
+      {/* BDD Review Modal */}
+      <BDDReviewModal
+        isOpen={bddReviewModalOpen}
+        onClose={() => setBddReviewModalOpen(false)}
+        bddResult={bddResult}
+        onRegenerate={onRegenerateBDD || handleGenerateBDD}
       />
     </>
   );

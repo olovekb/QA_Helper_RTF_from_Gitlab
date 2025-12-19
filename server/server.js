@@ -1159,7 +1159,7 @@ const upload = multer({
 
 
 const corsOptions = {
-    origin: 'https://test-inspector.abanking.ru',
+    origin: 'http://localhost:3000',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-OpenRouter-Key'],
     credentials: true,
@@ -2895,16 +2895,16 @@ app.post('/api/jira/meta', async (req, res) =>
                 
                 // Хардкод правильных ID для Platform
                 options[key] = [
-                    { id: '15960', name: 'Backend' },
-                    { id: '15961', name: 'Devops' },
-                    { id: '15962', name: 'Desktop' },
-                    { id: '15963', name: 'Adaptive' },
-                    { id: '15964', name: 'Mobile' },
-                    { id: '15965', name: 'Native (disabled)' },
-                    { id: '15966', name: 'Native-Android' },
-                    { id: '15967', name: 'Native-IOS' },
-                    { id: '15968', name: 'PWA' },
-                    { id: '15969', name: '1C' },
+                    { id: '12721', name: 'Backend' },
+                    { id: '12722', name: 'Devops' },
+                    { id: '12681', name: 'Desktop' },
+                    { id: '12682', name: 'Adaptive' },
+                    { id: '12680', name: 'Mobile' },
+                    { id: '12678', name: 'Native (disabled)' },
+                    { id: '14425', name: 'Native-Android' },
+                    { id: '14426', name: 'Native-IOS' },
+                    { id: '14427', name: 'PWA' },
+                    { id: '14428', name: '1C' },
                     { id: '-1', name: '' }
                 ];
                 continue;

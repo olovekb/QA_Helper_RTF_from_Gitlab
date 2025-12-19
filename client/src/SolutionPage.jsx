@@ -780,6 +780,14 @@ export default function SolutionPage({ projects = [] }) {
   const [generationStatus, setGenerationStatus] = usePersistentState('generationStatus', null);
   const [isGenerationMinimized, setIsGenerationMinimized] = usePersistentState('isGenerationMinimized', false);
 
+  // Состояния для генерации BDD тестов
+  const [bddTaskId, setBddTaskId] = usePersistentState('bddTaskId', null);
+  const [bddProgress, setBddProgress] = usePersistentState('bddProgress', 0);
+  const [bddStatus, setBddStatus] = usePersistentState('bddStatus', null);
+  const [isBddMinimized, setIsBddMinimized] = usePersistentState('isBddMinimized', false);
+  const [bddResult, setBddResult] = usePersistentState('bddResult', null);
+  const [isBddReviewModalOpen, setIsBddReviewModalOpen] = useState(false);
+
   // Состояния для генерации тестовой модели
   const [modelGenerationTaskId, setModelGenerationTaskId] = usePersistentState('modelGenerationTaskId', null);
   const [modelGenerationProgress, setModelGenerationProgress] = usePersistentState('modelGenerationProgress', 0);
@@ -800,6 +808,13 @@ export default function SolutionPage({ projects = [] }) {
       checkModelGenerationStatus(modelGenerationTaskId);
     }
   }, [modelGenerationTaskId, modelGenerationStatus]);
+
+  // Автоматически возобновляем проверку статуса BDD генерации
+  useEffect(() => {
+    if (bddTaskId && bddStatus === 'processing') {
+      checkBddStatus(bddTaskId);
+    }
+  }, [bddTaskId, bddStatus]);
 
   // Уведомляем GlobalBackgroundProgress об изменениях состояния
   useEffect(() => {
@@ -823,6 +838,26 @@ export default function SolutionPage({ projects = [] }) {
       }
     }));
   }, [modelGenerationStatus, modelGenerationProgress, modelGenerationTaskId, modelIsMinimized]);
+
+  // Загружаем сохраненные BDD результаты при инициализации
+  useEffect(() => {
+    const loadSavedBddResult = async () => {
+      try {
+        const saved = await idbGet('bddResult');
+        if (saved) {
+          setBddResult(saved);
+          // Если есть сохраненный результат, но статус не установлен - устанавливаем completed
+          const savedStatus = await idbGet('bddStatus');
+          if (!savedStatus && saved) {
+            setBddStatus('completed');
+          }
+        }
+      } catch (error) {
+        console.warn('Ошибка загрузки сохраненных BDD результатов:', error);
+      }
+    };
+    loadSavedBddResult();
+  }, []);
 
   // Загружаем сохраненные тест-кейсы при инициализации (только если нет активной задачи)
   useEffect(() => {
@@ -1104,6 +1139,141 @@ export default function SolutionPage({ projects = [] }) {
       console.error('generate-test-cases error:', err);
       alert('Ошибка генерации тест-кейсов: ' + (err.response?.data?.error || err.message));
     }
+  };
+
+  // Проверка статуса BDD генерации
+  const checkBddStatus = async (taskId) => {
+    try {
+      const { data } = await axios.get(`${config.bddServerUrl || config.serverUrl}/api/bdd/status/${taskId}?nocache=${Date.now()}`, {
+        timeout: 30000
+      });
+      setBddProgress(data.progress || 0);
+      setBddStatus(data.status);
+      
+      if (data.status === 'completed') {
+        console.log('BDD генерация завершена:', data.result);
+        
+        // Сохраняем результат
+        if (data.result) {
+          setBddResult(data.result);
+          await idbSet('bddResult', data.result);
+        }
+        
+        setBddTaskId(null);
+        setBddProgress(100);
+        setBddStatus('completed');
+        setIsBddMinimized(false);
+        
+        // Очищаем временные данные задачи, но сохраняем результат
+        await Promise.all([
+          idbSet('bddTaskId', null),
+          idbSet('bddProgress', 0),
+          idbSet('isBddMinimized', false)
+        ]);
+        
+        // Открываем модальное окно для просмотра результатов
+        setIsBddReviewModalOpen(true);
+        
+        // Показать уведомление
+        if (window.Notification && Notification.permission === 'granted') {
+          new Notification('BDD генерация завершена', {
+            body: 'BDD тесты успешно сгенерированы',
+            icon: '/favicon.ico'
+          });
+        }
+      } else if (data.status === 'failed') {
+        alert('Ошибка BDD генерации: ' + (data.error_message || 'Неизвестная ошибка'));
+        setBddTaskId(null);
+        setBddProgress(0);
+        setBddStatus(null);
+      } else if (data.status === 'processing') {
+        // Продолжаем опрашивать статус
+        setTimeout(() => {
+          if (bddTaskId === taskId) {
+            checkBddStatus(taskId);
+          }
+        }, 5000);
+      }
+    } catch (err) {
+      console.error('Ошибка проверки статуса BDD:', err);
+      alert('Ошибка проверки статуса BDD генерации: ' + (err.response?.data?.error || err.message));
+      setBddTaskId(null);
+      setBddProgress(0);
+      setBddStatus(null);
+    }
+  };
+
+  // Функция для регенерации BDD тестов (очищает старые результаты и запускает новую генерацию)
+  const handleRegenerateBDD = async () => {
+    // Закрываем модальное окно
+    setIsBddReviewModalOpen(false);
+    
+    // Очищаем старые результаты
+    setBddResult(null);
+    setBddStatus(null);
+    setBddTaskId(null);
+    setBddProgress(0);
+    
+    await Promise.all([
+      idbSet('bddResult', null),
+      idbSet('bddStatus', null),
+      idbSet('bddTaskId', null),
+      idbSet('bddProgress', 0)
+    ]);
+    
+    // Запускаем новую генерацию
+    await handleGenerateBDDInternal();
+  };
+
+  // Внутренняя функция для генерации BDD тестов (без проверки на существующие результаты)
+  const handleGenerateBDDInternal = async () => {
+
+    const payloadBase = buildRequirementsPayload({ includeRequirements: true });
+
+    // Запрашиваем разрешение на уведомления
+    if (window.Notification && Notification.permission === 'default') {
+      await Notification.requestPermission();
+    }
+
+    try {
+      const payload = {
+        ...payloadBase,
+        ...(allureProject ? { projectId: typeof allureProject === 'string' ? allureProject : allureProject.id } : {})
+      };
+      
+      console.log('BDD: отправляем запрос на генерацию:', payload);
+      
+      const { data } = await axios.post(
+        `${config.bddServerUrl || config.serverUrl}/api/bdd/generate`,
+        payload,
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          timeout: 30000
+        }
+      );
+      
+      setBddTaskId(data.taskId);
+      setBddProgress(0);
+      setBddStatus('processing');
+      checkBddStatus(data.taskId);
+    } catch (err) {
+      console.error('BDD генерация error:', err);
+      alert('Ошибка запуска BDD генерации: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  // Функция для генерации BDD тестов (публичная, с проверкой на существующие результаты)
+  const handleGenerateBDD = async () => {
+    // Если уже есть завершенные результаты - открываем превью
+    if (bddStatus === 'completed' && bddResult) {
+      setIsBddReviewModalOpen(true);
+      return;
+    }
+    
+    // Иначе запускаем генерацию
+    await handleGenerateBDDInternal();
   };
 
   // вызывается из ревью, отправляет финальный список в Allure и закрывает
@@ -1910,13 +2080,22 @@ export default function SolutionPage({ projects = [] }) {
         generatedModel={generatedModel}
         cancelGeneration={cancelGeneration}
         jiraProject={jiraProject}
-        allureProject={allureProject ? { id: allureProject } : null}
+        allureProject={allureProject ? (typeof allureProject === 'string' ? { id: allureProject } : allureProject) : null}
         jiraPat={jiraPat}
         reviewModalOpen={isReviewModalOpen}
         setReviewModalOpen={setReviewModalOpen}
         onClearTestCases={handleClearTestCases}
         onClearTestModel={handleClearTestModel}
         clearReviewState={clearReviewState}
+        // BDD генерация
+        handleGenerateBDD={handleGenerateBDD}
+        bddTaskId={bddTaskId}
+        bddProgress={bddProgress}
+        bddStatus={bddStatus}
+        bddReviewModalOpen={isBddReviewModalOpen}
+        setBddReviewModalOpen={setIsBddReviewModalOpen}
+        bddResult={bddResult}
+        onRegenerateBDD={handleRegenerateBDD}
       />
       
 
