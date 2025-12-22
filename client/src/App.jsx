@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import './style.css';
-import config from './config.json';
+import config from './config';
 import { parseXmindFile } from './parce-xmind/parce.xmind.mjs';
 import { useNavigate } from 'react-router-dom';
 import { marked } from 'marked'; // Импорт библиотеки marked
@@ -38,8 +38,8 @@ function usePersistentState(key, defaultValue) {
 }
 
 const App = ({ projects }) => {
-  const [projectId, setProjectId] = useState(config.projectId);
-  const [jiraIssue, setJiraIssue] = useState(config.jiraIssue);
+  const [projectId, setProjectId] = useState(config.projectId || '');
+  const [jiraIssue, setJiraIssue] = useState(config.jiraIssue || '');
   const [openRouterKey, setOpenRouterKey] = usePersistentState('openRouterKey', '');
   const [loading, setLoading] = useState(false);
   const [htmlReport, setHtmlReport] = useState('');

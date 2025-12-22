@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Modal from 'react-modal';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
-import config from '../../config.json';
+import config from '../../config';
 import axios from 'axios';
 import AsyncSelect from 'react-select/async';
 import { StyleInjector, LoaderOverlay } from './TestModelGeneratorModal';

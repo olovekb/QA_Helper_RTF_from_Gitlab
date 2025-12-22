@@ -7,7 +7,7 @@ import axios from 'axios';
 import { ReactFlow, MiniMap, Controls, Background, useNodesState, useEdgesState, MarkerType } from '@xyflow/react';
 import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
-import config from '../../config.json';
+import config from '../../config';
 import JSZip from 'jszip';
 
 // --- Component-specific styles ---

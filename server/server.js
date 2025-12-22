@@ -1158,8 +1158,22 @@ const upload = multer({
 });
 
 
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'https://test-inspector.abanking.ru')
+    .split(',')
+    .map(o => o.trim())
+    .filter(Boolean);
+
 const corsOptions = {
-    origin: 'https://test-inspector.abanking.ru',
+    origin (origin, callback)
+    {
+        if (!origin) return callback(null, true);
+
+        if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+
+        return callback(new Error('Не разрешено конфигурацией CORS'));
+    },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-OpenRouter-Key'],
     credentials: true,
