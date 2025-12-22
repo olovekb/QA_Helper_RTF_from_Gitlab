@@ -6,7 +6,7 @@ import AsyncSelect from 'react-select/async';
 import CreatableSelect from 'react-select/creatable';
 import { get as idbGet, set as idbSet, clear as idbClear } from 'idb-keyval';
 import './SolutionPage.css';
-import config from './config.json';
+import config from './config';
 import { useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
 import useAttachmentsMap from './components/useAttachmentsMap'

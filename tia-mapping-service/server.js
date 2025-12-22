@@ -20,8 +20,24 @@ const __dirname = dirname(__filename);
 
 const app = express();
 
+const tiaAllowedOrigins = (process.env.TIA_ALLOWED_ORIGINS ||
+    process.env.ALLOWED_ORIGINS ||
+    'https://test-inspector.abanking.ru')
+    .split(',')
+    .map(o => o.trim())
+    .filter(Boolean);
+
 const corsOptions = {
-    origin: 'https://test-inspector.abanking.ru',
+    origin (origin, callback)
+    {
+        if (!origin) return callback(null, true);
+
+        if (tiaAllowedOrigins.includes('*') || tiaAllowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+
+        return callback(new Error('Не разрешено конфигурацией CORS'));
+    },
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
