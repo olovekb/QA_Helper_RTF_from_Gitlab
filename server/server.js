@@ -172,6 +172,7 @@ import
     createTestCaseAllure,
     setTestCaseCustomFieldValues,
     updateTestCase,
+    deleteTestCase,
     addStepToTestCase,
     addExpectedResultToStep,
     linkIssueToTestCase,
