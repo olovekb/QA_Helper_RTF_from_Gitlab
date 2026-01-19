@@ -5,7 +5,7 @@ import Select from 'react-select';
 import AsyncSelect from 'react-select/async';
 import { get as idbGet, set as idbSet, clear as idbClear } from 'idb-keyval';
 import './CodeErrorPage.css';
-import config from './config.json';
+import config from './config';
 import { useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
 import useAttachmentsMap from './components/useAttachmentsMap'

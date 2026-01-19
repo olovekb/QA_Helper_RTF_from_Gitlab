@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import axios from 'axios';
-import config from '../config.json';
+import config from '../config';
 import TestModelGeneratorModal from './test-model/TestModelGeneratorModal';
 import TestModelReviewModal from './test-model/TestModelReviewModal';
 import BDDReviewModal from './bdd/BDDReviewModal';

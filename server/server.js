@@ -152,41 +152,42 @@ async function makeDirectOpenRouterCall (messages, apiKey, opts)
 }
 
 import
-    {
-        getAllureDefectById,
-        getSharedStepsList,
-        getStepsForDefect,
-        analyzeBugWithAI,
-        getAllureDefects,
-        linkIssueToAllureDefect,
-        getAllTestCases,
-        getTestCaseOverview,
-        getTestCaseExpectedResult,
-        getTestCaseLayer,
-        getCaseIssue,
-        getCaseTags,
-        getTestCasePrecondition,
-        getTestCaseStatus,
-        getTestCaseSteps,
-        getTestCaseCustomFields,
-        createTestCaseAllure,
-        setTestCaseCustomFieldValues,
-        updateTestCase,
-        addStepToTestCase,
-        addExpectedResultToStep,
-        linkIssueToTestCase,
-        setTestCaseLayer,
-        suggestTestLayers,
-        getProjectCustomFieldSchema,
-        fetchWithAuth,
-        suggestTags,
-        createTag,
-        createTestCaseExamples,
-        generatePairwiseExamples,
-        getSharedStepDetails,
-        findTestCaseByName,
-        deleteTestCase,
-    } from './http-service.mjs';
+{
+    getAllureDefectById,
+    getSharedStepsList,
+    getStepsForDefect,
+    analyzeBugWithAI,
+    getAllureDefects,
+    linkIssueToAllureDefect,
+    getAllTestCases,
+    getTestCaseOverview,
+    getTestCaseExpectedResult,
+    getTestCaseLayer,
+    getCaseIssue,
+    getCaseTags,
+    getTestCasePrecondition,
+    getTestCaseStatus,
+    getTestCaseSteps,
+    getTestCaseCustomFields,
+    createTestCaseAllure,
+    setTestCaseCustomFieldValues,
+    updateTestCase,
+    addStepToTestCase,
+    addExpectedResultToStep,
+    linkIssueToTestCase,
+    setTestCaseLayer,
+    suggestTestLayers,
+    getProjectCustomFieldSchema,
+    fetchWithAuth,
+    suggestTags,
+    createTag,
+    addParameterToTestCase,
+    createTestCaseExamples,
+    generatePairwiseExamples,
+    createSharedStep,
+    addStepToSharedStep,
+    getSharedStepDetails
+} from './http-service.mjs';
 import { spinningLoader } from './spinning-loader.mjs';
 import pLimit from 'p-limit';
 import { formatTestCaseAsJson } from './generate-json.mjs';
@@ -214,33 +215,35 @@ import { validateAndFixTestCases, validateE2ECoverage } from './post-processors/
 import { aggregateToParametrized } from './post-processors/aggregate-to-parametrized.js';
 import { validateUntilClean } from './agents/post-generation-validator.mjs';
 import
-    {
-        savePerfectExamples,
-        getAllPerfectExamplesByLayer,
-        getPerfectExamplesStats,
-        deletePerfectExample
-    } from './perfect-examples.mjs';
+{
+    savePerfectExamples,
+    getPerfectExamples,
+    getAllPerfectExamplesByLayer,
+    getPerfectExamplesStats,
+    deletePerfectExample
+} from './perfect-examples.mjs';
 import
-    {
-        getConversationContext,
-        createConversationContext,
-        addMessageToContext,
-        addErrorToContext,
-        clearErrors,
-        saveStateSnapshot,
-        rollbackToSnapshot,
-        getStateSnapshots,
-        deleteConversationContext
-    } from './conversation-context.mjs';
+{
+    getConversationContext,
+    createConversationContext,
+    addMessageToContext,
+    addErrorToContext,
+    clearErrors,
+    saveStateSnapshot,
+    rollbackToSnapshot,
+    getStateSnapshots,
+    deleteConversationContext
+} from './conversation-context.mjs';
 import
-    {
-        addPerfectExamplesAsFewShot
-    } from './prompt-composer.mjs';
+{
+    buildSystemPrompt,
+    addPerfectExamplesAsFewShot
+} from './prompt-composer.mjs';
 import
-    {
-        runTestCaseLLMWithContext,
-        validateFixedCases
-    } from './llm-with-context.mjs';
+{
+    runTestCaseLLMWithContext,
+    validateFixedCases
+} from './llm-with-context.mjs';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -1144,8 +1147,22 @@ const upload = multer({
 });
 
 
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'https://test-inspector.abanking.ru')
+    .split(',')
+    .map(o => o.trim())
+    .filter(Boolean);
+
 const corsOptions = {
-    origin: 'https://test-inspector.abanking.ru',
+    origin (origin, callback)
+    {
+        if (!origin) return callback(null, true);
+
+        if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+
+        return callback(new Error('Не разрешено конфигурацией CORS'));
+    },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-OpenRouter-Key'],
     credentials: true,
@@ -2871,14 +2888,14 @@ app.post('/api/jira/meta', async (req, res) =>
             if (key === 'Platform') {
                 const entry = Object.entries(fields)
                     .find(([_, meta]) => meta.name === jiraName);
-                
+
                 if (entry) {
                     const [fieldId] = entry;
                     fieldIds[key] = fieldId;
                 } else {
                     console.warn(`[META] Поле "${jiraName}" не найдено в editmeta`);
                 }
-                
+
                 // Хардкод правильных ID для Platform
                 options[key] = [
                     { id: '12721', name: 'Backend' },

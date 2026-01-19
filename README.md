@@ -203,9 +203,20 @@ cd ..
 - `errors_log`
 
 ### Конфигурация для локальной сборки
-Для работы в локальном окружении необходимо изменить:
-- в `server/config.json` — значение параметра "url" на "http://localhost:5000"
-- в `client/config.json` — параметра "serverUrl" на "http://localhost:5000/api"
+#### Для работы в локальном окружении
+1. Cоздать в корне проекта файл `.env`  с параметрами:
+
+```env
+ALLOWED_ORIGINS=http://localhost:3000
+TIA_ALLOWED_ORIGINS=http://localhost:3000
+```
+
+2. Создать в папке `client` файл `.env.local` с параметрами:
+
+```env
+REACT_APP_SERVER_URL=http://localhost:5000/api
+REACT_APP_TIA_URL=http://localhost:5001
+```
 
 ### Запуск приложения
 
@@ -230,8 +241,8 @@ cd client
 npm start
 ```
 
-Frontend откроется автоматически на http://localhost:3000  
-Main Server API: http://localhost:5000  
+Frontend откроется автоматически на http://localhost:3000
+Main Server API: http://localhost:5000
 TIA Service API: http://localhost:5001
 
 Логи серверов доступны в соответствующих терминалах IDE
