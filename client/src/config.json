@@ -1,13 +1,14 @@
 {
     "baseUrl":  "https://abanking.qatools.cloud/api",
     "allureToken":  "__REDACTED__",
-    "serverUrl":  "http://localhost:5000/api",
-    "TIAUrl":  "http://localhost:5000/tia-api",
+    "serverUrl":  "https://test-inspector.abanking.ru/api/api",
+    "TIAUrl":  "https://test-inspector.abanking.ru/tia-api",
     "bddServerUrl":  "http://localhost:5002",
     "projectId":  "",
     "jiraIssue":  "",
     "url":  "https://abanking.qatools.cloud",
     "jiraUrl":  "https://jira.abanking.ru/browse",
     "huggingfaceToken":  "__REDACTED__",
-    "openAiToken":  "__REDACTED__"
+    "openAiToken":  "__REDACTED__",
+    "testStandUrl":  "https://test-stand.url"
 }

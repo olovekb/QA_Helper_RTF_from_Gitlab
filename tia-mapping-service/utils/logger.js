@@ -35,8 +35,18 @@ export function logWarn(message) {
 /**
  * Логирует ошибку
  * @param {string} message - Сообщение об ошибке
- * @param {Error} [error] - Объект ошибки (опционально)
+ * @param {Error|string} [error] - Объект ошибки или строка с описанием ошибки (опционально)
  */
 export function logError(message, error) {
-  logger.error(`${message}${error ? `: ${error.message}` : ''}`);
+  let errorText = '';
+  if (error) {
+    if (error instanceof Error) {
+      errorText = `: ${error.message}${error.stack ? `\n${error.stack}` : ''}`;
+    } else if (typeof error === 'string') {
+      errorText = `: ${error}`;
+    } else {
+      errorText = `: ${JSON.stringify(error)}`;
+    }
+  }
+  logger.error(`${message}${errorText}`);
 }

@@ -7,7 +7,8 @@ import { fileURLToPath } from 'url'; // Импорт для преобразов
 import multer from 'multer'; // Импорт multer для обработки загрузки файлов
 import { uploadMiddleware, handleJsonUpload } from './api/upload.js'; // Импорт функционала для загрузки JSON
 import { getProjectStructure } from './api/structure.js'; // Импорт функционала для получения структуры Allure
-import { handleComponentMapping, deleteComponentMapping, getComponentMappings } from './api/components.js'; // Импорт функционала для маппинга
+import { handleComponentMapping, deleteComponentMapping, getComponentMappings, savePageDependencies, getFunctionalBlockPageComponentLinks } from './api/components.js'; // Импорт функционала для маппинга
+import { getHeatmapData, getReleaseVersions, getTestCoverageData } from './api/heatmap.js'; // Импорт функционала для тепловой карты
 import { createTestPlan } from './api/launch.js'; // Импорт функционала для создания тест-планов
 import config from './config/index.js'; // Импорт конфигурации проекта
 import { logInfo, logError } from './utils/logger.js'; // Импорт логгера для информационных и ошибочных сообщений
@@ -21,7 +22,7 @@ const __dirname = dirname(__filename);
 const app = express();
 
 const corsOptions = {
-    origin: 'http://localhost:3000',
+    origin: 'https://test-inspector.abanking.ru',
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
@@ -73,8 +74,9 @@ app.get('/api/structure', async (req, res) =>
         const structure = await getProjectStructure(projectId); // Получаем структуру проекта без фильтров пропуска
         res.json(structure); // Отправляем структуру клиенту
     } catch (error) {
-        logError(`Ошибка получения структуры для проекта ${projectId}:`, error.message); // Логирование ошибки
-        res.status(500).send(error.message); // Отправляем ошибку клиенту
+        const errorMessage = error instanceof Error ? error.message : (typeof error === 'string' ? error : JSON.stringify(error) || 'Неизвестная ошибка');
+        logError(`Ошибка получения структуры для проекта ${projectId}:`, errorMessage); // Логирование ошибки
+        res.status(500).send(errorMessage); // Отправляем ошибку клиенту
     }
 });
 
@@ -88,7 +90,40 @@ app.get('/api/structure', async (req, res) =>
  */
 app.post('/api/components', handleComponentMapping); // Создание маппинга
 app.patch('/api/components/:componentId', handleComponentMapping); // Обновление маппинга по ID
+app.post('/api/components/page-dependencies', savePageDependencies); // Сохранение связей Page -> компоненты
 app.get('/api/components', getComponentMappings);
+app.get('/api/components/functional-block-links', getFunctionalBlockPageComponentLinks); // Получение явных связей функциональный блок -> Page -> компонент
+
+/**
+ * Получение данных для тепловой карты дефектов
+ * @route GET /api/heatmap
+ * @param {string} projectId - ID проекта
+ * @param {string} startDate - Начальная дата (ISO 8601, опционально)
+ * @param {string} endDate - Конечная дата (ISO 8601, опционально)
+ * @param {string[]} releaseVersions - Массив версий релизов (опционально)
+ * @param {boolean} isBugFix - Фильтр по типу: true - только баги, false - общий (опционально)
+ */
+app.get('/api/heatmap', getHeatmapData);
+
+/**
+ * Получение данных для тепловой карты Test Coverage (по функциональным блокам и роутам)
+ * @route GET /api/heatmap/test-coverage
+ * @param {string} projectId - ID проекта
+ * @param {string} startDate - Начальная дата (ISO 8601, опционально)
+ * @param {string} endDate - Конечная дата (ISO 8601, опционально)
+ * @param {string[]} releaseVersions - Массив версий релизов (опционально)
+ * @param {boolean} isBugFix - Фильтр по типу: true - только баги, false - общий (опционально)
+ */
+app.get('/api/heatmap/test-coverage', getTestCoverageData);
+
+/**
+ * Получение списка доступных версий релизов для проекта
+ * @route GET /api/heatmap/release-versions
+ * @param {string} projectId - ID проекта
+ * @param {string} startDate - Начальная дата для фильтрации (опционально)
+ * @param {string} endDate - Конечная дата для фильтрации (опционально)
+ */
+app.get('/api/heatmap/release-versions', getReleaseVersions);
 
 /**
  * Удаление маппинга компонента

@@ -1,6 +1,7 @@
 import { fetchWithAuth, authHeaders } from '../utils/allureAuth.js'; // Импорт утилит для аутентификации
 import config from '../config/index.js'; // Импорт конфигурации проекта
 import { logError, logInfo, logWarn } from '../utils/logger.js'; // Импорт логгера
+import { savePageComponentDependencies } from './components.js'; // Импорт функции для сохранения связей Page -> компоненты
 
 
 // Глобальный кэш для хранения результатов запросов
@@ -172,7 +173,7 @@ async function setJobsMapping(projectId, treeId, jobId) {
  * @returns {void}
  */
 export async function createTestPlan(req, res) {
-    const { projectId, jiraLink, componentMappings } = req.body;
+    const { projectId, jiraLink, componentMappings, pageDependencies } = req.body;
 
     try {
         if (!projectId || !jiraLink || !componentMappings) {
@@ -353,6 +354,17 @@ export async function createTestPlan(req, res) {
         const launchId = responseData.id;
         if (!launchId) {
             throw new Error('Поле id не найдено в ответе, данные: ' + JSON.stringify(responseData));
+        }
+
+        // Сохраняем связи Page -> компоненты, если они переданы
+        if (pageDependencies && pageDependencies.length > 0) {
+            try {
+                await savePageComponentDependencies(projectId, pageDependencies);
+                logInfo(`Сохранены связи Page -> компоненты для проекта ${projectId}`);
+            } catch (depError) {
+                logWarn(`Ошибка при сохранении связей Page -> компоненты: ${depError.message}`);
+                // Не прерываем создание тест-плана, если сохранение связей не удалось
+            }
         }
 
         logInfo(`Тест-план успешно создан для проекта ${projectId}, Launch ID: ${launchId}`);

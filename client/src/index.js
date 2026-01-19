@@ -6,6 +6,7 @@ import App from './App';
 import TIAPage from './TIAPage';
 import SolutionPage from './SolutionPage';
 import CodeErrorPage from './CodeErrorPage';
+import HeatmapPage from './HeatmapPage';
 import { suppressResizeObserverErrors } from './utils/errorHandler';
 
 // Подавляем ResizeObserver ошибки
@@ -39,6 +40,7 @@ root.render(
       <Route path="/" element={<App projects={projects} />} />
       <Route path="/tia" element={<TIAPage projects={projects} />} />
       <Route path="/code-error" element={<CodeErrorPage projects={projects} />} />
+      <Route path="/heatmap" element={<HeatmapPage projects={projects} />} />
       <Route
         path="/solution"
         element={<SolutionPage projects={projects} />} />

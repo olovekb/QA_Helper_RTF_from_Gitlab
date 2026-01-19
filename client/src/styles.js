@@ -340,6 +340,20 @@ const styles = {
             cursor: 'not-allowed',
         },
     },
+    card: {
+        padding: '16px',
+        backgroundColor: '#ffffff',
+        borderRadius: '8px',
+        border: '1px solid #ced4da',
+        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
+    },
+    successMessage: {
+        padding: '12px',
+        backgroundColor: '#d4edda',
+        color: '#155724',
+        borderRadius: '8px',
+        marginBottom: '12px',
+    },
 };
 
 export default styles;

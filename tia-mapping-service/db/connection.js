@@ -7,7 +7,7 @@ import config from '../config/index.js'; // Импорт конфигураци�
  */
 const dbConnection = knex({
   client: 'pg', // Используем PostgreSQL
-  connection: process.env.DATABASE_URL || {
+  connection: process.env.DATABASE_URL || config.databaseUrl || {
     host: config.dbHost,
     port: config.dbPort,
     user: config.dbUser,

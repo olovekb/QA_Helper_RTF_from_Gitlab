@@ -147,9 +147,196 @@ async function getProjectCustomFieldIdRequest(projectCustomFieldName, projectId)
     }
 }
 
-// Функция для создания тест-кейса
-async function createTestCase(testCase, projectId) {
+// Функция для получения кастомных полей тест-кейса
+async function getTestCaseCustomFieldsLocal(testCaseId, projectId) {
     try {
+        const url = `/testcase/${testCaseId}/cfv`;
+        const params = { projectId, v2: true };
+        const response = await logRequestAndResponse(
+            apiClient.get(url, { params }),
+            'get',
+            url,
+            params
+        );
+        return response.data;
+    } catch (error) {
+        console.error(`Ошибка при получении кастомных полей для ТК ${testCaseId}:`, error.message);
+        return [];
+    }
+}
+
+// Функция для поиска тест-кейса по названию и кастомным полям
+async function findTestCaseByName(projectId, name, expectedCustomFields = {}) {
+    if (!projectId || !name) {
+        return null;
+    }
+    
+    try {
+        const url = '/testcase';
+        let page = 0;
+        const size = 100;
+        const normalizedName = name.trim().toLowerCase();
+        
+        // Нормализуем ожидаемые кастомные поля
+        const normalizedExpectedFields = {};
+        for (const [fieldName, fieldValue] of Object.entries(expectedCustomFields)) {
+            if (fieldValue != null && fieldValue !== '') {
+                const normalizedFieldName = String(fieldName).trim().toLowerCase();
+                const normalizedFieldValue = String(fieldValue).trim().toLowerCase();
+                normalizedExpectedFields[normalizedFieldName] = normalizedFieldValue;
+            }
+        }
+        
+        while (true) {
+            const params = { projectId, page, size };
+            const response = await logRequestAndResponse(
+                apiClient.get(url, { params }), 
+                'get', 
+                url, 
+                params
+            );
+            
+            const data = response.data;
+            
+            // Ищем тест-кейсы с таким же названием
+            const candidates = data.content?.filter(tc => 
+                tc.name && tc.name.trim().toLowerCase() === normalizedName
+            ) || [];
+            
+            // Если нет кастомных полей для проверки, возвращаем первый найденный
+            if (Object.keys(normalizedExpectedFields).length === 0 && candidates.length > 0) {
+                return candidates[0];
+            }
+            
+            // Проверяем кастомные поля для каждого кандидата
+            for (const candidate of candidates) {
+                try {
+                    const customFields = await getTestCaseCustomFieldsLocal(candidate.id, projectId);
+                    
+                    // Нормализуем кастомные поля существующего тест-кейса
+                    // Важно: для multi-select полей (например, Code) нужно проверять все значения
+                    const candidateFields = {};
+                    if (Array.isArray(customFields)) {
+                        for (const cf of customFields) {
+                            const fieldName = cf?.customField?.name || cf?.name;
+                            if (!fieldName) continue;
+                            
+                            const normalizedFieldName = String(fieldName).trim().toLowerCase();
+                            
+                            // Извлекаем значения: может быть одно значение или массив значений
+                            let fieldValues = [];
+                            if (cf?.values && Array.isArray(cf.values) && cf.values.length > 0) {
+                                // Multi-select поле - берем все значения
+                                fieldValues = cf.values.map(v => {
+                                    const val = v?.name || v;
+                                    return val ? String(val).trim().toLowerCase() : null;
+                                }).filter(Boolean);
+                            } else if (cf?.name) {
+                                // Single-select поле
+                                fieldValues = [String(cf.name).trim().toLowerCase()];
+                            }
+                            
+                            if (fieldValues.length > 0) {
+                                // Для полей с несколькими значениями сохраняем массив, для одного - строку
+                                candidateFields[normalizedFieldName] = fieldValues.length === 1 
+                                    ? fieldValues[0] 
+                                    : fieldValues;
+                            }
+                        }
+                    }
+                    
+                    // Сравниваем кастомные поля
+                    // Важно: проверяем только важные поля (Feature, Story, Scenario, Code, Block, SubBlock)
+                    const importantFields = ['feature', 'story', 'scenario', 'code', 'block', 'subblock'];
+                    let fieldsMatch = true;
+                    
+                    for (const [expectedFieldName, expectedFieldValue] of Object.entries(normalizedExpectedFields)) {
+                        // Пропускаем поля, которые не важны для проверки дублей
+                        if (!importantFields.includes(expectedFieldName)) {
+                            continue;
+                        }
+                        
+                        const candidateValue = candidateFields[expectedFieldName];
+                        
+                        if (!candidateValue) {
+                            // Поле отсутствует в существующем тест-кейсе
+                            fieldsMatch = false;
+                            break;
+                        }
+                        
+                        // Если это массив (multi-select поле), проверяем, содержится ли значение в массиве
+                        if (Array.isArray(candidateValue)) {
+                            if (!candidateValue.includes(expectedFieldValue)) {
+                                fieldsMatch = false;
+                                break;
+                            }
+                        } else {
+                            // Одно значение - точное совпадение
+                            if (candidateValue !== expectedFieldValue) {
+                                fieldsMatch = false;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Если все поля совпадают, возвращаем этот тест-кейс
+                    if (fieldsMatch && Object.keys(normalizedExpectedFields).length > 0) {
+                        console.log(`[findTestCaseByName] ✅ Найден дубль: ТК ${candidate.id} "${candidate.name}"`);
+                        console.log(`[findTestCaseByName] Ожидаемые поля:`, normalizedExpectedFields);
+                        console.log(`[findTestCaseByName] Поля кандидата:`, candidateFields);
+                        return candidate;
+                    } else if (!fieldsMatch) {
+                        console.log(`[findTestCaseByName] ⚠️ ТК ${candidate.id} не подходит: поля не совпадают`);
+                        console.log(`[findTestCaseByName] Ожидаемые:`, normalizedExpectedFields);
+                        console.log(`[findTestCaseByName] Фактические:`, candidateFields);
+                    }
+                    
+                    // Если не было ожидаемых полей, но название совпало - возвращаем первый
+                    if (Object.keys(normalizedExpectedFields).length === 0) {
+                        return candidate;
+                    }
+                } catch (error) {
+                    console.warn(`Ошибка при получении кастомных полей для ТК ${candidate.id}:`, error.message);
+                    // Продолжаем проверку других кандидатов
+                }
+            }
+            
+            if (data.last) break;
+            page += 1;
+        }
+        
+        return null;
+    } catch (error) {
+        console.error(`Ошибка при поиске тест-кейса по названию "${name}":`, error.message);
+        return null;
+    }
+}
+
+// Вспомогательная функция для преобразования массива кастомных полей в объект для поиска
+// Принимает массив полей с id и value, и маппинг id -> название поля
+function buildExpectedCustomFieldsFromArray(customFieldsArray, fieldIdToNameMap) {
+    const result = {};
+    for (const field of customFieldsArray || []) {
+        const fieldName = fieldIdToNameMap[field.id];
+        if (fieldName && field.value) {
+            result[fieldName] = field.value;
+        }
+    }
+    return result;
+}
+
+// Функция для создания тест-кейса
+async function createTestCase(testCase, projectId, expectedCustomFields = {}) {
+    try {
+        // Проверяем, существует ли уже тест-кейс с таким названием и кастомными полями
+        console.log(`[createTestCase] Проверяем дубли для тест-кейса "${testCase.name}" с полями:`, JSON.stringify(expectedCustomFields));
+        const existing = await findTestCaseByName(projectId, testCase.name, expectedCustomFields);
+        if (existing) {
+            console.log(`[createTestCase] ✅ Тест-кейс с названием "${testCase.name}" и такими же кастомными полями уже существует (ID: ${existing.id}). Пропускаем создание и обновление.`);
+            return null; // Возвращаем null, чтобы вызывающий код пропустил дальнейшую обработку
+        }
+        console.log(`[createTestCase] ✅ Дублей не найдено, создаем новый тест-кейс "${testCase.name}"`);
+        
         const url = '/testcase';
         const body = {
             projectId: projectId,
@@ -277,10 +464,18 @@ export async function exportStructureAllureNocode(parsedJson, projectId) {
                             if (blockFieldId) e2eFields.push({ id: blockFieldId, value: blockValue });
                             if (subBlockFieldId) e2eFields.push({ id: subBlockFieldId, value: subBlockValue });
 
+                            // Формируем ожидаемые кастомные поля для проверки дублей
+                            const expectedCustomFields = {
+                                [customProjectField.feature]: feature,
+                                [customProjectField.story]: story,
+                            };
+                            if (blockFieldId) expectedCustomFields[customProjectField.block] = blockValue;
+                            if (subBlockFieldId) expectedCustomFields[customProjectField.subBlock] = subBlockValue;
+                            
                             const e2eId = await createTestCase({
                                 name: e2e.name,
                                 steps: e2e.steps || []
-                            }, projectId);
+                            }, projectId, expectedCustomFields);
 
                             if (e2eId) {
                                 await addCustomFieldsToTestCase(e2eId, e2eFields);
@@ -305,19 +500,26 @@ export async function exportStructureAllureNocode(parsedJson, projectId) {
                         if (subBlockFieldId) customFields.push({ id: subBlockFieldId, value: subBlockValue });
 
                         if (scenarioObj.isE2E) {
+                            // Формируем маппинг ID -> название поля для проверки дублей
+                            const fieldIdToNameMap = {};
+                            if (featureFieldId) fieldIdToNameMap[featureFieldId] = customProjectField.feature;
+                            if (storyFieldId) fieldIdToNameMap[storyFieldId] = customProjectField.story;
+                            if (scenarioFieldId) fieldIdToNameMap[scenarioFieldId] = customProjectField.scenario;
+                            if (blockFieldId) fieldIdToNameMap[blockFieldId] = customProjectField.block;
+                            if (subBlockFieldId) fieldIdToNameMap[subBlockFieldId] = customProjectField.subBlock;
+                            
+                            const effectiveCustomFields = customFields.filter(field => field.id !== scenarioFieldId);
+                            const expectedFields = buildExpectedCustomFieldsFromArray(effectiveCustomFields, fieldIdToNameMap);
+                            
                             const testCaseId = await createTestCase({
                                 name: scenario,
                                 steps: scenarioObj.steps || []
-                            }, projectId);
+                            }, projectId, expectedFields);
 
                             if (!testCaseId) {
                                 console.error(`Ошибка создания тест-кейса для сценария "${scenario}"`);
                                 continue;
                             }
-
-                            const effectiveCustomFields = scenarioObj.isE2E
-                                ? customFields.filter(field => field.id !== scenarioFieldId)
-                                : customFields;
 
                             await addCustomFieldsToTestCase(testCaseId, effectiveCustomFields);
 
@@ -329,10 +531,20 @@ export async function exportStructureAllureNocode(parsedJson, projectId) {
                         } else if (scenarioObj.isIntegration) {
                             if (Array.isArray(scenarioObj.integrationCases) && scenarioObj.integrationCases.length > 0) {
                                 for (const ic of scenarioObj.integrationCases) {
+                                    // Формируем маппинг ID -> название поля для проверки дублей
+                                    const fieldIdToNameMap = {};
+                                    if (featureFieldId) fieldIdToNameMap[featureFieldId] = customProjectField.feature;
+                                    if (storyFieldId) fieldIdToNameMap[storyFieldId] = customProjectField.story;
+                                    if (scenarioFieldId) fieldIdToNameMap[scenarioFieldId] = customProjectField.scenario;
+                                    if (blockFieldId) fieldIdToNameMap[blockFieldId] = customProjectField.block;
+                                    if (subBlockFieldId) fieldIdToNameMap[subBlockFieldId] = customProjectField.subBlock;
+                                    
+                                    const expectedFields = buildExpectedCustomFieldsFromArray(customFields, fieldIdToNameMap);
+                                    
                                     const integrationTestCaseId = await createTestCase({
                                         name: ic.name,
                                         steps: ic.steps || []
-                                    }, projectId);
+                                    }, projectId, expectedFields);
 
                                     if (!integrationTestCaseId) {
                                         console.error(`Ошибка создания интеграционного тест-кейса "${ic.name}" для сценария "${scenario}"`);
@@ -357,10 +569,21 @@ export async function exportStructureAllureNocode(parsedJson, projectId) {
                                         codeCustomFields.push({ id: codeFieldId, value: code.code });
                                     }
 
+                                    // Формируем маппинг ID -> название поля для проверки дублей
+                                    const fieldIdToNameMap = {};
+                                    if (featureFieldId) fieldIdToNameMap[featureFieldId] = customProjectField.feature;
+                                    if (storyFieldId) fieldIdToNameMap[storyFieldId] = customProjectField.story;
+                                    if (scenarioFieldId) fieldIdToNameMap[scenarioFieldId] = customProjectField.scenario;
+                                    if (codeFieldId) fieldIdToNameMap[codeFieldId] = customProjectField.code;
+                                    if (blockFieldId) fieldIdToNameMap[blockFieldId] = customProjectField.block;
+                                    if (subBlockFieldId) fieldIdToNameMap[subBlockFieldId] = customProjectField.subBlock;
+                                    
+                                    const expectedFields = buildExpectedCustomFieldsFromArray(codeCustomFields, fieldIdToNameMap);
+
                                     const codeTestCaseId = await createTestCase({
                                         name: code.code,
                                         steps: []
-                                    }, projectId);
+                                    }, projectId, expectedFields);
 
                                     if (!codeTestCaseId) {
                                         console.error(`Ошибка создания тест-кейса для code "${code.code}" в сценарии "${scenario}"`);
@@ -383,10 +606,22 @@ export async function exportStructureAllureNocode(parsedJson, projectId) {
                                     if (codeFieldId) {
                                         codeCustomFields.push({ id: codeFieldId, value: code.code });
                                     }
+                                    
+                                    // Формируем маппинг ID -> название поля для проверки дублей
+                                    const fieldIdToNameMap = {};
+                                    if (featureFieldId) fieldIdToNameMap[featureFieldId] = customProjectField.feature;
+                                    if (storyFieldId) fieldIdToNameMap[storyFieldId] = customProjectField.story;
+                                    if (scenarioFieldId) fieldIdToNameMap[scenarioFieldId] = customProjectField.scenario;
+                                    if (codeFieldId) fieldIdToNameMap[codeFieldId] = customProjectField.code;
+                                    if (blockFieldId) fieldIdToNameMap[blockFieldId] = customProjectField.block;
+                                    if (subBlockFieldId) fieldIdToNameMap[subBlockFieldId] = customProjectField.subBlock;
+                                    
+                                    const expectedFields = buildExpectedCustomFieldsFromArray(codeCustomFields, fieldIdToNameMap);
+                                    
                                     const testCaseId = await createTestCase({
                                         name: code.code,
                                         steps: []
-                                    }, projectId);
+                                    }, projectId, expectedFields);
                                     if (!testCaseId) {
                                         console.error(`Ошибка создания тест-кейса для code "${code.code}"`);
                                         continue;
@@ -395,10 +630,20 @@ export async function exportStructureAllureNocode(parsedJson, projectId) {
                                     console.log(`Создан тест-кейс для code "${code.code}"`);
                                 }
                             } else {
+                                // Формируем маппинг ID -> название поля для проверки дублей
+                                const fieldIdToNameMap = {};
+                                if (featureFieldId) fieldIdToNameMap[featureFieldId] = customProjectField.feature;
+                                if (storyFieldId) fieldIdToNameMap[storyFieldId] = customProjectField.story;
+                                if (scenarioFieldId) fieldIdToNameMap[scenarioFieldId] = customProjectField.scenario;
+                                if (blockFieldId) fieldIdToNameMap[blockFieldId] = customProjectField.block;
+                                if (subBlockFieldId) fieldIdToNameMap[subBlockFieldId] = customProjectField.subBlock;
+                                
+                                const expectedFields = buildExpectedCustomFieldsFromArray(customFields, fieldIdToNameMap);
+                                
                                 const testCaseId = await createTestCase({
                                     name: scenario,
                                     steps: []
-                                }, projectId);
+                                }, projectId, expectedFields);
                                 if (!testCaseId) {
                                     console.error(`Ошибка создания тест-кейса для сценария "${scenario}"`);
                                     continue;
@@ -468,6 +713,15 @@ export async function exportStructureAllure(parsedJson, projectId) {
 
                             customFields.push({ id: codeFieldId, value: code });
 
+                            // Формируем ожидаемые кастомные поля для проверки дублей (Feature, Story, Scenario, Code)
+                            const fieldIdToNameMap = {};
+                            if (featureFieldId) fieldIdToNameMap[featureFieldId] = customProjectField.feature;
+                            if (storyFieldId) fieldIdToNameMap[storyFieldId] = customProjectField.story;
+                            if (scenarioFieldId) fieldIdToNameMap[scenarioFieldId] = customProjectField.scenario;
+                            if (codeFieldId) fieldIdToNameMap[codeFieldId] = customProjectField.code;
+                            
+                            const expectedFields = buildExpectedCustomFieldsFromArray(customFields, fieldIdToNameMap);
+
                             // Создаем тест-кейс
                             /**
                              * если есть scenarioObj.code, то выполняем запрос createTestCase({name: code}, id);
@@ -475,7 +729,7 @@ export async function exportStructureAllure(parsedJson, projectId) {
                              * @type {*|undefined}
 
                              */
-                            const testCaseId = await createTestCase({ name: code }, projectId);
+                            const testCaseId = await createTestCase({ name: code }, projectId, expectedFields);
 
                             if (!testCaseId) {
                                 console.error(`Ошибка создания тест-кейса для сценария "${code}"`);
@@ -488,7 +742,15 @@ export async function exportStructureAllure(parsedJson, projectId) {
                             console.log(`Кастомные поля добавлены в тест-кейс ${testCaseId}`);
                         }
                     } else {
-                        const testCaseId = await createTestCase({ name: scenario }, projectId);
+                        // Формируем ожидаемые кастомные поля для проверки дублей (Feature, Story, Scenario)
+                        const fieldIdToNameMap = {};
+                        if (featureFieldId) fieldIdToNameMap[featureFieldId] = customProjectField.feature;
+                        if (storyFieldId) fieldIdToNameMap[storyFieldId] = customProjectField.story;
+                        if (scenarioFieldId) fieldIdToNameMap[scenarioFieldId] = customProjectField.scenario;
+                        
+                        const expectedFields = buildExpectedCustomFieldsFromArray(customFields, fieldIdToNameMap);
+                        
+                        const testCaseId = await createTestCase({ name: scenario }, projectId, expectedFields);
 
                         if (!testCaseId) {
                             console.error(`Ошибка создания тест-кейса для сценария "${scenario}"`);

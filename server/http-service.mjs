@@ -128,6 +128,178 @@ export async function getAllTestCases(projectId, size = 10000) {
     return allCases;
 }
 
+/**
+ * Найти тест-кейс по названию, кастомным полям и проекту
+ * @param {string|number} projectId - ID проекта
+ * @param {string} name - Название тест-кейса
+ * @param {Object} expectedCustomFields - Ожидаемые кастомные поля в формате { fieldName: fieldValue }
+ * @returns {Promise<Object|null>} - Найденный тест-кейс или null
+ */
+export async function findTestCaseByName(projectId, name, expectedCustomFields = {}) {
+    if (!projectId || !name) {
+        return null;
+    }
+    
+    try {
+        const url = `${BASE_URL}/testcase`;
+        let page = 0;
+        const size = 100;
+        const normalizedName = name.trim().toLowerCase();
+        
+        // Нормализуем ожидаемые кастомные поля
+        const normalizedExpectedFields = {};
+        for (const [fieldName, fieldValue] of Object.entries(expectedCustomFields)) {
+            if (fieldValue != null && fieldValue !== '') {
+                const normalizedFieldName = String(fieldName).trim().toLowerCase();
+                const normalizedFieldValue = String(fieldValue).trim().toLowerCase();
+                normalizedExpectedFields[normalizedFieldName] = normalizedFieldValue;
+            }
+        }
+        
+        while (true) {
+            const response = await fetchWithAuth(`${url}?projectId=${projectId}&page=${page}&size=${size}`);
+            if (!response.ok) {
+                console.warn(`Ошибка поиска тест-кейса по названию: ${response.statusText}`);
+                return null;
+            }
+            
+            const data = await response.json();
+            
+            // Ищем тест-кейсы с таким же названием
+            const candidates = data.content?.filter(tc => 
+                tc.name && tc.name.trim().toLowerCase() === normalizedName
+            ) || [];
+            
+            // Если нет кастомных полей для проверки, возвращаем первый найденный
+            if (Object.keys(normalizedExpectedFields).length === 0 && candidates.length > 0) {
+                return candidates[0];
+            }
+            
+            // Проверяем кастомные поля для каждого кандидата
+            for (const candidate of candidates) {
+                try {
+                    const customFields = await getTestCaseCustomFields(candidate.id, projectId);
+                    
+                    // Нормализуем кастомные поля существующего тест-кейса
+                    // Важно: для multi-select полей (например, Code) нужно проверять все значения
+                    const candidateFields = {};
+                    if (Array.isArray(customFields)) {
+                        for (const cf of customFields) {
+                            const fieldName = cf?.customField?.name || cf?.name;
+                            if (!fieldName) continue;
+                            
+                            const normalizedFieldName = String(fieldName).trim().toLowerCase();
+                            
+                            // Извлекаем значения: может быть одно значение или массив значений
+                            let fieldValues = [];
+                            if (cf?.values && Array.isArray(cf.values) && cf.values.length > 0) {
+                                // Multi-select поле - берем все значения
+                                fieldValues = cf.values.map(v => {
+                                    const val = v?.name || v;
+                                    return val ? String(val).trim().toLowerCase() : null;
+                                }).filter(Boolean);
+                            } else if (cf?.name) {
+                                // Single-select поле
+                                fieldValues = [String(cf.name).trim().toLowerCase()];
+                            }
+                            
+                            if (fieldValues.length > 0) {
+                                // Для полей с несколькими значениями сохраняем массив, для одного - строку
+                                candidateFields[normalizedFieldName] = fieldValues.length === 1 
+                                    ? fieldValues[0] 
+                                    : fieldValues;
+                            }
+                        }
+                    }
+                    
+                    // Сравниваем кастомные поля
+                    // Важно: проверяем только важные поля (Feature, Story, Scenario, Code, Block, SubBlock)
+                    const importantFields = ['feature', 'story', 'scenario', 'code', 'block', 'subblock'];
+                    let fieldsMatch = true;
+                    
+                    for (const [expectedFieldName, expectedFieldValue] of Object.entries(normalizedExpectedFields)) {
+                        // Пропускаем поля, которые не важны для проверки дублей
+                        if (!importantFields.includes(expectedFieldName)) {
+                            continue;
+                        }
+                        
+                        const candidateValue = candidateFields[expectedFieldName];
+                        
+                        if (!candidateValue) {
+                            // Поле отсутствует в существующем тест-кейсе
+                            fieldsMatch = false;
+                            break;
+                        }
+                        
+                        // Если это массив (multi-select поле), проверяем, содержится ли значение в массиве
+                        if (Array.isArray(candidateValue)) {
+                            if (!candidateValue.includes(expectedFieldValue)) {
+                                fieldsMatch = false;
+                                break;
+                            }
+                        } else {
+                            // Одно значение - точное совпадение
+                            if (candidateValue !== expectedFieldValue) {
+                                fieldsMatch = false;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Если все поля совпадают, возвращаем этот тест-кейс
+                    if (fieldsMatch && Object.keys(normalizedExpectedFields).length > 0) {
+                        return candidate;
+                    }
+                    
+                    // Если не было ожидаемых полей, но название совпало - возвращаем первый
+                    if (Object.keys(normalizedExpectedFields).length === 0) {
+                        return candidate;
+                    }
+                } catch (error) {
+                    console.warn(`Ошибка при получении кастомных полей для ТК ${candidate.id}:`, error.message);
+                    // Продолжаем проверку других кандидатов
+                }
+            }
+            
+            if (data.last) break;
+            page += 1;
+        }
+        
+        return null;
+    } catch (error) {
+        console.error(`Ошибка при поиске тест-кейса по названию "${name}":`, error.message);
+        return null;
+    }
+}
+
+/**
+ * Удалить тест-кейс
+ * @param {string|number} testCaseId - ID тест-кейса
+ * @returns {Promise<boolean>} - true если успешно удален
+ */
+export async function deleteTestCase(testCaseId) {
+    if (!testCaseId) {
+        throw new Error('testCaseId is required');
+    }
+    
+    try {
+        const url = `${BASE_URL}/testcase/${testCaseId}`;
+        const response = await fetchWithAuth(url, {
+            method: 'DELETE',
+        });
+        
+        if (!response.ok && response.status !== 404) {
+            const txt = await response.text();
+            throw new Error(`Allure DELETE test case failed ${response.status}: ${txt}`);
+        }
+        
+        return response.ok || response.status === 404;
+    } catch (error) {
+        console.error(`Ошибка при удалении тест-кейса ${testCaseId}:`, error.message);
+        throw error;
+    }
+}
+
 export async function getTestCaseSharedStep(sharedStepId) {
     try {
         const url = `${BASE_URL}/sharedstep/${sharedStepId}`;

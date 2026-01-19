@@ -8,7 +8,8 @@ const config = {
     port: process.env.PORT || 5001,
 
     // URL подключения к базе данных PostgreSQL (берётся из .env, если доступен)
-    databaseUrl: process.env.DATABASE_URL || "postgres://tia_user:password@postgresql:5432/tia_mapping_db",
+    // Если DATABASE_URL не установлен, используем отдельные параметры (dbHost, dbPort, etc.)
+    databaseUrl: process.env.DATABASE_URL || null,
 
     // Отдельные параметры подключения к базе данных (используются, если DATABASE_URL отсутствует)
     dbClient: 'pg', // Клиент по умолчанию для PostgreSQL (можно переопределить через DB_CLIENT в .env)

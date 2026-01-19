@@ -51,18 +51,30 @@ export async function getProjectStructure(projectId, skipCriteria = { customFiel
             const treeData = await treeResponse.json();
             logInfo(`Ответ от /api/tree для projectId ${projectId}:`, JSON.stringify(treeData)); // Логирование ответа для отладки
 
-            // Извлекаем treeId из ответа, находя объект с name: "Structure"
-            const structureTree = treeData.content?.find(item => item.name === "Structure");
+            // Извлекаем treeId из ответа
+            // Для проекта 307 ищем "Global Structure", для остальных - "Structure"
+            let structureTree = null;
+            if (projectId === '307') {
+                structureTree = treeData.content?.find(item => item.name === "Global Structure");
+                if (!structureTree) {
+                    structureTree = treeData.content?.find(item => item.name === "Structure");
+                }
+            } else {
+                structureTree = treeData.content?.find(item => item.name === "Structure");
+            }
+            
             if (structureTree && structureTree.id) {
                 treeId = structureTree.id;
-                logInfo(`Найден treeId ${treeId} для проекта ${projectId} с name: "Structure"`); // Логирование успеха
+                logInfo(`Найден treeId ${treeId} для проекта ${projectId} с name: "${structureTree.name}"`); // Логирование успеха
             } else {
-                logWarn(`treeId с name: "Structure" не найден в ответе для проекта ${projectId}, используем значение по умолчанию (0)`); // Логирование предупреждения
+                const searchName = projectId === '307' ? '"Global Structure" или "Structure"' : '"Structure"';
+                logWarn(`treeId с name: ${searchName} не найден в ответе для проекта ${projectId}, используем значение по умолчанию (0)`); // Логирование предупреждения
                 treeId = 0; // Значение по умолчанию, если treeId не найден
             }
 
             if (!treeId) {
-                throw new Error(`treeId не найден для проекта ${projectId} с name: "Structure"`);
+                const searchName = projectId === '307' ? '"Global Structure" или "Structure"' : '"Structure"';
+                throw new Error(`treeId не найден для проекта ${projectId} с name: ${searchName}`);
             }
 
             cache.set(treeCacheKey, treeId); // Кэшируем treeId
@@ -136,6 +148,23 @@ export async function getProjectStructure(projectId, skipCriteria = { customFiel
             throw new Error('Некорректная структура ответа от Allure API');
         }
 
+        // Логируем типы корневых узлов и customFields для проекта 307
+        if (projectId === '307') {
+            const customFieldsMap = new Map();
+            customFields.forEach(field => {
+                customFieldsMap.set(field.id, field.name);
+            });
+            logInfo(`[projectId=307] Доступные customFields (${customFields.length}):`);
+            customFields.forEach(field => {
+                logInfo(`[projectId=307] customField: id=${field.id}, name="${field.name}"`);
+            });
+            logInfo(`[projectId=307] Корневые узлы (${initialData.children.content.length}):`);
+            initialData.children.content.forEach((node, idx) => {
+                const customFieldName = customFieldsMap.get(node.customFieldId);
+                logInfo(`[projectId=307] Корневой узел ${idx}: id=${node.id}, name="${node.name}", customFieldId=${node.customFieldId}, customFieldName="${customFieldName}", type=${node.type}`);
+            });
+        }
+
         // Сохраняем корневые функциональные блоки и их детей рекурсивно
         await saveFunctionalBlocks(projectId, initialData.children.content, null, customFields);
 
@@ -156,8 +185,13 @@ export async function getProjectStructure(projectId, skipCriteria = { customFiel
             folders: rootFolders, // Возвращаем только папки с полной вложенностью
         };
     } catch (error) {
-        logError(`Ошибка обработки запроса структуры проекта ${projectId}:`, error.message || 'Неизвестная ошибка'); // Логирование ошибки с проверкой на undefined
-        throw error; // Пробрасываем ошибку для обработки выше
+        const errorMessage = error instanceof Error ? error.message : (typeof error === 'string' ? error : JSON.stringify(error) || 'Неизвестная ошибка');
+        const errorStack = error instanceof Error ? error.stack : '';
+        logError(`Ошибка обработки запроса структуры проекта ${projectId}:`, errorMessage);
+        if (errorStack) {
+            logError(`Стек ошибки для проекта ${projectId}:`, errorStack);
+        }
+        throw error instanceof Error ? error : new Error(errorMessage); // Пробрасываем ошибку для обработки выше
     }
 }
 
@@ -355,25 +389,97 @@ async function getNestedFoldersParallel(projectId, parentNodeId, treeId, customF
         const groupNodes = data.children?.content?.filter(node => node.type === 'GROUP') || [];
         const folderPromises = groupNodes.map(node =>
             limit(async () => {
-                if (shouldSkipNode(node, skipCriteria)) {
-                    logWarn(`Пропущен узел с ID ${node.id} (name: ${node.name}, customFieldId: ${node.customFieldId}) по критериям пропуска`);
+                try {
+                    if (shouldSkipNode(node, skipCriteria)) {
+                        logWarn(`Пропущен узел с ID ${node.id} (name: ${node.name}, customFieldId: ${node.customFieldId}) по критериям пропуска`);
+                        return null;
+                    }
+
+                    const nodeCustomFieldName = customFieldsMap.get(node.customFieldId);
+                    logInfo(`Обрабатываем узел projectId=${projectId}, id=${node.id}, name=${node.name}, customFieldId=${node.customFieldId}, customFieldName=${nodeCustomFieldName}, parentNodeId=${parentNodeId}`);
+                    
+                    // Для проекта 307: специальная обработка
+                    if (projectId === '307') {
+                        // Показываем Block и SubBlock, а также все узлы, которые находятся под ними
+                        if (nodeCustomFieldName === 'Block' || nodeCustomFieldName === 'SubBlock') {
+                            logInfo(`Найден Block/SubBlock для проекта 307: ${nodeCustomFieldName} - ${node.name}`);
+                            // Для Block и SubBlock обрабатываем детей БЕЗ фильтрации, чтобы показать Feature, Story, Scenario, Code
+                            const children = await getNestedFoldersParallel(projectId, node.id.toString(), treeId, customFields, skipCriteria);
+                            const result = {
+                                id: node.id,
+                                name: node.name,
+                                customFieldId: node.customFieldId || null,
+                                customFieldName: nodeCustomFieldName,
+                                count: node.children?.content?.length || 0,
+                                children: children.filter(child => child !== null),
+                            };
+                            logInfo(`Возвращаем Block/SubBlock для проекта 307: ${nodeCustomFieldName} - ${node.name}, children count: ${result.children.length}`);
+                            return result;
+                        }
+                        
+                        // Для Feature, Story, Scenario, Code и других типов - показываем их, если они находятся под Block или SubBlock
+                        // Но если они на корневом уровне (parentNodeId === null), пропускаем их
+                        if (parentNodeId === null) {
+                            // На корневом уровне пропускаем все, кроме Block и SubBlock
+                            logInfo(`Пропускаем корневой узел ${nodeCustomFieldName} для проекта 307, обрабатываем детей: ${node.name}`);
+                            const children = await getNestedFoldersParallel(projectId, node.id.toString(), treeId, customFields, skipCriteria);
+                            const filteredChildren = children.filter(child => child !== null);
+                            logInfo(`Для корневого узла ${nodeCustomFieldName} - ${node.name} найдено детей после фильтрации: ${filteredChildren.length}`);
+                            // Возвращаем массив детей (поднимаем их на уровень выше)
+                            return filteredChildren;
+                        } else {
+                            // Если это не корневой уровень, показываем все узлы (Feature, Story, Scenario, Code и т.д.)
+                            logInfo(`Показываем узел ${nodeCustomFieldName} для проекта 307 (не корневой уровень): ${node.name}`);
+                            const children = await getNestedFoldersParallel(projectId, node.id.toString(), treeId, customFields, skipCriteria);
+                            return {
+                                id: node.id,
+                                name: node.name,
+                                customFieldId: node.customFieldId || null,
+                                customFieldName: nodeCustomFieldName,
+                                count: node.children?.content?.length || 0,
+                                children: children.filter(child => child !== null),
+                            };
+                        }
+                    }
+
+                    // Обычная обработка для всех остальных проектов
+                    const children = await getNestedFoldersParallel(projectId, node.id.toString(), treeId, customFields, skipCriteria);
+                    const folder = {
+                        id: node.id,
+                        name: node.name,
+                        customFieldId: node.customFieldId || null,
+                        customFieldName: nodeCustomFieldName || 'Неизвестное поле',
+                        count: node.children?.content?.length || 0,
+                        children: children.filter(child => child !== null),
+                    };
+                    
+                    return folder;
+                } catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : (typeof error === 'string' ? error : JSON.stringify(error) || 'Неизвестная ошибка');
+                    logError(`Ошибка при обработке узла ${node.id} (${node.name}):`, errorMessage);
+                    // Возвращаем null вместо проброса ошибки, чтобы не прерывать обработку других узлов
                     return null;
                 }
-
-                const children = await getNestedFoldersParallel(projectId, node.id.toString(), treeId, customFields, skipCriteria);
-                return {
-                    id: node.id,
-                    name: node.name,
-                    customFieldId: node.customFieldId || null,
-                    customFieldName: customFieldsMap.get(node.customFieldId) || 'Неизвестное поле',
-                    count: node.children?.content?.length || 0,
-                    children: children.filter(child => child !== null),
-                };
             })
         );
 
         const resolvedFolders = await Promise.all(folderPromises);
-        folders.push(...resolvedFolders.filter(folder => folder !== null));
+        // Обрабатываем результаты: если это массив (для Feature в проекте 307), распаковываем его
+        resolvedFolders.forEach((result, index) => {
+            if (Array.isArray(result)) {
+                // Если вернулся массив (дети Feature), добавляем их напрямую
+                const validResults = result.filter(folder => folder !== null);
+                logInfo(`[parentNodeId=${parentNodeId}] Добавляем ${validResults.length} детей из массива (индекс ${index})`);
+                folders.push(...validResults);
+            } else if (result !== null) {
+                // Обычный узел
+                logInfo(`[parentNodeId=${parentNodeId}] Добавляем узел: ${result.customFieldName} - ${result.name} (индекс ${index})`);
+                folders.push(result);
+            } else {
+                logInfo(`[parentNodeId=${parentNodeId}] Пропущен null результат (индекс ${index})`);
+            }
+        });
+        logInfo(`[parentNodeId=${parentNodeId}] Итого папок после обработки: ${folders.length}`);
 
         // Проверяем, есть ли ещё страницы
         hasMore = data.children?.content?.length === 100; // Если вернулось 100 узлов, возможно, есть ещё

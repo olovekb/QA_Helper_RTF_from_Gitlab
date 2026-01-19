@@ -132,7 +132,6 @@ async function makeDirectOpenRouterCall (messages, apiKey, opts)
         ...(response_format && { response_format })
     };
 
-    // ⚠️ ВАЖНО: config импортируется позже в файле, поэтому используем только apiKey из параметра
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -182,16 +181,14 @@ import
         fetchWithAuth,
         suggestTags,
         createTag,
-        addParameterToTestCase,
         createTestCaseExamples,
         generatePairwiseExamples,
-        createSharedStep,
-        addStepToSharedStep,
-        getSharedStepDetails
+        getSharedStepDetails,
+        findTestCaseByName,
+        deleteTestCase,
     } from './http-service.mjs';
 import { spinningLoader } from './spinning-loader.mjs';
 import pLimit from 'p-limit';
-import { formatTestCase } from './format-testcase.mjs';
 import { formatTestCaseAsJson } from './generate-json.mjs';
 import { staticAnalysis } from './static-analysis.mjs';
 import { exportStructureAllure, exportStructureAllureNocode } from './xmind-parce/export-structure-allure.mjs';
@@ -215,20 +212,10 @@ import { extractLogicAndConstraints, formatLogicConstraintsForPrompt } from './l
 import RULES from './config/rules/core-rules.js';
 import { validateAndFixTestCases, validateE2ECoverage } from './post-processors/validate-and-fix.js';
 import { aggregateToParametrized } from './post-processors/aggregate-to-parametrized.js';
-
-// ═══════════════════════════════════════════════════════════════
-// НОВЫЕ МОДУЛИ - АРХИТЕКТУРНЫЕ УЛУЧШЕНИЯ
-// ═══════════════════════════════════════════════════════════════
-import { validateTestCase, validateTestCases, SCHEMA_BY_LAYER } from './schemas/test-case-schemas.mjs';
-import { parseAPISpecification, validateCodeAgainstAPISpec, formatAPISpecForPrompt } from './parsers/api-spec-parser.mjs';
-import { normalizeTestCase, normalizeTestCases, splitCompositeCodesInModel } from './normalizers/test-case-normalizer.mjs';
-import { reviewTestCases, mergeReviewResults } from './agents/review-agent.mjs';
 import { validateUntilClean } from './agents/post-generation-validator.mjs';
-import { planPhases, updatePhaseContext, buildPhasePrompt } from './generators/multi-phase-generator.mjs';
 import
     {
         savePerfectExamples,
-        getPerfectExamples,
         getAllPerfectExamplesByLayer,
         getPerfectExamplesStats,
         deletePerfectExample
@@ -247,7 +234,6 @@ import
     } from './conversation-context.mjs';
 import
     {
-        buildSystemPrompt,
         addPerfectExamplesAsFewShot
     } from './prompt-composer.mjs';
 import
@@ -382,7 +368,7 @@ try {
     console.warn(`[server] ⚠️ Не удалось загрузить test-model-example.json: ${err.message}. Используем встроенный fallback.`);
 }
 
-// ✅ Загружаем идеальные примеры тест-кейсов для Few-Shot Learning
+
 let IDEAL_E2E_EXAMPLES = '[]';
 let IDEAL_INTEGRATION_FE_EXAMPLES = '[]';
 let IDEAL_INTEGRATION_BE_EXAMPLES = '[]';
@@ -1159,7 +1145,7 @@ const upload = multer({
 
 
 const corsOptions = {
-    origin: 'http://localhost:3000',
+    origin: 'https://test-inspector.abanking.ru',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-OpenRouter-Key'],
     credentials: true,
@@ -7440,7 +7426,40 @@ app.post('/api/create-test-cases', async (req, res) =>
 
         // ✅ ВАЖНО: Создаём тест-кейсы ПОСЛЕДОВАТЕЛЬНО (как в старом коде), чтобы избежать race condition в Allure API
         for (const c of cases) {
-            // 4) Создаём TC
+            // 4) Формируем ожидаемые кастомные поля для проверки дублей
+            // ✅ Важно: проверяем только Feature, Story, Scenario, Code и (для nocode) Block, SubBlock
+            const expectedCustomFields = {};
+            if (c.feature) expectedCustomFields['Feature'] = c.feature;
+            if (c.story) expectedCustomFields['Story'] = c.story;
+            if (c.scenario) expectedCustomFields['Scenario'] = c.scenario;
+            if (c.code || c.codeNode) expectedCustomFields['Code'] = c.code || c.codeNode;
+            
+            // Для nocode проекта (307) добавляем Block и SubBlock
+            if (projectId === '307') {
+                // Ищем Block и SubBlock в кастомных полях
+                if (Array.isArray(c.customFields)) {
+                    for (const { name, value } of c.customFields) {
+                        if (name && value != null && value !== '') {
+                            const normalizedName = String(name).trim();
+                            if (normalizedName === 'Block' || normalizedName === 'SubBlock') {
+                                expectedCustomFields[normalizedName] = value;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Проверяем, существует ли уже тест-кейс с таким названием и кастомными полями
+            const existing = await findTestCaseByName(projectId, c.title, expectedCustomFields);
+            
+            if (existing) {
+                console.log(`[create-test-cases] ⚠️ Тест-кейс с названием "${c.title}" и такими же кастомными полями уже существует (ID: ${existing.id}). Пропускаем создание и обновление.`);
+                // ✅ Полностью пропускаем этот тест-кейс - не создаем новый и не обновляем существующий
+                // Это гарантирует, что при загрузке новой тестовой модели старые тест-кейсы не будут изменены
+                continue;
+            }
+            
+            // Создаём новый TC
             const tc = await createTestCaseAllure({ projectId, name: c.title });
             const testCaseId = tc.id;
 
@@ -7691,6 +7710,289 @@ app.post('/api/create-test-cases', async (req, res) =>
         res.json({ success: true, created });
     } catch (err) {
         console.error('Ошибка при массовом создании ТК:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /api/cleanup-duplicates
+ * Очистка дублей тест-кейсов в TestOps
+ * Удаляет тест-кейсы с одинаковыми названиями и тегами, оставляя самый полный по содержанию
+ */
+app.post('/api/cleanup-duplicates', async (req, res) => {
+    const { projectId } = req.body;
+    
+    if (!projectId) {
+        return res.status(400).json({ error: 'projectId обязателен' });
+    }
+    
+    try {
+        console.log(`[cleanup-duplicates] Начинаем очистку дублей для проекта ${projectId}`);
+        
+        // Получаем все тест-кейсы проекта
+        const allCases = await getAllTestCases(projectId);
+        console.log(`[cleanup-duplicates] Получено ${allCases.length} тест-кейсов`);
+        
+        // Получаем теги для каждого тест-кейса
+        const casesWithTags = await Promise.all(
+            allCases.map(async (tc) => {
+                try {
+                    const tags = await getCaseTags(tc.id);
+                    const tagNames = Array.isArray(tags) 
+                        ? tags.map(t => (t.name || t).trim().toLowerCase()).sort()
+                        : [];
+                    return {
+                        ...tc,
+                        tagNames,
+                        tagsData: tags
+                    };
+                } catch (error) {
+                    console.warn(`[cleanup-duplicates] Не удалось получить теги для ТК ${tc.id}:`, error.message);
+                    return {
+                        ...tc,
+                        tagNames: [],
+                        tagsData: []
+                    };
+                }
+            })
+        );
+        
+        // Функция для вычисления ключа группировки (название + теги)
+        const getGroupKey = (tc) => {
+            const normalizedTitle = (tc.name || '').trim().toLowerCase();
+            const tagsKey = tc.tagNames.join(',');
+            return `${normalizedTitle}||${tagsKey}`;
+        };
+        
+        // Группируем тест-кейсы по ключу
+        const groups = {};
+        casesWithTags.forEach(tc => {
+            const key = getGroupKey(tc);
+            if (!groups[key]) {
+                groups[key] = [];
+            }
+            groups[key].push(tc);
+        });
+        
+        // Функция для вычисления "полноты" тест-кейса
+        const computeContentScore = async (tc) => {
+            let score = 0;
+            let hasPrecondition = false;
+            let hasExpectedResult = false;
+            let stepsCount = 0;
+            let stepsTotalLength = 0;
+            
+            // Название (базовая оценка)
+            if (tc.name) score += tc.name.length;
+            
+            // Теги (важно для группировки)
+            if (tc.tagNames && tc.tagNames.length > 0) {
+                score += tc.tagNames.length * 5;
+            }
+            
+            try {
+                // Precondition (важное поле)
+                const precondition = await getTestCasePrecondition(tc.id);
+                if (precondition) {
+                    const precondText = typeof precondition === 'string' ? precondition : JSON.stringify(precondition);
+                    const precondLength = precondText.trim().length;
+                    if (precondLength > 0) {
+                        hasPrecondition = true;
+                        score += precondLength; // Длина текста
+                        score += 50; // Бонус за наличие precondition
+                    }
+                }
+                
+                // Expected Result (важное поле)
+                const expectedResult = await getTestCaseExpectedResult(tc.id);
+                if (expectedResult) {
+                    const expectedText = typeof expectedResult === 'string' ? expectedResult : JSON.stringify(expectedResult);
+                    const expectedLength = expectedText.trim().length;
+                    if (expectedLength > 0) {
+                        hasExpectedResult = true;
+                        score += expectedLength; // Длина текста
+                        score += 50; // Бонус за наличие expected result
+                    }
+                }
+                
+                // Steps (самое важное - шаги тест-кейса)
+                const steps = await getTestCaseSteps(tc.id);
+                if (steps) {
+                    if (Array.isArray(steps)) {
+                        stepsCount = steps.length;
+                        score += stepsCount * 20; // Бонус за количество шагов (увеличен с 10 до 20)
+                        steps.forEach(step => {
+                            if (step.body) {
+                                const bodyText = typeof step.body === 'string' ? step.body : JSON.stringify(step.body);
+                                const bodyLength = bodyText.trim().length;
+                                stepsTotalLength += bodyLength;
+                                score += bodyLength; // Длина текста каждого шага
+                            }
+                        });
+                    } else if (steps.scenario && steps.scenario.scenarioSteps) {
+                        stepsCount = Object.keys(steps.scenario.scenarioSteps).length;
+                        score += stepsCount * 20; // Бонус за количество шагов
+                    }
+                }
+                
+                // Custom Fields (дополнительная информация)
+                const customFields = await getTestCaseCustomFields(tc.id, projectId);
+                if (Array.isArray(customFields) && customFields.length > 0) {
+                    score += customFields.length * 5;
+                }
+            } catch (error) {
+                console.warn(`[cleanup-duplicates] Ошибка при вычислении score для ТК ${tc.id}:`, error.message);
+            }
+            
+            // Дополнительные бонусы за полноту
+            if (hasPrecondition && hasExpectedResult && stepsCount > 0) {
+                score += 100; // Бонус за полностью заполненный тест-кейс
+            }
+            
+            return {
+                score,
+                stepsCount,
+                hasPrecondition,
+                hasExpectedResult,
+                stepsTotalLength
+            };
+        };
+        
+        // Находим дубли и определяем, какие удалять
+        const toDelete = [];
+        const toKeep = [];
+        const duplicateGroups = []; // Массив для хранения информации о группах дублей
+        
+        for (const [key, group] of Object.entries(groups)) {
+            if (group.length <= 1) {
+                // Нет дублей в группе
+                toKeep.push(...group);
+                continue;
+            }
+            
+            console.log(`[cleanup-duplicates] Найдена группа дублей (${group.length} шт.): "${group[0].name}"`);
+            
+            // Вычисляем score для каждого тест-кейса в группе
+            const casesWithScores = await Promise.all(
+                group.map(async (tc) => {
+                    const scoreData = await computeContentScore(tc);
+                    return {
+                        case: tc,
+                        score: scoreData.score,
+                        scoreData: scoreData
+                    };
+                })
+            );
+            
+            // Сортируем по убыванию score с дополнительными критериями для разрешения ничьих
+            // ✅ ГАРАНТИЯ: Тест-кейсы с шагами, precondition и expected result НИКОГДА не удаляются
+            casesWithScores.sort((a, b) => {
+                // 0. КРИТИЧЕСКИЙ ПРИОРИТЕТ: Тест-кейс с шагами ВСЕГДА лучше тест-кейса без шагов
+                if (a.scoreData.stepsCount === 0 && b.scoreData.stepsCount > 0) {
+                    return 1; // a без шагов, b с шагами - b лучше
+                }
+                if (a.scoreData.stepsCount > 0 && b.scoreData.stepsCount === 0) {
+                    return -1; // a с шагами, b без шагов - a лучше
+                }
+                
+                // 0.1. Если оба без шагов, но у одного есть precondition/expected - он лучше
+                if (a.scoreData.stepsCount === 0 && b.scoreData.stepsCount === 0) {
+                    const aHasContent = a.scoreData.hasPrecondition || a.scoreData.hasExpectedResult;
+                    const bHasContent = b.scoreData.hasPrecondition || b.scoreData.hasExpectedResult;
+                    if (aHasContent !== bHasContent) {
+                        return bHasContent ? 1 : -1; // Тот, у кого есть precondition или expected, лучше
+                    }
+                }
+                
+                // 1. Основной критерий - общий score
+                if (b.score !== a.score) {
+                    return b.score - a.score;
+                }
+                
+                // 2. Если score одинаковый - предпочитаем больше шагов
+                if (b.scoreData.stepsCount !== a.scoreData.stepsCount) {
+                    return b.scoreData.stepsCount - a.scoreData.stepsCount;
+                }
+                
+                // 3. Если шаги одинаковые - предпочитаем больше общую длину шагов
+                if (b.scoreData.stepsTotalLength !== a.scoreData.stepsTotalLength) {
+                    return b.scoreData.stepsTotalLength - a.scoreData.stepsTotalLength;
+                }
+                
+                // 4. Если все одинаково - предпочитаем тот, у которого есть precondition и expected result
+                const aHasBoth = a.scoreData.hasPrecondition && a.scoreData.hasExpectedResult;
+                const bHasBoth = b.scoreData.hasPrecondition && b.scoreData.hasExpectedResult;
+                if (aHasBoth !== bHasBoth) {
+                    return bHasBoth ? 1 : -1;
+                }
+                
+                // 5. Если все абсолютно одинаково - оставляем более старый (меньший ID, обычно создан раньше)
+                return a.case.id - b.case.id;
+            });
+            
+            // Первый (с наибольшим score) - оставляем, остальные - удаляем
+            const [best, ...others] = casesWithScores;
+            toKeep.push(best.case);
+            
+            const scoreDetails = `score: ${best.score}, шагов: ${best.scoreData.stepsCount}, precondition: ${best.scoreData.hasPrecondition ? 'да' : 'нет'}, expected: ${best.scoreData.hasExpectedResult ? 'да' : 'нет'}`;
+            console.log(`[cleanup-duplicates] Оставляем ТК ${best.case.id} (${scoreDetails}), удаляем ${others.length} дублей`);
+            
+            // Сохраняем информацию о группе дублей для превью
+            duplicateGroups.push({
+                name: best.case.name,
+                kept: {
+                    id: best.case.id,
+                    name: best.case.name,
+                    score: best.score,
+                    details: scoreDetails
+                },
+                deleted: others.map(({ case: tc, score, scoreData }) => ({
+                    id: tc.id,
+                    name: tc.name,
+                    score,
+                    details: `шагов: ${scoreData.stepsCount}, precondition: ${scoreData.hasPrecondition ? 'да' : 'нет'}, expected: ${scoreData.hasExpectedResult ? 'да' : 'нет'}`
+                }))
+            });
+            
+            others.forEach(({ case: tc, score, scoreData }) => {
+                toDelete.push({ 
+                    id: tc.id, 
+                    name: tc.name, 
+                    score,
+                    details: `шагов: ${scoreData.stepsCount}, precondition: ${scoreData.hasPrecondition ? 'да' : 'нет'}, expected: ${scoreData.hasExpectedResult ? 'да' : 'нет'}`
+                });
+            });
+        }
+        
+        // Удаляем дубли
+        const deleted = [];
+        const errors = [];
+        
+        for (const tc of toDelete) {
+            try {
+                await deleteTestCase(tc.id);
+                deleted.push(tc);
+                console.log(`[cleanup-duplicates] ✅ Удален ТК ${tc.id}: "${tc.name}"`);
+            } catch (error) {
+                console.error(`[cleanup-duplicates] ❌ Ошибка при удалении ТК ${tc.id}:`, error.message);
+                errors.push({ id: tc.id, name: tc.name, error: error.message });
+            }
+        }
+        
+        const result = {
+            success: true,
+            totalCases: allCases.length,
+            duplicatesFound: Object.values(groups).filter(g => g.length > 1).length,
+            deleted: deleted.length,
+            kept: toKeep.length,
+            errors: errors.length > 0 ? errors : undefined
+        };
+        
+        console.log(`[cleanup-duplicates] Завершено. Удалено ${deleted.length} дублей из ${allCases.length} тест-кейсов`);
+        
+        res.json(result);
+    } catch (err) {
+        console.error('[cleanup-duplicates] Ошибка при очистке дублей:', err);
         res.status(500).json({ error: err.message });
     }
 });

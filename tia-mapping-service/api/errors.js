@@ -29,7 +29,8 @@ export async function logServerError(req, res) {
 
         res.status(200).json({ message: 'Ошибка успешно записана.' });
     } catch (error) {
-        logError('Ошибка при логировании ошибки на сервере:', error.message);
-        res.status(500).json({ error: 'Произошла ошибка при логировании.', details: error.message });
+        const errorMessage = error instanceof Error ? error.message : (typeof error === 'string' ? error : JSON.stringify(error) || 'Неизвестная ошибка');
+        logError('Ошибка при логировании ошибки на сервере:', errorMessage);
+        res.status(500).json({ error: 'Произошла ошибка при логировании.', details: errorMessage });
     }
 }
