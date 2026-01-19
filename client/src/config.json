@@ -3,7 +3,7 @@
     "allureToken":  "__REDACTED__",
     "serverUrl":  "https://test-inspector.abanking.ru/api/api",
     "TIAUrl":  "https://test-inspector.abanking.ru/tia-api",
-    "bddServerUrl":  "http://localhost:5002",
+    "bddServerUrl":  "https://test-inspector.abanking.ru/bdd-api",
     "projectId":  "",
     "jiraIssue":  "",
     "url":  "https://abanking.qatools.cloud",

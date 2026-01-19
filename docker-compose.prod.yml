@@ -59,6 +59,37 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  bdd-server:
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: Dockerfile.bdd-server
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - BDD_SERVER_PORT=5002
+      - DB_HOST=postgresql
+      - DB_PORT=5432
+    ports:
+      - 5002:5002
+    networks:
+      - allure-test-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/api/bdd/steps"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   postgresql:
     image: postgres:16
     restart: always
