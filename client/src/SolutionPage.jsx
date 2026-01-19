@@ -811,7 +811,7 @@ export default function SolutionPage({ projects = [] }) {
 
   // Автоматически возобновляем проверку статуса BDD генерации
   useEffect(() => {
-    if (bddTaskId && bddStatus === 'processing') {
+    if (bddTaskId && bddTaskId !== 'undefined' && bddTaskId !== 'null' && bddStatus === 'processing') {
       checkBddStatus(bddTaskId);
     }
   }, [bddTaskId, bddStatus]);
@@ -1143,6 +1143,12 @@ export default function SolutionPage({ projects = [] }) {
 
   // Проверка статуса BDD генерации
   const checkBddStatus = async (taskId) => {
+    // Проверяем, что taskId валиден
+    if (!taskId || taskId === 'undefined' || taskId === 'null') {
+      console.warn('[BDD] checkBddStatus вызван с невалидным taskId:', taskId);
+      return;
+    }
+    
     try {
       const { data } = await axios.get(`${config.bddServerUrl || config.serverUrl}/api/bdd/status/${taskId}?nocache=${Date.now()}`, {
         timeout: 30000
