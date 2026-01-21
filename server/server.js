@@ -7876,10 +7876,18 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
             };
         };
         
+        // Удаляем ТОЛЬКО черновики (Draft). Активные и другие статусы не удаляем.
+        const isDraftStatus = (tc) => {
+            const statusId = tc?.status?.id;
+            const statusName = (tc?.status?.name || '').toString().trim().toLowerCase();
+            return statusId === -1 || statusName === 'draft';
+        };
+
         // Находим дубли и определяем, какие удалять
         const toDelete = [];
         const toKeep = [];
         const duplicateGroups = []; // Массив для хранения информации о группах дублей
+        const skippedNonDraft = []; // Дубли, которые нельзя удалить из-за статуса
         
         for (const [key, group] of Object.entries(groups)) {
             if (group.length <= 1) {
@@ -7902,9 +7910,9 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                 })
             );
             
-            // Сортируем по убыванию score с дополнительными критериями для разрешения ничьих
-            // ✅ ГАРАНТИЯ: Тест-кейсы с шагами, precondition и expected result НИКОГДА не удаляются
-            casesWithScores.sort((a, b) => {
+            // Сортируем по убыванию score с дополнительными критериями для разрешения ничьих.
+            // ВАЖНО: это сортировка "лучшего" — но удаляем мы ТОЛЬКО Draft.
+            const compareByBest = (a, b) => {
                 // 0. КРИТИЧЕСКИЙ ПРИОРИТЕТ: Тест-кейс с шагами ВСЕГДА лучше тест-кейса без шагов
                 if (a.scoreData.stepsCount === 0 && b.scoreData.stepsCount > 0) {
                     return 1; // a без шагов, b с шагами - b лучше
@@ -7946,37 +7954,79 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                 
                 // 5. Если все абсолютно одинаково - оставляем более старый (меньший ID, обычно создан раньше)
                 return a.case.id - b.case.id;
-            });
-            
-            // Первый (с наибольшим score) - оставляем, остальные - удаляем
-            const [best, ...others] = casesWithScores;
-            toKeep.push(best.case);
-            
-            const scoreDetails = `score: ${best.score}, шагов: ${best.scoreData.stepsCount}, precondition: ${best.scoreData.hasPrecondition ? 'да' : 'нет'}, expected: ${best.scoreData.hasExpectedResult ? 'да' : 'нет'}`;
-            console.log(`[cleanup-duplicates] Оставляем ТК ${best.case.id} (${scoreDetails}), удаляем ${others.length} дублей`);
-            
+            };
+
+            casesWithScores.sort(compareByBest);
+
+            // Разделяем на Draft и non-Draft. Удаляем только Draft.
+            const nonDraft = casesWithScores.filter(x => !isDraftStatus(x.case));
+            const drafts = casesWithScores.filter(x => isDraftStatus(x.case));
+
+            // "Best" для отображения в превью/логах: если есть non-draft — берём лучший non-draft, иначе лучший draft
+            const best = (nonDraft.length > 0 ? [...nonDraft].sort(compareByBest)[0] : drafts[0]);
+
+            // В kept всегда сохраняем ВСЕ non-draft (их нельзя удалять) + best draft (если группа полностью из draft)
+            nonDraft.forEach(x => toKeep.push(x.case));
+            if (nonDraft.length === 0 && best?.case) {
+                toKeep.push(best.case);
+            }
+
+            const scoreDetails = best
+                ? `score: ${best.score}, шагов: ${best.scoreData.stepsCount}, precondition: ${best.scoreData.hasPrecondition ? 'да' : 'нет'}, expected: ${best.scoreData.hasExpectedResult ? 'да' : 'нет'}, status: ${(best.case?.status?.name || best.case?.status?.id || 'unknown')}`
+                : 'best not found';
+
+            // Если есть non-draft, то удаляем ВСЕ draft (они считаются дублями). Non-draft дубли — не трогаем.
+            const draftsToDelete = (nonDraft.length > 0)
+                ? drafts
+                : drafts.slice(1); // если все draft — оставляем лучший, удаляем остальные
+
+            const nonDraftDuplicates = (nonDraft.length > 1) ? nonDraft.slice(1) : [];
+
+            console.log(`[cleanup-duplicates] Группа: "${group[0].name}". Best=${best?.case?.id}. Draft к удалению=${draftsToDelete.length}. Non-draft дублей (не удаляем)=${nonDraftDuplicates.length}`);
+
             // Сохраняем информацию о группе дублей для превью
             duplicateGroups.push({
-                name: best.case.name,
-                kept: {
+                name: best?.case?.name || group[0].name,
+                kept: best?.case ? {
                     id: best.case.id,
                     name: best.case.name,
                     score: best.score,
                     details: scoreDetails
-                },
-                deleted: others.map(({ case: tc, score, scoreData }) => ({
+                } : null,
+                deleted: draftsToDelete.map(({ case: tc, score, scoreData }) => ({
                     id: tc.id,
                     name: tc.name,
                     score,
+                    status: tc?.status?.name || tc?.status?.id,
+                    details: `шагов: ${scoreData.stepsCount}, precondition: ${scoreData.hasPrecondition ? 'да' : 'нет'}, expected: ${scoreData.hasExpectedResult ? 'да' : 'нет'}`
+                })),
+                skippedNonDraft: nonDraftDuplicates.map(({ case: tc, score, scoreData }) => ({
+                    id: tc.id,
+                    name: tc.name,
+                    score,
+                    status: tc?.status?.name || tc?.status?.id,
                     details: `шагов: ${scoreData.stepsCount}, precondition: ${scoreData.hasPrecondition ? 'да' : 'нет'}, expected: ${scoreData.hasExpectedResult ? 'да' : 'нет'}`
                 }))
             });
-            
-            others.forEach(({ case: tc, score, scoreData }) => {
-                toDelete.push({ 
-                    id: tc.id, 
-                    name: tc.name, 
+
+            // В общий список удаления добавляем только draft
+            draftsToDelete.forEach(({ case: tc, score, scoreData }) => {
+                toDelete.push({
+                    id: tc.id,
+                    name: tc.name,
                     score,
+                    status: tc?.status?.name || tc?.status?.id,
+                    details: `шагов: ${scoreData.stepsCount}, precondition: ${scoreData.hasPrecondition ? 'да' : 'нет'}, expected: ${scoreData.hasExpectedResult ? 'да' : 'нет'}`
+                });
+            });
+
+            // Non-draft дубли учитываем отдельно, чтобы было видно, что они остались
+            nonDraftDuplicates.forEach(({ case: tc, score, scoreData }) => {
+                skippedNonDraft.push({
+                    id: tc.id,
+                    name: tc.name,
+                    score,
+                    status: tc?.status?.name || tc?.status?.id,
                     details: `шагов: ${scoreData.stepsCount}, precondition: ${scoreData.hasPrecondition ? 'да' : 'нет'}, expected: ${scoreData.hasExpectedResult ? 'да' : 'нет'}`
                 });
             });
@@ -8003,6 +8053,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
             duplicatesFound: Object.values(groups).filter(g => g.length > 1).length,
             deleted: deleted.length,
             kept: toKeep.length,
+            skippedNonDraft: skippedNonDraft.length > 0 ? skippedNonDraft : undefined,
             errors: errors.length > 0 ? errors : undefined
         };
         
