@@ -8032,20 +8032,25 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
             });
         }
         
-        // Удаляем дубли
+        // Удаляем дубли — параллельно с ограничением (ускоряет операцию)
         const deleted = [];
         const errors = [];
+        const deleteLimit = pLimit(5); // одновременно не более 5 запросов к Allure
         
-        for (const tc of toDelete) {
-            try {
-                await deleteTestCase(tc.id);
-                deleted.push(tc);
-                console.log(`[cleanup-duplicates] ✅ Удален ТК ${tc.id}: "${tc.name}"`);
-            } catch (error) {
-                console.error(`[cleanup-duplicates] ❌ Ошибка при удалении ТК ${tc.id}:`, error.message);
-                errors.push({ id: tc.id, name: tc.name, error: error.message });
-            }
-        }
+        await Promise.all(
+            toDelete.map(tc =>
+                deleteLimit(async () => {
+                    try {
+                        await deleteTestCase(tc.id);
+                        deleted.push(tc);
+                        console.log(`[cleanup-duplicates] ✅ Удален ТК ${tc.id}: "${tc.name}"`);
+                    } catch (error) {
+                        console.error(`[cleanup-duplicates] ❌ Ошибка при удалении ТК ${tc.id}:`, error.message);
+                        errors.push({ id: tc.id, name: tc.name, error: error.message });
+                    }
+                })
+            )
+        );
         
         const result = {
             success: true,
