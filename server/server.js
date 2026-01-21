@@ -7744,8 +7744,48 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
         return res.status(400).json({ error: 'projectId обязателен' });
     }
     
+    // Делаем эндпоинт асинхронным по умолчанию, чтобы избежать 504 от reverse-proxy на больших проектах.
+    // Для синхронного режима можно вызвать /api/cleanup-duplicates?sync=true
+    const sync = String(req.query.sync || '').toLowerCase() === 'true';
+
+    // Асинхронный запуск (рекомендуется)
+    if (!sync) {
+        try {
+            const taskId = uuidv4();
+            await db('generation_tasks').insert({
+                id: taskId,
+                type: 'cleanup_duplicates',
+                status: 'processing',
+                progress: 0,
+                input_data: { projectId },
+                created_at: new Date(),
+                updated_at: new Date()
+            });
+
+            // Запускаем в фоне
+            cleanupDuplicatesAsync(taskId, projectId).catch(async (err) => {
+                console.error(`[cleanup-duplicates-async] ❌ Необработанная ошибка taskId=${taskId}:`, err);
+                try {
+                    await db('generation_tasks').where('id', taskId).update({
+                        status: 'failed',
+                        error_message: err.message,
+                        updated_at: new Date(),
+                        completed_at: new Date()
+                    });
+                } catch (e) {
+                    console.error(`[cleanup-duplicates-async] ❌ Ошибка обновления статуса taskId=${taskId}:`, e.message);
+                }
+            });
+
+            return res.json({ taskId, status: 'started' });
+        } catch (e) {
+            console.error('[cleanup-duplicates-async] Ошибка создания задачи:', e);
+            return res.status(500).json({ error: e.message });
+        }
+    }
+
     try {
-        console.log(`[cleanup-duplicates] Начинаем очистку дублей для проекта ${projectId}`);
+        console.log(`[cleanup-duplicates] (sync) Начинаем очистку дублей для проекта ${projectId}`);
         
         // Получаем все тест-кейсы проекта
         const allCases = await getAllTestCases(projectId);
@@ -8068,6 +8108,282 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
     } catch (err) {
         console.error('[cleanup-duplicates] Ошибка при очистке дублей:', err);
         res.status(500).json({ error: err.message });
+    }
+});
+
+// Асинхронная версия очистки дублей (для больших проектов)
+async function cleanupDuplicatesAsync(taskId, projectId) {
+    const updateTask = async (patch) => {
+        await db('generation_tasks').where('id', taskId).update({
+            ...patch,
+            updated_at: new Date()
+        });
+    };
+
+    await updateTask({ status: 'processing', progress: 1 });
+    console.log(`[cleanup-duplicates-async] taskId=${taskId} старт для проекта ${projectId}`);
+
+    // Получаем все тест-кейсы проекта
+    const allCases = await getAllTestCases(projectId);
+    await updateTask({ progress: 5 });
+    console.log(`[cleanup-duplicates-async] taskId=${taskId} получено ${allCases.length} тест-кейсов`);
+
+    // Получаем теги для каждого тест-кейса (ограничиваем параллельность)
+    const tagLimit = pLimit(10);
+    let tagsDone = 0;
+    const casesWithTags = await Promise.all(
+        allCases.map(tc => tagLimit(async () => {
+            try {
+                const tags = await getCaseTags(tc.id);
+                const tagNames = Array.isArray(tags)
+                    ? tags.map(t => (t.name || t).trim().toLowerCase()).sort()
+                    : [];
+                return { ...tc, tagNames, tagsData: tags };
+            } catch (error) {
+                return { ...tc, tagNames: [], tagsData: [] };
+            } finally {
+                tagsDone++;
+                if (tagsDone % 2000 === 0) {
+                    // 5..20%
+                    const p = 5 + Math.min(15, Math.floor((tagsDone / allCases.length) * 15));
+                    await updateTask({ progress: p });
+                    console.log(`[cleanup-duplicates-async] taskId=${taskId} теги: ${tagsDone}/${allCases.length}`);
+                }
+            }
+        }))
+    );
+
+    // Группируем тест-кейсы по ключу (название + теги)
+    const getGroupKey = (tc) => {
+        const normalizedTitle = (tc.name || '').trim().toLowerCase();
+        const tagsKey = (tc.tagNames || []).join(',');
+        return `${normalizedTitle}||${tagsKey}`;
+    };
+
+    const groups = {};
+    casesWithTags.forEach(tc => {
+        const key = getGroupKey(tc);
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(tc);
+    });
+
+    const groupEntries = Object.entries(groups).filter(([, g]) => g.length > 1);
+    await updateTask({ progress: 25 });
+    console.log(`[cleanup-duplicates-async] taskId=${taskId} групп дублей: ${groupEntries.length}`);
+
+    // Draft only
+    const isDraftStatus = (tc) => {
+        const statusId = tc?.status?.id;
+        const statusName = (tc?.status?.name || '').toString().trim().toLowerCase();
+        return statusId === -1 || statusName === 'draft';
+    };
+
+    const computeContentScore = async (tc) => {
+        // максимально близко к синхронной версии (упрощать не будем здесь)
+        let score = 0;
+        let hasPrecondition = false;
+        let hasExpectedResult = false;
+        let stepsCount = 0;
+        let stepsTotalLength = 0;
+
+        if (tc.name) score += tc.name.length;
+        if (tc.tagNames && tc.tagNames.length > 0) score += tc.tagNames.length * 5;
+
+        try {
+            const precondition = await getTestCasePrecondition(tc.id);
+            if (precondition) {
+                const precondText = typeof precondition === 'string' ? precondition : JSON.stringify(precondition);
+                const precondLength = precondText.trim().length;
+                if (precondLength > 0) {
+                    hasPrecondition = true;
+                    score += precondLength + 50;
+                }
+            }
+
+            const expectedResult = await getTestCaseExpectedResult(tc.id);
+            if (expectedResult) {
+                const expectedText = typeof expectedResult === 'string' ? expectedResult : JSON.stringify(expectedResult);
+                const expectedLength = expectedText.trim().length;
+                if (expectedLength > 0) {
+                    hasExpectedResult = true;
+                    score += expectedLength + 50;
+                }
+            }
+
+            const steps = await getTestCaseSteps(tc.id);
+            if (steps) {
+                if (Array.isArray(steps)) {
+                    stepsCount = steps.length;
+                    score += stepsCount * 20;
+                    steps.forEach(step => {
+                        if (step.body) {
+                            const bodyText = typeof step.body === 'string' ? step.body : JSON.stringify(step.body);
+                            const bodyLength = bodyText.trim().length;
+                            stepsTotalLength += bodyLength;
+                            score += bodyLength;
+                        }
+                    });
+                } else if (steps.scenario && steps.scenario.scenarioSteps) {
+                    stepsCount = Object.keys(steps.scenario.scenarioSteps).length;
+                    score += stepsCount * 20;
+                }
+            }
+
+            const customFields = await getTestCaseCustomFields(tc.id, projectId);
+            if (Array.isArray(customFields) && customFields.length > 0) score += customFields.length * 5;
+        } catch (e) {
+            // ignore
+        }
+
+        if (hasPrecondition && hasExpectedResult && stepsCount > 0) score += 100;
+
+        return { score, stepsCount, hasPrecondition, hasExpectedResult, stepsTotalLength };
+    };
+
+    const compareByBest = (a, b) => {
+        if (a.scoreData.stepsCount === 0 && b.scoreData.stepsCount > 0) return 1;
+        if (a.scoreData.stepsCount > 0 && b.scoreData.stepsCount === 0) return -1;
+
+        if (a.scoreData.stepsCount === 0 && b.scoreData.stepsCount === 0) {
+            const aHasContent = a.scoreData.hasPrecondition || a.scoreData.hasExpectedResult;
+            const bHasContent = b.scoreData.hasPrecondition || b.scoreData.hasExpectedResult;
+            if (aHasContent !== bHasContent) return bHasContent ? 1 : -1;
+        }
+
+        if (b.score !== a.score) return b.score - a.score;
+        if (b.scoreData.stepsCount !== a.scoreData.stepsCount) return b.scoreData.stepsCount - a.scoreData.stepsCount;
+        if (b.scoreData.stepsTotalLength !== a.scoreData.stepsTotalLength) return b.scoreData.stepsTotalLength - a.scoreData.stepsTotalLength;
+
+        const aHasBoth = a.scoreData.hasPrecondition && a.scoreData.hasExpectedResult;
+        const bHasBoth = b.scoreData.hasPrecondition && b.scoreData.hasExpectedResult;
+        if (aHasBoth !== bHasBoth) return bHasBoth ? 1 : -1;
+
+        return a.case.id - b.case.id;
+    };
+
+    const toDelete = [];
+    const toKeep = [];
+    const skippedNonDraft = [];
+    const duplicateGroups = [];
+
+    const detailLimit = pLimit(10);
+    let groupsDone = 0;
+
+    for (const [, group] of groupEntries) {
+        const casesWithScores = await Promise.all(
+            group.map(tc => detailLimit(async () => {
+                const scoreData = await computeContentScore(tc);
+                return { case: tc, score: scoreData.score, scoreData };
+            }))
+        );
+
+        casesWithScores.sort(compareByBest);
+        const nonDraft = casesWithScores.filter(x => !isDraftStatus(x.case));
+        const drafts = casesWithScores.filter(x => isDraftStatus(x.case));
+        const best = (nonDraft.length > 0 ? [...nonDraft].sort(compareByBest)[0] : drafts[0]);
+
+        nonDraft.forEach(x => toKeep.push(x.case));
+        if (nonDraft.length === 0 && best?.case) toKeep.push(best.case);
+
+        const draftsToDelete = (nonDraft.length > 0) ? drafts : drafts.slice(1);
+        const nonDraftDuplicates = (nonDraft.length > 1) ? nonDraft.slice(1) : [];
+
+        duplicateGroups.push({
+            name: best?.case?.name || group[0].name,
+            kept: best?.case ? { id: best.case.id, name: best.case.name, score: best.score } : null,
+            deleted: draftsToDelete.map(x => ({ id: x.case.id, name: x.case.name, score: x.score, status: x.case?.status?.name || x.case?.status?.id })),
+            skippedNonDraft: nonDraftDuplicates.map(x => ({ id: x.case.id, name: x.case.name, score: x.score, status: x.case?.status?.name || x.case?.status?.id }))
+        });
+
+        draftsToDelete.forEach(x => toDelete.push({ id: x.case.id, name: x.case.name, score: x.score, status: x.case?.status?.name || x.case?.status?.id }));
+        nonDraftDuplicates.forEach(x => skippedNonDraft.push({ id: x.case.id, name: x.case.name, score: x.score, status: x.case?.status?.name || x.case?.status?.id }));
+
+        groupsDone++;
+        if (groupsDone % 50 === 0) {
+            const p = 25 + Math.min(55, Math.floor((groupsDone / groupEntries.length) * 55)); // 25..80
+            await updateTask({ progress: p });
+            console.log(`[cleanup-duplicates-async] taskId=${taskId} группы: ${groupsDone}/${groupEntries.length}, draft к удалению: ${toDelete.length}`);
+        }
+    }
+
+    await updateTask({ progress: 80 });
+
+    // Удаляем draft-дубли параллельно с ограничением
+    const deleted = [];
+    const errors = [];
+    const deleteLimit = pLimit(5);
+    let deleteDone = 0;
+
+    await Promise.all(
+        toDelete.map(tc => deleteLimit(async () => {
+            try {
+                await deleteTestCase(tc.id);
+                deleted.push(tc);
+            } catch (e) {
+                errors.push({ id: tc.id, name: tc.name, error: e.message });
+            } finally {
+                deleteDone++;
+                if (deleteDone % 50 === 0) {
+                    const p = 80 + Math.min(19, Math.floor((deleteDone / Math.max(1, toDelete.length)) * 19)); // 80..99
+                    await updateTask({ progress: p });
+                    console.log(`[cleanup-duplicates-async] taskId=${taskId} удаление: ${deleteDone}/${toDelete.length}`);
+                }
+            }
+        }))
+    );
+
+    const result = {
+        success: true,
+        totalCases: allCases.length,
+        duplicatesFound: groupEntries.length,
+        deleted: deleted.length,
+        kept: toKeep.length,
+        skippedNonDraft: skippedNonDraft.length > 0 ? skippedNonDraft : undefined,
+        errors: errors.length > 0 ? errors : undefined,
+        duplicateGroups
+    };
+
+    await db('generation_tasks').where('id', taskId).update({
+        status: 'completed',
+        progress: 100,
+        result,
+        completed_at: new Date(),
+        updated_at: new Date()
+    });
+
+    console.log(`[cleanup-duplicates-async] ✅ taskId=${taskId} завершено. Удалено=${deleted.length}, skippedNonDraft=${skippedNonDraft.length}`);
+}
+
+// Статус асинхронной очистки дублей
+app.get('/api/cleanup-duplicates-status/:taskId', async (req, res) => {
+    try {
+        const taskId = req.params.taskId;
+        const cacheKey = `cleanup_status_${taskId}`;
+
+        const cached = taskStatusCache.get(cacheKey);
+        if (cached && Date.now() - cached.timestamp < 5000) {
+            return res.json(cached.data);
+        }
+
+        const task = await db('generation_tasks').where('id', taskId).first();
+        if (!task) return res.status(404).json({ error: 'Task not found' });
+
+        const responseData = {
+            id: task.id,
+            status: task.status,
+            progress: task.progress,
+            result: task.result,
+            error_message: task.error_message,
+            created_at: task.created_at,
+            updated_at: task.updated_at,
+            completed_at: task.completed_at
+        };
+
+        taskStatusCache.set(cacheKey, { data: responseData, timestamp: Date.now() });
+        return res.json(responseData);
+    } catch (e) {
+        console.error('[cleanup-duplicates-status] Ошибка:', e);
+        res.status(500).json({ error: e.message });
     }
 });
 
