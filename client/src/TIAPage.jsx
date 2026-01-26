@@ -247,10 +247,16 @@ const TIAPage = ({ projects }) => {
     };
 
     // Формирование pageDependencies из tiaReport
-    const buildPageDependencies = () => {
+    const buildPageDependencies = (components = []) => {
         if (!tiaReport || !isNewTiaFormat(tiaReport)) {
             return [];
         }
+
+        // Создаем Map для быстрого поиска типа компонента по имени
+        const componentTypeMap = new Map();
+        components.forEach(comp => {
+            componentTypeMap.set(comp.name, comp.type); // 'frontend' или 'backend'
+        });
 
         const dependencies = [];
         (tiaReport.pages || []).forEach((page) => {
@@ -259,11 +265,17 @@ const TIAPage = ({ projects }) => {
             
             if (pageName && page.depends_on_components) {
                 (page.depends_on_components || []).forEach((compName) => {
+                    // Определяем тип компонента: если это страница (page), то 'page', иначе 'component'
+                    // Но для создания компонента в БД нужен реальный тип: 'frontend' или 'backend'
+                    const realComponentType = componentTypeMap.get(compName) || 'frontend'; // По умолчанию frontend для нового формата
+                    const dependencyType = realComponentType === 'page' ? 'page' : 'component'; // Тип зависимости
+                    
                     dependencies.push({
                         pageName: pageName,
                         pageRoute: pageRoute || '', // Используем пустую строку вместо null
                         componentName: compName,
-                        componentType: 'frontend' // Новый формат TIA report - только для фронтенда
+                        componentType: dependencyType, // 'component' или 'page' для валидации
+                        realComponentType: realComponentType // 'frontend' или 'backend' для создания компонента
                     });
                 });
             }
@@ -274,7 +286,8 @@ const TIAPage = ({ projects }) => {
 
     const saveComponentMapping = async (component, folderIds) => {
         try {
-            const pageDependencies = buildPageDependencies();
+            const components = extractComponents(); // Получаем список всех компонентов для определения типов
+            const pageDependencies = buildPageDependencies(components);
             
             // Извлекаем release_version, change_date и is_bug_fix из tiaReport, если он есть
             const releaseVersion = tiaReport?.release_version || null;
@@ -375,7 +388,8 @@ const TIAPage = ({ projects }) => {
 
             // Сохраняем все связи Page -> компоненты одним запросом (если есть tiaReport)
             if (tiaReport && isNewTiaFormat(tiaReport)) {
-                const pageDependencies = buildPageDependencies();
+                const components = extractComponents(); // Получаем список всех компонентов для определения типов
+                const pageDependencies = buildPageDependencies(components);
                 if (pageDependencies.length > 0) {
                     try {
                         await axios.post(`${config.TIAUrl}/api/components/page-dependencies`, {
@@ -437,7 +451,8 @@ const TIAPage = ({ projects }) => {
             Object.values(componentMappings).forEach(folderIds => folderIds.forEach(id => allFolderIds.add(id)));
             const groupsInclude = Array.from(allFolderIds).map(id => parseInt(id, 10));
 
-            const pageDependencies = buildPageDependencies();
+            const components = extractComponents(); // Получаем список всех компонентов для определения типов
+            const pageDependencies = buildPageDependencies(components);
 
             const requestBody = {
                 projectId,

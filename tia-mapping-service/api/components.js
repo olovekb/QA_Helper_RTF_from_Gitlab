@@ -16,7 +16,7 @@ const componentValidationSchema = Joi.object({
         pageName: Joi.string().required(),
         pageRoute: Joi.string().allow(null, '').optional(),
         componentName: Joi.string().required(),
-        componentType: Joi.string().valid('component', 'page').allow(null, '').default('component')
+        componentType: Joi.string().valid('component', 'page').allow(null, '').optional()
     })).optional().description('Массив связей Page -> компоненты'),
     releaseVersion: Joi.alternatives().try(
         Joi.string().allow(null, ''),
@@ -123,10 +123,31 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
     for (const dep of finalDeps) {
         const key = `${projectId}_${dep.pageName}_${dep.componentName}`;
         if (!uniqueDepsMap.has(key)) {
-            // Находим или создаём компонент (используем нормализованный componentType)
+            // Определяем реальный тип компонента для создания в таблице components
+            // Если есть realComponentType (frontend/backend), используем его
+            // Иначе пытаемся найти существующий компонент или используем 'frontend' по умолчанию
+            let realComponentType = dep.realComponentType;
+            if (!realComponentType || !['frontend', 'backend', 'page', 'component'].includes(realComponentType)) {
+                // Пытаемся найти существующий компонент
+                const existingComponent = await databasePool('components')
+                    .where({
+                        project_id: projectId,
+                        component_name: dep.componentName
+                    })
+                    .first();
+                
+                if (existingComponent) {
+                    realComponentType = existingComponent.component_type;
+                } else {
+                    // По умолчанию для нового формата TIA - frontend
+                    realComponentType = 'frontend';
+                }
+            }
+            
+            // Находим или создаём компонент с реальным типом
             const component = await findOrCreateComponent(
                 projectId,
-                dep.componentType, // Уже нормализован выше
+                realComponentType, // 'frontend', 'backend', 'page' или 'component'
                 dep.componentName
             );
 
@@ -165,14 +186,34 @@ export async function handleComponentMapping(req, res) {
     const componentId = req.params.componentId; // Для PATCH
 
     try {
+        // Логируем входящие данные для отладки
+        logInfo(`Входящий запрос: pageDependencies=${JSON.stringify(pageDependencies)}`);
+        
         // Нормализуем pageDependencies перед валидацией (устанавливаем default для componentType)
         let normalizedPageDependencies = pageDependencies;
         if (normalizedPageDependencies && Array.isArray(normalizedPageDependencies)) {
-            normalizedPageDependencies = normalizedPageDependencies.map(dep => ({
-                ...dep,
-                componentType: dep.componentType || 'component' // Устанавливаем default если отсутствует или null/undefined
-            }));
+            normalizedPageDependencies = normalizedPageDependencies.map((dep, index) => {
+                // Обрабатываем все возможные случаи: отсутствует, null, undefined, '', невалидное значение
+                let normalizedComponentType = dep.componentType;
+                
+                // Проверяем, что значение либо отсутствует, либо невалидно
+                if (normalizedComponentType === undefined || 
+                    normalizedComponentType === null || 
+                    normalizedComponentType === '' || 
+                    (typeof normalizedComponentType === 'string' && !['component', 'page'].includes(normalizedComponentType))) {
+                    normalizedComponentType = 'component';
+                }
+                
+                logInfo(`Нормализация pageDependencies[${index}]: было="${dep.componentType}" (тип: ${typeof dep.componentType}), стало="${normalizedComponentType}"`);
+                
+                return {
+                    ...dep,
+                    componentType: normalizedComponentType
+                };
+            });
         }
+        
+        logInfo(`После нормализации: pageDependencies=${JSON.stringify(normalizedPageDependencies)}`);
         
         // Нормализуем changeDate: преобразуем в ISO формат если нужно, или устанавливаем null
         let normalizedChangeDate = changeDate;
@@ -218,13 +259,16 @@ export async function handleComponentMapping(req, res) {
             isBugFix 
         }, { 
             abortEarly: false, // Показывать все ошибки валидации
-            stripUnknown: true // Удалять неизвестные поля
+            stripUnknown: true, // Удалять неизвестные поля
+            convert: true // Включаем автоматическое преобразование типов
         });
         
         if (error) {
             const errorMessages = error.details.map(d => d.message).join('; ');
             logError(`Ошибка валидации данных для маппинга компонента: ${errorMessages}`);
-            logError(`Полученные данные: pageDependencies=${JSON.stringify(pageDependencies)}`);
+            logError(`Полученные данные (оригинал): pageDependencies=${JSON.stringify(pageDependencies)}`);
+            logError(`Полученные данные (нормализованные): pageDependencies=${JSON.stringify(normalizedPageDependencies)}`);
+            logError(`Детали ошибки: ${JSON.stringify(error.details, null, 2)}`);
             return res.status(400).json({ error: errorMessages });
         }
         
