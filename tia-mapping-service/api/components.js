@@ -23,7 +23,11 @@ const componentValidationSchema = Joi.object({
         Joi.array().items(Joi.string().allow(null, ''))
     ).optional().description('Версия релиза (например, "npp-2.214.0") или массив версий'),
     releaseVersions: Joi.array().items(Joi.string()).optional().description('Массив версий релизов (альтернатива releaseVersion)'),
-    changeDate: Joi.string().isoDate().optional().allow(null, '').description('Дата изменения компонента в формате ISO 8601'),
+    changeDate: Joi.alternatives().try(
+        Joi.string().isoDate(),
+        Joi.string().allow(null, ''),
+        Joi.valid(null, '')
+    ).optional().description('Дата изменения компонента в формате ISO 8601'),
     isBugFix: Joi.boolean().optional().description('Флаг анализа компонентов из бага'),
 });
 
@@ -170,6 +174,37 @@ export async function handleComponentMapping(req, res) {
             }));
         }
         
+        // Нормализуем changeDate: преобразуем в ISO формат если нужно, или устанавливаем null
+        let normalizedChangeDate = changeDate;
+        if (normalizedChangeDate === '' || normalizedChangeDate === null || normalizedChangeDate === undefined) {
+            normalizedChangeDate = null;
+        } else if (typeof normalizedChangeDate === 'string' && normalizedChangeDate.trim() !== '') {
+            // Пытаемся преобразовать различные форматы дат в ISO
+            try {
+                // Формат "2026-01-22 14:31:18 +0500" -> ISO
+                const dateMatch = normalizedChangeDate.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+([+-]\d{4})$/);
+                if (dateMatch) {
+                    const [, date, time, tz] = dateMatch;
+                    // Преобразуем timezone offset из +0500 в +05:00
+                    const tzFormatted = tz.slice(0, 3) + ':' + tz.slice(3);
+                    normalizedChangeDate = `${date}T${time}${tzFormatted}`;
+                } else {
+                    // Пытаемся распарсить как есть (может быть уже ISO)
+                    const parsedDate = new Date(normalizedChangeDate);
+                    if (isNaN(parsedDate.getTime())) {
+                        logWarn(`Не удалось распарсить дату: ${normalizedChangeDate}, устанавливаем null`);
+                        normalizedChangeDate = null;
+                    } else {
+                        // Преобразуем в ISO строку
+                        normalizedChangeDate = parsedDate.toISOString();
+                    }
+                }
+            } catch (err) {
+                logWarn(`Ошибка при нормализации даты ${normalizedChangeDate}: ${err.message}, устанавливаем null`);
+                normalizedChangeDate = null;
+            }
+        }
+        
         // Валидация входных данных
         const { error, value } = componentValidationSchema.validate({ 
             projectId, 
@@ -179,7 +214,7 @@ export async function handleComponentMapping(req, res) {
             pageDependencies: normalizedPageDependencies, 
             releaseVersion, 
             releaseVersions, 
-            changeDate, 
+            changeDate: normalizedChangeDate, 
             isBugFix 
         }, { 
             abortEarly: false, // Показывать все ошибки валидации
@@ -195,6 +230,7 @@ export async function handleComponentMapping(req, res) {
         
         // Используем нормализованные значения из валидации
         const validatedPageDependencies = value.pageDependencies;
+        const validatedChangeDate = value.changeDate; // Может быть null или ISO строка
 
         // Нормализуем releaseVersions: если передан releaseVersion (строка или массив), используем его, иначе releaseVersions
         let normalizedReleaseVersions = [];
@@ -217,7 +253,7 @@ export async function handleComponentMapping(req, res) {
         const component = await findOrCreateComponent(projectId, componentType, componentName);
 
         // 2. Если isBugFix === true, сохраняем в component_defects для каждой версии (только добавляем, не удаляем и не меняем)
-        if (isBugFix === true && (normalizedReleaseVersions.length > 0 || changeDate)) {
+        if (isBugFix === true && (normalizedReleaseVersions.length > 0 || validatedChangeDate)) {
             try {
                 const defectsToInsert = [];
                 
@@ -227,16 +263,16 @@ export async function handleComponentMapping(req, res) {
                         defectsToInsert.push({
                             component_id: component.id,
                             release_version: version || null,
-                            change_date: changeDate || null,
+                            change_date: validatedChangeDate || null,
                             created_at: databasePool.fn.now(),
                         });
                     }
-                } else if (changeDate) {
+                } else if (validatedChangeDate) {
                     // Если версий нет, но есть дата, создаём одну запись
                     defectsToInsert.push({
                         component_id: component.id,
                         release_version: null,
-                        change_date: changeDate || null,
+                        change_date: validatedChangeDate || null,
                         created_at: databasePool.fn.now(),
                     });
                 }
