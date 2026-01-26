@@ -175,13 +175,63 @@ async function runMigrations ()
     try {
         logInfo('Применение миграций базы данных...');
         const knex = await import('./db/connection.js');
-        await knex.default.migrate.latest();
-        logInfo('Миграции успешно применены');
+        const [batchNo, log] = await knex.default.migrate.latest();
+        logInfo(`Миграции успешно применены. Batch: ${batchNo}, Applied: ${log.length}`);
+        if (log.length > 0) {
+            logInfo(`Применённые миграции: ${log.join(', ')}`);
+        }
+        return { success: true, batchNo, applied: log };
     } catch (error) {
         logError('Ошибка при применении миграций:', error.message);
-        // Не останавливаем сервер, продолжаем работу
+        throw error;
     }
 }
+
+/**
+ * Эндпоинт для ручного запуска миграций (для админов)
+ * @route POST /api/migrations/run
+ */
+app.post('/api/migrations/run', async (req, res) => {
+    try {
+        logInfo('[migrations] Запрос на ручное применение миграций');
+        const result = await runMigrations();
+        res.json({
+            success: true,
+            message: 'Миграции успешно применены',
+            batchNo: result.batchNo,
+            applied: result.applied
+        });
+    } catch (error) {
+        logError('[migrations] Ошибка при применении миграций:', error.message);
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+    }
+});
+
+/**
+ * Эндпоинт для проверки статуса миграций
+ * @route GET /api/migrations/status
+ */
+app.get('/api/migrations/status', async (req, res) => {
+    try {
+        const knex = await import('./db/connection.js');
+        const migrations = await knex.default.migrate.list();
+        res.json({
+            success: true,
+            completed: migrations[0], // Уже применённые
+            pending: migrations[1]     // Ожидающие применения
+        });
+    } catch (error) {
+        logError('[migrations] Ошибка при проверке статуса миграций:', error.message);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
 
 // Запуск сервера на указанном порту
 app.listen(config.port, async () =>
@@ -192,5 +242,11 @@ app.listen(config.port, async () =>
     logInfo(`Allure DB host ${process.env.DB_HOST}`) // Логирование env
 
     // Применяем миграции при запуске
-    await runMigrations();
+    try {
+        await runMigrations();
+    } catch (error) {
+        logError('Ошибка при автоматическом применении миграций при запуске:', error.message);
+        // Не останавливаем сервер, продолжаем работу
+        // Миграции можно применить вручную через POST /api/migrations/run
+    }
 });

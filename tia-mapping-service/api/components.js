@@ -16,7 +16,7 @@ const componentValidationSchema = Joi.object({
         pageName: Joi.string().required(),
         pageRoute: Joi.string().allow(null, '').optional(),
         componentName: Joi.string().required(),
-        componentType: Joi.string().valid('component', 'page').default('component')
+        componentType: Joi.string().valid('component', 'page').allow(null, '').default('component')
     })).optional().description('Массив связей Page -> компоненты'),
     releaseVersion: Joi.alternatives().try(
         Joi.string().allow(null, ''),
@@ -83,10 +83,18 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
         return;
     }
 
+    // Нормализуем pageDependencies: устанавливаем default для componentType
+    const normalizedDeps = pageDependencies.map(dep => ({
+        ...dep,
+        componentType: (dep.componentType && ['component', 'page'].includes(dep.componentType)) 
+            ? dep.componentType 
+            : 'component' // Default если отсутствует, null, undefined или невалидное значение
+    }));
+
     // Удаляем существующие связи для этих страниц и компонентов
     // Используем уникальный ключ для предотвращения дублирования
     const uniqueDeps = new Map();
-    for (const dep of pageDependencies) {
+    for (const dep of normalizedDeps) {
         const key = `${projectId}_${dep.pageName}_${dep.componentName}`;
         if (!uniqueDeps.has(key)) {
             uniqueDeps.set(key, dep);
@@ -102,16 +110,19 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
             })
             .del();
     }
+    
+    // Используем normalizedDeps для дальнейшей обработки
+    const finalDeps = Array.from(uniqueDeps.values());
 
     // Создаём новые связи (убираем дубликаты)
     const uniqueDepsMap = new Map();
-    for (const dep of pageDependencies) {
+    for (const dep of finalDeps) {
         const key = `${projectId}_${dep.pageName}_${dep.componentName}`;
         if (!uniqueDepsMap.has(key)) {
-            // Находим или создаём компонент
+            // Находим или создаём компонент (используем нормализованный componentType)
             const component = await findOrCreateComponent(
                 projectId,
-                dep.componentType || 'component',
+                dep.componentType, // Уже нормализован выше
                 dep.componentName
             );
 
@@ -120,7 +131,7 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
                 page_name: dep.pageName,
                 page_route: dep.pageRoute || null,
                 component_name: dep.componentName,
-                component_type: dep.componentType || 'component',
+                component_type: dep.componentType, // Уже нормализован выше
                 component_id: component.id,
                 created_at: databasePool.fn.now(),
                 updated_at: databasePool.fn.now(),
@@ -150,12 +161,40 @@ export async function handleComponentMapping(req, res) {
     const componentId = req.params.componentId; // Для PATCH
 
     try {
-        // Валидация входных данных
-        const { error } = componentValidationSchema.validate({ projectId, componentType, componentName, functionalBlock, pageDependencies, releaseVersion, releaseVersions, changeDate, isBugFix });
-        if (error) {
-            logError(`Ошибка валидации данных для маппинга компонента: ${error.details[0].message}`);
-            return res.status(400).json({ error: error.details[0].message });
+        // Нормализуем pageDependencies перед валидацией (устанавливаем default для componentType)
+        let normalizedPageDependencies = pageDependencies;
+        if (normalizedPageDependencies && Array.isArray(normalizedPageDependencies)) {
+            normalizedPageDependencies = normalizedPageDependencies.map(dep => ({
+                ...dep,
+                componentType: dep.componentType || 'component' // Устанавливаем default если отсутствует или null/undefined
+            }));
         }
+        
+        // Валидация входных данных
+        const { error, value } = componentValidationSchema.validate({ 
+            projectId, 
+            componentType, 
+            componentName, 
+            functionalBlock, 
+            pageDependencies: normalizedPageDependencies, 
+            releaseVersion, 
+            releaseVersions, 
+            changeDate, 
+            isBugFix 
+        }, { 
+            abortEarly: false, // Показывать все ошибки валидации
+            stripUnknown: true // Удалять неизвестные поля
+        });
+        
+        if (error) {
+            const errorMessages = error.details.map(d => d.message).join('; ');
+            logError(`Ошибка валидации данных для маппинга компонента: ${errorMessages}`);
+            logError(`Полученные данные: pageDependencies=${JSON.stringify(pageDependencies)}`);
+            return res.status(400).json({ error: errorMessages });
+        }
+        
+        // Используем нормализованные значения из валидации
+        const validatedPageDependencies = value.pageDependencies;
 
         // Нормализуем releaseVersions: если передан releaseVersion (строка или массив), используем его, иначе releaseVersions
         let normalizedReleaseVersions = [];
@@ -259,8 +298,8 @@ export async function handleComponentMapping(req, res) {
             }
 
             // 5. Сохраняем связи Page -> компоненты, если они переданы
-            if (pageDependencies && pageDependencies.length > 0) {
-                await savePageComponentDependencies(projectId, pageDependencies);
+            if (validatedPageDependencies && validatedPageDependencies.length > 0) {
+                await savePageComponentDependencies(projectId, validatedPageDependencies);
             }
 
             // 6. Получаем актуальные связи из БД для ответа
