@@ -549,9 +549,21 @@ export async function getPageMappings(req, res) {
             return res.status(400).json({ error: 'Необходимо указать projectId.' });
         }
 
-        const pageNamesArray = pageNames ? (Array.isArray(pageNames) ? pageNames : [pageNames]) : [];
-
-        logInfo(`Получаем маппинги для Page: ${pageNamesArray.join(', ')} в проекте ${projectId}`);
+        // pageNames может прийти как массив или как строка (если один элемент)
+        // Express автоматически парсит повторяющиеся query параметры в массив
+        // pageNames может прийти как массив или как строка (если один элемент)
+        // Express автоматически парсит повторяющиеся query параметры в массив
+        let pageNamesArray = [];
+        if (pageNames) {
+            if (Array.isArray(pageNames)) {
+                // Фильтруем только строки, убираем объекты
+                pageNamesArray = pageNames.filter(name => name && typeof name === 'string' && name !== '[object Object]');
+            } else if (typeof pageNames === 'string' && pageNames !== '[object Object]') {
+                pageNamesArray = [pageNames];
+            }
+        }
+        
+        logInfo(`Получен запрос маппингов для Page: projectId=${projectId}, pageNames (raw)=${JSON.stringify(pageNames)}, pageNamesArray=${JSON.stringify(pageNamesArray)}`);
 
         const pageMappings = {};
 

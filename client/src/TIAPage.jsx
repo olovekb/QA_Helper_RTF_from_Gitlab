@@ -375,16 +375,22 @@ const TIAPage = ({ projects }) => {
                         const pageDependencies = buildPageDependencies(components);
                         
                         // Собираем уникальные имена Page
-                        const pageNames = [...new Set(pageDependencies.map(dep => dep.pageName))];
+                        const pageNames = [...new Set(pageDependencies.map(dep => dep.pageName))].filter(name => name); // Убираем пустые значения
                         
                         if (pageNames.length > 0) {
                             // Запрашиваем маппинги для всех Page одним запросом
-                            const response = await axios.get(`${config.TIAUrl}/api/components/page-mappings`, {
-                                params: { 
-                                    projectId,
-                                    pageNames: pageNames 
+                            // Передаем pageNames как массив строк в query параметрах
+                            // Используем URLSearchParams для правильной передачи массива
+                            const params = new URLSearchParams();
+                            params.append('projectId', projectId);
+                            pageNames.forEach(pageName => {
+                                if (pageName && typeof pageName === 'string') {
+                                    params.append('pageNames', pageName);
                                 }
                             });
+                            
+                            logInfo(`Запрашиваем маппинги для Page: ${pageNames.join(', ')}`);
+                            const response = await axios.get(`${config.TIAUrl}/api/components/page-mappings?${params.toString()}`);
                             
                             const { pageMappings } = response.data;
                             
