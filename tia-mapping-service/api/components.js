@@ -380,6 +380,90 @@ export async function handleComponentMapping(req, res) {
             // 5. Сохраняем связи Page -> компоненты, если они переданы
             if (validatedPageDependencies && validatedPageDependencies.length > 0) {
                 await savePageComponentDependencies(projectId, validatedPageDependencies);
+                
+                // 5.5. Автоматический маппинг функциональных блоков из связанных Page
+                // Если компонент связан с Page, которая уже имеет маппинг с функциональными блоками,
+                // автоматически передаём эти блоки компоненту
+                
+                // Получаем уже созданные связи компонента (после шага 4)
+                const existingBlockIds = new Set(
+                    (await databasePool('component_functional_blocks')
+                        .where({ component_id: component.id })
+                        .select('functional_block_id'))
+                        .map(fb => fb.functional_block_id)
+                );
+                
+                const autoMappedBlocks = new Set();
+                
+                for (const pageDep of validatedPageDependencies) {
+                    const pageName = pageDep.pageName;
+                    
+                    // Ищем маппинги функциональных блоков для этой Page
+                    // Сначала проверяем новую структуру (components + component_functional_blocks)
+                    const pageComponent = await databasePool('components')
+                        .where({
+                            project_id: projectId,
+                            component_type: 'page',
+                            component_name: pageName
+                        })
+                        .first();
+                    
+                    if (pageComponent) {
+                        // Находим функциональные блоки через новую структуру
+                        const pageFunctionalBlocks = await databasePool('component_functional_blocks')
+                            .join('functional_blocks', 'component_functional_blocks.functional_block_id', 'functional_blocks.id')
+                            .where({
+                                'component_functional_blocks.component_id': pageComponent.id,
+                                'functional_blocks.project_id': projectId
+                            })
+                            .select('functional_blocks.id', 'functional_blocks.allure_id');
+                        
+                        for (const fb of pageFunctionalBlocks) {
+                            if (!existingBlockIds.has(fb.id)) {
+                                autoMappedBlocks.add(fb.id);
+                            }
+                        }
+                    }
+                    
+                    // Если не найдено в новой структуре, проверяем старую (component_mappings)
+                    if (autoMappedBlocks.size === 0 || !pageComponent) {
+                        const oldPageMappings = await databasePool('component_mappings')
+                            .join('functional_blocks', 'component_mappings.functional_block_id', 'functional_blocks.id')
+                            .where({
+                                'component_mappings.project_id': projectId,
+                                'component_mappings.component_type': 'page',
+                                'component_mappings.component_name': pageName,
+                                'functional_blocks.project_id': projectId
+                            })
+                            .select('functional_blocks.id', 'functional_blocks.allure_id');
+                        
+                        for (const fb of oldPageMappings) {
+                            if (!existingBlockIds.has(fb.id)) {
+                                autoMappedBlocks.add(fb.id);
+                            }
+                        }
+                    }
+                }
+                
+                // Создаём автоматические связи для найденных функциональных блоков
+                if (autoMappedBlocks.size > 0) {
+                    const autoLinks = [];
+                    for (const fbId of autoMappedBlocks) {
+                        autoLinks.push({
+                            component_id: component.id,
+                            functional_block_id: fbId,
+                            created_at: databasePool.fn.now(),
+                        });
+                    }
+                    
+                    if (autoLinks.length > 0) {
+                        await databasePool('component_functional_blocks')
+                            .insert(autoLinks)
+                            .onConflict(['component_id', 'functional_block_id'])
+                            .ignore();
+                        logInfo(`Автоматически создано ${autoLinks.length} связей компонент-функциональные блоки для компонента ${componentName} из связанных Page в проекте ${projectId}`);
+                    }
+                }
             }
 
             // 6. Получаем актуальные связи из БД для ответа
@@ -448,6 +532,91 @@ export async function handleComponentMapping(req, res) {
     } catch (error) {
         logError(`Ошибка при обработке маппинга для проекта ${projectId}:`, error.message);
         res.status(500).json({ error: 'Произошла ошибка при создании/обновлении маппинга.', details: error.message });
+    }
+}
+
+/**
+ * Получение маппингов функциональных блоков для Page по имени
+ * @param {Object} req - Объект запроса Express
+ * @param {Object} res - Объект ответа Express
+ * @returns {void}
+ */
+export async function getPageMappings(req, res) {
+    const { projectId, pageNames } = req.query;
+
+    try {
+        if (!projectId) {
+            return res.status(400).json({ error: 'Необходимо указать projectId.' });
+        }
+
+        const pageNamesArray = pageNames ? (Array.isArray(pageNames) ? pageNames : [pageNames]) : [];
+
+        logInfo(`Получаем маппинги для Page: ${pageNamesArray.join(', ')} в проекте ${projectId}`);
+
+        const pageMappings = {};
+
+        for (const pageName of pageNamesArray) {
+            const mappings = [];
+
+            // Проверяем новую структуру (components + component_functional_blocks)
+            const pageComponent = await databasePool('components')
+                .where({
+                    project_id: projectId,
+                    component_type: 'page',
+                    component_name: pageName
+                })
+                .first();
+
+            if (pageComponent) {
+                const newMappings = await databasePool('component_functional_blocks')
+                    .join('functional_blocks', 'component_functional_blocks.functional_block_id', 'functional_blocks.id')
+                    .where({
+                        'component_functional_blocks.component_id': pageComponent.id,
+                        'functional_blocks.project_id': projectId
+                    })
+                    .select(
+                        'functional_blocks.allure_id',
+                        'functional_blocks.name as functional_block_name'
+                    );
+
+                mappings.push(...newMappings.map(m => ({
+                    functional_block_allure_id: m.allure_id,
+                    functional_block_name: m.functional_block_name
+                })));
+            }
+
+            // Проверяем старую структуру (component_mappings)
+            const oldMappings = await databasePool('component_mappings')
+                .join('functional_blocks', 'component_mappings.functional_block_id', 'functional_blocks.id')
+                .where({
+                    'component_mappings.project_id': projectId,
+                    'component_mappings.component_type': 'page',
+                    'component_mappings.component_name': pageName,
+                    'functional_blocks.project_id': projectId
+                })
+                .select(
+                    'functional_blocks.allure_id',
+                    'functional_blocks.name as functional_block_name'
+                );
+
+            // Объединяем результаты, убирая дубликаты по allure_id
+            const uniqueMappings = new Map();
+            [...mappings, ...oldMappings.map(m => ({
+                functional_block_allure_id: m.allure_id,
+                functional_block_name: m.functional_block_name
+            }))].forEach(m => {
+                if (!uniqueMappings.has(m.functional_block_allure_id)) {
+                    uniqueMappings.set(m.functional_block_allure_id, m);
+                }
+            });
+
+            pageMappings[pageName] = Array.from(uniqueMappings.values());
+        }
+
+        res.status(200).json({ pageMappings });
+    } catch (error) {
+        logError(`Ошибка при получении маппингов для Page в проекте ${projectId}:`, error.message);
+        res.status(500).json({ error: 'Произошла ошибка при получении маппингов.', details: error.message });
     }
 }
 

@@ -37,6 +37,7 @@ const TIAPage = ({ projects }) => {
     // Состояния для маппинга компонентов
     const [components, setComponents] = useState([]); // Список всех компонентов
     const [componentMappings, setComponentMappings] = useState({}); // Маппинг { componentId: [folderIds] } для мультиселекта
+    const [autoMappedBlocks, setAutoMappedBlocks] = useState({}); // Автоматически добавленные блоки { componentId: Set<folderId> }
     const [showMappingModal, setShowMappingModal] = useState(false); // Управление модальным окном
     const [isMappingLoading, setIsMappingLoading] = useState(false); // Лоудер для маппинга
 
@@ -59,6 +60,7 @@ const TIAPage = ({ projects }) => {
             setAllureLink('');
             setComponents([]);
             setComponentMappings({});
+            setAutoMappedBlocks({});
             setShowMappingModal(false);
             setIsMappingLoading(false);
         };
@@ -348,10 +350,13 @@ const TIAPage = ({ projects }) => {
         }
 
         fetchExistingMappings(projectId)
-            .then(existingMappings => {
+            .then(async (existingMappings) => {
                 setComponents(extractedComponents);
 
                 const initialMappings = {};
+                const autoMappedBlocks = {}; // Для отслеживания автоматически добавленных блоков
+                
+                // Сначала загружаем существующие маппинги
                 extractedComponents.forEach(component => {
                     const mappingsForComponent = existingMappings.filter(
                         m => m.component_name === component.name && m.component_type === component.type
@@ -360,8 +365,67 @@ const TIAPage = ({ projects }) => {
                         .map(m => findFolderAllureId(m.functional_block_allure_id)?.toString() || '')
                         .filter(id => id);
                     initialMappings[component.id] = folderIds.length > 0 ? folderIds : [];
+                    autoMappedBlocks[component.id] = new Set(); // Инициализируем Set для автоматических блоков
                 });
+                
+                // Затем добавляем автоматические маппинги из связанных Page
+                if (tiaReport && isNewTiaFormat(tiaReport)) {
+                    try {
+                        const components = extractedComponents;
+                        const pageDependencies = buildPageDependencies(components);
+                        
+                        // Собираем уникальные имена Page
+                        const pageNames = [...new Set(pageDependencies.map(dep => dep.pageName))];
+                        
+                        if (pageNames.length > 0) {
+                            // Запрашиваем маппинги для всех Page одним запросом
+                            const response = await axios.get(`${config.TIAUrl}/api/components/page-mappings`, {
+                                params: { 
+                                    projectId,
+                                    pageNames: pageNames 
+                                }
+                            });
+                            
+                            const { pageMappings } = response.data;
+                            
+                            // Для каждого компонента находим связанные Page и добавляем их маппинги
+                            extractedComponents.forEach(component => {
+                                const componentPageDeps = pageDependencies.filter(
+                                    dep => dep.componentName === component.name
+                                );
+                                
+                                const autoFolderIds = new Set(initialMappings[component.id] || []);
+                                
+                                componentPageDeps.forEach(pageDep => {
+                                    const pageName = pageDep.pageName;
+                                    const pageMapping = pageMappings[pageName] || [];
+                                    
+                                    pageMapping.forEach(mapping => {
+                                        const folderId = findFolderAllureId(mapping.functional_block_allure_id)?.toString();
+                                        if (folderId && !autoFolderIds.has(folderId)) {
+                                            autoFolderIds.add(folderId);
+                                            autoMappedBlocks[component.id].add(folderId);
+                                        }
+                                    });
+                                });
+                                
+                                initialMappings[component.id] = Array.from(autoFolderIds);
+                            });
+                        }
+                    } catch (err) {
+                        logError('Ошибка при загрузке автоматических маппингов из Page:', err.message);
+                        // Продолжаем работу даже если не удалось загрузить автоматические маппинги
+                    }
+                }
+                
                 setComponentMappings(initialMappings);
+                // Сохраняем информацию об автоматически добавленных блоках в отдельном состоянии
+                // Преобразуем Set в объект для хранения в состоянии
+                const autoMappedBlocksObj = {};
+                Object.keys(autoMappedBlocks).forEach(componentId => {
+                    autoMappedBlocksObj[componentId] = Array.from(autoMappedBlocks[componentId]);
+                });
+                setAutoMappedBlocks(autoMappedBlocksObj);
 
                 setShowMappingModal(true);
             })
@@ -2574,18 +2638,25 @@ const TIAPage = ({ projects }) => {
                                                             }}>
                                                                 {componentMappings[comp.id].map(folderId => {
                                                                     const folder = findFolderById(folders, parseInt(folderId));
+                                                                    const isAutoMapped = autoMappedBlocks[comp.id]?.includes(folderId);
                                                                     return folder ? (
                                                                         <span
                                                                             key={folderId}
+                                                                            title={isAutoMapped ? 'Автоматически добавлен из связанной Page' : ''}
                                                                             style={{
                                                                                 padding: '4px 10px',
-                                                                                backgroundColor: '#d4edda',
+                                                                                backgroundColor: isAutoMapped ? '#fff3cd' : '#d4edda',
                                                                                 borderRadius: '4px',
                                                                                 fontSize: '12px',
-                                                                                color: '#155724',
-                                                                                fontWeight: 500
+                                                                                color: isAutoMapped ? '#856404' : '#155724',
+                                                                                fontWeight: 500,
+                                                                                border: isAutoMapped ? '1px solid #ffc107' : 'none',
+                                                                                display: 'inline-flex',
+                                                                                alignItems: 'center',
+                                                                                gap: '4px'
                                                                             }}
                                                                         >
+                                                                            {isAutoMapped && '🔄 '}
                                                                             {formatCustomFieldName(folder, 0)}
                                                                         </span>
                                                                     ) : null;

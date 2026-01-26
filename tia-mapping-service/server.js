@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url'; // Импорт для преобразов
 import multer from 'multer'; // Импорт multer для обработки загрузки файлов
 import { uploadMiddleware, handleJsonUpload } from './api/upload.js'; // Импорт функционала для загрузки JSON
 import { getProjectStructure } from './api/structure.js'; // Импорт функционала для получения структуры Allure
-import { handleComponentMapping, deleteComponentMapping, getComponentMappings, savePageDependencies, getFunctionalBlockPageComponentLinks } from './api/components.js'; // Импорт функционала для маппинга
+import { handleComponentMapping, deleteComponentMapping, getComponentMappings, getPageMappings, savePageDependencies, getFunctionalBlockPageComponentLinks } from './api/components.js'; // Импорт функционала для маппинга
 import { getHeatmapData, getReleaseVersions, getTestCoverageData } from './api/heatmap.js'; // Импорт функционала для тепловой карты
 import { createTestPlan } from './api/launch.js'; // Импорт функционала для создания тест-планов
 import config from './config/index.js'; // Импорт конфигурации проекта
@@ -108,6 +108,7 @@ app.post('/api/components', handleComponentMapping); // Создание мап�
 app.patch('/api/components/:componentId', handleComponentMapping); // Обновление маппинга по ID
 app.post('/api/components/page-dependencies', savePageDependencies); // Сохранение связей Page -> компоненты
 app.get('/api/components', getComponentMappings);
+app.get('/api/components/page-mappings', getPageMappings); // Получение маппингов функциональных блоков для Page
 app.get('/api/components/functional-block-links', getFunctionalBlockPageComponentLinks); // Получение явных связей функциональный блок -> Page -> компонент
 
 /**
