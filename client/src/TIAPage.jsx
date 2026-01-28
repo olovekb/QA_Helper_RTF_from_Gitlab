@@ -192,11 +192,11 @@ const TIAPage = ({ projects }) => {
                     file_path: detail.file_path,
                     method_jsdoc: detail.method_jsdoc || {}, // Добавляем JSDoc для методов
                 }] : (existing?.nestedComponents || []);
-                
+
                 // Собираем уникальные env
                 const envs = new Set(existing?.envs || []);
                 if (pageEnv) envs.add(pageEnv);
-                
+
                 componentsMap.set(key, {
                     id: key,
                     name: name,
@@ -264,14 +264,14 @@ const TIAPage = ({ projects }) => {
         (tiaReport.pages || []).forEach((page) => {
             const pageName = page.page_meta?.name;
             const pageRoute = page.page_meta?.route;
-            
+
             if (pageName && page.depends_on_components) {
                 (page.depends_on_components || []).forEach((compName) => {
                     // Определяем тип компонента: если это страница (page), то 'page', иначе 'component'
                     // Но для создания компонента в БД нужен реальный тип: 'frontend' или 'backend'
                     const realComponentType = componentTypeMap.get(compName) || 'frontend'; // По умолчанию frontend для нового формата
                     const dependencyType = realComponentType === 'page' ? 'page' : 'component'; // Тип зависимости
-                    
+
                     dependencies.push({
                         pageName: pageName,
                         pageRoute: pageRoute || '', // Используем пустую строку вместо null
@@ -286,20 +286,21 @@ const TIAPage = ({ projects }) => {
         return dependencies;
     };
 
-    const saveComponentMapping = async (component, folderIds) => {
+    const saveComponentMapping = async (component, folderIds, allComponents, allPageDependencies) => {
         try {
-            const components = extractComponents(); // Получаем список всех компонентов для определения типов
-            const pageDependencies = buildPageDependencies(components);
-            
+            // Используем переданные данные, чтобы не пересчитывать их каждый раз
+            const components = allComponents || extractComponents();
+            const pageDependencies = allPageDependencies || buildPageDependencies(components);
+
             // Извлекаем release_version, change_date и is_bug_fix из tiaReport, если он есть
             const releaseVersion = tiaReport?.release_version || null;
             const changeDate = tiaReport?.change_date || null;
             const isBugFix = tiaReport?.is_bug_fix || false;
-            
+
             // Если нет маппинга на функциональные блоки, все равно сохраняем метаданные компонента
             // Для этого отправляем пустой массив, но с метаданными
             const functionalBlocks = folderIds.length > 0 ? folderIds.map(id => id.toString()) : [];
-            
+
             await axios.post(`${config.TIAUrl}/api/components`, {
                 projectId,
                 componentType: component.type,
@@ -355,7 +356,7 @@ const TIAPage = ({ projects }) => {
 
                 const initialMappings = {};
                 const autoMappedBlocks = {}; // Для отслеживания автоматически добавленных блоков
-                
+
                 // Сначала загружаем существующие маппинги
                 extractedComponents.forEach(component => {
                     const mappingsForComponent = existingMappings.filter(
@@ -367,16 +368,16 @@ const TIAPage = ({ projects }) => {
                     initialMappings[component.id] = folderIds.length > 0 ? folderIds : [];
                     autoMappedBlocks[component.id] = new Set(); // Инициализируем Set для автоматических блоков
                 });
-                
+
                 // Затем добавляем автоматические маппинги из связанных Page
                 if (tiaReport && isNewTiaFormat(tiaReport)) {
                     try {
                         const components = extractedComponents;
                         const pageDependencies = buildPageDependencies(components);
-                        
+
                         // Собираем уникальные имена Page
                         const pageNames = [...new Set(pageDependencies.map(dep => dep.pageName))].filter(name => name); // Убираем пустые значения
-                        
+
                         if (pageNames.length > 0) {
                             // Запрашиваем маппинги для всех Page одним запросом
                             // Передаем pageNames как массив строк в query параметрах
@@ -388,24 +389,24 @@ const TIAPage = ({ projects }) => {
                                     params.append('pageNames', pageName);
                                 }
                             });
-                            
+
                             console.log(`Запрашиваем маппинги для Page: ${pageNames.join(', ')}`);
                             const response = await axios.get(`${config.TIAUrl}/api/components/page-mappings?${params.toString()}`);
-                            
+
                             const { pageMappings } = response.data;
-                            
+
                             // Для каждого компонента находим связанные Page и добавляем их маппинги
                             extractedComponents.forEach(component => {
                                 const componentPageDeps = pageDependencies.filter(
                                     dep => dep.componentName === component.name
                                 );
-                                
+
                                 const autoFolderIds = new Set(initialMappings[component.id] || []);
-                                
+
                                 componentPageDeps.forEach(pageDep => {
                                     const pageName = pageDep.pageName;
                                     const pageMapping = pageMappings[pageName] || [];
-                                    
+
                                     pageMapping.forEach(mapping => {
                                         const folderId = findFolderAllureId(mapping.functional_block_allure_id)?.toString();
                                         if (folderId && !autoFolderIds.has(folderId)) {
@@ -414,7 +415,7 @@ const TIAPage = ({ projects }) => {
                                         }
                                     });
                                 });
-                                
+
                                 initialMappings[component.id] = Array.from(autoFolderIds);
                             });
                         }
@@ -423,7 +424,7 @@ const TIAPage = ({ projects }) => {
                         // Продолжаем работу даже если не удалось загрузить автоматические маппинги
                     }
                 }
-                
+
                 setComponentMappings(initialMappings);
                 // Сохраняем информацию об автоматически добавленных блоках в отдельном состоянии
                 // Преобразуем Set в объект для хранения в состоянии
@@ -448,23 +449,29 @@ const TIAPage = ({ projects }) => {
         setPartialSaveMessage('');
 
         try {
+            // Предварительно вычисляем данные один раз
+            const allComponents = extractComponents();
+            const allPageDependencies = buildPageDependencies(allComponents);
+
             // Сохраняем ВСЕ компоненты, включая те, у которых маппинги были удалены (пустой массив)
             // Это необходимо для удаления старых маппингов из БД
-            const promises = components.map(c => {
-                const folderIds = componentMappings[c.id] || [];
-                return saveComponentMapping(c, folderIds);
-            });
-            await Promise.all(promises);
+            // Запускаем сохранения параллельно пачками по 5 штук, чтобы не заблокировать браузер и не перегрузить сеть
+            const chunkSize = 5;
+            for (let i = 0; i < components.length; i += chunkSize) {
+                const chunk = components.slice(i, i + chunkSize);
+                await Promise.all(chunk.map(c => {
+                    const folderIds = componentMappings[c.id] || [];
+                    return saveComponentMapping(c, folderIds, allComponents, allPageDependencies);
+                }));
+            }
 
             // Сохраняем все связи Page -> компоненты одним запросом (если есть tiaReport)
             if (tiaReport && isNewTiaFormat(tiaReport)) {
-                const components = extractComponents(); // Получаем список всех компонентов для определения типов
-                const pageDependencies = buildPageDependencies(components);
-                if (pageDependencies.length > 0) {
+                if (allPageDependencies.length > 0) {
                     try {
                         await axios.post(`${config.TIAUrl}/api/components/page-dependencies`, {
                             projectId,
-                            pageDependencies: pageDependencies,
+                            pageDependencies: allPageDependencies,
                         });
                     } catch (depErr) {
                         // Игнорируем ошибку, если это не критично
@@ -554,12 +561,23 @@ const TIAPage = ({ projects }) => {
     const handleMappingConfirm = async () => {
         setIsMappingLoading(true); // Включаем лоудер для маппинга
         try {
+            // Предварительно вычисляем данные один раз перед циклом
+            const allComponents = extractComponents();
+            const allPageDependencies = buildPageDependencies(allComponents);
+
             // Сохраняем ВСЕ компоненты, включая те, у которых маппинги были удалены (пустой массив)
             // Это необходимо для удаления старых маппингов из БД
-            for (const component of components) {
-                const folderIds = componentMappings[component.id] || [];
-                await saveComponentMapping(component, folderIds);
+
+            // Запускаем сохранения параллельно пачками по 5 штук
+            const chunkSize = 5;
+            for (let i = 0; i < components.length; i += chunkSize) {
+                const chunk = components.slice(i, i + chunkSize);
+                await Promise.all(chunk.map(component => {
+                    const folderIds = componentMappings[component.id] || [];
+                    return saveComponentMapping(component, folderIds, allComponents, allPageDependencies);
+                }));
             }
+
             await createTestPlan();
             setShowMappingModal(false);
         } catch (err) {
@@ -612,12 +630,12 @@ const TIAPage = ({ projects }) => {
         const folderId = folder.id.toString();
         // Если сам узел выбран, считаем что все дочерние тоже выбраны (так как при выборе родителя выбираются все дети)
         if (mappings.includes(folderId)) return true;
-        
+
         // Если нет детей, проверяем только сам узел
         if (!folder.children || folder.children.length === 0) {
             return mappings.includes(folderId);
         }
-        
+
         // Проверяем, выбраны ли все дочерние элементы
         return folder.children.every(child => areAllDescendantsSelected(child, mappings));
     };
@@ -625,7 +643,7 @@ const TIAPage = ({ projects }) => {
     // Получить список страниц, использующих компонент
     const getPagesUsingComponent = (componentName) => {
         if (!tiaReport || !isNewTiaFormat(tiaReport)) return [];
-        return (tiaReport.pages || []).filter(page => 
+        return (tiaReport.pages || []).filter(page =>
             (page.depends_on_components || []).includes(componentName)
         );
     };
@@ -736,7 +754,7 @@ const TIAPage = ({ projects }) => {
     const handleRouteClick = (route, e) => {
         e.stopPropagation();
         if (!route) return;
-        
+
         // Заменяем параметры маршрута на placeholder или оставляем как есть
         let finalRoute = route;
         if (route.includes(':')) {
@@ -755,7 +773,7 @@ const TIAPage = ({ projects }) => {
                 });
             }
         }
-        
+
         const fullUrl = `${getTestStandUrl()}/${finalRoute}`;
         window.open(fullUrl, '_blank');
     };
@@ -799,10 +817,10 @@ const TIAPage = ({ projects }) => {
             const folderId = folder.id.toString();
             const mappings = componentId ? (componentMappings[componentId] || []) : [];
             const isDirectlySelected = mappings.includes(folderId);
-            
+
             // Проверяем, выбраны ли все дочерние элементы (рекурсивно)
             const allDescendantsSelected = areAllDescendantsSelected(folder, mappings);
-            
+
             // Узел считается выбранным, если он выбран напрямую или все его дочерние элементы выбраны
             const isSelected = isDirectlySelected || (allDescendantsSelected && !isDirectlySelected && folder.children && folder.children.length > 0);
             const hasChildren = folder.children && folder.children.length > 0;
@@ -974,13 +992,13 @@ const TIAPage = ({ projects }) => {
         if (projectId !== '307') {
             return folders;
         }
-        
+
         const result = [];
         folders.forEach(folder => {
             if (folder.customFieldName === 'Block' || folder.customFieldName === 'SubBlock') {
                 // Показываем Block и SubBlock, рекурсивно фильтруем детей (но не фильтруем Feature, Story и т.д.)
-                const filteredChildren = folder.children && folder.children.length > 0 
-                    ? filterFoldersForProject(folder.children) 
+                const filteredChildren = folder.children && folder.children.length > 0
+                    ? filterFoldersForProject(folder.children)
                     : [];
                 result.push({
                     ...folder,
@@ -990,8 +1008,8 @@ const TIAPage = ({ projects }) => {
                 // Для всех остальных типов (Feature, Story, Scenario, Code) - показываем их, если они не на корневом уровне
                 // Но эта функция вызывается рекурсивно, так что если мы здесь, значит это уже не корневой уровень
                 // Просто показываем все узлы с их детьми
-                const filteredChildren = folder.children && folder.children.length > 0 
-                    ? filterFoldersForProject(folder.children) 
+                const filteredChildren = folder.children && folder.children.length > 0
+                    ? filterFoldersForProject(folder.children)
                     : [];
                 result.push({
                     ...folder,
@@ -1026,7 +1044,7 @@ const TIAPage = ({ projects }) => {
 
     // Обновленная логика для проверки, что все компоненты имеют хотя бы один блок
     const isMappingConfirmDisabled = components.some(component => !componentMappings[component.id] || componentMappings[component.id].length === 0);
-    
+
     // Проверка для кнопки "Подтвердить и создать" - требуется Jira ссылка
     const isMappingConfirmButtonDisabled = isMappingConfirmDisabled || !jiraLink || !jiraLink.match(/^https?:\/\/jira\.abanking\.ru\/browse\/[A-Z]+-\d+$/);
 
@@ -1096,7 +1114,7 @@ const TIAPage = ({ projects }) => {
         return (
             <div style={{ marginTop: 24 }}>
                 <h2 style={styles.subHeader}>TIA Light: сводка изменений</h2>
-                
+
                 {/* Глобальные риски - красный алерт блок */}
                 {globalRisks.length > 0 && (
                     <div style={{
@@ -1128,8 +1146,8 @@ const TIAPage = ({ projects }) => {
                             </h3>
                         </div>
                         {globalRisks.map((risk, ridx) => {
-                            const riskColor = risk.risk_level === 'HIGH' ? '#dc3545' : 
-                                            risk.risk_level === 'MEDIUM' ? '#ffc107' : '#28a745';
+                            const riskColor = risk.risk_level === 'HIGH' ? '#dc3545' :
+                                risk.risk_level === 'MEDIUM' ? '#ffc107' : '#28a745';
                             return (
                                 <div key={`global-risk-${ridx}`} style={{
                                     marginBottom: ridx < globalRisks.length - 1 ? '20px' : '0',
@@ -1222,7 +1240,7 @@ const TIAPage = ({ projects }) => {
                         })}
                     </div>
                 )}
-                
+
                 {/* Легенда */}
                 <div style={{ marginBottom: 24, padding: 16, backgroundColor: '#f8f9fa', borderRadius: 8, border: `1px solid ${styles.borderLight}` }}>
                     <h3 style={{ ...styles.subHeader, fontSize: 16, marginBottom: 12 }}>Легенда</h3>
@@ -1330,7 +1348,7 @@ const TIAPage = ({ projects }) => {
                         <h3 style={{ ...styles.subHeader, fontSize: 18, marginBottom: 16 }}>
                             Затронутые страницы ({pages.length})
                         </h3>
-                        
+
                         {/* Приоритетные страницы с HIGH риском */}
                         {pages.filter(page => page.ai_analysis?.risk_level === 'HIGH').length > 0 && (
                             <div style={{ marginBottom: 24 }}>
@@ -1353,8 +1371,8 @@ const TIAPage = ({ projects }) => {
                                             const pageKey = `page-high-${idx}`;
                                             const isPageExpanded = !!expandedPageComponents[pageKey];
                                             return (
-                                                <div key={pageKey} style={{ 
-                                                    ...styles.card, 
+                                                <div key={pageKey} style={{
+                                                    ...styles.card,
                                                     padding: 20,
                                                     border: '2px solid #dc3545',
                                                     backgroundColor: '#fff5f5'
@@ -1366,33 +1384,33 @@ const TIAPage = ({ projects }) => {
                                                                     {page.page_meta?.name}
                                                                 </div>
                                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                                                                    <span style={{ 
-                                                                        padding: '6px 12px', 
-                                                                        borderRadius: 4, 
-                                                                        backgroundColor: '#dc3545', 
-                                                                        color: '#fff', 
-                                                                        fontSize: 12, 
-                                                                        fontWeight: 700 
+                                                                    <span style={{
+                                                                        padding: '6px 12px',
+                                                                        borderRadius: 4,
+                                                                        backgroundColor: '#dc3545',
+                                                                        color: '#fff',
+                                                                        fontSize: 12,
+                                                                        fontWeight: 700
                                                                     }}>
                                                                         HIGH RISK
                                                                     </span>
                                                                     {page.page_meta?.env && (
-                                                                        <span style={{ 
-                                                                            padding: '4px 10px', 
-                                                                            borderRadius: 4, 
-                                                                            backgroundColor: '#6c757d', 
-                                                                            color: '#fff', 
-                                                                            fontSize: 11 
+                                                                        <span style={{
+                                                                            padding: '4px 10px',
+                                                                            borderRadius: 4,
+                                                                            backgroundColor: '#6c757d',
+                                                                            color: '#fff',
+                                                                            fontSize: 11
                                                                         }}>
                                                                             {page.page_meta.env}
                                                                         </span>
                                                                     )}
                                                                     {page.page_meta?.route && (
-                                                                        <span style={{ 
-                                                                            padding: '4px 10px', 
-                                                                            borderRadius: 4, 
-                                                                            backgroundColor: '#17a2b8', 
-                                                                            color: '#fff', 
+                                                                        <span style={{
+                                                                            padding: '4px 10px',
+                                                                            borderRadius: 4,
+                                                                            backgroundColor: '#17a2b8',
+                                                                            color: '#fff',
                                                                             fontSize: 11,
                                                                             fontFamily: 'monospace'
                                                                         }}>
@@ -1415,12 +1433,12 @@ const TIAPage = ({ projects }) => {
                                                         </div>
                                                         <button
                                                             onClick={() => setExpandedPageComponents(prev => ({ ...prev, [pageKey]: !isPageExpanded }))}
-                                                            style={{ 
-                                                                padding: '8px 16px', 
-                                                                backgroundColor: '#dc3545', 
-                                                                color: '#fff', 
-                                                                border: 'none', 
-                                                                borderRadius: 4, 
+                                                            style={{
+                                                                padding: '8px 16px',
+                                                                backgroundColor: '#dc3545',
+                                                                color: '#fff',
+                                                                border: 'none',
+                                                                borderRadius: 4,
                                                                 cursor: 'pointer',
                                                                 fontSize: 14,
                                                                 fontWeight: 600
@@ -1429,7 +1447,7 @@ const TIAPage = ({ projects }) => {
                                                             {isPageExpanded ? '▼ Скрыть' : '▶ Подробнее'}
                                                         </button>
                                                     </div>
-                                                    
+
                                                     {/* Зависимые компоненты */}
                                                     {(page.depends_on_components || []).length > 0 && (
                                                         <div style={{ marginTop: 16 }}>
@@ -1440,14 +1458,14 @@ const TIAPage = ({ projects }) => {
                                                                 {page.depends_on_components.map((compName, cidx) => {
                                                                     const compDetail = uniqueMap[compName];
                                                                     return (
-                                                                        <span 
+                                                                        <span
                                                                             key={`${pageKey}-comp-${cidx}`}
                                                                             title={compDetail?.file_path || compName}
-                                                                            style={{ 
-                                                                                padding: '6px 12px', 
-                                                                                backgroundColor: compDetail ? '#ffeaa7' : '#e9ecef', 
-                                                                                borderRadius: 4, 
-                                                                                fontSize: 12, 
+                                                                            style={{
+                                                                                padding: '6px 12px',
+                                                                                backgroundColor: compDetail ? '#ffeaa7' : '#e9ecef',
+                                                                                borderRadius: 4,
+                                                                                fontSize: 12,
                                                                                 color: '#111',
                                                                                 fontWeight: 600,
                                                                                 border: compDetail ? '1px solid #fdcb6e' : '1px solid #dee2e6',
@@ -1461,7 +1479,7 @@ const TIAPage = ({ projects }) => {
                                                             </div>
                                                         </div>
                                                     )}
-                                                    
+
                                                     {isPageExpanded && (
                                                         <div style={{ marginTop: 20, paddingTop: 20, borderTop: '2px solid #fecaca' }}>
                                                             {renderQAAdvice(page.ai_analysis?.qa_advice || [])}
@@ -1473,281 +1491,281 @@ const TIAPage = ({ projects }) => {
                                 </div>
                             </div>
                         )}
-                        
+
                         {/* Остальные страницы */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                             {pages
                                 .filter(page => page.ai_analysis?.risk_level !== 'HIGH')
                                 .map((page, idx) => {
-                                const pageKey = `page-${idx}`;
-                                const isPageExpanded = !!expandedPageComponents[pageKey];
-                                const riskColor = page.ai_analysis?.risk_level === 'HIGH' ? '#dc3545' : 
-                                                 page.ai_analysis?.risk_level === 'MEDIUM' ? '#ffc107' : '#28a745';
-                                
-                                return (
-                                    <div key={pageKey} style={{ ...styles.card, padding: 20 }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
-                                            <div style={{ flex: 1 }}>
-                                                <div style={{ marginBottom: 6 }}>
-                                                    <div style={{ fontWeight: 700, fontSize: 18, color: '#111', marginBottom: 8 }}>
-                                                        {page.page_meta?.name}
-                                                    </div>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                                                        {page.ai_analysis?.risk_level && (
-                                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                                                <span style={{ fontSize: 11, color: '#6c757d' }}>Приоритет риска:</span>
-                                                                <span style={{ 
-                                                                    padding: '4px 10px', 
-                                                                    borderRadius: 4, 
-                                                                    backgroundColor: riskColor, 
-                                                                    color: '#fff', 
-                                                                    fontSize: 12, 
-                                                                    fontWeight: 600 
-                                                                }}>
-                                                                    {page.ai_analysis.risk_level}
-                                                                </span>
-                                                            </div>
-                                                        )}
-                                                        {page.page_meta?.env && (
-                                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                                                <span style={{ fontSize: 11, color: '#6c757d' }}>Окружение:</span>
-                                                                <span style={{ 
-                                                                    padding: '4px 10px', 
-                                                                    borderRadius: 4, 
-                                                                    backgroundColor: '#6c757d', 
-                                                                    color: '#fff', 
-                                                                    fontSize: 11 
-                                                                }}>
-                                                                    {page.page_meta.env}
-                                                                </span>
-                                                            </div>
-                                                        )}
-                                                        {page.page_meta?.route && (
-                                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                                                <span style={{ fontSize: 11, color: '#6c757d' }}>Путь страницы:</span>
-                                                                <span style={{ 
-                                                                    padding: '4px 10px', 
-                                                                    borderRadius: 4, 
-                                                                    backgroundColor: '#17a2b8', 
-                                                                    color: '#fff', 
-                                                                    fontSize: 11,
-                                                                    fontFamily: 'monospace'
-                                                                }}>
-                                                                    {page.page_meta.route}
-                                                                </span>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                                {page.page_meta?.human_title && (
-                                                    <div style={{ fontSize: 13, color: '#495057', marginBottom: 6 }}>
-                                                        <span style={{ fontSize: 11, color: '#6c757d', marginRight: 4 }}>Название:</span>
-                                                        <span style={{ fontStyle: 'italic' }}>{page.page_meta.human_title}</span>
-                                                    </div>
-                                                )}
-                                                {Array.isArray(page.page_meta?.features) && page.page_meta.features.length > 0 && (
+                                    const pageKey = `page-${idx}`;
+                                    const isPageExpanded = !!expandedPageComponents[pageKey];
+                                    const riskColor = page.ai_analysis?.risk_level === 'HIGH' ? '#dc3545' :
+                                        page.ai_analysis?.risk_level === 'MEDIUM' ? '#ffc107' : '#28a745';
+
+                                    return (
+                                        <div key={pageKey} style={{ ...styles.card, padding: 20 }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                                                <div style={{ flex: 1 }}>
                                                     <div style={{ marginBottom: 6 }}>
-                                                        <div style={{ fontSize: 11, color: '#6c757d', marginBottom: 4 }}>Функциональные возможности:</div>
-                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                                            {page.page_meta.features.map((feature, fidx) => (
-                                                                <span 
-                                                                    key={`${pageKey}-feature-${fidx}`}
-                                                                    style={{ 
-                                                                        padding: '3px 8px', 
-                                                                        backgroundColor: '#e7f3ff', 
-                                                                        borderRadius: 3, 
-                                                                        fontSize: 11, 
-                                                                        color: '#0056b3',
-                                                                        fontWeight: 500
-                                                                    }}
-                                                                >
-                                                                    {feature}
-                                                                </span>
-                                                            ))}
+                                                        <div style={{ fontWeight: 700, fontSize: 18, color: '#111', marginBottom: 8 }}>
+                                                            {page.page_meta?.name}
                                                         </div>
-                                                    </div>
-                                                )}
-                                                {page.page_meta?.file_path && (
-                                                    <div style={{ fontSize: 12, color: '#6c757d', marginTop: 4 }}>
-                                                        <span style={{ fontSize: 11, color: '#6c757d', marginRight: 4 }}>Файл:</span>
-                                                        {page.page_meta.file_path}
-                                                    </div>
-                                                )}
-                                            </div>
-                                            <button
-                                                onClick={() => setExpandedPageComponents(prev => ({ ...prev, [pageKey]: !isPageExpanded }))}
-                                                style={{ 
-                                                    padding: '8px 16px', 
-                                                    backgroundColor: '#007bff', 
-                                                    color: '#fff', 
-                                                    border: 'none', 
-                                                    borderRadius: 4, 
-                                                    cursor: 'pointer',
-                                                    fontSize: 14,
-                                                    fontWeight: 600
-                                                }}
-                                            >
-                                                {isPageExpanded ? '▼ Скрыть' : '▶ Подробнее'}
-                                            </button>
-                                        </div>
-                                        
-                                        {page.ai_analysis?.summary && (
-                                            <div style={{ marginTop: 12, color: '#111', fontSize: 14, lineHeight: 1.6 }}>
-                                                {page.ai_analysis.summary}
-                                            </div>
-                                        )}
-
-                                        {/* Зависимые компоненты - краткий список */}
-                                        {(page.depends_on_components || []).length > 0 && (
-                                            <div style={{ marginTop: 16 }}>
-                                                <div style={{ fontWeight: 600, color: '#111', marginBottom: 8, fontSize: 14 }}>
-                                                    Зависит от компонентов ({page.depends_on_components.length}):
-                                                </div>
-                                                <div style={{ fontSize: 12, color: '#6c757d', marginBottom: 8 }}>
-                                                    Компоненты, изменения в которых могут повлиять на эту страницу
-                                                </div>
-                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                                    {page.depends_on_components.map((compName, cidx) => (
-                                                        <span 
-                                                            key={`${pageKey}-comp-${cidx}`}
-                                                            style={{ 
-                                                                padding: '4px 10px', 
-                                                                backgroundColor: '#e9ecef', 
-                                                                borderRadius: 4, 
-                                                                fontSize: 12, 
-                                                                color: '#111',
-                                                                fontWeight: 500
-                                                            }}
-                                                        >
-                                                            {compName}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* Раскрываемая секция с деталями */}
-                                        {isPageExpanded && (
-                                            <div style={{ marginTop: 20, paddingTop: 20, borderTop: `2px solid ${styles.borderLight}` }}>
-                                                {renderQAAdvice(page.ai_analysis?.qa_advice || [])}
-                                                
-                                                {/* Детали компонентов для этой страницы */}
-                                                {(page.depends_on_components || []).length > 0 && (
-                                                    <div style={{ marginTop: 20 }}>
-                                                        <div style={{ fontWeight: 700, color: '#111', marginBottom: 16, fontSize: 16 }}>
-                                                            Детали затронутых компонентов
-                                                        </div>
-                                                        {(page.depends_on_components || []).map((compName, cidx) => {
-                                                            const detail = uniqueMap[compName];
-                                                            if (!detail) return null;
-                                                            const compKey = `${pageKey}-comp-detail-${cidx}`;
-                                                            const isCompExpanded = !!expandedPageComponents[compKey];
-                                                            
-                                                            return (
-                                                                <div key={compKey} style={{ 
-                                                                    marginBottom: 16, 
-                                                                    padding: 16, 
-                                                                    backgroundColor: '#f8f9fa', 
-                                                                    borderRadius: 8,
-                                                                    border: `1px solid ${styles.borderLight}`
-                                                                }}>
-                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                                                                        <div style={{ flex: 1 }}>
-                                                                            <div style={{ fontWeight: 600, color: '#111', fontSize: 15, marginBottom: 4 }}>{compName}</div>
-                                                                            {detail.file_path && (
-                                                                                <div style={{ fontSize: 11, color: '#6c757d', fontFamily: 'monospace', marginBottom: 4, wordBreak: 'break-all' }}>
-                                                                                    {detail.file_path}
-                                                                                </div>
-                                                                            )}
-                                                                            {detail.change_source && (
-                                                                                <div style={{ fontSize: 11, color: '#6c757d', marginBottom: 4 }}>
-                                                                                    Источник: <strong style={{ color: '#495057' }}>{detail.change_source}</strong>
-                                                                                </div>
-                                                                            )}
-                                                                        </div>
-                                                                        <button
-                                                                            onClick={() => setExpandedPageComponents(prev => ({ ...prev, [compKey]: !isCompExpanded }))}
-                                                                            style={{ 
-                                                                                padding: '6px 12px', 
-                                                                                backgroundColor: '#6c757d', 
-                                                                                color: '#fff', 
-                                                                                border: 'none', 
-                                                                                borderRadius: 4, 
-                                                                                cursor: 'pointer',
-                                                                                fontSize: 13
-                                                                            }}
-                                                                        >
-                                                                            {isCompExpanded ? 'Скрыть' : 'Детали'}
-                                                                        </button>
-                                                                    </div>
-                                                                    {/* UI Trace для компонента в light режиме */}
-                                                                    {detail.ui_context && detail.ui_context.uiElements && detail.ui_context.uiElements.length > 0 && (
-                                                                        <div style={{ marginTop: 12, marginBottom: 12 }}>
-                                                                            {renderUITrace({ uiContext: detail.ui_context })}
-                                                                        </div>
-                                                                    )}
-                                                                    {isCompExpanded && (
-                                                                        <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${styles.borderLight}` }}>
-                                                                            {detail.changed_methods?.length > 0 && (
-                                                                                <div style={{ marginBottom: 16 }}>
-                                                                                    <div style={{ fontWeight: 600, color: '#111', marginBottom: 8 }}>Изменённые методы:</div>
-                                                                                    <ul style={{ margin: 0, paddingLeft: 20 }}>
-                                                                                        {detail.changed_methods.map((m, mi) => {
-                                                                                            const methodJSDoc = detail.method_jsdoc?.[m];
-                                                                                            return (
-                                                                                                <li key={`${compKey}-m-${mi}`} style={{ fontSize: 14, color: '#111', marginBottom: 8 }}>
-                                                                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                                                                                        <code style={{ backgroundColor: '#f1f3f5', padding: '2px 8px', borderRadius: 3, fontSize: 13 }}>{m}</code>
-                                                                                                        {methodJSDoc && (
-                                                                                                            <div style={{
-                                                                                                                fontSize: '12px',
-                                                                                                                color: '#6c757d',
-                                                                                                                fontStyle: 'italic',
-                                                                                                                paddingLeft: '8px',
-                                                                                                                borderLeft: '2px solid #dee2e6'
-                                                                                                            }}>
-                                                                                                                {methodJSDoc}
-                                                                                                            </div>
-                                                                                                        )}
-                                                                                                    </div>
-                                                                                                </li>
-                                                                                            );
-                                                                                        })}
-                                                                                    </ul>
-                                                                                </div>
-                                                                            )}
-                                                                            {detail.diff_snippet && (
-                                                                                <div>
-                                                                                    <div style={{ fontWeight: 600, color: '#111', marginBottom: 8 }}>Изменения в коде:</div>
-                                                                                    <pre style={{ 
-                                                                                        whiteSpace: 'pre-wrap', 
-                                                                                        backgroundColor: '#fff', 
-                                                                                        padding: 16, 
-                                                                                        borderRadius: 6, 
-                                                                                        border: `1px solid ${styles.borderLight}`, 
-                                                                                        color: '#111',
-                                                                                        fontSize: 12,
-                                                                                        overflowX: 'auto',
-                                                                                        maxHeight: 400,
-                                                                                        overflowY: 'auto',
-                                                                                        lineHeight: 1.6
-                                                                                    }}>
-                                                                                        {detail.diff_snippet}
-                                                                                    </pre>
-                                                                                </div>
-                                                                            )}
-                                                                        </div>
-                                                                    )}
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                                                            {page.ai_analysis?.risk_level && (
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                                    <span style={{ fontSize: 11, color: '#6c757d' }}>Приоритет риска:</span>
+                                                                    <span style={{
+                                                                        padding: '4px 10px',
+                                                                        borderRadius: 4,
+                                                                        backgroundColor: riskColor,
+                                                                        color: '#fff',
+                                                                        fontSize: 12,
+                                                                        fontWeight: 600
+                                                                    }}>
+                                                                        {page.ai_analysis.risk_level}
+                                                                    </span>
                                                                 </div>
-                                                            );
-                                                        })}
+                                                            )}
+                                                            {page.page_meta?.env && (
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                                    <span style={{ fontSize: 11, color: '#6c757d' }}>Окружение:</span>
+                                                                    <span style={{
+                                                                        padding: '4px 10px',
+                                                                        borderRadius: 4,
+                                                                        backgroundColor: '#6c757d',
+                                                                        color: '#fff',
+                                                                        fontSize: 11
+                                                                    }}>
+                                                                        {page.page_meta.env}
+                                                                    </span>
+                                                                </div>
+                                                            )}
+                                                            {page.page_meta?.route && (
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                                    <span style={{ fontSize: 11, color: '#6c757d' }}>Путь страницы:</span>
+                                                                    <span style={{
+                                                                        padding: '4px 10px',
+                                                                        borderRadius: 4,
+                                                                        backgroundColor: '#17a2b8',
+                                                                        color: '#fff',
+                                                                        fontSize: 11,
+                                                                        fontFamily: 'monospace'
+                                                                    }}>
+                                                                        {page.page_meta.route}
+                                                                    </span>
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                     </div>
-                                                )}
+                                                    {page.page_meta?.human_title && (
+                                                        <div style={{ fontSize: 13, color: '#495057', marginBottom: 6 }}>
+                                                            <span style={{ fontSize: 11, color: '#6c757d', marginRight: 4 }}>Название:</span>
+                                                            <span style={{ fontStyle: 'italic' }}>{page.page_meta.human_title}</span>
+                                                        </div>
+                                                    )}
+                                                    {Array.isArray(page.page_meta?.features) && page.page_meta.features.length > 0 && (
+                                                        <div style={{ marginBottom: 6 }}>
+                                                            <div style={{ fontSize: 11, color: '#6c757d', marginBottom: 4 }}>Функциональные возможности:</div>
+                                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                                                {page.page_meta.features.map((feature, fidx) => (
+                                                                    <span
+                                                                        key={`${pageKey}-feature-${fidx}`}
+                                                                        style={{
+                                                                            padding: '3px 8px',
+                                                                            backgroundColor: '#e7f3ff',
+                                                                            borderRadius: 3,
+                                                                            fontSize: 11,
+                                                                            color: '#0056b3',
+                                                                            fontWeight: 500
+                                                                        }}
+                                                                    >
+                                                                        {feature}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {page.page_meta?.file_path && (
+                                                        <div style={{ fontSize: 12, color: '#6c757d', marginTop: 4 }}>
+                                                            <span style={{ fontSize: 11, color: '#6c757d', marginRight: 4 }}>Файл:</span>
+                                                            {page.page_meta.file_path}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <button
+                                                    onClick={() => setExpandedPageComponents(prev => ({ ...prev, [pageKey]: !isPageExpanded }))}
+                                                    style={{
+                                                        padding: '8px 16px',
+                                                        backgroundColor: '#007bff',
+                                                        color: '#fff',
+                                                        border: 'none',
+                                                        borderRadius: 4,
+                                                        cursor: 'pointer',
+                                                        fontSize: 14,
+                                                        fontWeight: 600
+                                                    }}
+                                                >
+                                                    {isPageExpanded ? '▼ Скрыть' : '▶ Подробнее'}
+                                                </button>
                                             </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
+
+                                            {page.ai_analysis?.summary && (
+                                                <div style={{ marginTop: 12, color: '#111', fontSize: 14, lineHeight: 1.6 }}>
+                                                    {page.ai_analysis.summary}
+                                                </div>
+                                            )}
+
+                                            {/* Зависимые компоненты - краткий список */}
+                                            {(page.depends_on_components || []).length > 0 && (
+                                                <div style={{ marginTop: 16 }}>
+                                                    <div style={{ fontWeight: 600, color: '#111', marginBottom: 8, fontSize: 14 }}>
+                                                        Зависит от компонентов ({page.depends_on_components.length}):
+                                                    </div>
+                                                    <div style={{ fontSize: 12, color: '#6c757d', marginBottom: 8 }}>
+                                                        Компоненты, изменения в которых могут повлиять на эту страницу
+                                                    </div>
+                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                                        {page.depends_on_components.map((compName, cidx) => (
+                                                            <span
+                                                                key={`${pageKey}-comp-${cidx}`}
+                                                                style={{
+                                                                    padding: '4px 10px',
+                                                                    backgroundColor: '#e9ecef',
+                                                                    borderRadius: 4,
+                                                                    fontSize: 12,
+                                                                    color: '#111',
+                                                                    fontWeight: 500
+                                                                }}
+                                                            >
+                                                                {compName}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Раскрываемая секция с деталями */}
+                                            {isPageExpanded && (
+                                                <div style={{ marginTop: 20, paddingTop: 20, borderTop: `2px solid ${styles.borderLight}` }}>
+                                                    {renderQAAdvice(page.ai_analysis?.qa_advice || [])}
+
+                                                    {/* Детали компонентов для этой страницы */}
+                                                    {(page.depends_on_components || []).length > 0 && (
+                                                        <div style={{ marginTop: 20 }}>
+                                                            <div style={{ fontWeight: 700, color: '#111', marginBottom: 16, fontSize: 16 }}>
+                                                                Детали затронутых компонентов
+                                                            </div>
+                                                            {(page.depends_on_components || []).map((compName, cidx) => {
+                                                                const detail = uniqueMap[compName];
+                                                                if (!detail) return null;
+                                                                const compKey = `${pageKey}-comp-detail-${cidx}`;
+                                                                const isCompExpanded = !!expandedPageComponents[compKey];
+
+                                                                return (
+                                                                    <div key={compKey} style={{
+                                                                        marginBottom: 16,
+                                                                        padding: 16,
+                                                                        backgroundColor: '#f8f9fa',
+                                                                        borderRadius: 8,
+                                                                        border: `1px solid ${styles.borderLight}`
+                                                                    }}>
+                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                                                                            <div style={{ flex: 1 }}>
+                                                                                <div style={{ fontWeight: 600, color: '#111', fontSize: 15, marginBottom: 4 }}>{compName}</div>
+                                                                                {detail.file_path && (
+                                                                                    <div style={{ fontSize: 11, color: '#6c757d', fontFamily: 'monospace', marginBottom: 4, wordBreak: 'break-all' }}>
+                                                                                        {detail.file_path}
+                                                                                    </div>
+                                                                                )}
+                                                                                {detail.change_source && (
+                                                                                    <div style={{ fontSize: 11, color: '#6c757d', marginBottom: 4 }}>
+                                                                                        Источник: <strong style={{ color: '#495057' }}>{detail.change_source}</strong>
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                            <button
+                                                                                onClick={() => setExpandedPageComponents(prev => ({ ...prev, [compKey]: !isCompExpanded }))}
+                                                                                style={{
+                                                                                    padding: '6px 12px',
+                                                                                    backgroundColor: '#6c757d',
+                                                                                    color: '#fff',
+                                                                                    border: 'none',
+                                                                                    borderRadius: 4,
+                                                                                    cursor: 'pointer',
+                                                                                    fontSize: 13
+                                                                                }}
+                                                                            >
+                                                                                {isCompExpanded ? 'Скрыть' : 'Детали'}
+                                                                            </button>
+                                                                        </div>
+                                                                        {/* UI Trace для компонента в light режиме */}
+                                                                        {detail.ui_context && detail.ui_context.uiElements && detail.ui_context.uiElements.length > 0 && (
+                                                                            <div style={{ marginTop: 12, marginBottom: 12 }}>
+                                                                                {renderUITrace({ uiContext: detail.ui_context })}
+                                                                            </div>
+                                                                        )}
+                                                                        {isCompExpanded && (
+                                                                            <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${styles.borderLight}` }}>
+                                                                                {detail.changed_methods?.length > 0 && (
+                                                                                    <div style={{ marginBottom: 16 }}>
+                                                                                        <div style={{ fontWeight: 600, color: '#111', marginBottom: 8 }}>Изменённые методы:</div>
+                                                                                        <ul style={{ margin: 0, paddingLeft: 20 }}>
+                                                                                            {detail.changed_methods.map((m, mi) => {
+                                                                                                const methodJSDoc = detail.method_jsdoc?.[m];
+                                                                                                return (
+                                                                                                    <li key={`${compKey}-m-${mi}`} style={{ fontSize: 14, color: '#111', marginBottom: 8 }}>
+                                                                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                                                                                            <code style={{ backgroundColor: '#f1f3f5', padding: '2px 8px', borderRadius: 3, fontSize: 13 }}>{m}</code>
+                                                                                                            {methodJSDoc && (
+                                                                                                                <div style={{
+                                                                                                                    fontSize: '12px',
+                                                                                                                    color: '#6c757d',
+                                                                                                                    fontStyle: 'italic',
+                                                                                                                    paddingLeft: '8px',
+                                                                                                                    borderLeft: '2px solid #dee2e6'
+                                                                                                                }}>
+                                                                                                                    {methodJSDoc}
+                                                                                                                </div>
+                                                                                                            )}
+                                                                                                        </div>
+                                                                                                    </li>
+                                                                                                );
+                                                                                            })}
+                                                                                        </ul>
+                                                                                    </div>
+                                                                                )}
+                                                                                {detail.diff_snippet && (
+                                                                                    <div>
+                                                                                        <div style={{ fontWeight: 600, color: '#111', marginBottom: 8 }}>Изменения в коде:</div>
+                                                                                        <pre style={{
+                                                                                            whiteSpace: 'pre-wrap',
+                                                                                            backgroundColor: '#fff',
+                                                                                            padding: 16,
+                                                                                            borderRadius: 6,
+                                                                                            border: `1px solid ${styles.borderLight}`,
+                                                                                            color: '#111',
+                                                                                            fontSize: 12,
+                                                                                            overflowX: 'auto',
+                                                                                            maxHeight: 400,
+                                                                                            overflowY: 'auto',
+                                                                                            lineHeight: 1.6
+                                                                                        }}>
+                                                                                            {detail.diff_snippet}
+                                                                                        </pre>
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
                         </div>
                     </div>
                 )}
@@ -1765,10 +1783,10 @@ const TIAPage = ({ projects }) => {
                             {Object.entries(uniqueMap).map(([compName, detail], idx) => {
                                 const compKey = `unique-comp-${idx}`;
                                 const isExpanded = !!expandedUniqueComponents[compKey];
-                                
+
                                 return (
-                                    <div key={compKey} style={{ 
-                                        ...styles.card, 
+                                    <div key={compKey} style={{
+                                        ...styles.card,
                                         padding: 20,
                                         border: `2px solid ${styles.borderLight}`
                                     }}>
@@ -1798,12 +1816,12 @@ const TIAPage = ({ projects }) => {
                                             </div>
                                             <button
                                                 onClick={() => setExpandedUniqueComponents(prev => ({ ...prev, [compKey]: !isExpanded }))}
-                                                style={{ 
-                                                    padding: '8px 16px', 
-                                                    backgroundColor: '#007bff', 
-                                                    color: '#fff', 
-                                                    border: 'none', 
-                                                    borderRadius: 4, 
+                                                style={{
+                                                    padding: '8px 16px',
+                                                    backgroundColor: '#007bff',
+                                                    color: '#fff',
+                                                    border: 'none',
+                                                    borderRadius: 4,
                                                     cursor: 'pointer',
                                                     fontSize: 14,
                                                     fontWeight: 600
@@ -1812,7 +1830,7 @@ const TIAPage = ({ projects }) => {
                                                 {isExpanded ? '▼ Скрыть детали' : '▶ Показать детали'}
                                             </button>
                                         </div>
-                                        
+
                                         {isExpanded && (
                                             <div style={{ marginTop: 20, paddingTop: 20, borderTop: `2px solid ${styles.borderLight}` }}>
                                                 {detail.changed_methods?.length > 0 && (
@@ -1834,12 +1852,12 @@ const TIAPage = ({ projects }) => {
                                                         <div style={{ fontWeight: 600, color: '#111', marginBottom: 12, fontSize: 15 }}>
                                                             Изменения в коде:
                                                         </div>
-                                                        <pre style={{ 
-                                                            whiteSpace: 'pre-wrap', 
-                                                            backgroundColor: '#fff', 
-                                                            padding: 20, 
-                                                            borderRadius: 8, 
-                                                            border: `1px solid ${styles.borderLight}`, 
+                                                        <pre style={{
+                                                            whiteSpace: 'pre-wrap',
+                                                            backgroundColor: '#fff',
+                                                            padding: 20,
+                                                            borderRadius: 8,
+                                                            border: `1px solid ${styles.borderLight}`,
                                                             color: '#111',
                                                             fontSize: 12,
                                                             overflowX: 'auto',
@@ -1867,14 +1885,14 @@ const TIAPage = ({ projects }) => {
         <div style={styles.container}>
             {/* Глобальный фоновый прогресс-бар */}
             <GlobalBackgroundProgress />
-            
+
             <div style={styles.headerSection}>
                 <h1 style={styles.title}>Test Impact Analysis (TIA)</h1>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                     <button style={styles.backButton} onClick={() => navigate('/')}>
                         Назад
                     </button>
-                    <button 
+                    <button
                         style={{
                             ...styles.backButton,
                             backgroundColor: '#007bff',
@@ -1901,7 +1919,7 @@ const TIAPage = ({ projects }) => {
                             onChange={() => setMode('mapping')}
                             style={{ margin: 0 }}
                         />
-                            Маппинг
+                        Маппинг
                     </label>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#111' }}>
                         <input
@@ -2206,8 +2224,8 @@ const TIAPage = ({ projects }) => {
                                         {components.map(comp => {
                                             const pages = getPagesUsingComponent(comp.name);
                                             const changeSummary = getComponentChangeSummary(comp);
-                                            const riskColor = comp.riskLevel === 'HIGH' ? '#dc3545' : 
-                                                           comp.riskLevel === 'MEDIUM' ? '#ffc107' : '#28a745';
+                                            const riskColor = comp.riskLevel === 'HIGH' ? '#dc3545' :
+                                                comp.riskLevel === 'MEDIUM' ? '#ffc107' : '#28a745';
                                             const isSelected = selectedComponentId === comp.id;
                                             const hasMapping = componentMappings[comp.id]?.length > 0;
 
@@ -2356,7 +2374,7 @@ const TIAPage = ({ projects }) => {
                                                                 }}
                                                             >
                                                                 <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                                    {expandedScenarios[comp.id] ? '▼' : '▶'} 
+                                                                    {expandedScenarios[comp.id] ? '▼' : '▶'}
                                                                     Сценарии тестирования
                                                                     <span style={{
                                                                         fontSize: '11px',
@@ -2378,8 +2396,8 @@ const TIAPage = ({ projects }) => {
                                                                     border: '1px solid #b3d9ff'
                                                                 }}>
                                                                     {comp.qaAdvice.map((advice, aidx) => {
-                                                                        const priorityColor = advice.priority === 'HIGH' ? '#dc3545' : 
-                                                                                             advice.priority === 'MEDIUM' ? '#ffc107' : '#28a745';
+                                                                        const priorityColor = advice.priority === 'HIGH' ? '#dc3545' :
+                                                                            advice.priority === 'MEDIUM' ? '#ffc107' : '#28a745';
                                                                         return (
                                                                             <div key={`${comp.id}-advice-${aidx}`} style={{
                                                                                 marginBottom: aidx < comp.qaAdvice.length - 1 ? '16px' : '0',
@@ -2472,7 +2490,7 @@ const TIAPage = ({ projects }) => {
                                                                     gap: '6px'
                                                                 }}
                                                             >
-                                                                {expandedTechnicalDetails[comp.id] ? '▼' : '▶'} 
+                                                                {expandedTechnicalDetails[comp.id] ? '▼' : '▶'}
                                                                 Показать код
                                                             </button>
                                                             {expandedTechnicalDetails[comp.id] && (
@@ -2583,7 +2601,7 @@ const TIAPage = ({ projects }) => {
                                                                         pageRoute ? `Route: ${pageRoute}` : null,
                                                                         page.page_meta?.file_path
                                                                     ].filter(Boolean).join('\n');
-                                                                    
+
                                                                     return (
                                                                         <div key={`${comp.id}-page-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                                                                             <span
