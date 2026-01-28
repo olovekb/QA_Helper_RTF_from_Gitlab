@@ -29,8 +29,7 @@ const tiaAllowedOrigins = (process.env.TIA_ALLOWED_ORIGINS ||
     .filter(Boolean);
 
 const corsOptions = {
-    origin (origin, callback)
-    {
+    origin(origin, callback) {
         if (!origin) return callback(null, true);
 
         if (tiaAllowedOrigins.includes('*') || tiaAllowedOrigins.includes(origin)) {
@@ -45,8 +44,8 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 const clientBuildPath = path.join(__dirname, 'client', 'build');
 app.use(express.static(clientBuildPath));
 
@@ -65,8 +64,7 @@ app.post('/api/upload/json', uploadMiddleware, handleJsonUpload);
 app.post('/api/errors', logServerError);
 
 // Health check endpoint
-app.get('/health', (req, res) =>
-{
+app.get('/health', (req, res) => {
     res.status(200).json({
         status: 'healthy',
         timestamp: new Date().toISOString(),
@@ -79,8 +77,7 @@ app.get('/health', (req, res) =>
  * @route GET /api/structure
  * @param {string} projectId - ID проекта
  */
-app.get('/api/structure', async (req, res) =>
-{
+app.get('/api/structure', async (req, res) => {
     const projectId = req.query.projectId; // Извлекаем ID проекта из параметров запроса
     if (!projectId) {
         return res.status(400).send('Отсутствует идентификатор проекта (projectId)');
@@ -159,10 +156,8 @@ app.delete('/api/components/:componentId', deleteComponentMapping);
 app.post('/api/launch', createTestPlan);
 
 // Обработка всех маршрутов для React SPA (перенаправление на index.html)
-app.get('*', (req, res) =>
-{
-    res.sendFile(path.join(clientBuildPath, 'index.html'), (err) =>
-    {
+app.get('*', (req, res) => {
+    res.sendFile(path.join(clientBuildPath, 'index.html'), (err) => {
         if (err) {
             logError(`Ошибка при обслуживании статического файла: ${err.message}`);
             res.status(500).send('Ошибка при загрузке приложения');
@@ -171,8 +166,7 @@ app.get('*', (req, res) =>
 });
 
 // Функция для применения миграций
-async function runMigrations ()
-{
+async function runMigrations() {
     try {
         logInfo('Применение миграций базы данных...');
         const knex = await import('./db/connection.js');
@@ -235,8 +229,7 @@ app.get('/api/migrations/status', async (req, res) => {
 });
 
 // Запуск сервера на указанном порту
-app.listen(config.port, async () =>
-{
+app.listen(config.port, async () => {
     logInfo(`TIA Mapping Service запущен на http://localhost:${config.port}`);
     logInfo(`Allure base url ${process.env.ALLURE_BASE_URL}`) // Логирование env
     logInfo(`Allure token ${process.env.ALLURE_TOKEN}`) // Логирование env
