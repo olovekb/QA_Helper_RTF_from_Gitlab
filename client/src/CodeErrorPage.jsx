@@ -413,6 +413,20 @@ export const CodeErrorCard = ({
                             onChange={handleChange('mockup')}
                         />
                     </div>
+                    <div className="field">
+                        <label>Worker</label>
+                        <Select
+                            menuPortalTarget={document.body}
+                            menuPosition="fixed"
+                            menuPlacement="auto"
+                            styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
+                            classNamePrefix="select"
+                            isClearable
+                            options={toOptions('Worker')}
+                            value={toOptions('Worker').find(o => o.value === task.worker) || null}
+                            onChange={opt => onUpdate(index, { ...task, worker: opt?.value || '' })}
+                        />
+                    </div>
                 </div>
 
                 {/* === Жирные JIRA‑селекты === */}
@@ -514,6 +528,7 @@ export default function CodeErrorPage({ projects }) {
     const [defaultEnv, setDefaultEnv] = usePersistentState('defaultEnv', '');
     const [defaultRequirementLink, setDefaultRequirementLink] = usePersistentState('defaultRequirementLink', '');
     const [defaultTestData, setDefaultTestData] = usePersistentState('defaultTestData', '');
+    const [defaultWorker, setDefaultWorker] = usePersistentState('defaultWorker', '');
     const [defaultMockup, setDefaultMockup] = usePersistentState('defaultMockup', '');
     const [defaultProdBug, setDefaultProdBug] = usePersistentState('defaultProdBug', '');
     const [defaultsCollapsed, setDefaultsCollapsed] = useState(false);
@@ -914,6 +929,7 @@ export default function CodeErrorPage({ projects }) {
             aiSteps: '',
             aiActual: '',
             aiExpected: '',
+            worker: defaultWorker,
         }, ...prev]);
 
         // 4) Развернуть новую карточку (index 0) и сдвинуть старые collapsedStates
@@ -1021,6 +1037,11 @@ ${t.expected}
                 if (opts.length) {
                     fields[reviewersFieldId] = opts.map(o => ({ name: o.value }));
                 }
+            }
+            const WORKER_CF = 'customfield_15001';
+            const workerFieldId = fieldIds['Worker'] || WORKER_CF;
+            if (workerFieldId && t.worker) {
+                fields[workerFieldId] = { id: t.worker };
             }
 
             try {
@@ -1305,6 +1326,20 @@ ${t.expected}
                                         const v = e.target.value;
                                         setDefaultMockup(v);
                                         setTasks(ts => ts.map(t => ({ ...t, mockup: v })));
+                                    }}
+                                />
+                            </div>
+                            <div className="field">
+                                <label>Воркер</label>
+                                <Select
+                                    classNamePrefix="select"
+                                    isClearable
+                                    options={(fieldOptions.Worker || []).map(o => ({ value: o.id, label: o.name }))}
+                                    value={(fieldOptions.Worker || []).map(o => ({ value: o.id, label: o.name })).find(o => o.value === defaultWorker) || null}
+                                    onChange={opt => {
+                                        const v = opt?.value || '';
+                                        setDefaultWorker(v);
+                                        setTasks(ts => ts.map(t => ({ ...t, worker: v })));
                                     }}
                                 />
                             </div>

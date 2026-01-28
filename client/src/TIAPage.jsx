@@ -389,7 +389,7 @@ const TIAPage = ({ projects }) => {
                                 }
                             });
                             
-                            logInfo(`Запрашиваем маппинги для Page: ${pageNames.join(', ')}`);
+                            console.log(`Запрашиваем маппинги для Page: ${pageNames.join(', ')}`);
                             const response = await axios.get(`${config.TIAUrl}/api/components/page-mappings?${params.toString()}`);
                             
                             const { pageMappings } = response.data;

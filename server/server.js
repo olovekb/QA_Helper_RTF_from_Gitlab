@@ -2877,7 +2877,8 @@ app.post('/api/jira/meta', async (req, res) =>
             ProdBug: 'Баг с прода',
             'Epic Link': 'Epic Link',
             'Основной исполнитель': 'Основной исполнитель',
-            'Ревьюеры': 'Ревьюеры'
+            'Ревьюеры': 'Ревьюеры',
+            Worker: 'Worker'
         };
 
         const options = {};
