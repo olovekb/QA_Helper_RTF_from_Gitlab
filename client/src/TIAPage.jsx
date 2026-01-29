@@ -1042,11 +1042,16 @@ const TIAPage = ({ projects }) => {
 
     const isCreateButtonDisabled = () => mode !== 'mapping' || !projectId || (!(frontendJSON || backendJSON || (tiaReport && isNewTiaFormat(tiaReport))) || isLoading);
 
-    // Обновленная логика для проверки, что все компоненты имеют хотя бы один блок
-    const isMappingConfirmDisabled = components.some(component => !componentMappings[component.id] || componentMappings[component.id].length === 0);
+    // Обновленная логика: РАЗРЕШАЕМ создание, даже если не все компоненты смаплены.
+    // Мы просто передадим те, что есть. Пустые маппинги будут проигнорированы.
+    const isMappingConfirmDisabled = false;
 
-    // Проверка для кнопки "Подтвердить и создать" - требуется Jira ссылка
-    const isMappingConfirmButtonDisabled = isMappingConfirmDisabled || !jiraLink || !jiraLink.match(/^https?:\/\/jira\.abanking\.ru\/browse\/[A-Z]+-\d+$/);
+    // Проверка для кнопки "Подтвердить и создать"
+    // Jira ссылка теперь опциональна (проверяем валидность только если она введена)
+    const isJiraValid = !jiraLink || jiraLink.match(/^https?:\/\/jira\.abanking\.ru\/browse\/[A-Z]+-\d+$/);
+
+    // Кнопка заблокирована только если Jira ссылка некорректна (если введена)
+    const isMappingConfirmButtonDisabled = !isJiraValid;
 
     const renderQAAdvice = (qaAdvice = []) => {
         if (!qaAdvice.length) return null;
