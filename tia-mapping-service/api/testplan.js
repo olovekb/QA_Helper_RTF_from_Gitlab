@@ -91,7 +91,27 @@ async function getTreeId(projectId) {
             }
 
             const treeData = await treeResponse.json();
-            treeId = treeData.content?.[0]?.id || 0;
+
+            // Логика выбора дерева должна совпадать с getProjectStructure из structure.js
+            let structureTree = null;
+            if (String(projectId) === '307') {
+                structureTree = treeData.content?.find(item => item.name === "Global Structure");
+                if (!structureTree) {
+                    structureTree = treeData.content?.find(item => item.name === "Structure");
+                }
+            } else {
+                structureTree = treeData.content?.find(item => item.name === "Structure");
+            }
+
+            if (structureTree && structureTree.id) {
+                treeId = structureTree.id;
+                logInfo(`Найден treeId ${treeId} для проекта ${projectId} с name: "${structureTree.name}"`);
+            } else {
+                const searchName = String(projectId) === '307' ? '"Global Structure" или "Structure"' : '"Structure"';
+                logWarn(`treeId с name: ${searchName} не найден в ответе для проекта ${projectId}, используем первый доступный`);
+                treeId = treeData.content?.[0]?.id || 0;
+            }
+
             if (!treeId) {
                 logWarn(`treeId не найден в ответе для проекта ${projectId}`);
                 throw new Error(`treeId не найден для проекта ${projectId}`);
@@ -127,33 +147,24 @@ export async function createTestPlanAPI(req, res) {
         });
     }
 
-    // 1. Собираем ID групп. Если переданы полные пути (groupsIncludePaths), используем их.
-    // Иначе собираем ID из componentMappings (fallback для старых клиентов или прямых вызовов)
+    // 1. Собираем ID групп из componentMappings (всегда fallback logic - одиночные ID)
+    // Мы отказываемся от полных путей (groupsIncludePaths), так как они могут быть нестабильны
+    // и примеры пользователя показывают, что достаточно или одного ID, или пути.
+    // Попробуем отправлять [[ID]], то есть путь длиной 1, указывающий на конкретную папку.
     const groupsInclude = [];
+    const processedIds = new Set();
 
-    if (req.body.groupsIncludePaths && Array.isArray(req.body.groupsIncludePaths) && req.body.groupsIncludePaths.length > 0) {
-        logInfo(`Используем переданные полные пути (groupsIncludePaths): ${req.body.groupsIncludePaths.length} путей`);
-        req.body.groupsIncludePaths.forEach(path => {
-            if (Array.isArray(path)) {
-                const validPath = path.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
-                if (validPath.length > 0) groupsInclude.push(validPath);
-            }
-        });
-    } else {
-        logInfo(`groupsIncludePaths не переданы, используем fallback logic (одиночные ID)`);
-        const processedIds = new Set();
-        Object.values(componentMappings).forEach(blockIds => {
-            if (Array.isArray(blockIds)) {
-                blockIds.forEach(idVal => {
-                    const id = parseInt(idVal, 10);
-                    if (!isNaN(id) && !processedIds.has(id)) {
-                        processedIds.add(id);
-                        groupsInclude.push([id]); // [[ID]] - путь из одного элемента
-                    }
-                });
-            }
-        });
-    }
+    Object.values(componentMappings).forEach(blockIds => {
+        if (Array.isArray(blockIds)) {
+            blockIds.forEach(idVal => {
+                const id = parseInt(idVal, 10);
+                if (!isNaN(id) && !processedIds.has(id)) {
+                    processedIds.add(id);
+                    groupsInclude.push([id]); // [[ID]]
+                }
+            });
+        }
+    });
 
     if (groupsInclude.length === 0) {
         return res.status(400).json({
@@ -185,31 +196,72 @@ export async function createTestPlanAPI(req, res) {
             testPlanName = `Регресс тестирование ${new Date().toLocaleDateString('ru-RU')}`;
         }
 
-        sendEvent('progress', { current: groupsInclude.length, total: groupsInclude.length, message: 'Отправка запроса в Allure...' });
+        // 2а. Собираем ID всех листьев (тест-кейсов) параллельно
+        const allLeafsInclude = new Set();
+        const folderIds = groupsInclude.map(group => group[0]); // Извлекаем ID папок
 
-        // 4. Тело запроса - ВАЖНО: передаем groupsInclude вложенными массивами (как в UI)
-        // Allure API требует List<List<Long>> (пути?), а не плоский список.
-        const treeSelection = {
-            inverted: false,
-            groupsInclude: groupsInclude,
-            groupsExclude: [],
-            leafsInclude: [],
-            leafsExclude: [],
-            kind: 'TreeSelectionDto'
+        let processedCount = 0;
+        const totalFolders = folderIds.length;
+
+        // Функция для обновления прогресса
+        const updateLeafProgress = () => {
+            processedCount++;
+            if (processedCount % 5 === 0 || processedCount === totalFolders) {
+                sendEvent('progress', {
+                    current: processedCount,
+                    total: totalFolders,
+                    message: `Сбор тест-кейсов: обработано ${processedCount} из ${totalFolders} папок`
+                });
+            }
         };
 
+        const leavesPromises = folderIds.map(folderId =>
+            limit(async () => {
+                try {
+                    const leaves = await collectAllLeaves(projectId, treeId, folderId);
+                    leaves.forEach(leafId => allLeafsInclude.add(leafId));
+                    updateLeafProgress();
+                } catch (e) {
+                    logError(`Ошибка сбора листьев для папки ${folderId}:`, e.message);
+                }
+            })
+        );
+
+        await Promise.all(leavesPromises);
+
+        const finalLeafsInclude = Array.from(allLeafsInclude);
+        logInfo(`Собрано ${finalLeafsInclude.length} уникальных тест-кейсов для тест-плана`);
+
+        if (finalLeafsInclude.length === 0) {
+            throw new Error('Не найдено ни одного тест-кейса в выбранных папках');
+        }
+
+        // 4. Тело запроса для нового endpoint
+        // Используем leafsInclude вместо groupsInclude для надежности
         const requestBody = {
-            projectId: parseInt(projectId, 10),
-            treeSelection: treeSelection,
-            treeId: treeId,
-            name: testPlanName
+            selection: {
+                projectId: parseInt(projectId, 10),
+                treeId: parseInt(treeId, 10),
+                inverted: false,
+                groupsInclude: [], // Оставляем пустым, так как используем leafsInclude
+                groupsExclude: [],
+                leafsInclude: finalLeafsInclude, // Передаем собранные ID тест-кейсов
+                leafsExclude: [],
+                path: [parseInt(treeId, 10)],
+                deleted: false,
+                search: ""
+            },
+            testPlanName: testPlanName,
+            tree: {
+                id: parseInt(treeId, 10)
+            }
         };
 
-        logInfo(`Отправляем запрос создания тест-плана (структура обновлена): ${JSON.stringify(requestBody)}`);
+        logInfo(`Отправляем запрос создания тест-плана (Bulk API): ${JSON.stringify(requestBody)}`);
 
         // 5. Запрос к Allure
-        // Возвращаем /api/testplan, так как /api/rs/testplan мб не тем энпоинтом
-        const testPlanUrl = `${config.allureBaseUrl}/api/testplan`;
+        // Новый endpoint для массового создания тест-плана
+        const testPlanUrl = `${config.allureBaseUrl}/api/testcase/bulk/testplan/create`;
 
         const response = await fetchWithAuth(testPlanUrl, {
             method: 'POST',

@@ -591,6 +591,8 @@ const TIAPage = ({ projects }) => {
             }
             setLoadingState(prev => ({ ...prev, launch: false }));
             setIsLoading(false);
+        } finally {
+            setLoadingState(prev => ({ ...prev, launch: false }));
         }
     };
 
@@ -749,7 +751,9 @@ const TIAPage = ({ projects }) => {
             setError(err.message);
             logError('Mapping confirmation error', err.message);
         } finally {
-            setIsLoading(false); // Выключаем лоудер
+            setIsLoading(false);
+            setIsMappingLoading(false); // Обязательно сбрасываем состояние загрузки маппинга
+            setLoadingState(prev => ({ ...prev, [createType]: false })); // Сброс состояния кнопки
         }
     };
 
