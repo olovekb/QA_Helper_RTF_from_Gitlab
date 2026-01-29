@@ -100,17 +100,18 @@ export async function createTestPlanAPI(req, res) {
         }
 
         // 4. Формируем тело запроса для testplan API
-        // ВАЖНО: groupsInclude должен быть МАССИВОМ МАССИВОВ!
-        // Каждый ID нужно обернуть в свой массив: [[19668], [12552]] вместо [19668, 12552]
-        const groupsIncludeFormatted = groupsInclude.map(id => [id]);
+        // КРИТИЧНО: У нас ID тест-кейсов (leafs), а не групп (groups)!
+        // Поэтому используем leafsInclude, а не groupsInclude
+        // Каждый ID оборачиваем в массив для формата [[id1], [id2], ...]
+        const leafsIncludeFormatted = groupsInclude.map(id => [id]);
 
         const requestBody = {
             projectId: parseInt(projectId, 10),
             treeSelection: {
                 inverted: false,
-                groupsInclude: groupsIncludeFormatted,  // Массив массивов!
+                groupsInclude: [],  // Пустой - у нас нет ID групп/папок
                 groupsExclude: [],
-                leafsInclude: [],
+                leafsInclude: leafsIncludeFormatted,  // ID тест-кейсов идут сюда!
                 leafsExclude: [],
                 kind: 'TreeSelectionDto'
             },
@@ -119,8 +120,8 @@ export async function createTestPlanAPI(req, res) {
         };
 
         logInfo(`Отправляем запрос создания тест-плана: ${testPlanName}`);
-        logInfo(`groupsInclude исходный: ${JSON.stringify(groupsInclude)}`);
-        logInfo(`groupsInclude форматированный (массив массивов): ${JSON.stringify(groupsIncludeFormatted)}`);
+        logInfo(`Собрано ${groupsInclude.length} уникальных ID тест-кейсов`);
+        logInfo(`leafsInclude (первые 10): ${JSON.stringify(leafsIncludeFormatted.slice(0, 10))}`);
         logInfo(`Полное тело запроса: ${JSON.stringify(requestBody, null, 2)}`);
 
         // 5. Отправка запроса в Allure testplan API
