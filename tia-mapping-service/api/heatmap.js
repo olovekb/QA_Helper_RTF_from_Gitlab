@@ -22,7 +22,7 @@ const heatmapValidationSchema = Joi.object({
 export async function getHeatmapData(req, res) {
     try {
         const { projectId, startDate, endDate, isBugFix } = req.query;
-        
+
         // releaseVersions может прийти как массив или как строка
         let releaseVersions = req.query.releaseVersions;
         if (releaseVersions && !Array.isArray(releaseVersions)) {
@@ -74,10 +74,9 @@ export async function getHeatmapData(req, res) {
         }
 
         // Фильтр по типу (баги или общий)
-        // В новой структуре все записи в component_defects - это баги (isBugFix=true)
-        // Если isBugFix=false, не показываем ничего (так как дефекты только для багов)
-        // Если isBugFix не указан или true, показываем все дефекты
-        // Этот фильтр теперь не нужен, так как component_defects содержит только баги
+        if (parsedIsBugFix !== undefined) {
+            query = query.where('component_defects.is_bug_fix', parsedIsBugFix);
+        }
 
         const results = await query;
 
@@ -171,7 +170,7 @@ export async function getReleaseVersions(req, res) {
 export async function getTestCoverageData(req, res) {
     try {
         const { projectId, startDate, endDate, isBugFix } = req.query;
-        
+
         // releaseVersions может прийти как массив или как строка
         let releaseVersions = req.query.releaseVersions;
         if (releaseVersions && !Array.isArray(releaseVersions)) {
@@ -227,7 +226,9 @@ export async function getTestCoverageData(req, res) {
             )
             .groupBy('fb.id', 'fb.allure_id', 'fb.name', 'fb.custom_field_name')
             .having(databasePool.raw('COUNT(DISTINCT cd.id)'), '>', 0)
-            .orderBy('total_defects', 'desc');
+        if (parsedIsBugFix !== undefined) {
+            query = query.where('cd.is_bug_fix', parsedIsBugFix);
+        }
 
         const results = await query;
 
@@ -238,7 +239,7 @@ export async function getTestCoverageData(req, res) {
         results.forEach(row => {
             const defectCount = parseInt(row.total_defects, 10);
             totalDefects += defectCount;
-            
+
             functionalBlocksMap.set(row.functional_block_id, {
                 functionalBlockId: row.functional_block_id,
                 functionalBlockAllureId: row.functional_block_allure_id,
@@ -277,6 +278,10 @@ export async function getTestCoverageData(req, res) {
             routesQuery = routesQuery.whereIn('cd.release_version', parsedReleaseVersions);
         }
 
+        if (parsedIsBugFix !== undefined) {
+            routesQuery = routesQuery.where('cd.is_bug_fix', parsedIsBugFix);
+        }
+
         routesQuery = routesQuery
             .select(
                 'pcd.page_route',
@@ -295,7 +300,7 @@ export async function getTestCoverageData(req, res) {
         routesResults.forEach(row => {
             const defectCount = parseInt(row.total_defects, 10);
             totalRoutesDefects += defectCount;
-            
+
             routesMap.set(row.page_route, {
                 route: row.page_route,
                 defectCount: defectCount,
@@ -328,6 +333,116 @@ export async function getTestCoverageData(req, res) {
     } catch (error) {
         logError(`Ошибка при получении данных Test Coverage:`, error.message);
         res.status(500).json({ error: 'Произошла ошибка при получении данных Test Coverage.', details: error.message });
+    }
+}
+
+/**
+ * Массовый импорт истории дефектов из JSON-отчетов TIA
+ * @param {Object} req - Объект запроса Express
+ * @param {Object} res - Объект ответа Express
+ * @returns {void}
+ */
+export async function bulkImportHistory(req, res) {
+    const { projectId, items, mappings } = req.body;
+
+    if (!projectId || !items || !Array.isArray(items)) {
+        return res.status(400).json({ error: 'Необходимо указать projectId и массив items.' });
+    }
+
+    try {
+        logInfo(`Начало массового импорта истории для проекта ${projectId}. Количество записей: ${items.length}`);
+
+        await databasePool.transaction(async (trx) => {
+            // 1. Собираем все уникальные компоненты из всех записей
+            const allComponentNames = new Set();
+            items.forEach(item => {
+                if (item.affected_components && Array.isArray(item.affected_components)) {
+                    item.affected_components.forEach(name => allComponentNames.add(name));
+                }
+            });
+
+            // 2. Гарантируем, что все компоненты созданы в таблице components
+            for (const name of allComponentNames) {
+                await trx('components')
+                    .insert({
+                        project_id: projectId,
+                        component_name: name,
+                        component_type: 'component', // По умолчанию.
+                    })
+                    .onConflict(['project_id', 'component_type', 'component_name'])
+                    .ignore();
+            }
+
+            // 3. Получаем ID всех компонентов проекта
+            const components = await trx('components')
+                .where({ project_id: projectId })
+                .select('id', 'component_name');
+
+            const nameToIdMap = new Map(components.map(c => [c.component_name, c.id]));
+
+            // 4. Обновляем маппинги функциональных блоков (если переданы)
+            if (mappings && typeof mappings === 'object') {
+                for (const [compName, fbIds] of Object.entries(mappings)) {
+                    const compId = nameToIdMap.get(compName);
+                    if (compId && Array.isArray(fbIds)) {
+                        // Удаляем старые маппинги этого компонента перед вставкой новых
+                        await trx('component_functional_blocks')
+                            .where({ component_id: compId })
+                            .del();
+
+                        if (fbIds.length > 0) {
+                            const mappingInserts = fbIds.map(fbId => ({
+                                component_id: compId,
+                                functional_block_id: fbId
+                            }));
+                            await trx('component_functional_blocks').insert(mappingInserts);
+                        }
+                    }
+                }
+            }
+
+            // 5. Вставляем историю дефектов
+            const defectInserts = [];
+            items.forEach(item => {
+                if (item.affected_components && Array.isArray(item.affected_components)) {
+                    item.affected_components.forEach(compName => {
+                        const compId = nameToIdMap.get(compName);
+                        if (compId) {
+                            defectInserts.push({
+                                component_id: compId,
+                                release_version: item.release_version || null,
+                                change_date: item.change_date || null,
+                                issue_key: item.issue_key || null,
+                                is_bug_fix: item.is_bug_fix !== undefined ? item.is_bug_fix : true,
+                                mr_iid: item.mr_iid || null,
+                                mr_title: item.mr_title || null,
+                                source_branch: item.source_branch || null,
+                                target_branch: item.target_branch || null,
+                                merged_at: item.merged_at || null,
+                                web_url: item.web_url || null
+                            });
+                        }
+                    });
+                }
+            });
+
+            if (defectInserts.length > 0) {
+                const chunkSize = 500;
+                for (let i = 0; i < defectInserts.length; i += chunkSize) {
+                    const chunk = defectInserts.slice(i, i + chunkSize);
+                    await trx('component_defects')
+                        .insert(chunk)
+                        .onConflict(['component_id', 'mr_iid', 'change_date', 'release_version'])
+                        .ignore();
+                }
+            }
+        });
+
+        logInfo(`Массовый импорт успешно завершен для проекта ${projectId}`);
+        res.status(200).json({ message: 'Импорт успешно завершен.' });
+    } catch (error) {
+        logError(`Ошибка при массовом импорте истории для проекта ${projectId}:`, error.message);
+        res.status(500).json({ error: 'Произошла ошибка при импорте.', details: error.message });
     }
 }
 

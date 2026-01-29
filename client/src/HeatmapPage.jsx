@@ -26,6 +26,18 @@ const HeatmapPage = ({ projects }) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [selectedComponent, setSelectedComponent] = useState(null);
+    const [showImportModal, setShowImportModal] = useState(false);
+    const [importFiles, setImportFiles] = useState([]);
+    const [importProcessing, setImportProcessing] = useState(false);
+    const [importError, setImportError] = useState('');
+    const [importLog, setImportLog] = useState([]);
+
+    // Для маппинга
+    const [showMappingModal, setShowMappingModal] = useState(false);
+    const [unmappedComponents, setUnmappedComponents] = useState([]);
+    const [componentMappings, setComponentMappings] = useState({});
+    const [folders, setFolders] = useState([]);
+    const [parsedHistoryItems, setParsedHistoryItems] = useState([]);
 
     // Загрузка доступных версий при изменении проекта или дат
     useEffect(() => {
@@ -112,6 +124,122 @@ const HeatmapPage = ({ projects }) => {
 
     const versionOptions = availableVersions.map(v => ({ value: v, label: v }));
 
+    // Загрузка структуры Allure для маппинга
+    const fetchFolders = async () => {
+        if (!projectId) return;
+        try {
+            const response = await axios.get(`${config.structureUrl}/folders?projectId=${projectId}`);
+            setFolders(response.data);
+        } catch (err) {
+            console.error('Ошибка при загрузке структуры Allure:', err);
+        }
+    };
+
+    const handleProcessFiles = async () => {
+        if (importFiles.length === 0) return;
+
+        setImportProcessing(true);
+        setImportError('');
+        setImportLog(['Начало обработки файлов...']);
+
+        const allParsedItems = [];
+        const uniqueComponentsSet = new Set();
+
+        try {
+            for (let i = 0; i < importFiles.length; i++) {
+                const file = importFiles[i];
+                const text = await file.text();
+                const json = JSON.parse(text);
+
+                // Извлекаем данные из нового формата JSON
+                const item = {
+                    change_date: json.change_date || json.merged_at,
+                    is_bug_fix: json.is_bug_fix !== undefined ? json.is_bug_fix : true,
+                    issue_key: json.issue_key || json.issue_bug,
+                    mr_iid: json.mr_iid,
+                    mr_title: json.mr_title,
+                    source_branch: json.source_branch,
+                    target_branch: json.target_branch,
+                    merged_at: json.merged_at,
+                    web_url: json.web_url,
+                    release_version: json.project_version || json.release_version,
+                    affected_components: []
+                };
+
+                const componentsObj = json.unique_affected_components || {};
+                Object.keys(componentsObj).forEach(compName => {
+                    item.affected_components.push(compName);
+                    uniqueComponentsSet.add(compName);
+                });
+
+                allParsedItems.push(item);
+
+                if (i % 20 === 0 || i === importFiles.length - 1) {
+                    setImportLog(prev => [...prev, `Обработано ${i + 1} из ${importFiles.length} файлов...`]);
+                }
+            }
+
+            setParsedHistoryItems(allParsedItems);
+
+            // Теперь проверяем маппинги для всех найденных компонентов
+            const componentNames = Array.from(uniqueComponentsSet);
+            setImportLog(prev => [...prev, `Найдено ${componentNames.length} уникальных компонентов. Проверка маппингов...`]);
+
+            // Запрашиваем существующие маппинги
+            const mappingResponse = await axios.get(`${config.TIAUrl}/api/components?projectId=${projectId}`);
+            const existingMappings = mappingResponse.data.mappings || [];
+
+            const mappingsMap = {};
+            const unmapped = [];
+
+            componentNames.forEach(name => {
+                const found = existingMappings.filter(m => m.component_name === name);
+                if (found.length > 0) {
+                    // Используем Set для того чтобы не дублировать ID
+                    const blockIds = [...new Set(found.map(m => m.functional_block_id))];
+                    mappingsMap[name] = blockIds;
+                } else {
+                    unmapped.push(name);
+                }
+            });
+
+            setComponentMappings(mappingsMap);
+            setUnmappedComponents(unmapped);
+
+            // Загружаем папки для маппинга
+            await fetchFolders();
+
+            setImportProcessing(false);
+            setShowImportModal(false);
+            setShowMappingModal(true);
+
+        } catch (err) {
+            console.error('Ошибка при парсинге файлов:', err);
+            setImportError(`Ошибка: ${err.message}`);
+            setImportProcessing(false);
+        }
+    };
+
+    const handleSaveBulkHistory = async () => {
+        setLoading(true);
+        try {
+            await axios.post(`${config.TIAUrl}/api/heatmap/bulk-import`, {
+                projectId,
+                items: parsedHistoryItems,
+                mappings: componentMappings
+            });
+
+            setShowMappingModal(false);
+            alert('История успешно импортирована!');
+            fetchHeatmapData();
+        } catch (err) {
+            console.error('Ошибка при сохранении истории:', err);
+            alert(`Ошибка при сохранении: ${err.response?.data?.error || err.message}`);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     // Подготовка данных для графика (топ компонентов)
     const chartData = heatmapData?.components?.slice(0, 30).map((item, index) => ({
         name: item.componentName,
@@ -123,8 +251,8 @@ const HeatmapPage = ({ projects }) => {
     // Остальные компоненты (если больше 30)
     const otherComponents = heatmapData?.components?.slice(30) || [];
     const otherCount = otherComponents.reduce((sum, item) => sum + item.count, 0);
-    const otherPercentage = heatmapData?.totalDefects > 0 
-        ? ((otherCount / heatmapData.totalDefects) * 100).toFixed(1) 
+    const otherPercentage = heatmapData?.totalDefects > 0
+        ? ((otherCount / heatmapData.totalDefects) * 100).toFixed(1)
         : '0.0';
 
     if (otherCount > 0) {
@@ -159,7 +287,7 @@ const HeatmapPage = ({ projects }) => {
 
     const renderCustomLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }) => {
         if (percent < 0.02) return null; // Не показываем подписи для маленьких сегментов
-        
+
         const RADIAN = Math.PI / 180;
         const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
         const x = cx + radius * Math.cos(-midAngle * RADIAN);
@@ -191,8 +319,8 @@ const HeatmapPage = ({ projects }) => {
 
     const otherFunctionalBlocks = testCoverageData?.functionalBlocks?.slice(30) || [];
     const otherFbCount = otherFunctionalBlocks.reduce((sum, item) => sum + item.defectCount, 0);
-    const otherFbPercentage = testCoverageData?.totalDefects > 0 
-        ? ((otherFbCount / testCoverageData.totalDefects) * 100).toFixed(1) 
+    const otherFbPercentage = testCoverageData?.totalDefects > 0
+        ? ((otherFbCount / testCoverageData.totalDefects) * 100).toFixed(1)
         : '0.0';
 
     if (otherFbCount > 0) {
@@ -215,8 +343,8 @@ const HeatmapPage = ({ projects }) => {
 
     const otherRoutes = testCoverageData?.routes?.slice(30) || [];
     const otherRoutesCount = otherRoutes.reduce((sum, item) => sum + item.defectCount, 0);
-    const otherRoutesPercentage = testCoverageData?.totalRoutesDefects > 0 
-        ? ((otherRoutesCount / testCoverageData.totalRoutesDefects) * 100).toFixed(1) 
+    const otherRoutesPercentage = testCoverageData?.totalRoutesDefects > 0
+        ? ((otherRoutesCount / testCoverageData.totalRoutesDefects) * 100).toFixed(1)
         : '0.0';
 
     if (otherRoutesCount > 0) {
@@ -273,31 +401,28 @@ const HeatmapPage = ({ projects }) => {
                 </button>
             </div>
 
-            {/* Фильтры */}
+            {/* Фильтры и действия */}
             <div style={{
                 backgroundColor: '#fff',
-                padding: '20px',
-                borderRadius: '8px',
+                padding: '24px',
+                borderRadius: '12px',
                 marginBottom: '24px',
                 border: `1px solid ${styles.borderLight}`,
+                boxShadow: '0 2px 12px rgba(0,0,0,0.05)',
             }}>
-                <div style={{ 
+                <div style={{
                     display: 'flex',
                     flexWrap: 'wrap',
-                    gap: '20px',
-                    alignItems: 'flex-end'
+                    gap: '24px',
+                    alignItems: 'flex-start'
                 }}>
                     {/* Выбор проекта */}
-                    <div style={{ 
-                        display: 'flex', 
-                        flexDirection: 'column',
-                        flex: '0 0 180px'
-                    }}>
-                        <label style={{ 
-                            display: 'block', 
-                            marginBottom: '8px', 
-                            fontWeight: 600, 
-                            color: '#000',
+                    <div style={{ flex: '1 1 200px' }}>
+                        <label style={{
+                            display: 'block',
+                            marginBottom: '8px',
+                            fontWeight: 600,
+                            color: '#333',
                             fontSize: '14px'
                         }}>
                             Проект:
@@ -309,12 +434,11 @@ const HeatmapPage = ({ projects }) => {
                                 width: '100%',
                                 padding: '10px 12px',
                                 border: `1px solid ${styles.borderLight}`,
-                                borderRadius: '4px',
+                                borderRadius: '6px',
                                 fontSize: '14px',
                                 backgroundColor: '#fff',
                                 color: '#000',
-                                boxSizing: 'border-box',
-                                height: '40px',
+                                height: '42px',
                             }}
                         >
                             <option value="">Выберите проект</option>
@@ -327,21 +451,17 @@ const HeatmapPage = ({ projects }) => {
                     </div>
 
                     {/* Диапазон дат */}
-                    <div style={{ 
-                        display: 'flex', 
-                        flexDirection: 'column',
-                        flex: '0 0 350px'
-                    }}>
-                        <label style={{ 
-                            display: 'block', 
-                            marginBottom: '8px', 
-                            fontWeight: 600, 
-                            color: '#000',
+                    <div style={{ flex: '2 1 350px' }}>
+                        <label style={{
+                            display: 'block',
+                            marginBottom: '8px',
+                            fontWeight: 600,
+                            color: '#333',
                             fontSize: '14px'
                         }}>
                             Диапазон дат (необязательно):
                         </label>
-                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                             <input
                                 type="date"
                                 value={startDate}
@@ -350,15 +470,12 @@ const HeatmapPage = ({ projects }) => {
                                     flex: 1,
                                     padding: '10px 12px',
                                     border: `1px solid ${styles.borderLight}`,
-                                    borderRadius: '4px',
+                                    borderRadius: '6px',
                                     fontSize: '14px',
-                                    backgroundColor: '#fff',
-                                    color: '#000',
-                                    boxSizing: 'border-box',
-                                    height: '40px',
+                                    height: '42px',
                                 }}
                             />
-                            <span style={{ color: '#000', fontSize: '14px', padding: '0 4px' }}>—</span>
+                            <span style={{ color: '#666', fontWeight: 600 }}>—</span>
                             <input
                                 type="date"
                                 value={endDate}
@@ -367,28 +484,21 @@ const HeatmapPage = ({ projects }) => {
                                     flex: 1,
                                     padding: '10px 12px',
                                     border: `1px solid ${styles.borderLight}`,
-                                    borderRadius: '4px',
+                                    borderRadius: '6px',
                                     fontSize: '14px',
-                                    backgroundColor: '#fff',
-                                    color: '#000',
-                                    boxSizing: 'border-box',
-                                    height: '40px',
+                                    height: '42px',
                                 }}
                             />
                         </div>
                     </div>
 
-                    {/* Версии релизов (мультиселект) */}
-                    <div style={{ 
-                        display: 'flex', 
-                        flexDirection: 'column',
-                        flex: '0 0 250px'
-                    }}>
-                        <label style={{ 
-                            display: 'block', 
-                            marginBottom: '8px', 
-                            fontWeight: 600, 
-                            color: '#000',
+                    {/* Версии релизов */}
+                    <div style={{ flex: '1.5 1 250px' }}>
+                        <label style={{
+                            display: 'block',
+                            marginBottom: '8px',
+                            fontWeight: 600,
+                            color: '#333',
                             fontSize: '14px'
                         }}>
                             Версии релизов:
@@ -404,36 +514,22 @@ const HeatmapPage = ({ projects }) => {
                                 control: (base) => ({
                                     ...base,
                                     borderColor: styles.borderLight,
+                                    borderRadius: '6px',
                                     fontSize: '14px',
-                                    minHeight: '40px',
+                                    minHeight: '42px',
                                     boxShadow: 'none',
-                                    '&:hover': {
-                                        borderColor: styles.borderLight,
-                                    },
-                                }),
-                                placeholder: (base) => ({
-                                    ...base,
-                                    fontSize: '14px',
-                                }),
-                                input: (base) => ({
-                                    ...base,
-                                    fontSize: '14px',
                                 }),
                             }}
                         />
                     </div>
 
-                    {/* Тип (общий/баги) */}
-                    <div style={{ 
-                        display: 'flex', 
-                        flexDirection: 'column',
-                        flex: '0 0 150px'
-                    }}>
-                        <label style={{ 
-                            display: 'block', 
-                            marginBottom: '8px', 
-                            fontWeight: 600, 
-                            color: '#000',
+                    {/* Тип */}
+                    <div style={{ flex: '1 1 150px' }}>
+                        <label style={{
+                            display: 'block',
+                            marginBottom: '8px',
+                            fontWeight: 600,
+                            color: '#333',
                             fontSize: '14px'
                         }}>
                             Тип:
@@ -448,18 +544,35 @@ const HeatmapPage = ({ projects }) => {
                                 width: '100%',
                                 padding: '10px 12px',
                                 border: `1px solid ${styles.borderLight}`,
-                                borderRadius: '4px',
+                                borderRadius: '6px',
                                 fontSize: '14px',
                                 backgroundColor: '#fff',
-                                color: '#000',
-                                boxSizing: 'border-box',
-                                height: '40px',
+                                height: '42px',
                             }}
                         >
                             <option value="all">Все</option>
                             <option value="bugs">Только баги</option>
                             <option value="general">Общий</option>
                         </select>
+                    </div>
+
+                    {/* Кнопка импорта */}
+                    <div style={{ flex: '0 0 auto', alignSelf: 'flex-end' }}>
+                        <button
+                            onClick={() => setShowImportModal(true)}
+                            disabled={!projectId}
+                            style={{
+                                ...styles.submitButton,
+                                padding: '10px 20px',
+                                height: '42px',
+                                backgroundColor: '#6f42c1', // Purple for history import
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                            }}
+                        >
+                            <span>📅</span> Загрузить историю
+                        </button>
                     </div>
                 </div>
             </div>
@@ -494,15 +607,15 @@ const HeatmapPage = ({ projects }) => {
                     <h2 style={{ ...styles.subHeader, marginBottom: '16px' }}>
                         Тепловая карта дефектов
                     </h2>
-                    
-                    <div style={{ 
-                        display: 'flex', 
-                        gap: '32px', 
+
+                    <div style={{
+                        display: 'flex',
+                        gap: '32px',
                         flexWrap: 'nowrap',
                         alignItems: 'flex-start'
                     }}>
                         {/* Donut Chart */}
-                        <div style={{ 
+                        <div style={{
                             flex: '0 0 500px',
                             width: '500px',
                             maxWidth: '100%'
@@ -555,10 +668,10 @@ const HeatmapPage = ({ projects }) => {
                         </div>
 
                         {/* Легенда */}
-                        <div style={{ 
+                        <div style={{
                             flex: '1 1 auto',
                             minWidth: '300px',
-                            maxHeight: '500px', 
+                            maxHeight: '500px',
                             overflowY: 'auto',
                             overflowX: 'hidden'
                         }}>
@@ -642,15 +755,15 @@ const HeatmapPage = ({ projects }) => {
                             <h2 style={{ ...styles.subHeader, marginBottom: '16px' }}>
                                 Test Coverage - Функциональные блоки
                             </h2>
-                            
-                            <div style={{ 
-                                display: 'flex', 
-                                gap: '32px', 
+
+                            <div style={{
+                                display: 'flex',
+                                gap: '32px',
                                 flexWrap: 'nowrap',
                                 alignItems: 'flex-start'
                             }}>
                                 {/* Donut Chart для функциональных блоков */}
-                                <div style={{ 
+                                <div style={{
                                     flex: '0 0 400px',
                                     width: '400px',
                                     maxWidth: '100%'
@@ -698,10 +811,10 @@ const HeatmapPage = ({ projects }) => {
                                 </div>
 
                                 {/* Легенда для функциональных блоков */}
-                                <div style={{ 
+                                <div style={{
                                     flex: '1 1 auto',
                                     minWidth: '250px',
-                                    maxHeight: '500px', 
+                                    maxHeight: '500px',
                                     overflowY: 'auto',
                                     overflowX: 'hidden'
                                 }}>
@@ -770,15 +883,15 @@ const HeatmapPage = ({ projects }) => {
                                 <h2 style={{ ...styles.subHeader, marginBottom: '16px' }}>
                                     Test Coverage - Роуты
                                 </h2>
-                                
-                                <div style={{ 
-                                    display: 'flex', 
-                                    gap: '32px', 
+
+                                <div style={{
+                                    display: 'flex',
+                                    gap: '32px',
                                     flexWrap: 'nowrap',
                                     alignItems: 'flex-start'
                                 }}>
                                     {/* Donut Chart для роутов */}
-                                    <div style={{ 
+                                    <div style={{
                                         flex: '0 0 400px',
                                         width: '400px',
                                         maxWidth: '100%'
@@ -826,10 +939,10 @@ const HeatmapPage = ({ projects }) => {
                                     </div>
 
                                     {/* Легенда для роутов */}
-                                    <div style={{ 
+                                    <div style={{
                                         flex: '1 1 auto',
                                         minWidth: '250px',
-                                        maxHeight: '500px', 
+                                        maxHeight: '500px',
                                         overflowY: 'auto',
                                         overflowX: 'hidden'
                                     }}>
@@ -885,6 +998,150 @@ const HeatmapPage = ({ projects }) => {
                                 </div>
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+            {/* Модальное окно массового импорта */}
+            {showImportModal && (
+                <div style={styles.modalOverlay}>
+                    <div style={{ ...styles.modalContent, width: '600px' }}>
+                        <div style={styles.modalHeader}>
+                            <h2 style={styles.modalTitle}>Загрузка истории TIA (JSON)</h2>
+                            <button onClick={() => setShowImportModal(false)} style={styles.closeButton}>×</button>
+                        </div>
+                        <div style={{ padding: '20px' }}>
+                            <p style={{ marginBottom: '15px', color: '#666' }}>
+                                Выберите один или несколько JSON-отчетов TIA для импорта истории дефектов.
+                            </p>
+
+                            <input
+                                type="file"
+                                multiple
+                                accept=".json"
+                                onChange={(e) => setImportFiles(Array.from(e.target.files))}
+                                style={{
+                                    width: '100%',
+                                    padding: '10px',
+                                    border: `2px dashed ${styles.borderLight}`,
+                                    borderRadius: '8px',
+                                    marginBottom: '20px',
+                                    cursor: 'pointer'
+                                }}
+                            />
+
+                            {importFiles.length > 0 && (
+                                <div style={{ marginBottom: '20px' }}>
+                                    <strong>Выбрано файлов: {importFiles.length}</strong>
+                                </div>
+                            )}
+
+                            {importProcessing && (
+                                <div style={{
+                                    padding: '15px',
+                                    backgroundColor: '#f8f9fa',
+                                    borderRadius: '8px',
+                                    maxHeight: '200px',
+                                    overflowY: 'auto',
+                                    marginBottom: '20px',
+                                    fontSize: '12px',
+                                    fontFamily: 'monospace'
+                                }}>
+                                    {importLog.map((log, i) => <div key={i}>{log}</div>)}
+                                </div>
+                            )}
+
+                            {importError && (
+                                <div style={{ color: 'red', marginBottom: '20px' }}>{importError}</div>
+                            )}
+
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                                <button
+                                    onClick={() => setShowImportModal(false)}
+                                    style={styles.cancelButton}
+                                    disabled={importProcessing}
+                                >
+                                    Отмена
+                                </button>
+                                <button
+                                    onClick={handleProcessFiles}
+                                    disabled={importFiles.length === 0 || importProcessing}
+                                    style={{
+                                        ...styles.submitButton,
+                                        opacity: (importFiles.length === 0 || importProcessing) ? 0.6 : 1
+                                    }}
+                                >
+                                    {importProcessing ? 'Обработка...' : 'Начать обработку'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Модальное окно маппинга для импорта */}
+            {showMappingModal && (
+                <div style={styles.modalOverlay}>
+                    <div style={{ ...styles.modalContent, width: '900px', maxWidth: '95vw', maxHeight: '90vh' }}>
+                        <div style={styles.modalHeader}>
+                            <h2 style={styles.modalTitle}>Маппинг компонентов</h2>
+                            <button onClick={() => setShowMappingModal(false)} style={styles.closeButton}>×</button>
+                        </div>
+                        <div style={{ padding: '20px', overflowY: 'auto', flex: 1 }}>
+                            <p style={{ marginBottom: '15px' }}>
+                                Для корректного отображения <strong>Test Coverage</strong> необходимо связать найденные компоненты с функциональными блоками Allure.
+                            </p>
+
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr style={{ borderBottom: `2px solid ${styles.borderLight}`, textAlign: 'left' }}>
+                                        <th style={{ padding: '10px' }}>Компонент</th>
+                                        <th style={{ padding: '10px' }}>Функциональные блоки Allure</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {[...unmappedComponents, ...Object.keys(componentMappings)].sort().map(compName => (
+                                        <tr key={compName} style={{ borderBottom: `1px solid ${styles.borderLight}` }}>
+                                            <td style={{ padding: '10px', fontWeight: 600 }}>{compName}</td>
+                                            <td style={{ padding: '10px' }}>
+                                                <Select
+                                                    isMulti
+                                                    options={folders.map(f => ({ value: f.id, label: f.name }))}
+                                                    value={(componentMappings[compName] || []).map(id => {
+                                                        const folder = folders.find(f => f.id === id);
+                                                        return { value: id, label: folder ? folder.name : id };
+                                                    })}
+                                                    onChange={(selected) => {
+                                                        setComponentMappings(prev => ({
+                                                            ...prev,
+                                                            [compName]: selected ? selected.map(s => s.value) : []
+                                                        }));
+                                                    }}
+                                                    placeholder="Выберите блоки..."
+                                                    styles={{
+                                                        control: (base) => ({ ...base, fontSize: '13px' })
+                                                    }}
+                                                />
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div style={{ padding: '20px', borderTop: `1px solid ${styles.borderLight}`, display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                            <button
+                                onClick={() => setShowMappingModal(false)}
+                                style={styles.cancelButton}
+                            >
+                                Отмена
+                            </button>
+                            <button
+                                onClick={handleSaveBulkHistory}
+                                disabled={loading}
+                                style={styles.submitButton}
+                            >
+                                {loading ? 'Сохранение...' : 'Завершить импорт'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

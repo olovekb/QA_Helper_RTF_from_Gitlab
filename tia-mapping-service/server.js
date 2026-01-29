@@ -8,7 +8,7 @@ import multer from 'multer'; // Импорт multer для обработки з
 import { uploadMiddleware, handleJsonUpload } from './api/upload.js'; // Импорт функционала для загрузки JSON
 import { getProjectStructure } from './api/structure.js'; // Импорт функционала для получения структуры Allure
 import { handleComponentMapping, deleteComponentMapping, getComponentMappings, getPageMappings, savePageDependencies, getFunctionalBlockPageComponentLinks } from './api/components.js'; // Импорт функционала для маппинга
-import { getHeatmapData, getReleaseVersions, getTestCoverageData } from './api/heatmap.js'; // Импорт функционала для тепловой карты
+import { getHeatmapData, getReleaseVersions, getTestCoverageData, bulkImportHistory } from './api/heatmap.js'; // Импорт функционала для тепловой карты
 import { createTestPlan } from './api/launch.js'; // Импорт функционала для создания запусков
 import { createTestPlanAPI } from './api/testplan.js'; // Импорт функционала для создания тест-планов
 import config from './config/index.js'; // Импорт конфигурации проекта
@@ -140,6 +140,7 @@ app.get('/api/heatmap/test-coverage', getTestCoverageData);
  * @param {string} endDate - Конечная дата для фильтрации (опционально)
  */
 app.get('/api/heatmap/release-versions', getReleaseVersions);
+app.post('/api/heatmap/bulk-import', bulkImportHistory); // Массовый импорт истории
 
 /**
  * Удаление маппинга компонента
