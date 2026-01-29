@@ -100,22 +100,28 @@ export async function createTestPlanAPI(req, res) {
         }
 
         // 4. Формируем тело запроса для testplan API
-        // ВАЖНО: используем inverted:false и указываем конкретные группы в groupsInclude
+        // ВАЖНО: groupsInclude должен быть МАССИВОМ МАССИВОВ!
+        // Каждый ID нужно обернуть в свой массив: [[19668], [12552]] вместо [19668, 12552]
+        const groupsIncludeFormatted = groupsInclude.map(id => [id]);
+
         const requestBody = {
             projectId: parseInt(projectId, 10),
             treeSelection: {
-                inverted: false,  // false = выбрать только указанные группы
-                groupsInclude: groupsInclude,  // Массив ID выбранных блоков
+                inverted: false,
+                groupsInclude: groupsIncludeFormatted,  // Массив массивов!
                 groupsExclude: [],
                 leafsInclude: [],
                 leafsExclude: [],
                 kind: 'TreeSelectionDto'
             },
+            treeId: treeId,  // Добавляем treeId как в curl
             name: testPlanName
         };
 
-        logInfo(`Отправляем запрос создания тест-плана: ${testPlanName}, групп: ${groupsInclude.length}`);
-        logInfo(`groupsInclude содержимое: ${JSON.stringify(groupsInclude)}`);
+        logInfo(`Отправляем запрос создания тест-плана: ${testPlanName}`);
+        logInfo(`groupsInclude исходный: ${JSON.stringify(groupsInclude)}`);
+        logInfo(`groupsInclude форматированный (массив массивов): ${JSON.stringify(groupsIncludeFormatted)}`);
+        logInfo(`Полное тело запроса: ${JSON.stringify(requestBody, null, 2)}`);
 
         // 5. Отправка запроса в Allure testplan API
         const testPlanUrl = `${config.allureBaseUrl}/api/testplan`;
