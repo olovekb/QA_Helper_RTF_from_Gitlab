@@ -180,74 +180,68 @@ export async function createTestPlan(req, res) {
             return res.status(400).json({ error: 'Необходимо указать projectId, jiraLink и componentMappings.' });
         }
 
-        // Логируем входные данные для отладки
-        logInfo(`Входные данные для создания тест-плана: projectId=${projectId}, jiraLink=${jiraLink}, componentMappings=${JSON.stringify(componentMappings)}`);
+        // Логируем входные данные
+        logInfo(`Входные данные для создания тест-плана: projectId=${projectId}, jiraLink=${jiraLink}, componentMappings length=${Object.keys(componentMappings).length}`);
 
         // Собираем все уникальные folderIds из componentMappings
         const allFolderIds = new Set();
         Object.values(componentMappings).forEach(folderIds => {
             if (!Array.isArray(folderIds)) {
-                logWarn(`componentMappings содержит некорректные данные для какого-то компонента: ${JSON.stringify(componentMappings)}`);
+                logWarn(`componentMappings содержит некорректные данные: ${JSON.stringify(componentMappings)}`);
                 throw new Error('Некорректный формат componentMappings: folderIds должны быть массивом');
             }
             folderIds.forEach(id => allFolderIds.add(id));
         });
-        const groupsInclude = Array.from(allFolderIds).map(id => {
-            const parsedId = parseInt(id, 10);
-            if (isNaN(parsedId)) {
-                logWarn(`Невозможно преобразовать ID в число: ${id}`);
-            }
-            return parsedId;
-        }).filter(id => !isNaN(id)); // Фильтруем NaN значения
+
+        const groupsInclude = Array.from(allFolderIds)
+            .map(id => {
+                const parsedId = parseInt(id, 10);
+                if (isNaN(parsedId)) logWarn(`Невозможно преобразовать ID в число: ${id}`);
+                return parsedId;
+            })
+            .filter(id => !isNaN(id));
 
         if (groupsInclude.length === 0) {
             throw new Error('Не найдены группы для включения (groupsInclude пустой)');
         }
 
-        // Получаем динамический treeId для проекта
+        // Получаем treeId
         const treeId = await getTreeId(projectId);
         logInfo(`Динамически получен treeId: ${treeId} для projectId: ${projectId}`);
 
-        // Получаем integrationId для Jira с использованием аутентификации
+        // Получаем integrationId для Jira
         const integrationUrl = `${config.allureBaseUrl}/api/integration/suggest?operation=issue_suggest&projectId=${projectId}`;
-        logInfo(`Отправляем запрос на ${integrationUrl}`);
-        const integrationResponse = await fetchWithAuth(integrationUrl, {
-            method: 'GET',
-            headers: authHeaders, // Используем заголовки авторизации
-        });
+        const integrationResponse = await fetchWithAuth(integrationUrl, { method: 'GET', headers: authHeaders });
 
-        // Логируем и возвращаем оригинальный response
-        const loggedIntegrationResponse = await logResponse(integrationResponse, integrationUrl);
+        // Читаем тело ответа интеграции один раз
+        const integrationText = await integrationResponse.text();
+        logInfo(`Ответ интеграции: Status ${integrationResponse.status}`);
 
-        if (!loggedIntegrationResponse.ok) {
-            throw new Error(`Не удалось получить integrationId: ${loggedIntegrationResponse.status} - ${loggedIntegrationResponse.statusText}`);
+        if (!integrationResponse.ok) {
+            throw new Error(`Не удалось получить integrationId: ${integrationResponse.status} - ${integrationResponse.statusText}`);
         }
 
         let integrationData;
         try {
-            // Читаем JSON напрямую из оригинального response
-            integrationData = await loggedIntegrationResponse.json();
-            logInfo(`Полученные данные интеграции: ${JSON.stringify(integrationData)}`);
-        } catch (jsonError) {
-            throw new Error(`Не удалось разобрать ответ интеграции как JSON: ${jsonError.message}, Response Text: ${await loggedIntegrationResponse.text()}`);
+            integrationData = JSON.parse(integrationText);
+        } catch (e) {
+            throw new Error(`Не удалось разобрать ответ интеграции как JSON: ${e.message}`);
         }
 
         const jiraIntegration = integrationData.content.find(integration => integration.name === 'Jira');
-        if (!jiraIntegration) {
-            throw new Error('Интеграция Jira не найдена в ответе API');
-        }
-        const integrationId = jiraIntegration.id || 67; // Укажи дефолтное значение, если не найден
+        // Используем 67 как дефолт, если не найдено, но лучше выкинуть ошибку, если это критично
+        const integrationId = jiraIntegration ? jiraIntegration.id : 67;
         logInfo(`Найден integrationId для Jira: ${integrationId}`);
 
-        // Извлекаем имя задачи из jiraLink (например, "SBK-20930" из "https://jira.abanking.ru/browse/SBK-20930")
+        // Извлекаем имя задачи
         const jiraIssueKeyMatch = jiraLink.match(/\/browse\/([A-Z]+-\d+)$/);
         const jiraIssueKey = jiraIssueKeyMatch ? jiraIssueKeyMatch[1] : jiraLink.split('/').pop();
         if (!jiraIssueKey || !/^[A-Z]+-\d+$/.test(jiraIssueKey)) {
-            throw new Error(`Некорректный формат jiraLink: ${jiraLink}. Ожидается формат вида https://jira.abanking.ru/browse/CTMM-528`);
+            throw new Error(`Некорректный формат jiraLink: ${jiraLink}`);
         }
         logInfo(`Извлечён jiraIssueKey: ${jiraIssueKey}`);
 
-        // Формируем тело запроса для создания тест-плана
+        // Формируем тело запроса
         let requestBody = {
             selection: {
                 inverted: false,
@@ -257,118 +251,145 @@ export async function createTestPlan(req, res) {
                 testCasesExclude: [],
                 leavesInclude: [],
                 leavesExclude: [],
-                projectId: parseInt(projectId, 10), // Убедимся, что это число
-                treeId: treeId, // Используем динамически полученный treeId
+                projectId: parseInt(projectId, 10),
+                treeId: treeId,
                 deleted: false,
             },
             launchName: `Регресс тестирование ${jiraIssueKey}`,
-            issues: [
-                {
-                    integrationId,
-                    name: jiraIssueKey,
-                },
-            ],
+            issues: [{ integrationId, name: jiraIssueKey }],
         };
 
-        // Выводим тело запроса в консоль для проверки в Swagger (опционально, если нужно)
-        console.log('Тело запроса для тестирования в Swagger:');
-        console.log(JSON.stringify(requestBody, null, 2)); // Форматированный JSON для удобства копирования
+        logInfo('Request body for test plan (initial size):', JSON.stringify(requestBody).length);
 
-        logInfo('Request body for test plan (initial):', JSON.stringify(requestBody));
-
-        // Отправляем POST-запрос для создания тест-плана с аутентификацией
+        // --- ПЕРВЫЙ ЗАПРОС НА СОЗДАНИЕ (С РЕТРАЯМИ) ---
         const testPlanUrl = `${config.allureBaseUrl}/api/v2/test-case/bulk/run/new`;
         logInfo(`Отправляем запрос на ${testPlanUrl}`);
-        let testPlanResponse = await fetchWithAuth(testPlanUrl, {
-            method: 'POST',
-            headers: {
-                ...authHeaders,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(requestBody),
-        });
 
-        // Логируем запрос перед отправкой
-        logInfo(`Отправлен запрос на ${testPlanUrl} с телом: ${JSON.stringify(requestBody)}`);
+        let testPlanResponse;
+        let responseText;
+        const MAX_RETRIES = 3; // Максимальное количество попыток
 
-        // Логируем ответ от API для диагностики
-        await logResponse(testPlanResponse, testPlanUrl, requestBody);
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                testPlanResponse = await fetchWithAuth(testPlanUrl, {
+                    method: 'POST',
+                    headers: { ...authHeaders, 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody),
+                });
+
+                // Читаем тело ответа сразу
+                responseText = await testPlanResponse.text();
+
+                // Если статус 504 и попытки еще есть — ждем и идем на следующий круг
+                if (testPlanResponse.status === 504 && attempt < MAX_RETRIES) {
+                    logWarn(`Попытка ${attempt} завершилась ошибкой 504 Gateway Time-out. Ждем 3 секунды и повторяем...`);
+                    await new Promise(resolve => setTimeout(resolve, 3000)); // Ждем 3 секунды
+                    continue;
+                }
+
+                // Если статус не 504 или попытки кончились — выходим из цикла
+                logInfo(`Ответ от ${testPlanUrl} (Попытка ${attempt}): Status ${testPlanResponse.status}, Body length: ${responseText.length}`);
+                break;
+
+            } catch (networkError) {
+                // Обработка сетевых сбоев (когда fetch падает с исключением)
+                logWarn(`Сетевая ошибка при попытке ${attempt}: ${networkError.message}`);
+                if (attempt < MAX_RETRIES) {
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    continue;
+                }
+                throw networkError; // Если попытки кончились, прокидываем ошибку дальше
+            }
+        }
+
 
         let responseData;
-        try {
-            if (!testPlanResponse.ok) {
-                const errorText = await testPlanResponse.text();
-                const errorData = JSON.parse(errorText); // Парсим текст ошибки как JSON
 
-                // Проверяем, есть ли ошибка jobsMapping
-                if (errorData.errors && errorData.errors.some(error => error.field === 'jobsMapping' && error.defaultMessage === 'test-case-bulk.no-job-assigned')) {
-                    logWarn('Обнаружена ошибка jobsMapping. Получаем и устанавливаем jobId...');
-
-                    // Получаем jobId для проекта
-                    const jobId = await getJobId(projectId);
-
-                    // Устанавливаем jobsMapping
-                    await setJobsMapping(projectId, treeId, jobId);
-
-                    // Повторно формируем запрос с jobsMapping
-                    requestBody = {
-                        ...requestBody,
-                        jobsMapping: [
-                            {
-                                toId: jobId,
-                            },
-                        ],
-                    };
-
-                    logInfo('Request body for test plan (with jobsMapping):', JSON.stringify(requestBody));
-
-                    // Повторно отправляем запрос на создание тест-плана
-                    testPlanResponse = await fetchWithAuth(testPlanUrl, {
-                        method: 'POST',
-                        headers: {
-                            ...authHeaders,
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(requestBody),
-                    });
-
-                    // Логируем повторный запрос
-                    logInfo(`Повторный запрос на ${testPlanUrl} с телом: ${JSON.stringify(requestBody)}`);
-                    await logResponse(testPlanResponse, testPlanUrl, requestBody);
-                } else if (errorData.errors && errorData.errors.some(error => error.field === 'selection' && error.defaultMessage === 'test-case-bulk.nothing-to-run')) {
-                    // Возвращаем точное сообщение для клиента
-                    return res.status(400).json({ error: 'На выбранных блоках отсутствуют тест-кейсы. Добавьте хотя бы один для возможности создания тест-плана.' });
-                } else {
-                    throw new Error(`Не удалось создать тест-план: ${testPlanResponse.status} - ${testPlanResponse.statusText}, Body: ${errorText}`);
-                }
+        // Обработка ошибок первого запроса
+        if (!testPlanResponse.ok) {
+            // Проверка на 504 Gateway Timeout
+            if (testPlanResponse.status === 504) {
+                throw new Error('Allure TestOps Timeout (504). Слишком много тестов в одном запросе. Попробуйте уменьшить объем выборки.');
             }
 
-            // Проверяем, что тело ответа не undefined
-            responseData = await testPlanResponse.json();
-            logInfo(`Полученные данные тест-плана: ${JSON.stringify(responseData)}`);
-        } catch (jsonError) {
-            throw new Error(`Не удалось разобрать ответ как JSON: ${jsonError.message}, Response Text: ${await testPlanResponse.text()}`);
+            let errorData = {};
+            try {
+                errorData = JSON.parse(responseText);
+            } catch (e) {
+                // Если не JSON (например, HTML от Nginx), оставляем errorData пустым
+                logWarn('Ответ об ошибке не является валидным JSON');
+            }
+
+            // Сценарий 1: Ошибка jobsMapping
+            if (errorData.errors && errorData.errors.some(error => error.field === 'jobsMapping' && error.defaultMessage === 'test-case-bulk.no-job-assigned')) {
+                logWarn('Обнаружена ошибка jobsMapping. Получаем и устанавливаем jobId...');
+
+                const jobId = await getJobId(projectId);
+                await setJobsMapping(projectId, treeId, jobId);
+
+                // Обновляем тело запроса
+                requestBody = {
+                    ...requestBody,
+                    jobsMapping: [{ toId: jobId }],
+                };
+
+                logInfo('Повторная отправка запроса с jobsMapping...');
+
+                // --- ПОВТОРНЫЙ ЗАПРОС ---
+                testPlanResponse = await fetchWithAuth(testPlanUrl, {
+                    method: 'POST',
+                    headers: { ...authHeaders, 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody),
+                });
+
+                // Снова читаем тело (это новый запрос, новый поток)
+                responseText = await testPlanResponse.text();
+                logInfo(`Ответ повторного запроса: Status ${testPlanResponse.status}`);
+
+                if (!testPlanResponse.ok) {
+                    // Проверка на 504 при повторе
+                    if (testPlanResponse.status === 504) {
+                        throw new Error('Allure TestOps Timeout (504) при повторном запросе.');
+                    }
+                    throw new Error(`Не удалось создать тест-план (повторно): ${testPlanResponse.status}, Body: ${responseText}`);
+                }
+
+            }
+            // Сценарий 2: Пустая выборка
+            else if (errorData.errors && errorData.errors.some(error => error.field === 'selection' && error.defaultMessage === 'test-case-bulk.nothing-to-run')) {
+                return res.status(400).json({ error: 'На выбранных блоках отсутствуют тест-кейсы. Добавьте хотя бы один для создания тест-плана.' });
+            }
+            // Сценарий 3: Прочие ошибки
+            else {
+                throw new Error(`Не удалось создать тест-план: ${testPlanResponse.status} - ${testPlanResponse.statusText}, Body: ${responseText}`);
+            }
         }
 
-        // Извлекаем только id из ответа
+        // Парсим успешный ответ (из уже прочитанного текста)
+        try {
+            responseData = JSON.parse(responseText);
+        } catch (jsonError) {
+            throw new Error(`Не удалось разобрать успешный ответ как JSON: ${jsonError.message}`);
+        }
+
         const launchId = responseData.id;
         if (!launchId) {
-            throw new Error('Поле id не найдено в ответе, данные: ' + JSON.stringify(responseData));
+            throw new Error('Поле id не найдено в ответе: ' + JSON.stringify(responseData));
         }
 
-        // Сохраняем связи Page -> компоненты, если они переданы
+        // Сохраняем связи Page -> компоненты
         if (pageDependencies && pageDependencies.length > 0) {
             try {
                 await savePageComponentDependencies(projectId, pageDependencies);
                 logInfo(`Сохранены связи Page -> компоненты для проекта ${projectId}`);
             } catch (depError) {
-                logWarn(`Ошибка при сохранении связей Page -> компоненты: ${depError.message}`);
-                // Не прерываем создание тест-плана, если сохранение связей не удалось
+                logWarn(`Ошибка при сохранении связей: ${depError.message}`);
             }
         }
 
-        logInfo(`Тест-план успешно создан для проекта ${projectId}, Launch ID: ${launchId}`);
-        res.status(200).json({ id: launchId }); // Возвращаем только id для клиента
+        logInfo(`Тест-план успешно создан, Launch ID: ${launchId}`);
+        res.status(200).json({ id: launchId });
+
     } catch (error) {
         const errorMessage = error.message || 'Неизвестная ошибка';
         const errorDetails = error.stack || '';
