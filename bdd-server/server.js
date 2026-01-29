@@ -89,11 +89,11 @@ async function ensureTableExists() {
             // Создаём индексы
             await db.raw('CREATE INDEX IF NOT EXISTS idx_generation_tasks_status ON generation_tasks(status)');
             await db.raw('CREATE INDEX IF NOT EXISTS idx_generation_tasks_created_at ON generation_tasks(created_at)');
-            
+
             console.log('[BDD Server] ✅ Таблица generation_tasks создана');
         } else {
             console.log('[BDD Server] ✅ Таблица generation_tasks уже существует');
-            
+
             // Проверяем и обновляем CHECK constraint для поддержки 'bdd_tests'
             try {
                 // Проверяем существование constraint
@@ -103,20 +103,20 @@ async function ensureTableExists() {
                     WHERE table_name = 'generation_tasks' 
                     AND constraint_name = 'generation_tasks_type_check'
                 `);
-                
+
                 if (constraintCheck.rows.length > 0) {
                     console.log('[BDD Server] 🔧 Обновляем CHECK constraint для поддержки bdd_tests...');
-                    
+
                     // Удаляем старый constraint
                     await db.raw('ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_type_check');
-                    
+
                     // Создаём новый constraint с поддержкой bdd_tests
                     await db.raw(`
                         ALTER TABLE generation_tasks 
                         ADD CONSTRAINT generation_tasks_type_check 
                         CHECK (type IN ('test_cases', 'test_model', 'bdd_tests'))
                     `);
-                    
+
                     console.log('[BDD Server] ✅ CHECK constraint обновлён для поддержки bdd_tests');
                 }
             } catch (constraintError) {
@@ -133,7 +133,7 @@ async function initDatabase() {
     try {
         // Поддерживаем конфигурацию как в tia-mapping-service: DATABASE_URL или отдельные параметры
         let connectionConfig;
-        
+
         if (process.env.DATABASE_URL) {
             connectionConfig = process.env.DATABASE_URL;
         } else if (process.env.DB_HOST || process.env.DB_USER) {
@@ -156,17 +156,17 @@ async function initDatabase() {
             connection: connectionConfig,
             pool: {
                 min: 1,
-                max: 5
+                max: 50
             }
         });
 
         // Проверяем подключение
         await db.raw('SELECT 1');
         console.log('[BDD Server] ✅ Подключение к БД установлено');
-        
+
         // Автоматически создаём таблицу если её нет
         await ensureTableExists();
-        
+
         useInMemoryStorage = false;
     } catch (error) {
         console.warn('[BDD Server] ⚠️ Не удалось подключиться к БД:', error.message);
@@ -185,7 +185,7 @@ const taskStorage = {
         }
         return await db('generation_tasks').insert(task);
     },
-    
+
     async update(id, updates) {
         if (useInMemoryStorage) {
             const task = inMemoryTasks.get(id);
@@ -197,7 +197,7 @@ const taskStorage = {
         }
         return await db('generation_tasks').where('id', id).update(updates);
     },
-    
+
     async findById(id) {
         if (useInMemoryStorage) {
             return inMemoryTasks.get(id) || null;
@@ -220,11 +220,11 @@ async function initVectorStore() {
 
         const pinecone = new Pinecone({ apiKey });
         const indexName = process.env.PINECONE_INDEX_NAME || 'gherkin-steps';
-        
+
         // Проверяем существование индекса
         const indexes = await pinecone.listIndexes();
         const indexExists = indexes.indexes?.some(idx => idx.name === indexName);
-        
+
         if (!indexExists) {
             console.log(`[BDD Server] Создаём индекс ${indexName}...`);
             await pinecone.createIndex({
@@ -274,14 +274,14 @@ function normalizeStep(stepText) {
 function extractStepsFromGherkin(gherkinText) {
     const steps = [];
     const lines = gherkinText.split('\n');
-    
+
     for (const line of lines) {
         const trimmed = line.trim();
         if (trimmed.match(/^(Given|When|Then|And|Но|И|Дано|Когда|Тогда)\s+/i)) {
             steps.push(trimmed);
         }
     }
-    
+
     return steps;
 }
 
@@ -293,14 +293,14 @@ async function findSimilarSteps(queryStep, limit = 3) {
         // Fallback: поиск в локальном хранилище
         const normalizedQuery = normalizeStep(queryStep);
         const similar = [];
-        
+
         for (const [storedStep, normalized] of localStepsStore.entries()) {
             const similarity = calculateSimilarity(normalizedQuery, normalized);
             if (similarity > 0.7) { // Порог схожести
                 similar.push({ step: storedStep, similarity });
             }
         }
-        
+
         return similar
             .sort((a, b) => b.similarity - a.similarity)
             .slice(0, limit)
@@ -400,7 +400,7 @@ async function initRequirementsVectorStore() {
  */
 async function extractDomainSchema(requirementsText, modelStructure, apiKey) {
     console.log('[BDD Server] 🏗️ Извлечение domain schema...');
-    
+
     const schemaPrompt = `
 Ты QA Automation Engineer. Извлеки из требований и структуры модели доменный словарь/контракт.
 
@@ -504,7 +504,7 @@ ${modelStructure ? `Структура модели (JSON):\n${JSON.stringify(mo
             console.log(`[BDD Server] ✅ Domain schema извлечен: ${schema.fields?.length || 0} полей, ${schema.endpoints?.length || 0} эндпоинтов`);
             return schema;
         }
-        
+
         throw new Error('Не удалось найти JSON в ответе');
     } catch (error) {
         console.warn('[BDD Server] ⚠️ Ошибка извлечения domain schema:', error.message);
@@ -516,7 +516,7 @@ ${modelStructure ? `Структура модели (JSON):\n${JSON.stringify(mo
             uiElements: [],
             businessRules: []
         };
-        
+
         // Если есть modelStructure, пытаемся извлечь базовые поля
         if (modelStructure && typeof modelStructure === 'object') {
             try {
@@ -543,7 +543,7 @@ ${modelStructure ? `Структура модели (JSON):\n${JSON.stringify(mo
                 console.warn('[BDD Server] ⚠️ Не удалось извлечь поля из modelStructure:', e.message);
             }
         }
-        
+
         return fallbackSchema;
     }
 }
@@ -559,7 +559,7 @@ async function indexRequirements(sections, apiKey) {
 
     try {
         console.log(`[BDD Server] 📚 Индексирование ${sections.length} секций требований в RAG...`);
-        
+
         const documents = sections.map((section) => ({
             pageContent: section.text || '',
             metadata: {
@@ -743,39 +743,39 @@ async function parseRequirements(requirementsText, apiKey) {
     let match;
     let matchCount = 0;
     const MAX_MATCHES = 100; // Защита от бесконечного цикла
-    
+
     // Находим все секции с ID (3.1.1, 3.1.2 и т.д.)
     try {
         while ((match = sectionPattern.exec(requirementsText)) !== null && matchCount < MAX_MATCHES) {
             matchCount++;
             const sectionId = match[1];
             const startPos = match.index;
-            
+
             // Сохраняем текущую позицию перед следующим поиском
             const savedLastIndex = sectionPattern.lastIndex;
-            
+
             // Ищем следующее совпадение
             const nextMatch = sectionPattern.exec(requirementsText);
             const endPos = nextMatch ? nextMatch.index : requirementsText.length;
-            
+
             // Восстанавливаем позицию для следующей итерации основного цикла
             sectionPattern.lastIndex = savedLastIndex;
-            
+
             const sectionText = requirementsText.substring(startPos, endPos).trim();
             if (sectionText.length > 0) {
                 sections.push({ id: sectionId, text: sectionText });
             }
         }
-        
+
         if (matchCount >= MAX_MATCHES) {
             console.warn(`[BDD Server] ⚠️ Достигнут лимит совпадений (${MAX_MATCHES}), останавливаем парсинг`);
         }
-        
+
         console.log(`[BDD Server] ✅ Найдено ${sections.length} секций по паттерну`);
     } catch (error) {
         console.error('[BDD Server] ❌ Ошибка при парсинге секций:', error.message);
     }
-    
+
     // Если не нашли секции по паттерну, разбиваем на абзацы
     if (sections.length === 0) {
         console.log('[BDD Server] 📄 Секции не найдены, разбиваем на абзацы...');
@@ -791,33 +791,33 @@ async function parseRequirements(requirementsText, apiKey) {
             sections.push({ id: 'req_1', text: requirementsText.substring(0, 5000) });
         }
     }
-    
+
     // Маркируем типы каждого фрагмента
     // Ограничиваем размер секций и количество для предотвращения переполнения памяти
     const MAX_SECTION_LENGTH = 2000; // Максимальная длина текста секции
     const MAX_SECTIONS = 50; // Максимальное количество секций
-    
+
     console.log(`[BDD Server] 📊 Всего найдено секций: ${sections.length}`);
-    
+
     const processedSections = sections
         .slice(0, MAX_SECTIONS) // Ограничиваем количество секций
         .map(s => ({
             id: s.id,
-            text: s.text.length > MAX_SECTION_LENGTH 
-                ? s.text.substring(0, MAX_SECTION_LENGTH) + '...' 
+            text: s.text.length > MAX_SECTION_LENGTH
+                ? s.text.substring(0, MAX_SECTION_LENGTH) + '...'
                 : s.text
         }));
-    
+
     console.log(`[BDD Server] 📝 Обработано секций: ${processedSections.length} (из ${sections.length}, ограничено для оптимизации)`);
     console.log(`[BDD Server] 🔧 Формируем промпт для AI...`);
-    
+
     // Ограничиваем общую длину промпта
     const promptSectionsText = processedSections.map(s => `ID: ${s.id}\n${s.text}`).join('\n\n---\n\n');
     const MAX_PROMPT_LENGTH = 50000; // Максимальная длина промпта
-    const truncatedSectionsText = promptSectionsText.length > MAX_PROMPT_LENGTH 
+    const truncatedSectionsText = promptSectionsText.length > MAX_PROMPT_LENGTH
         ? promptSectionsText.substring(0, MAX_PROMPT_LENGTH) + '\n\n... (текст обрезан из-за размера)'
         : promptSectionsText;
-    
+
     const parsePrompt = `
 Ты QA Automation Engineer. Проанализируй каждый фрагмент требований и определи его тип.
 
@@ -868,7 +868,7 @@ ${truncatedSectionsText}
         // Пытаемся найти JSON массив или объект
         const arrayMatch = content.match(/\[[\s\S]*\]/);
         const objectMatch = content.match(/\{[\s\S]*\}/);
-        
+
         if (arrayMatch) {
             parsedSections = JSON.parse(arrayMatch[0]);
         } else if (objectMatch) {
@@ -877,15 +877,15 @@ ${truncatedSectionsText}
         } else {
             throw new Error('JSON не найден в ответе');
         }
-        
+
         if (!Array.isArray(parsedSections) || parsedSections.length === 0) {
             throw new Error('Пустой массив или неверный формат');
         }
     } catch (e) {
         console.warn('[BDD Server] Ошибка парсинга JSON, используем исходные секции:', e.message);
-        parsedSections = sections.map(s => ({ 
-            id: s.id, 
-            requirement: s.text.substring(0, 200), 
+        parsedSections = sections.map(s => ({
+            id: s.id,
+            requirement: s.text.substring(0, 200),
             type: 'другое',
             element: 'Не определен',
             methods: [],
@@ -904,7 +904,7 @@ async function normalizeToRules(parsedSections, apiKey) {
     // Ограничиваем количество секций и размер данных для предотвращения переполнения памяти
     const MAX_SECTIONS_FOR_RULES = 30;
     const MAX_FIELD_LENGTH = 500;
-    
+
     const limitedSections = parsedSections.slice(0, MAX_SECTIONS_FOR_RULES).map(s => ({
         id: s.id,
         element: (s.element || '').substring(0, MAX_FIELD_LENGTH),
@@ -914,9 +914,9 @@ async function normalizeToRules(parsedSections, apiKey) {
         links: Array.isArray(s.links) ? s.links.slice(0, 10) : [],
         type: s.type || 'другое'
     }));
-    
+
     console.log(`[BDD Server] 📋 Обрабатываем ${limitedSections.length} секций для нормализации в правила (из ${parsedSections.length})`);
-    
+
     const rulesPrompt = `
 Ты QA Automation Engineer. Извлеки из каждого фрагмента требований список независимых правил поведения.
 
@@ -986,7 +986,7 @@ ${JSON.stringify(limitedSections, null, 2)}
         // Пытаемся найти JSON массив или объект
         const arrayMatch = content.match(/\[[\s\S]*\]/);
         const objectMatch = content.match(/\{[\s\S]*\}/);
-        
+
         if (arrayMatch) {
             rules = JSON.parse(arrayMatch[0]);
         } else if (objectMatch) {
@@ -995,11 +995,11 @@ ${JSON.stringify(limitedSections, null, 2)}
         } else {
             throw new Error('JSON не найден в ответе');
         }
-        
+
         if (!Array.isArray(rules) || rules.length === 0) {
             throw new Error('Пустой массив правил или неверный формат');
         }
-        
+
         // Постобработка и нормализация правил
         rules = rules.map((rule, idx) => {
             // Обеспечиваем наличие обязательных полей
@@ -1011,30 +1011,30 @@ ${JSON.stringify(limitedSections, null, 2)}
                     /все\s+проверки?\s+пройден/i,
                     /готов\s+к\s+работе/i
                 ];
-                
-                const hasVague = vaguePatterns.some(pattern => 
+
+                const hasVague = vaguePatterns.some(pattern =>
                     pattern.test(rule.rule || '') || pattern.test(rule.precondition || '')
                 );
-                
+
                 if (hasVague) {
                     console.warn(`[BDD Server] ⚠️ Правило ${idx + 1} (${rule.requirementId}) содержит расплывчатые формулировки, требуется уточнение`);
                 }
-                
+
                 // Устанавливаем пустой массив, если нет условий
                 rule.conditions = rule.conditions || [];
             }
-            
+
             if (!rule.triggers || !Array.isArray(rule.triggers) || rule.triggers.length === 0) {
                 rule.triggers = rule.triggers || [];
             }
-            
+
             // Нормализуем правило: убираем расплывчатые формулировки
             const vagueReplacements = [
                 { pattern: /выполнены?\s+условия?\s+отображения/i, replacement: 'конкретное условие отображения' },
                 { pattern: /система\s+в\s+нужном\s+состоянии/i, replacement: 'конкретное состояние системы' },
                 { pattern: /все\s+проверки?\s+пройден/i, replacement: 'конкретные проверки пройдены' }
             ];
-            
+
             if (rule.rule) {
                 vagueReplacements.forEach(({ pattern, replacement }) => {
                     if (pattern.test(rule.rule)) {
@@ -1042,10 +1042,10 @@ ${JSON.stringify(limitedSections, null, 2)}
                     }
                 });
             }
-            
+
             return rule;
         });
-        
+
         console.log(`[BDD Server] ✅ Правила нормализованы: ${rules.length} правил обработано`);
     } catch (e) {
         console.warn('[BDD Server] Ошибка парсинга правил, создаем из секций:', e.message);
@@ -1094,7 +1094,7 @@ function validateGherkinSyntax(gherkinText) {
  */
 function validateDomainCompliance(gherkinText, domainSchema) {
     console.log('[BDD Server] 🏗️ Начинаем доменную проверку соответствия шагов domain schema...');
-    
+
     if (!domainSchema || (!domainSchema.fields?.length && !domainSchema.endpoints?.length && !domainSchema.uiElements?.length)) {
         // Если schema пустой, пропускаем проверку
         console.log('[BDD Server] ⚠️ Domain schema пуст, проверка пропущена');
@@ -1106,10 +1106,10 @@ function validateDomainCompliance(gherkinText, domainSchema) {
     }
 
     console.log(`[BDD Server] 📊 Domain schema содержит: ${domainSchema.fields?.length || 0} полей, ${domainSchema.endpoints?.length || 0} эндпоинтов, ${domainSchema.uiElements?.length || 0} UI элементов`);
-    
+
     const issues = [];
     let stepsChecked = 0;
-    
+
     // Попытка использовать AST Gherkin для более точной проверки
     let gherkinAST = null;
     try {
@@ -1118,17 +1118,17 @@ function validateDomainCompliance(gherkinText, domainSchema) {
     } catch (parseError) {
         console.warn('[BDD Server] ⚠️ Не удалось распарсить Gherkin для AST валидации, используем текстовый анализ:', parseError.message);
     }
-    
+
     // Нормализуем все разрешенные сущности
     const allFields = new Set((domainSchema.fields || []).map(f => f.name.toLowerCase().trim()));
     const allFieldNames = new Set((domainSchema.fields || []).map(f => {
         const parts = f.name.split('.');
         return parts[parts.length - 1].toLowerCase(); // Последняя часть (например, "dealMode" из "deal.dealMode")
     }));
-    
+
     const allEndpoints = new Set((domainSchema.endpoints || []).map(e => e.path.toLowerCase().trim()));
     const allEndpointMethods = new Map((domainSchema.endpoints || []).map(e => [e.path.toLowerCase().trim(), e.method]));
-    
+
     const allCodes = new Set((domainSchema.codes || []).map(c => String(c).toLowerCase().trim()));
     const allUiElements = new Set((domainSchema.uiElements || []).map(u => {
         if (typeof u === 'object' && u.name) {
@@ -1136,7 +1136,7 @@ function validateDomainCompliance(gherkinText, domainSchema) {
         }
         return typeof u === 'string' ? u.toLowerCase().trim() : String(u);
     }));
-    
+
     // Извлекаем все упоминания кнопок, полей, страниц из UI элементов
     const uiKeywords = new Set();
     allUiElements.forEach(ui => {
@@ -1164,7 +1164,7 @@ function validateDomainCompliance(gherkinText, domainSchema) {
         allUiElements,
         uiKeywords
     };
-    
+
     // Если AST доступен, используем его для более точной проверки
     if (gherkinAST && gherkinAST.feature) {
         try {
@@ -1174,12 +1174,12 @@ function validateDomainCompliance(gherkinText, domainSchema) {
                 if (child.scenario) {
                     const scenario = child.scenario;
                     const steps = scenario.steps || [];
-                    
+
                     steps.forEach((step) => {
                         const stepText = step.text || '';
                         const stepLocation = step.location?.line || 0;
                         const lowerStepText = stepText.toLowerCase();
-                        
+
                         // Проверяем шаг через AST
                         stepsChecked++;
                         validateStepFromAST(stepText, lowerStepText, stepLocation, domainSchema, issues, validationData);
@@ -1190,22 +1190,22 @@ function validateDomainCompliance(gherkinText, domainSchema) {
             console.warn('[BDD Server] ⚠️ Ошибка при работе с AST, переходим на текстовый анализ:', astError.message);
         }
     }
-    
+
     // Дополнительная проверка через текстовый анализ (fallback и дополнение)
     const lines = gherkinText.split('\n');
-    
+
     lines.forEach((line, lineNum) => {
         const trimmedLine = line.trim();
         if (!trimmedLine || trimmedLine.startsWith('#') || trimmedLine.startsWith('@')) {
             return; // Пропускаем комментарии и теги
         }
-        
+
         // Проверяем только шаги (Given/When/Then/И/Дано/Когда/Тогда)
         const isStep = /^(given|when|then|and|но|и|дано|когда|тогда)\s+/i.test(trimmedLine);
         if (!isStep) return;
-        
+
         const lowerLine = trimmedLine.toLowerCase();
-        
+
         // Вызываем функцию валидации шага
         stepsChecked++;
         validateStepFromAST(trimmedLine, lowerLine, lineNum + 1, domainSchema, issues, validationData);
@@ -1220,7 +1220,7 @@ function validateDomainCompliance(gherkinText, domainSchema) {
         compliant: issues.length === 0,
         issues: issues,
         stepsChecked: stepsChecked,
-        summary: issues.length === 0 
+        summary: issues.length === 0
             ? `Все сущности соответствуют domain schema (проверено ${stepsChecked} шагов)`
             : `Найдено ${issues.length} нарушений domain schema из ${stepsChecked} проверенных шагов: ${issues.map(i => i.type).filter((v, i, a) => a.indexOf(v) === i).join(', ')}`
     };
@@ -1237,26 +1237,26 @@ function validateStepFromAST(stepText, lowerStepText, lineNum, domainSchema, iss
     const allCodes = validationData.allCodes;
     const allUiElements = validationData.allUiElements;
     const uiKeywords = validationData.uiKeywords;
-    
+
     // 1. Проверка полей (формат: object.field или просто field)
     const fieldPatterns = [
         /\b([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)\b/g, // object.field
         /(?:поле|field|параметр)\s+['"]([^'"]+)['"]/gi, // "поле 'fieldName'"
     ];
-    
+
     fieldPatterns.forEach(pattern => {
         let match;
         while ((match = pattern.exec(lowerStepText)) !== null) {
             const field = match[1] || match[0];
             const normalizedField = field.toLowerCase().trim();
             const fieldNameOnly = normalizedField.split('.').pop();
-            
+
             if (!allFields.has(normalizedField) && !allFieldNames.has(fieldNameOnly)) {
                 // Проверяем, не является ли это частью разрешенного поля
-                const isPartOfAllowedField = Array.from(allFields).some(f => 
+                const isPartOfAllowedField = Array.from(allFields).some(f =>
                     f.includes(fieldNameOnly) || normalizedField.includes(f.split('.').pop())
                 );
-                
+
                 if (!isPartOfAllowedField) {
                     issues.push({
                         type: 'unknown_field',
@@ -1268,22 +1268,22 @@ function validateStepFromAST(stepText, lowerStepText, lineNum, domainSchema, iss
             }
         }
     });
-    
+
     // 2. Проверка эндпоинтов (форматы: "/api/path", "/rest/path", "endpoint '/api/path'")
     const endpointPatterns = [
         /['"](?:\/api|\/rest|\/v\d+)[^'"]+['"]/gi, // '/api/path' или "/rest/path"
         /(?:эндпоинт|endpoint|метод|method)\s+['"]([^'"]+)['"]/gi,
         /(?:GET|POST|PUT|DELETE|PATCH)\s+(['"][^'"]+['"])/gi
     ];
-    
+
     endpointPatterns.forEach(pattern => {
         let match;
         while ((match = pattern.exec(lowerStepText)) !== null) {
             const endpoint = (match[1] || match[0]).replace(/['"]/g, '').toLowerCase().trim();
-            const isAllowed = Array.from(allEndpoints).some(allowedEp => 
+            const isAllowed = Array.from(allEndpoints).some(allowedEp =>
                 endpoint.includes(allowedEp) || allowedEp.includes(endpoint)
             );
-            
+
             if (!isAllowed && endpoint.length > 3) {
                 issues.push({
                     type: 'unknown_endpoint',
@@ -1294,7 +1294,7 @@ function validateStepFromAST(stepText, lowerStepText, lineNum, domainSchema, iss
             }
         }
     });
-    
+
     // 3. Проверка кодов/значений (числовые коды)
     const codeMatches = lowerStepText.match(/\b(\d{4,6})\b/g); // 4-6 цифр подряд (коды)
     if (codeMatches) {
@@ -1309,7 +1309,7 @@ function validateStepFromAST(stepText, lowerStepText, lineNum, domainSchema, iss
             }
         });
     }
-    
+
     // 4. Проверка UI элементов (кнопки, поля, страницы)
     const uiPatterns = [
         /(?:кнопка|button)\s+['"]([^'"]+)['"]/gi,
@@ -1318,18 +1318,18 @@ function validateStepFromAST(stepText, lowerStepText, lineNum, domainSchema, iss
         /нажимаю\s+(?:кнопку|на)\s+['"]([^'"]+)['"]/gi,
         /ввожу\s+(?:в|в поле)\s+['"]([^'"]+)['"]/gi,
     ];
-    
+
     uiPatterns.forEach(pattern => {
         let match;
         while ((match = pattern.exec(lowerStepText)) !== null) {
             const uiElement = match[1].toLowerCase().trim();
-            const isAllowed = Array.from(uiKeywords).some(keyword => 
+            const isAllowed = Array.from(uiKeywords).some(keyword =>
                 keyword.includes(uiElement) || uiElement.includes(keyword)
             ) || Array.from(allUiElements).some(ui => {
                 const uiStr = typeof ui === 'string' ? ui : (ui.name || '');
                 return uiStr.includes(uiElement) || uiElement.includes(uiStr.split(/['"]/).pop()?.toLowerCase() || '');
             });
-            
+
             if (!isAllowed && allUiElements.size > 0) {
                 issues.push({
                     type: 'unknown_ui_element',
@@ -1349,7 +1349,7 @@ function validateStepFromAST(stepText, lowerStepText, lineNum, domainSchema, iss
 async function validateWithLLM(gherkinText, rules, requirements, domainSchema, apiKey) {
     console.log('[BDD Server] 🤖 LLM self-check: Запускаем второй проход модели для проверки соответствия сценариев правилам/требованиям...');
     console.log(`[BDD Server] 📊 Проверяем ${rules.length} правил против сгенерированных сценариев (${gherkinText.length} символов)`);
-    
+
     // Формируем правила с контекстом для проверки (включая conditions и triggers)
     const rulesForValidation = rules.slice(0, 15).map((r, idx) => ({
         ruleId: `RULE-${idx + 1}`,
@@ -1361,7 +1361,7 @@ async function validateWithLLM(gherkinText, rules, requirements, domainSchema, a
         triggers: r.triggers || [],
         type: r.type
     }));
-    
+
     const validationPrompt = `
 Ты QA Automation Code Reviewer. Проверь сгенерированные BDD сценарии на соответствие правилам, требованиям и domain schema.
 
@@ -1465,7 +1465,7 @@ ${gherkinText.substring(0, 12000)}
             console.log(`[BDD Server] ✅ LLM валидация завершена: ${validation.valid ? 'валидно' : `${validation.issues?.length || 0} проблем найдено`}`);
             return validation;
         }
-        
+
         return { valid: true, issues: [], summary: 'Не удалось распарсить результат валидации' };
     } catch (error) {
         console.error('[BDD Server] ❌ Ошибка LLM валидации:', error.message);
@@ -1481,7 +1481,7 @@ async function generateGherkinFromRules(rules, domainSchema, relevantRequirement
     // Ограничиваем количество правил для предотвращения переполнения памяти
     const MAX_RULES = 30;
     const MAX_FIELD_LENGTH = 300;
-    
+
     const limitedRules = rules.slice(0, MAX_RULES).map(r => ({
         requirementId: r.requirementId,
         rule: (r.rule || '').substring(0, MAX_FIELD_LENGTH),
@@ -1489,12 +1489,12 @@ async function generateGherkinFromRules(rules, domainSchema, relevantRequirement
         expectedResult: (r.expectedResult || '').substring(0, MAX_FIELD_LENGTH),
         type: r.type || 'другое'
     }));
-    
+
     console.log(`[BDD Server] 📝 Генерируем Gherkin для ${limitedRules.length} правил (из ${rules.length})`);
-    
+
     // Ищем похожие шаги для каждого правила
     const existingStepsContext = [];
-    
+
     for (const rule of limitedRules.slice(0, 15)) { // Ограничиваем для производительности
         const ruleText = `${rule.rule} ${rule.precondition} ${rule.expectedResult}`;
         const similar = await findSimilarSteps(ruleText, 3);
@@ -1510,10 +1510,10 @@ DOMAIN SCHEMA (РАЗРЕШЕННЫЕ СУЩНОСТИ - ИСПОЛЬЗУЙ ТО
 ${(domainSchema.fields || []).length > 0 ? `
 Поля/Параметры:
 ${(domainSchema.fields || []).slice(0, 30).map(f => {
-    const allowedValues = f.allowedValues ? ` (допустимые значения: ${f.allowedValues.join(', ')})` : '';
-    const validation = f.validation ? ` (валидация: ${f.validation})` : '';
-    return `  - ${f.name} (${f.type || 'string'})${allowedValues}${validation}`;
-}).join('\n')}
+        const allowedValues = f.allowedValues ? ` (допустимые значения: ${f.allowedValues.join(', ')})` : '';
+        const validation = f.validation ? ` (валидация: ${f.validation})` : '';
+        return `  - ${f.name} (${f.type || 'string'})${allowedValues}${validation}`;
+    }).join('\n')}
 ` : ''}
 ${(domainSchema.endpoints || []).length > 0 ? `
 API Эндпоинты:
@@ -1522,20 +1522,20 @@ ${(domainSchema.endpoints || []).slice(0, 20).map(e => `  - ${e.method || 'GET'}
 ${(domainSchema.codes || []).length > 0 ? `
 Коды операций/Значения:
 ${(domainSchema.codes || []).slice(0, 30).map(c => {
-    if (typeof c === 'object' && c.value) {
-        return `  - ${c.value}${c.description ? ` (${c.description})` : ''}`;
-    }
-    return `  - ${c}`;
-}).join('\n')}
+        if (typeof c === 'object' && c.value) {
+            return `  - ${c.value}${c.description ? ` (${c.description})` : ''}`;
+        }
+        return `  - ${c}`;
+    }).join('\n')}
 ` : ''}
 ${(domainSchema.uiElements || []).length > 0 ? `
 UI Элементы:
 ${(domainSchema.uiElements || []).slice(0, 20).map(ui => {
-    if (typeof ui === 'object' && ui.name) {
-        return `  - ${ui.type || 'элемент'} '${ui.name}'${ui.page ? ` на странице '${ui.page}'` : ''}${ui.states ? ` (состояния: ${ui.states.join(', ')})` : ''}`;
-    }
-    return `  - ${ui}`;
-}).join('\n')}
+        if (typeof ui === 'object' && ui.name) {
+            return `  - ${ui.type || 'элемент'} '${ui.name}'${ui.page ? ` на странице '${ui.page}'` : ''}${ui.states ? ` (состояния: ${ui.states.join(', ')})` : ''}`;
+        }
+        return `  - ${ui}`;
+    }).join('\n')}
 ` : ''}
 ${(domainSchema.businessRules || []).length > 0 ? `
 Бизнес-правила:
@@ -1581,8 +1581,8 @@ ${uniqueExistingSteps.length > 0 ? uniqueExistingSteps.map(s => `- ${s}`).join('
 
 ТРЕБОВАНИЯ К ФОРМАТУ:
 ${isTestCaseInput
-    ? '1. Для каждого правила (тест-кейса) создай ровно 1 Scenario. Не придумывай новые сценарии и не объединяй разные тест-кейсы.'
-    : '1. Для каждого правила создай 1-3 Gherkin сценария'}
+            ? '1. Для каждого правила (тест-кейса) создай ровно 1 Scenario. Не придумывай новые сценарии и не объединяй разные тест-кейсы.'
+            : '1. Для каждого правила создай 1-3 Gherkin сценария'}
 
 2. **ЯВНЫЙ ШАГ When (ОБЯЗАТЕЛЬНО!)**:
    - ВСЕГДА указывай явное действие в шаге "Когда"
@@ -1755,13 +1755,13 @@ function ensureTraceabilityTags(gherkinText, rules) {
     if (!gherkinText || !rules || rules.length === 0) {
         return gherkinText; // Не можем добавить теги без правил
     }
-    
+
     const lines = gherkinText.split('\n');
     const result = [];
     let featureRequirementId = null;
     let ruleIndex = 0;
     let scenarioIndex = 0;
-    
+
     // Создаем карту requirementId -> rules для быстрого поиска
     const reqIdToRules = new Map();
     rules.forEach((rule, idx) => {
@@ -1771,7 +1771,7 @@ function ensureTraceabilityTags(gherkinText, rules) {
         }
         reqIdToRules.get(reqId).push({ ...rule, ruleIndex: idx + 1 });
     });
-    
+
     // Собираем теги перед Feature
     const featureTagLines = [];
     let i = 0;
@@ -1779,12 +1779,12 @@ function ensureTraceabilityTags(gherkinText, rules) {
         featureTagLines.push(lines[i]);
         i++;
     }
-    
+
     // Обрабатываем Feature
     if (i < lines.length && lines[i].trim().toLowerCase().startsWith('feature:')) {
         const featureLine = lines[i];
         i++;
-        
+
         // Извлекаем requirementId из тегов Feature
         const reqTag = featureTagLines.find(l => l.trim().startsWith('@REQ-'));
         if (reqTag) {
@@ -1793,7 +1793,7 @@ function ensureTraceabilityTags(gherkinText, rules) {
             // Берем первый requirementId из правил
             featureRequirementId = rules[0].requirementId || 'REQ-1';
         }
-        
+
         // Добавляем теги Feature (если нет @REQ-, добавляем)
         featureTagLines.forEach(tag => result.push(tag));
         if (!reqTag && featureRequirementId) {
@@ -1808,12 +1808,12 @@ function ensureTraceabilityTags(gherkinText, rules) {
             i++;
         }
     }
-    
+
     // Обрабатываем остальные строки (Scenarios)
     while (i < lines.length) {
         const line = lines[i];
         const trimmed = line.trim();
-        
+
         // Определяем Scenario
         if (trimmed.toLowerCase().match(/^(scenario|scenario outline):/i)) {
             // Собираем теги перед Scenario из исходного текста
@@ -1823,7 +1823,7 @@ function ensureTraceabilityTags(gherkinText, rules) {
                 scenarioTagLines.unshift(lines[k]);
                 k--;
             }
-            
+
             // Удаляем старые теги из результата - находим все теги, которые мы уже добавили до этого момента
             // Удаляем все теги, которые находятся после последней не-теговой строки
             let lastNonTagIndex = result.length - 1;
@@ -1834,7 +1834,7 @@ function ensureTraceabilityTags(gherkinText, rules) {
             if (lastNonTagIndex < result.length - 1) {
                 result.splice(lastNonTagIndex + 1);
             }
-            
+
             // Извлекаем requirementId и ruleNum из тегов исходного текста
             let scenarioReqId = featureRequirementId;
             const scenarioReqTags = scenarioTagLines.filter(l => l.trim().startsWith('@REQ-'));
@@ -1847,7 +1847,7 @@ function ensureTraceabilityTags(gherkinText, rules) {
                     scenarioReqId = reqMatch[1];
                 }
             }
-            
+
             let ruleNum = null;
             const ruleTags = scenarioTagLines.filter(l => {
                 const tag = l.trim();
@@ -1870,14 +1870,14 @@ function ensureTraceabilityTags(gherkinText, rules) {
                     ruleNum = String(scenarioIndex);
                 }
             }
-            
+
             // Сохраняем другие теги (не @REQ- и не @RULE-)
             const otherTags = scenarioTagLines.filter(l => {
                 const tag = l.trim();
                 // Проверяем, что строка не содержит @REQ- или @RULE-
                 return !tag.includes('@REQ-') && !tag.includes('@RULE-');
             });
-            
+
             // Добавляем: другие теги, затем обязательные @REQ- и @RULE- теги, затем строку Scenario
             otherTags.forEach(tag => result.push(tag));
             if (scenarioReqId) {
@@ -1891,10 +1891,10 @@ function ensureTraceabilityTags(gherkinText, rules) {
         } else {
             result.push(line);
         }
-        
+
         i++;
     }
-    
+
     return result.join('\n');
 }
 
@@ -2033,13 +2033,13 @@ async function generateBDDTestsAsync(taskId, inputData) {
 
         // ВАЛИДАЦИЯ (85-95%)
         console.log('[BDD Server] ✅ Валидация сгенерированных сценариев...');
-        
+
         let validatedFeatureContent = featureContent;
-        
+
         // 1. Синтаксическая валидация Gherkin
         let syntaxValidation = validateGherkinSyntax(validatedFeatureContent);
         console.log(`[BDD Server] 📋 Синтаксическая валидация: ${syntaxValidation.valid ? '✅ валидно' : `❌ ${syntaxValidation.errors.length} ошибок`}`);
-        
+
         // Автофикс синтаксических ошибок (если есть)
         if (!syntaxValidation.valid && syntaxValidation.errors.length > 0) {
             console.log('[BDD Server] 🔧 Попытка автофикса синтаксических ошибок...');
@@ -2069,7 +2069,7 @@ ${validatedFeatureContent.substring(0, 6000)}
                     .replace(/```gherkin\n?/g, '')
                     .replace(/```\n?/g, '')
                     .trim();
-                
+
                 // Проверяем исправленный код
                 syntaxValidation = validateGherkinSyntax(fixedContent);
                 if (syntaxValidation.valid) {
@@ -2084,7 +2084,7 @@ ${validatedFeatureContent.substring(0, 6000)}
                 console.error('[BDD Server] ❌ Ошибка автофикса:', fixError.message);
             }
         }
-        
+
         // 2. Доменная проверка (явная проверка каждого шага на соответствие domain schema)
         // КРИТИЧНО: Эта функция реально пробегается по каждому шагу и проверяет, что используются только поля/методы из schema
         console.log('[BDD Server] 🏗️ Запускаем доменную проверку: проверяем каждый шаг на соответствие domain schema...');
@@ -2101,7 +2101,7 @@ ${validatedFeatureContent.substring(0, 6000)}
                 console.log(`[BDD Server]   Резюме: ${domainValidation.summary}`);
             }
         }
-        
+
         // 3. LLM self-check (второй проход модели для проверки соответствия)
         // КРИТИЧНО: Это отдельный запрос к LLM для проверки соответствия сценариев правилам/требованиям
         console.log('[BDD Server] 🤖 Запускаем LLM self-check: второй проход модели для проверки соответствия...');
@@ -2286,7 +2286,7 @@ app.get('/api/bdd/steps', async (req, res) => {
     await initDatabase();
     await initVectorStore();
     await initRequirementsVectorStore(); // Инициализируем RAG для требований
-    
+
     app.listen(PORT, () => {
         console.log(`[BDD Server] ✅ Сервер запущен на http://localhost:${PORT}`);
         console.log(`[BDD Server] База данных: ${useInMemoryStorage ? '❌ In-memory (данные не сохраняются)' : '✅ PostgreSQL'}`);

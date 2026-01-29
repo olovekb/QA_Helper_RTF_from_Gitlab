@@ -17,8 +17,7 @@ const CONFLUENCE_BASE_URL = process.env.CONFLUENCE_BASE || 'https://confluence.a
  * @param {Object} opts - Опции
  * @returns {Promise<Object>} - Объединенный результат
  */
-async function processLargeOpenRouterRequest (messages, opts, apiKey)
-{
+async function processLargeOpenRouterRequest(messages, opts, apiKey) {
     const { model, models, temperature, max_tokens, response_format } = opts;
 
     // Находим самое большое сообщение (обычно user content)
@@ -26,8 +25,7 @@ async function processLargeOpenRouterRequest (messages, opts, apiKey)
     let largestIndex = -1;
     let maxSize = 0;
 
-    messages.forEach((msg, index) =>
-    {
+    messages.forEach((msg, index) => {
         const size = JSON.stringify(msg.content).length;
         if (size > maxSize) {
             maxSize = size;
@@ -116,8 +114,7 @@ async function processLargeOpenRouterRequest (messages, opts, apiKey)
  * @param {Object} opts - Опции
  * @returns {Promise<Object>} - Результат API
  */
-async function makeDirectOpenRouterCall (messages, apiKey, opts)
-{
+async function makeDirectOpenRouterCall(messages, apiKey, opts) {
     const { model, models, temperature, max_tokens, response_format } = opts;
 
     const modelQueue = Array.isArray(models) && models.length
@@ -151,43 +148,42 @@ async function makeDirectOpenRouterCall (messages, apiKey, opts)
     return await response.json();
 }
 
-import
-{
-    getAllureDefectById,
-    getSharedStepsList,
-    getStepsForDefect,
-    analyzeBugWithAI,
-    getAllureDefects,
-    linkIssueToAllureDefect,
-    getAllTestCases,
-    getTestCaseOverview,
-    getTestCaseExpectedResult,
-    getTestCaseLayer,
-    getCaseIssue,
-    getCaseTags,
-    getTestCasePrecondition,
-    getTestCaseStatus,
-    getTestCaseSteps,
-    getTestCaseCustomFields,
-    createTestCaseAllure,
-    setTestCaseCustomFieldValues,
-    updateTestCase,
-    deleteTestCase,
-    addStepToTestCase,
-    addExpectedResultToStep,
-    linkIssueToTestCase,
-    setTestCaseLayer,
-    suggestTestLayers,
-    getProjectCustomFieldSchema,
-    fetchWithAuth,
-    suggestTags,
-    createTag,
-    addParameterToTestCase,
-    createTestCaseExamples,
-    generatePairwiseExamples,
-    createSharedStep,
-    addStepToSharedStep,
-    getSharedStepDetails
+import {
+getAllureDefectById,
+getSharedStepsList,
+getStepsForDefect,
+analyzeBugWithAI,
+getAllureDefects,
+linkIssueToAllureDefect,
+getAllTestCases,
+getTestCaseOverview,
+getTestCaseExpectedResult,
+getTestCaseLayer,
+getCaseIssue,
+getCaseTags,
+getTestCasePrecondition,
+getTestCaseStatus,
+getTestCaseSteps,
+getTestCaseCustomFields,
+createTestCaseAllure,
+setTestCaseCustomFieldValues,
+updateTestCase,
+deleteTestCase,
+addStepToTestCase,
+addExpectedResultToStep,
+linkIssueToTestCase,
+setTestCaseLayer,
+suggestTestLayers,
+getProjectCustomFieldSchema,
+fetchWithAuth,
+suggestTags,
+createTag,
+addParameterToTestCase,
+createTestCaseExamples,
+generatePairwiseExamples,
+createSharedStep,
+addStepToSharedStep,
+getSharedStepDetails
 } from './http-service.mjs';
 import { spinningLoader } from './spinning-loader.mjs';
 import pLimit from 'p-limit';
@@ -215,35 +211,31 @@ import RULES from './config/rules/core-rules.js';
 import { validateAndFixTestCases, validateE2ECoverage } from './post-processors/validate-and-fix.js';
 import { aggregateToParametrized } from './post-processors/aggregate-to-parametrized.js';
 import { validateUntilClean } from './agents/post-generation-validator.mjs';
-import
-{
-    savePerfectExamples,
-    getPerfectExamples,
-    getAllPerfectExamplesByLayer,
-    getPerfectExamplesStats,
-    deletePerfectExample
+import {
+savePerfectExamples,
+getPerfectExamples,
+getAllPerfectExamplesByLayer,
+getPerfectExamplesStats,
+deletePerfectExample
 } from './perfect-examples.mjs';
-import
-{
-    getConversationContext,
-    createConversationContext,
-    addMessageToContext,
-    addErrorToContext,
-    clearErrors,
-    saveStateSnapshot,
-    rollbackToSnapshot,
-    getStateSnapshots,
-    deleteConversationContext
+import {
+getConversationContext,
+createConversationContext,
+addMessageToContext,
+addErrorToContext,
+clearErrors,
+saveStateSnapshot,
+rollbackToSnapshot,
+getStateSnapshots,
+deleteConversationContext
 } from './conversation-context.mjs';
-import
-{
-    buildSystemPrompt,
-    addPerfectExamplesAsFewShot
+import {
+buildSystemPrompt,
+addPerfectExamplesAsFewShot
 } from './prompt-composer.mjs';
-import
-{
-    runTestCaseLLMWithContext,
-    validateFixedCases
+import {
+runTestCaseLLMWithContext,
+validateFixedCases
 } from './llm-with-context.mjs';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -407,8 +399,7 @@ try {
  * @param {string} fullText - Полный текст требований
  * @returns {Promise<Object>} Глобальный контекст с ролями, сущностями, правилами
  */
-async function extractGlobalContext (fullText)
-{
+async function extractGlobalContext(fullText) {
     if (!fullText || typeof fullText !== 'string' || !fullText.trim()) {
         console.warn('[extractGlobalContext] Пустой текст, возвращаю пустой контекст');
         return {
@@ -528,8 +519,7 @@ ${fullText.substring(0, 300000)}${fullText.length > 100000 ? '\n\n... (текс�
 /**
  * Возвращает пустой глобальный контекст
  */
-function getEmptyGlobalContext ()
-{
+function getEmptyGlobalContext() {
     return {
         roles: [],
         entities: [],
@@ -538,8 +528,7 @@ function getEmptyGlobalContext ()
     };
 }
 
-function buildModelSystemPrompt (globalContext = null)
-{
+function buildModelSystemPrompt(globalContext = null) {
     const globalContextSection = globalContext && (
         globalContext.roles.length > 0 ||
         globalContext.entities.length > 0 ||
@@ -743,8 +732,7 @@ Scenario 2: "Нажать кнопку Отправить (Ошибка вали
 }
 
 
-function buildRefineModelSystemPrompt ()
-{
+function buildRefineModelSystemPrompt() {
     return `
 Твоя роль: Code Reviewer & JSON Patcher.
 Твоя задача: Внести ТОЧЕЧНЫЕ изменения в существующую тестовую модель (JSON) на основе Code Review замечаний.
@@ -780,8 +768,7 @@ function buildRefineModelSystemPrompt ()
 }
 
 
-function buildRefineModelUserPrompt ({ oldModel, reviewNotes, issues, requirements })
-{
+function buildRefineModelUserPrompt({ oldModel, reviewNotes, issues, requirements }) {
     const issuesList = issues && issues.length > 0
         ? issues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')
         : 'Не указаны';
@@ -837,15 +824,14 @@ ${requirementsPreview}
 `.trim();
 }
 
-function buildModelUserPrompt ({
+function buildModelUserPrompt({
     reqChunk,
     chunkIdx,
     totalChunks,
     previousContext,
     logicSection,
     interactiveInstructionBlock
-})
-{
+}) {
     const chunkNotice = totalChunks > 1
         ? `ВАЖНО: Это ЧАСТЬ ${chunkIdx + 1} из ${totalChunks} большого документа.`
         : 'Это полный текст документа.';
@@ -856,8 +842,7 @@ function buildModelUserPrompt ({
     Уже сгенерировано: ${previousContext.totalScenarios} сценариев.
 
     Features:
-    ${previousContext.features.map(f =>
-        {
+    ${previousContext.features.map(f => {
             const storySummary = f.stories.map(s =>
                 `  - Story "${s.text}" (${s.scenarioCount} сценариев): [${s.scenarioSummaries.map(sc => sc.text).join('; ')}]`
             ).join('\n');
@@ -923,8 +908,7 @@ ${interactiveInstructionBlock || ''}
 /**
  * Удаляет дубли Scenarios и Stories после слияния всех чанков.
  */
-function deduplicateModel (model)
-{
+function deduplicateModel(model) {
     const deduped = [];
 
     for (const feature of model) {
@@ -1124,8 +1108,7 @@ app.use(compression({
     threshold: 1024, // Сжимать файлы больше 1KB
     level: 6, // Уровень сжатия (1-9, 6 оптимальный)
     memLevel: 8, // Использование памяти
-    filter: (req, res) =>
-    {
+    filter: (req, res) => {
         // Сжимаем только JSON ответы
         if (req.path.includes('/api/') && res.get('Content-Type')?.includes('application/json')) {
             return compression.filter(req, res);
@@ -1139,7 +1122,7 @@ const db = knex({
     connection: process.env.DATABASE_URL,
     pool: {
         min: 2,
-        max: 10
+        max: 50
     }
 });
 const upload = multer({
@@ -1154,8 +1137,7 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'https://test-inspector.a
     .filter(Boolean);
 
 const corsOptions = {
-    origin (origin, callback)
-    {
+    origin(origin, callback) {
         if (!origin) return callback(null, true);
 
         if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
@@ -1184,7 +1166,7 @@ registerDebugRoutes(app);
 
 // Универсальный рефайнер требований: подтягивает Confluence, сжимает глоссарий/контекст через prepareContextWithAI,
 // возвращает совместимый интерфейс: { refinedArray, refinedText }
-async function contextRefiner ({
+async function contextRefiner({
     requirements,            // string | string[] | undefined
     text,                    // string | undefined
     pageId,                  // string|number | undefined
@@ -1197,10 +1179,8 @@ async function contextRefiner ({
     contextPages,            // string[] | undefined - дополнительные страницы контекста
     maxGlossary = 40,        // можно прокидывать из тела запроса (увеличено с 25)
     maxContext = 50         // можно прокидывать из тела запроса (увеличено с 16)
-})
-{
-    const normIds = (v) =>
-    {
+}) {
+    const normIds = (v) => {
         if (!v) return [];
         if (Array.isArray(v)) return v.map(String).filter(Boolean);
         return String(v).split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
@@ -1301,10 +1281,8 @@ async function contextRefiner ({
 
 
 // ✅ ВОССТАНОВЛЕНО: функция normalizeModelStructure критически важна для стабильной структуры
-function normalizeModelStructure (model)
-{
-    const walk = (arr, depth = 1) => (arr || []).map(item =>
-    {
+function normalizeModelStructure(model) {
+    const walk = (arr, depth = 1) => (arr || []).map(item => {
         const out = { ...item };
         if (depth === 1 && Array.isArray(out.stories)) {
             out.stories = walk(out.stories, 2);
@@ -1323,10 +1301,8 @@ function normalizeModelStructure (model)
     });
 
     // Merge nodes with identical text on the same level (Feature→Story→Scenario→Code)
-    const dedupeByText = (features) =>
-    {
-        const dedupedFeatures = (features || []).map(feature =>
-        {
+    const dedupeByText = (features) => {
+        const dedupedFeatures = (features || []).map(feature => {
             const stories = feature.stories || [];
             const storyMap = new Map();
             for (const st of stories) {
@@ -1341,8 +1317,7 @@ function normalizeModelStructure (model)
             }
 
             // dedupe scenarios inside each story by text
-            const mergedStories = [...storyMap.values()].map(st =>
-            {
+            const mergedStories = [...storyMap.values()].map(st => {
                 const scenMap = new Map();
                 for (const sc of (st.scenarios || [])) {
                     const k = String(sc.text || '').trim();
@@ -1355,8 +1330,7 @@ function normalizeModelStructure (model)
                 }
 
                 // dedupe codes by text
-                const mergedScenarios = [...scenMap.values()].map(sc =>
-                {
+                const mergedScenarios = [...scenMap.values()].map(sc => {
                     const codeMap = new Map();
                     const removedCodes = [];
                     for (const cd of (sc.codes || [])) {
@@ -1378,8 +1352,7 @@ function normalizeModelStructure (model)
                     }
                     if (removedCodes.length > 0) {
                         console.warn(`[normalizeModelStructure] ⚠️ Удалено ${removedCodes.length} дубликат(ов) Code в Scenario "${sc.text}":`);
-                        removedCodes.forEach(removed =>
-                        {
+                        removedCodes.forEach(removed => {
                             console.warn(`  - Удален Code: id=${removed.removedId}, type=${removed.removedType || 'N/A'}, text="${removed.text}"`);
                             console.warn(`    Оставлен Code: id=${removed.keptId}, type=${removed.keptType || 'N/A'}`);
                         });
@@ -1514,21 +1487,18 @@ const SYSTEM_ACTION_REGEX = new RegExp(
     'i'
 );
 
-function generatePrefixedId (prefix)
-{
+function generatePrefixedId(prefix) {
     return `${prefix}-${uuidv4()}`;
 }
 
-function ensurePrefixedId (originalId, prefix)
-{
+function ensurePrefixedId(originalId, prefix) {
     if (typeof originalId === 'string' && originalId.startsWith(prefix)) {
         return originalId;
     }
     return generatePrefixedId(prefix);
 }
 
-function ensureScenarioStepText (text, index)
-{
+function ensureScenarioStepText(text, index) {
     let trimmed = String(text || '').trim();
     if (!trimmed) {
         return 'Выполнить пользовательское действие';
@@ -1552,8 +1522,7 @@ function ensureScenarioStepText (text, index)
 }
 
 // ✅ Функция для определения типа Code (backend/frontend/integration)
-function detectCodeType (codeText)
-{
+function detectCodeType(codeText) {
     const text = String(codeText || '').trim().toLowerCase();
 
     // Backend паттерны
@@ -1621,8 +1590,7 @@ function detectCodeType (codeText)
  * Исправляет двойное экранирование placeholder'ов {{}} → {{}}
  * Убирает все варианты экранирования: \\{\\{, \{\{, {{ → {{
  */
-function fixPlaceholderEscaping (text)
-{
+function fixPlaceholderEscaping(text) {
     if (typeof text !== 'string') return text;
     // Исправляем все варианты двойного экранирования:
     // \\{\\{ → {{ (двойной обратный слэш + фигурные скобки)
@@ -1635,8 +1603,7 @@ function fixPlaceholderEscaping (text)
         .replace(/\\\}\}/g, '}}');     // \}\} → }}
 }
 
-function normalizeCodeText (rawText)
-{
+function normalizeCodeText(rawText) {
     let text = String(rawText || '').trim();
     if (!text) return '';
 
@@ -1705,8 +1672,7 @@ function normalizeCodeText (rawText)
     return text;
 }
 
-function convertScenarioToCodes (scenario, fallbackRequirement)
-{
+function convertScenarioToCodes(scenario, fallbackRequirement) {
     const codes = [];
     const scenarioText = String(scenario?.text || '').trim();
     const scenarioRequirement = scenario?.requirement || fallbackRequirement;
@@ -1737,20 +1703,17 @@ function convertScenarioToCodes (scenario, fallbackRequirement)
     return codes;
 }
 
-function repairStoryStructure (story)
-{
+function repairStoryStructure(story) {
     let stepCounter = 0;
     const repairedScenarios = [];
     let lastScenario = null;
 
-    const appendScenario = (scenario) =>
-    {
+    const appendScenario = (scenario) => {
         repairedScenarios.push(scenario);
         lastScenario = scenario;
     };
 
-    const ensureLastScenario = (sourceScenario) =>
-    {
+    const ensureLastScenario = (sourceScenario) => {
         if (lastScenario) return lastScenario;
         const synthetic = {
             id: sourceScenario?.id || uuidv4(),
@@ -1817,14 +1780,11 @@ function repairStoryStructure (story)
     };
 }
 
-function repairModelStructure (model)
-{
-    return (model || []).map(feature =>
-    {
+function repairModelStructure(model) {
+    return (model || []).map(feature => {
         return {
             ...feature,
-            stories: (feature?.stories || []).map(story =>
-            {
+            stories: (feature?.stories || []).map(story => {
                 return {
                     ...story,
                     ...repairStoryStructure(story)
@@ -1835,22 +1795,17 @@ function repairModelStructure (model)
 }
 
 // ✅ Функция для автоматического исправления Code с пользовательскими действиями
-function autoFixCodeWithUserActions (model)
-{
-    return (model || []).map(feature =>
-    {
+function autoFixCodeWithUserActions(model) {
+    return (model || []).map(feature => {
         return {
             ...feature,
-            stories: (feature?.stories || []).map(story =>
-            {
+            stories: (feature?.stories || []).map(story => {
                 return {
                     ...story,
-                    scenarios: (story?.scenarios || []).map(scenario =>
-                    {
+                    scenarios: (story?.scenarios || []).map(scenario => {
                         return {
                             ...scenario,
-                            codes: (scenario?.codes || []).map(code =>
-                            {
+                            codes: (scenario?.codes || []).map(code => {
                                 // Применяем normalizeCodeText для автоматического исправления
                                 const fixedText = normalizeCodeText(code?.text);
                                 return {
@@ -1867,8 +1822,7 @@ function autoFixCodeWithUserActions (model)
 }
 
 // ✅ Функция для валидации и очистки модели от requirement и префиксов, добавления типа Code
-function validateAndCleanModel (model)
-{
+function validateAndCleanModel(model) {
     const errors = [];
     const warnings = [];
 
@@ -1946,11 +1900,9 @@ function validateAndCleanModel (model)
 const TECHNICAL_PREFIXES = /^(реализовать|алгоритм|функция|метод|api|система|доработка|реализация)\s+/i;
 const CONTROL_PATTERNS = /^(чек-бокс|чекбокс|checkbox|переключатель|radio|toggle|поле|field|input|кнопка|button|btn)\s*["']?/i;
 
-function detectModelStructureIssues (model, contextLabel = 'model')
-{
+function detectModelStructureIssues(model, contextLabel = 'model') {
     const issues = [];
-    (model || []).forEach((feature, featureIdx) =>
-    {
+    (model || []).forEach((feature, featureIdx) => {
         const featureTitle = String(feature?.text || `Feature#${featureIdx + 1}`).trim();
 
         // Проверка Feature на технические формулировки
@@ -1971,8 +1923,7 @@ function detectModelStructureIssues (model, contextLabel = 'model')
             }
         }
 
-        (feature?.stories || []).forEach((story, storyIdx) =>
-        {
+        (feature?.stories || []).forEach((story, storyIdx) => {
             const storyTitle = String(story?.text || `Story#${storyIdx + 1}`).trim();
 
             // Проверка Story на технические формулировки
@@ -1987,8 +1938,7 @@ function detectModelStructureIssues (model, contextLabel = 'model')
 
             let lastValidScenario = null;
 
-            (story?.scenarios || []).forEach((scenario, scenarioIdx) =>
-            {
+            (story?.scenarios || []).forEach((scenario, scenarioIdx) => {
                 const scenarioTitle = String(scenario?.text || '').trim();
                 const labelBase = `${featureTitle} → ${storyTitle}`;
 
@@ -2005,8 +1955,7 @@ function detectModelStructureIssues (model, contextLabel = 'model')
                     issues.push(`Scenario "${scenarioTitle || `#${scenarioIdx + 1}`}" не содержит системных реакций (codes) (${labelBase})`);
                 }
 
-                codes.forEach(code =>
-                {
+                codes.forEach(code => {
                     const codeTitle = String(code?.text || '').trim();
                     const detailedLabel = `${labelBase}${scenarioTitle ? ` → ${scenarioTitle}` : ''}`;
 
@@ -2029,8 +1978,7 @@ function detectModelStructureIssues (model, contextLabel = 'model')
     return issues;
 }
 
-function summarizeStructureIssuesForPrompt (issues, limit = 3)
-{
+function summarizeStructureIssuesForPrompt(issues, limit = 3) {
     if (!Array.isArray(issues) || issues.length === 0) return '';
     const top = issues.slice(0, limit);
     const rest = issues.length - top.length;
@@ -2038,8 +1986,7 @@ function summarizeStructureIssuesForPrompt (issues, limit = 3)
 }
 
 // Выделение релевантных секций из markdown страницы по ключам из цитаты
-function extractRelevantSections (markdown, mentionText, { maxSections = 6, maxChars = 50000 } = {})
-{
+function extractRelevantSections(markdown, mentionText, { maxSections = 6, maxChars = 50000 } = {}) {
     const md = String(markdown || '');
     const mention = String(mentionText || '').toLowerCase();
     const tokens = new Set(
@@ -2051,8 +1998,7 @@ function extractRelevantSections (markdown, mentionText, { maxSections = 6, maxC
     );
     // Разбиваем по секциям заголовков второго уровня и ниже
     const sections = md.split(/\n(?=##+\s)/).map(s => s.trim()).filter(Boolean);
-    const scoreSection = (s) =>
-    {
+    const scoreSection = (s) => {
         const text = s.toLowerCase();
         let score = 0;
         tokens.forEach(t => { if (text.includes(t)) score += 1; });
@@ -2074,8 +2020,7 @@ function extractRelevantSections (markdown, mentionText, { maxSections = 6, maxC
 }
 
 
-async function fetchJiraMeta (pat, projectKey)
-{
+async function fetchJiraMeta(pat, projectKey) {
     const { data } = await axios.post(
         `${config.serverUrl}/api/jira/meta`,
         { pat, projectKey }
@@ -2097,8 +2042,7 @@ async function fetchJiraMeta (pat, projectKey)
  *  S    — Backend
  *  PWA  — Progressive Web App
  */
-function detectPlatforms (summary, env)
-{
+function detectPlatforms(summary, env) {
     const result = [];
 
     // 1) Парсим префикс из summary: "КОД | остальное"
@@ -2150,8 +2094,7 @@ function detectPlatforms (summary, env)
     return ['D'];
 }
 
-function buildFillJiraFieldsTool ({ sevOptions, platOptions, sympOptions })
-{
+function buildFillJiraFieldsTool({ sevOptions, platOptions, sympOptions }) {
     const sevEnum = sevOptions.map(o => o.name);
     const platEnum = platOptions.map(o => o.name);
     const sympEnum = sympOptions.map(o => o.name);
@@ -2179,8 +2122,7 @@ function buildFillJiraFieldsTool ({ sevOptions, platOptions, sympOptions })
 
 
 
-function extractJsonArray (text)
-{
+function extractJsonArray(text) {
     // 1) fenced ```json``` — самый честный путь
     const fence = text.match(/```json\s*([\s\S]*?)```/i);
     if (fence) return fence[1].trim();
@@ -2214,8 +2156,7 @@ function extractJsonArray (text)
     // 3) Если найдено несколько массивов, объединяем их
     if (candidates.length > 1) {
         console.log(`[extractJsonArray] 🚨 ВНИМАНИЕ: Найдено ${candidates.length} JSON массивов!`);
-        console.log(`[extractJsonArray] 📊 Размеры массивов:`, candidates.map((c, i) =>
-        {
+        console.log(`[extractJsonArray] 📊 Размеры массивов:`, candidates.map((c, i) => {
             const parsed = JSON5.parse(c);
             return `[${i}]: ${Array.isArray(parsed) ? parsed.length : 'не массив'} элементов`;
         }).join(', '));
@@ -2269,8 +2210,7 @@ function extractJsonArray (text)
     return candidates[0] || null;
 }
 
-function cleanupJsonText (s)
-{
+function cleanupJsonText(s) {
     // Подчистить наиболее частые артефакты
     let t = s;
 
@@ -2294,11 +2234,9 @@ function cleanupJsonText (s)
 }
 
 
-function buildPlatformMap (platOptions)
-{
+function buildPlatformMap(platOptions) {
     const m = {};
-    platOptions.forEach(o =>
-    {
+    platOptions.forEach(o => {
         const n = o.name.toLowerCase();
         if (n.includes('desktop') || n.includes('web')) m['D'] = o.id;
         else if (n.includes('adaptive')) m['A'] = o.id;
@@ -2315,8 +2253,7 @@ function buildPlatformMap (platOptions)
  * @param {string} layer - Слой тестирования (для проверки E2E)
  * @returns {Array} - Массив шагов в нашем формате
  */
-function convertAllureStepsToFormat (stepsRaw, layer)
-{
+function convertAllureStepsToFormat(stepsRaw, layer) {
     // API Allure возвращает структуру с root и scenarioSteps на верхнем уровне
     // Поддерживаем обе структуры: старую (с scenario) и новую (без scenario)
     const root = stepsRaw?.scenario?.root || stepsRaw?.root;
@@ -2360,8 +2297,7 @@ function convertAllureStepsToFormat (stepsRaw, layer)
                 // Извлекаем текст ожидаемого результата из дочерних шагов
                 const expectedResultChildren = expectedResultContainer.children || [];
                 const expectedResultTexts = expectedResultChildren
-                    .map(childId =>
-                    {
+                    .map(childId => {
                         const childStep = scenarioSteps[childId];
                         return childStep?.body || '';
                     })
@@ -2393,14 +2329,12 @@ function convertAllureStepsToFormat (stepsRaw, layer)
 }
 
 // Функция фильтрации тест-кейсов
-async function filterCases (allCases, jiraIssue, projectId)
-{
+async function filterCases(allCases, jiraIssue, projectId) {
     console.log(`filterCases принял: ${jiraIssue} ${projectId}`)
     const filteredCases = [];
 
     const promises = allCases.map((testCase) =>
-        limit(async () =>
-        {
+        limit(async () => {
             const { id, name } = testCase;
 
             // Условие: Связь с Jira
@@ -2462,8 +2396,7 @@ async function filterCases (allCases, jiraIssue, projectId)
 }
 
 // API для анализа тест-кейсов
-app.post('/api/analyze', async (req, res) =>
-{
+app.post('/api/analyze', async (req, res) => {
     const { projectId, jiraIssue } = req.body;
     console.log(`Запрос /api/analyze получил: ${JSON.stringify(req.body)}`)
 
@@ -2500,8 +2433,7 @@ app.post('/api/analyze', async (req, res) =>
 });
 
 // Запрос на экспорт тестовой модели
-app.post('/api/export', async (req, res) =>
-{
+app.post('/api/export', async (req, res) => {
     console.log('Вошли в експорт')
     const { allureData, projectId } = req.body; // Получаем JSON с клиента
 
@@ -2529,8 +2461,7 @@ app.post('/api/export', async (req, res) =>
     }
 });
 
-app.post('/api/ai-recommendation', async (req, res) =>
-{
+app.post('/api/ai-recommendation', async (req, res) => {
     try {
         // Получаем OpenRouter API Key из header (с фоллбэком на config)
         const apiKey = req.headers['x-openrouter-key']?.trim() || config.openRouterAiKey;
@@ -2610,8 +2541,7 @@ app.post('/api/ai-recommendation', async (req, res) =>
 });
 
 /** Строка/массив -> массив pageId */
-function normalizePageIds (v)
-{
+function normalizePageIds(v) {
     if (!v) return [];
     if (Array.isArray(v)) return v.filter(Boolean).map(String);
     return String(v)
@@ -2621,8 +2551,7 @@ function normalizePageIds (v)
 }
 
 /** Строка или массив строк -> единый markdown-блок с разделителями */
-function normalizeContextInput (v)
-{
+function normalizeContextInput(v) {
     if (!v) return '';
     if (Array.isArray(v)) {
         return v
@@ -2642,8 +2571,7 @@ function normalizeContextInput (v)
  *         contextPageIds?: string|string[]|number[],
  *         contextInstruction?: string }
  */
-app.post('/api/analyze/solution', async (req, res) =>
-{
+app.post('/api/analyze/solution', async (req, res) => {
     try {
         const {
             text, pageId, context, project, glossary, bearerToken,
@@ -2791,8 +2719,7 @@ app.post('/api/analyze/solution', async (req, res) =>
 });
 
 
-app.post('/api/jira/create-issue', async (req, res) =>
-{
+app.post('/api/jira/create-issue', async (req, res) => {
     const { pat, payload } = req.body;
 
     if (!pat || !payload) {
@@ -2843,8 +2770,7 @@ app.post('/api/jira/create-issue', async (req, res) =>
 
 
 // Эндпоинт для получения метаданных проекта (поля, пользователи, версии)
-app.post('/api/jira/meta', async (req, res) =>
-{
+app.post('/api/jira/meta', async (req, res) => {
     const jiraBase = 'https://jira.abanking.ru';
     const issueKey = 'SBK-33974';               // берём из вашего CURL
     const { pat, projectKey } = req.body;     // передаёте с фронта
@@ -2942,8 +2868,7 @@ app.post('/api/jira/meta', async (req, res) =>
 
 
 // 1. Поиск assignable пользователей
-app.get('/api/jira/users', async (req, res) =>
-{
+app.get('/api/jira/users', async (req, res) => {
     const { projectKey, pat, query = '', startAt = 0, maxResults = 50 } = req.query;
     const jiraBase = 'https://jira.abanking.ru';
     const headers = {
@@ -2964,8 +2889,7 @@ app.get('/api/jira/users', async (req, res) =>
 });
 
 // 2. Поиск версий (фильтрация по имени)
-app.get('/api/jira/versions', async (req, res) =>
-{
+app.get('/api/jira/versions', async (req, res) => {
     const { projectKey, pat, query = '' } = req.query;
     const jiraBase = 'https://jira.abanking.ru';
     const headers = {
@@ -2988,8 +2912,7 @@ app.get('/api/jira/versions', async (req, res) =>
 });
 
 // GET /jira/transitions?issueKey=JMT-123
-app.get('/api/jira/transitions', async (req, res) =>
-{
+app.get('/api/jira/transitions', async (req, res) => {
     const { pat, issueKey } = req.query;
     if (!pat || !issueKey) {
         return res.status(400).json({ error: 'Нужны pat и issueKey' });
@@ -3015,8 +2938,7 @@ app.get('/api/jira/transitions', async (req, res) =>
     }
 });
 
-app.post('/api/jira/transition-issues', async (req, res) =>
-{
+app.post('/api/jira/transition-issues', async (req, res) => {
     let { pat, issueKeys, issueKey, transitionId } = req.body;
 
     // если пришёл одиночный issueKey, упакуем его в массив
@@ -3059,8 +2981,7 @@ app.post('/api/jira/transition-issues', async (req, res) =>
 });
 
 // GET /allure/defects
-app.get('/api/allure/defects', async (req, res) =>
-{
+app.get('/api/allure/defects', async (req, res) => {
     try {
         const { projectId, query, page, size } = req.query;
         const defects = await getAllureDefects(projectId, query, page, size);
@@ -3072,8 +2993,7 @@ app.get('/api/allure/defects', async (req, res) =>
 });
 
 // POST /allure/defect/:defectId/issue
-app.post('/api/allure/defect/:defectId/issue', async (req, res) =>
-{
+app.post('/api/allure/defect/:defectId/issue', async (req, res) => {
     const { defectId } = req.params;
     const { integrationId, name } = req.body;
     if (!defectId || !integrationId || !name) {
@@ -3089,8 +3009,7 @@ app.post('/api/allure/defect/:defectId/issue', async (req, res) =>
 });
 
 
-app.post('/api/bug/ai-review', async (req, res) =>
-{
+app.post('/api/bug/ai-review', async (req, res) => {
     const task = req.body.task || req.body.testCase;
     if (!task || typeof task !== 'object') {
         return res.status(400).json({ error: 'Нужен объект task' });
@@ -3108,8 +3027,7 @@ app.post('/api/bug/ai-review', async (req, res) =>
     }
 });
 
-app.get('/api/allure/defect/:defectId/details', async (req, res) =>
-{
+app.get('/api/allure/defect/:defectId/details', async (req, res) => {
     try {
         const defectId = req.params.defectId;
         if (!defectId) return res.status(400).json({ error: 'Нужен defectId' });
@@ -3129,8 +3047,7 @@ app.get('/api/allure/defect/:defectId/details', async (req, res) =>
     }
 });
 
-app.get('/api/jira/issue/picker', async (req, res) =>
-{
+app.get('/api/jira/issue/picker', async (req, res) => {
     const { pat, query } = req.query;
     if (!pat) {
         return res.status(400).json({ error: 'pat is required' });
@@ -3179,8 +3096,7 @@ app.get('/api/jira/issue/picker', async (req, res) =>
 });
 
 // GET /api/jira/issueLinkTypes — вернуть все типы связей из Jira
-app.get('/api/jira/issueLinkTypes', async (req, res) =>
-{
+app.get('/api/jira/issueLinkTypes', async (req, res) => {
     const { pat } = req.query;
     if (!pat) {
         return res.status(400).json({ error: 'pat is required' });
@@ -3200,8 +3116,7 @@ app.get('/api/jira/issueLinkTypes', async (req, res) =>
 });
 
 // POST /api/jira/issueLink — связать две задачи
-app.post('/api/jira/issueLink', async (req, res) =>
-{
+app.post('/api/jira/issueLink', async (req, res) => {
     const { pat, typeName, inwardIssueKey, outwardIssueKey } = req.body;
     if (!pat || !typeName || !inwardIssueKey || !outwardIssueKey) {
         return res.status(400).json({
@@ -3238,8 +3153,7 @@ app.post('/api/jira/issueLink', async (req, res) =>
 app.post(
     '/api/jira/issue/:issueKey/attachments',
     upload.array('file'),
-    async (req, res) =>
-    {
+    async (req, res) => {
         const auth = req.headers.authorization;
         const { issueKey } = req.params;
         const form = new (await import('form-data')).default();
@@ -3278,8 +3192,7 @@ app.post(
 );
 
 // Обновление полей задачи (например, description с маркерами !file.png!)
-app.put('/api/jira/issue/:issueKey', async (req, res) =>
-{
+app.put('/api/jira/issue/:issueKey', async (req, res) => {
     const { issueKey } = req.params;
     const { pat, payload } = req.body;   // payload ожидаем вида { fields: { description: desc, ... } }
 
@@ -3323,8 +3236,7 @@ app.put('/api/jira/issue/:issueKey', async (req, res) =>
 });
 
 
-app.post('/api/jira/ai-fill-fields', async (req, res) =>
-{
+app.post('/api/jira/ai-fill-fields', async (req, res) => {
     try {
         const { summary, description, steps, stand, env, pat, projectKey } = req.body;
         if (!pat || !projectKey) {
@@ -3332,8 +3244,7 @@ app.post('/api/jira/ai-fill-fields', async (req, res) =>
         }
         // ✅ Исправляем обработку steps: извлекаем текст из объектов
         const stepsStr = Array.isArray(steps)
-            ? steps.map(s =>
-            {
+            ? steps.map(s => {
                 if (typeof s === 'string') return s;
                 if (typeof s === 'object' && s !== null) {
                     return s.action || s.text || s.body || '';
@@ -3348,8 +3259,7 @@ app.post('/api/jira/ai-fill-fields', async (req, res) =>
         // 2) Хелперы маппинга → id
         const nameToId = (arr, name) =>
             (arr || []).find(o => o.name.toLowerCase() === String(name || '').toLowerCase())?.id || null;
-        const namesToIds = (arr, names) =>
-        {
+        const namesToIds = (arr, names) => {
             const set = new Set((names || []).map(n => String(n || '').toLowerCase()));
             return (arr || [])
                 .filter(o => set.has(String(o.name).toLowerCase()))
@@ -3456,8 +3366,7 @@ ENV: ${env}
 
 
 
-function extractToolArgs (aiResponse, preferredFnName)
-{
+function extractToolArgs(aiResponse, preferredFnName) {
     try {
         console.log(`[extractToolArgs] 🔍 Начинаем извлечение args для функции: ${preferredFnName}`);
 
@@ -3676,8 +3585,7 @@ function extractToolArgs (aiResponse, preferredFnName)
     }
 }
 
-function tryParseInlineToolCall (rawContent, toolName)
-{
+function tryParseInlineToolCall(rawContent, toolName) {
     if (!rawContent) return null;
 
     const toolBlockMatch = rawContent.match(/<tool_call>\s*([\s\S]+?)\s*<\/tool_call>/i);
@@ -3731,8 +3639,7 @@ function tryParseInlineToolCall (rawContent, toolName)
 // Универсальная функция для повторных попыток при 5xx,
 // принимающая либо строку prompt, либо массив сообщений {role, content}
 //
-export async function callWithBackoff (url, promptOrMessages, apiKey, opts = {})
-{
+export async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
     const {
         // Основная free‑модель и массив fallback‑моделей
         model = 'deepseek/deepseek-chat-v3.1:free',
@@ -3768,8 +3675,7 @@ export async function callWithBackoff (url, promptOrMessages, apiKey, opts = {})
     }
 
     // экспоненциальный бэкофф с небольшим джиттером
-    const backoff = (attemptIdx) =>
-    {
+    const backoff = (attemptIdx) => {
         const base = Math.min(minWaitMs * Math.pow(2, attemptIdx - 1), maxWaitMs);
         const jitter = 1 + Math.random() * 0.2; // +0..20%
         return Math.floor(base * jitter);
@@ -3946,8 +3852,7 @@ export async function callWithBackoff (url, promptOrMessages, apiKey, opts = {})
     throw new Error('OpenRouter: превышено число попыток (после 429/5xx)');
 }
 
-function buildSubmitModelTool ()
-{
+function buildSubmitModelTool() {
     return {
         type: "function",
         function: {
@@ -4031,8 +3936,7 @@ const httpsAgent = new https.Agent({ keepAlive: true });
  *   - maxResults: сколько возвращать записей (необязательно, дефолт 50)
  *   - startAt:    с какой записи начинать (необязательно, дефолт 0)
  */
-app.get('/api/jira/search', async (req, res) =>
-{
+app.get('/api/jira/search', async (req, res) => {
     const { pat, jql, maxResults = 50 } = req.query;
     if (!pat || !jql) return res.status(400).json({ error: 'pat и jql обязательны' });
 
@@ -4069,8 +3973,7 @@ app.get('/api/jira/search', async (req, res) =>
  * @param {string} requirementsText - Текст requirements из Confluence
  * @returns {Promise<RequirementsStructure>}
  */
-async function extractRequirementsStructure (requirementsText)
-{
+async function extractRequirementsStructure(requirementsText) {
     console.log('[extractRequirementsStructure] Начинаю извлечение структуры Feature → Story...');
 
     const prompt = `
@@ -4229,8 +4132,7 @@ ${requirementsText}
  * @param {RequirementsStructure} reqStructure - Извлечённая структура requirements
  * @returns {ValidationReport}
  */
-function validateTestModel (model, reqStructure)
-{
+function validateTestModel(model, reqStructure) {
     const report = {
         valid: true,
         errors: [],
@@ -4242,8 +4144,7 @@ function validateTestModel (model, reqStructure)
         }
     };
 
-    function normalizeText (text)
-    {
+    function normalizeText(text) {
         return String(text || '').toLowerCase()
             .replace(/\s+/g, ' ')
             .replace(/[^\w\s]/g, '')
@@ -4426,8 +4327,7 @@ const STOP_WORDS = new Set([
     'реализация', 'реализовать', 'модуль', 'система'
 ]);
 
-function normalizeDomainTokens (text = '')
-{
+function normalizeDomainTokens(text = '') {
     return String(text)
         .toLowerCase()
         .replace(/[^a-zа-я0-9\s]/gi, ' ')
@@ -4435,8 +4335,7 @@ function normalizeDomainTokens (text = '')
         .filter(token => token.length >= 4 && !STOP_WORDS.has(token));
 }
 
-function detectDominantDomainToken (features)
-{
+function detectDominantDomainToken(features) {
     if (!Array.isArray(features) || features.length === 0) return null;
     const frequency = new Map();
 
@@ -4459,8 +4358,7 @@ function detectDominantDomainToken (features)
     return bestToken;
 }
 
-function deduplicateStoriesInFeature (feature)
-{
+function deduplicateStoriesInFeature(feature) {
     if (!feature || !Array.isArray(feature.stories)) return;
     const normalizedMap = new Map();
     const dedupedStories = [];
@@ -4504,8 +4402,7 @@ function deduplicateStoriesInFeature (feature)
 }
 
 // ✅ НОВАЯ ФУНКЦИЯ: Дедупликация scenarios внутри Story
-function deduplicateScenariosInStory (story)
-{
+function deduplicateScenariosInStory(story) {
     if (!story || !Array.isArray(story.scenarios)) return;
     const normalizedMap = new Map();
     const dedupedScenarios = [];
@@ -4549,8 +4446,7 @@ function deduplicateScenariosInStory (story)
 }
 
 // ✅ НОВАЯ ФУНКЦИЯ: Дедупликация codes внутри Scenario
-function deduplicateCodesInScenario (scenario)
-{
+function deduplicateCodesInScenario(scenario) {
     if (!scenario || !Array.isArray(scenario.codes)) return;
     const normalizedMap = new Map();
     const dedupedCodes = [];
@@ -4577,8 +4473,7 @@ function deduplicateCodesInScenario (scenario)
     scenario.codes = dedupedCodes;
 }
 
-function mergeFeaturesByDomain (model)
-{
+function mergeFeaturesByDomain(model) {
     if (!Array.isArray(model) || model.length <= 1) return model;
     const featuresWithStories = model.filter(f => Array.isArray(f?.stories) && f.stories.length > 0);
     if (featuresWithStories.length <= 1) return featuresWithStories;
@@ -4650,15 +4545,13 @@ function mergeFeaturesByDomain (model)
     return [mergedFeature];
 }
 
-function postProcessModel (model)
-{
+function postProcessModel(model) {
     console.log('[postProcessModel] Начинаю постобработку модели...');
     let cleanedCount = 0;
 
     for (const feature of model) {
         // Удаляем технические Story
-        feature.stories = (feature.stories || []).filter(story =>
-        {
+        feature.stories = (feature.stories || []).filter(story => {
             const storyText = (story.text || '').toLowerCase();
             const technicalKeywords = ['загрузка страницы', 'переключение между'];
             const isTechnical = technicalKeywords.some(keyword => storyText.includes(keyword));
@@ -4672,8 +4565,7 @@ function postProcessModel (model)
 
         for (const story of feature.stories || []) {
             // Удаляем технические Scenario
-            story.scenarios = (story.scenarios || []).filter(scenario =>
-            {
+            story.scenarios = (story.scenarios || []).filter(scenario => {
                 const scenarioText = (scenario.text || '').toLowerCase();
                 const isTechnicalScenario = scenarioText.includes('загрузить страницу') ||
                     scenarioText.includes('загрузить') && scenarioText.includes('страниц');
@@ -4820,13 +4712,11 @@ function postProcessModel (model)
  * @param {Array} model - Тестовая модель
  * @returns {Array} - Модель без дубликатов Scenarios между Stories
  */
-function deduplicateScenariosAcrossStories (model)
-{
+function deduplicateScenariosAcrossStories(model) {
     console.log('[deduplicateScenariosAcrossStories] Начинаю дедупликацию Scenarios между Stories...');
     let removedCount = 0;
 
-    const normalizeScenarioText = (text) =>
-    {
+    const normalizeScenarioText = (text) => {
         // Убираем номер в начале ("1. " -> "")
         return String(text || '').trim().replace(/^\d+\.\s*/, '').toLowerCase();
     };
@@ -4890,8 +4780,7 @@ function deduplicateScenariosAcrossStories (model)
  * @param {string} requirements - Требования
  * @returns {Promise<Array>} - Перегенерированные Scenarios
  */
-async function regenerateOverDetailedScenarios (story, scenarios, requirements)
-{
+async function regenerateOverDetailedScenarios(story, scenarios, requirements) {
     if (scenarios.length <= 5) return scenarios; // Нормальная детализация
 
     console.warn(`[regenerateOverDetailedScenarios] Story "${story.text}" содержит ${scenarios.length} Scenarios (рекомендуется 3-5), перегенерируем...`);
@@ -5049,13 +4938,11 @@ ${requirements.substring(0, 3000)}
  * @param {Array} model - Тестовая модель
  * @returns {Array} - Модель с объединенными Scenarios
  */
-function mergeDetailedScenarios (model)
-{
+function mergeDetailedScenarios(model) {
     console.log('[mergeDetailedScenarios] Начинаю объединение детализированных Scenarios...');
     let mergedCount = 0;
 
-    const normalizeAction = (text) =>
-    {
+    const normalizeAction = (text) => {
         // Извлекаем основное действие из Scenario
         const normalized = String(text || '').trim().replace(/^\d+\.\s*/, '').toLowerCase();
         // Определяем тип действия
@@ -5207,8 +5094,7 @@ function mergeDetailedScenarios (model)
  * @param {Array} model - Тестовая модель
  * @returns {Array} - Модель с обогащенными backend Code
  */
-function enrichBackendCodesWithExpectedResult (model)
-{
+function enrichBackendCodesWithExpectedResult(model) {
     console.log('[enrichBackendCodesWithExpectedResult] Начинаю обогащение backend Code Expected Result...');
     let enrichedCount = 0;
 
@@ -5256,12 +5142,10 @@ function enrichBackendCodesWithExpectedResult (model)
  * @param {RequirementsStructure} reqStructure - Структура requirements
  * @returns {CoverageReport}
  */
-function generateCoverageReport (model, reqStructure)
-{
+function generateCoverageReport(model, reqStructure) {
     console.log('[generateCoverageReport] Генерирую отчёт о покрытии...');
 
-    function normalizeText (text)
-    {
+    function normalizeText(text) {
         return String(text || '').toLowerCase()
             .replace(/\s+/g, ' ')
             .replace(/[^\w\s]/g, '')
@@ -5351,8 +5235,7 @@ function generateCoverageReport (model, reqStructure)
  * @param {Array} model - Тестовая модель (массив Feature)
  * @returns {Object} - Отчёт о покрытии scenarios
  */
-function calculateTestCasesCoverage (testCases, model)
-{
+function calculateTestCasesCoverage(testCases, model) {
     const normalizeText = (text) => String(text || '').toLowerCase().trim();
 
     const allScenarios = [];
@@ -5399,8 +5282,7 @@ function calculateTestCasesCoverage (testCases, model)
  * @param {string} layer - Тип теста (E2E, Integration frontend, Integration backend)
  * @returns {string} - Форматированный Expected
  */
-function formatExpectedResult (expected, layer)
-{
+function formatExpectedResult(expected, layer) {
     if (!expected || typeof expected !== 'string') return expected;
     let formatted = expected;
 
@@ -5454,12 +5336,10 @@ function formatExpectedResult (expected, layer)
  * @param {Array} issues - Список структурных проблем
  * @returns {Array} - Массив { feature, story, scenario, problematicCodes, issue }
  */
-function extractProblematicScenarios (model, issues)
-{
+function extractProblematicScenarios(model, issues) {
     const problematic = [];
 
-    function normalizeText (text)
-    {
+    function normalizeText(text) {
         return String(text || '').toLowerCase()
             .replace(/\s+/g, ' ')
             .replace(/[^\w\s]/g, '')
@@ -5512,8 +5392,7 @@ function extractProblematicScenarios (model, issues)
  * @param {string} requirements - Требования
  * @returns {Promise<Array>} - Исправленные Scenarios [{ scenario, fixedCodes }]
  */
-async function regenerateProblematicScenarios (problematicScenarios, requirements)
-{
+async function regenerateProblematicScenarios(problematicScenarios, requirements) {
     console.log(`[regenerateProblematicScenarios] Перегенерирую ${problematicScenarios.length} проблемных Scenarios...`);
 
     const fixed = [];
@@ -5705,8 +5584,7 @@ Code должны описывать ПОВЕДЕНИЕ СИСТЕМЫ (что �
  * Извлекает детальный контекст из уже сгенерированных частей модели.
  * Возвращает структуру для промпта с указанием, что уже покрыто.
  */
-function extractContext (accumulatedModel)
-{
+function extractContext(accumulatedModel) {
     if (!Array.isArray(accumulatedModel) || accumulatedModel.length === 0) {
         return null;
     }
@@ -5752,8 +5630,7 @@ function extractContext (accumulatedModel)
 }
 
 // Вспомогательная функция извлечения ключевых слов
-function extractKeywords (text)
-{
+function extractKeywords(text) {
     if (!text) return [];
     // Извлекаем существительные и глаголы (примитивный NLP)
     const stopWords = new Set(['на', 'и', 'в', 'с', 'из', 'по', 'для', 'к', 'о']);
@@ -5766,15 +5643,12 @@ function extractKeywords (text)
 
 
 // 2. Функция финальной склейки (Smart Merge)
-function mergeChunkResults (allChunksJson)
-{
+function mergeChunkResults(allChunksJson) {
     const finalModel = [];
 
     // allChunksJson - это массив массивов (результат каждого чанка)
-    allChunksJson.forEach(chunkArray =>
-    {
-        chunkArray.forEach(feature =>
-        {
+    allChunksJson.forEach(chunkArray => {
+        chunkArray.forEach(feature => {
             // Ищем, есть ли уже такая Feature в финальной модели
             let existingFeature = finalModel.find(f => f.text === feature.text);
 
@@ -5785,8 +5659,7 @@ function mergeChunkResults (allChunksJson)
             }
 
             // Мержим Stories
-            feature.stories.forEach(story =>
-            {
+            feature.stories.forEach(story => {
                 let existingStory = existingFeature.stories.find(s => s.text === story.text);
 
                 if (!existingStory) {
@@ -5805,8 +5678,7 @@ function mergeChunkResults (allChunksJson)
     return finalModel;
 }
 
-async function generateTestModelAsync (taskId, inputData)
-{
+async function generateTestModelAsync(taskId, inputData) {
     const startTime = Date.now();
     let regenerationCount = 0;
     let escalationCount = 0;
@@ -5833,8 +5705,7 @@ async function generateTestModelAsync (taskId, inputData)
         // 0) Если pageId передан — подтягиваем основную страницу и прямые ссылки
         let autoPages = [];
         let baseRequirement = '';
-        const formatMention = (mention) =>
-        {
+        const formatMention = (mention) => {
             if (!mention) return '';
             return mention
                 .replace(/\r?\n/g, ' ')
@@ -6080,8 +5951,7 @@ async function generateTestModelAsync (taskId, inputData)
         }
 
         const contextFetcher = bearerToken
-            ? async (requestedPageId) =>
-            {
+            ? async (requestedPageId) => {
                 try {
                     if (requestedPageId == null) return '';
                     const requestedIdStr = String(requestedPageId);
@@ -6118,8 +5988,7 @@ async function generateTestModelAsync (taskId, inputData)
          * Умное разбиение на чанки по смысловым границам (Features/Stories).
          * Использует структуру из extractRequirementsStructure.
          */
-        function semanticChunkByFeatures (text, reqStructure, maxChars = 80000)
-        {
+        function semanticChunkByFeatures(text, reqStructure, maxChars = 80000) {
             // Если текст маленький — вообще не режем
             if (!text || text.length <= maxChars) return [text];
 
@@ -6178,8 +6047,7 @@ async function generateTestModelAsync (taskId, inputData)
         }
 
         // Вспомогательная функция поиска начала фичи в тексте
-        function findFeatureStart (text, featureName, fromIndex = 0)
-        {
+        function findFeatureStart(text, featureName, fromIndex = 0) {
             if (!featureName) return fromIndex;
 
             // Ищем заголовок фичи (может быть в Markdown: ## Feature Name или просто текст)
@@ -6199,14 +6067,12 @@ async function generateTestModelAsync (taskId, inputData)
             return fromIndex;
         }
 
-        function escapeRegex (str)
-        {
+        function escapeRegex(str) {
             return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         }
 
         // Fallback для случаев, когда структура не извлеклась
-        function chunkTextBySize (text, maxChars = 120000)
-        {
+        function chunkTextBySize(text, maxChars = 120000) {
             // Твоя текущая реализация остаётся как fallback
             if (!text || text.length <= maxChars) return [{ text, metadata: {} }];
 
@@ -6709,12 +6575,10 @@ ${contextSourcesSummary || '—'}
 
         // ✅ Добавляем уникальные ID к каждому элементу модели (БЕЗ requirement!)
         // ✅ ГАРАНТИРУЕМ УНИКАЛЬНОСТЬ ВСЕХ ID
-        const addUniqueIds = (model) =>
-        {
+        const addUniqueIds = (model) => {
             const usedIds = new Set();
 
-            const generateUniqueId = () =>
-            {
+            const generateUniqueId = () => {
                 let newId = uuidv4();
                 while (usedIds.has(newId)) {
                     newId = uuidv4();
@@ -6723,32 +6587,28 @@ ${contextSourcesSummary || '—'}
                 return newId;
             };
 
-            return (model || []).map(feature =>
-            {
+            return (model || []).map(feature => {
                 const featureId = feature.id && !usedIds.has(feature.id) ? feature.id : generateUniqueId();
 
                 return {
                     id: featureId,
                     text: feature.text,
                     // ❌ УДАЛЕНО: requirement - это поле не используется в тестовой модели
-                    stories: (feature.stories || []).map(story =>
-                    {
+                    stories: (feature.stories || []).map(story => {
                         const storyId = story.id && !usedIds.has(story.id) ? story.id : generateUniqueId();
 
                         return {
                             id: storyId,
                             text: story.text,
                             // ❌ УДАЛЕНО: requirement - это поле не используется в тестовой модели
-                            scenarios: (story.scenarios || []).map(scenario =>
-                            {
+                            scenarios: (story.scenarios || []).map(scenario => {
                                 const scenarioId = scenario.id && !usedIds.has(scenario.id) ? scenario.id : generateUniqueId();
 
                                 return {
                                     id: scenarioId,
                                     text: scenario.text,
                                     // ❌ УДАЛЕНО: requirement - это поле не используется в тестовой модели
-                                    codes: (scenario.codes || []).map(code =>
-                                    {
+                                    codes: (scenario.codes || []).map(code => {
                                         const codeId = code.id && !usedIds.has(code.id) ? code.id : generateUniqueId();
 
                                         return {
@@ -6767,8 +6627,7 @@ ${contextSourcesSummary || '—'}
         };
 
         // Функция извлечения requirement из текста элемента
-        function extractRequirementFromText (text)
-        {
+        function extractRequirementFromText(text) {
             if (!text) return null;
 
             // Ищем паттерны типа "2.2.7", "4.3", "1.2.3.4" в тексте
@@ -7163,8 +7022,7 @@ ${escalationPrompt}`;
     }
 }
 
-app.post('/api/generate-test-model-async', async (req, res) =>
-{
+app.post('/api/generate-test-model-async', async (req, res) => {
     try {
         const taskId = uuidv4();
 
@@ -7194,8 +7052,7 @@ app.post('/api/generate-test-model-async', async (req, res) =>
     }
 });
 
-app.post('/api/refine-test-model', async (req, res) =>
-{
+app.post('/api/refine-test-model', async (req, res) => {
     try {
         const { oldModel, reviewNotes, issues, baselineMetrics, requirements } = req.body;
 
@@ -7262,14 +7119,12 @@ app.post('/api/refine-test-model', async (req, res) =>
         }
 
         // Валидация структуры (базовая)
-        const validateModelStructure = (model) =>
-        {
+        const validateModelStructure = (model) => {
             const errors = [];
             if (!Array.isArray(model) || model.length === 0) {
                 errors.push('Модель должна быть непустым массивом');
             }
-            model.forEach((feature, idx) =>
-            {
+            model.forEach((feature, idx) => {
                 if (!feature.id) errors.push(`Feature ${idx} не имеет id`);
                 if (!feature.text) errors.push(`Feature ${idx} не имеет text`);
                 if (!Array.isArray(feature.stories)) {
@@ -7307,8 +7162,7 @@ app.post('/api/refine-test-model', async (req, res) =>
     }
 });
 
-app.get('/api/generate-test-model-status/:taskId', async (req, res) =>
-{
+app.get('/api/generate-test-model-status/:taskId', async (req, res) => {
     try {
         const taskId = req.params.taskId;
         const cacheKey = `model_status_${taskId}`;
@@ -7360,8 +7214,7 @@ app.get('/api/generate-test-model-status/:taskId', async (req, res) =>
  *   - archived  (опционально, default=false)
  *   - search    (опционально) — подстрока для фильтрации по имени шага
  */
-app.get('/api/shared-steps', async (req, res) =>
-{
+app.get('/api/shared-steps', async (req, res) => {
     try {
         const {
             projectId,
@@ -7391,8 +7244,7 @@ app.get('/api/shared-steps', async (req, res) =>
 });
 
 
-app.post('/api/create-test-cases', async (req, res) =>
-{
+app.post('/api/create-test-cases', async (req, res) => {
     const { projectId, cases } = req.body;
     if (!projectId || !Array.isArray(cases)) {
         return res.status(400).json({ error: 'projectId и массив cases обязательны' });
@@ -7452,7 +7304,7 @@ app.post('/api/create-test-cases', async (req, res) =>
             if (c.story) expectedCustomFields['Story'] = c.story;
             if (c.scenario) expectedCustomFields['Scenario'] = c.scenario;
             if (c.code || c.codeNode) expectedCustomFields['Code'] = c.code || c.codeNode;
-            
+
             // Для nocode проекта (307) добавляем Block и SubBlock
             if (projectId === '307') {
                 // Ищем Block и SubBlock в кастомных полях
@@ -7467,17 +7319,17 @@ app.post('/api/create-test-cases', async (req, res) =>
                     }
                 }
             }
-            
+
             // Проверяем, существует ли уже тест-кейс с таким названием и кастомными полями
             const existing = await findTestCaseByName(projectId, c.title, expectedCustomFields);
-            
+
             if (existing) {
                 console.log(`[create-test-cases] ⚠️ Тест-кейс с названием "${c.title}" и такими же кастомными полями уже существует (ID: ${existing.id}). Пропускаем создание и обновление.`);
                 // ✅ Полностью пропускаем этот тест-кейс - не создаем новый и не обновляем существующий
                 // Это гарантирует, что при загрузке новой тестовой модели старые тест-кейсы не будут изменены
                 continue;
             }
-            
+
             // Создаём новый TC
             const tc = await createTestCaseAllure({ projectId, name: c.title });
             const testCaseId = tc.id;
@@ -7612,8 +7464,7 @@ app.post('/api/create-test-cases', async (req, res) =>
             // 11) Кастомные поля
             const cfvById = new Map();
 
-            const putCF = (fieldNameOrKey, raw) =>
-            {
+            const putCF = (fieldNameOrKey, raw) => {
                 if (raw == null) return;
                 let val = String(raw).trim();
                 if (!val) return;                      // не шлём пустые значения
@@ -7740,11 +7591,11 @@ app.post('/api/create-test-cases', async (req, res) =>
  */
 app.post('/api/cleanup-duplicates', async (req, res) => {
     const { projectId } = req.body;
-    
+
     if (!projectId) {
         return res.status(400).json({ error: 'projectId обязателен' });
     }
-    
+
     // Делаем эндпоинт асинхронным по умолчанию, чтобы избежать 504 от reverse-proxy на больших проектах.
     // Для синхронного режима можно вызвать /api/cleanup-duplicates?sync=true
     const sync = String(req.query.sync || '').toLowerCase() === 'true';
@@ -7787,17 +7638,17 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
 
     try {
         console.log(`[cleanup-duplicates] (sync) Начинаем очистку дублей для проекта ${projectId}`);
-        
+
         // Получаем все тест-кейсы проекта
         const allCases = await getAllTestCases(projectId);
         console.log(`[cleanup-duplicates] Получено ${allCases.length} тест-кейсов`);
-        
+
         // Получаем теги для каждого тест-кейса
         const casesWithTags = await Promise.all(
             allCases.map(async (tc) => {
                 try {
                     const tags = await getCaseTags(tc.id);
-                    const tagNames = Array.isArray(tags) 
+                    const tagNames = Array.isArray(tags)
                         ? tags.map(t => (t.name || t).trim().toLowerCase()).sort()
                         : [];
                     return {
@@ -7815,14 +7666,14 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                 }
             })
         );
-        
+
         // Функция для вычисления ключа группировки (название + теги)
         const getGroupKey = (tc) => {
             const normalizedTitle = (tc.name || '').trim().toLowerCase();
             const tagsKey = tc.tagNames.join(',');
             return `${normalizedTitle}||${tagsKey}`;
         };
-        
+
         // Группируем тест-кейсы по ключу
         const groups = {};
         casesWithTags.forEach(tc => {
@@ -7832,7 +7683,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
             }
             groups[key].push(tc);
         });
-        
+
         // Функция для вычисления "полноты" тест-кейса
         const computeContentScore = async (tc) => {
             let score = 0;
@@ -7840,15 +7691,15 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
             let hasExpectedResult = false;
             let stepsCount = 0;
             let stepsTotalLength = 0;
-            
+
             // Название (базовая оценка)
             if (tc.name) score += tc.name.length;
-            
+
             // Теги (важно для группировки)
             if (tc.tagNames && tc.tagNames.length > 0) {
                 score += tc.tagNames.length * 5;
             }
-            
+
             try {
                 // Precondition (важное поле)
                 const precondition = await getTestCasePrecondition(tc.id);
@@ -7861,7 +7712,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                         score += 50; // Бонус за наличие precondition
                     }
                 }
-                
+
                 // Expected Result (важное поле)
                 const expectedResult = await getTestCaseExpectedResult(tc.id);
                 if (expectedResult) {
@@ -7873,7 +7724,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                         score += 50; // Бонус за наличие expected result
                     }
                 }
-                
+
                 // Steps (самое важное - шаги тест-кейса)
                 const steps = await getTestCaseSteps(tc.id);
                 if (steps) {
@@ -7893,7 +7744,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                         score += stepsCount * 20; // Бонус за количество шагов
                     }
                 }
-                
+
                 // Custom Fields (дополнительная информация)
                 const customFields = await getTestCaseCustomFields(tc.id, projectId);
                 if (Array.isArray(customFields) && customFields.length > 0) {
@@ -7902,12 +7753,12 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
             } catch (error) {
                 console.warn(`[cleanup-duplicates] Ошибка при вычислении score для ТК ${tc.id}:`, error.message);
             }
-            
+
             // Дополнительные бонусы за полноту
             if (hasPrecondition && hasExpectedResult && stepsCount > 0) {
                 score += 100; // Бонус за полностью заполненный тест-кейс
             }
-            
+
             return {
                 score,
                 stepsCount,
@@ -7916,7 +7767,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                 stepsTotalLength
             };
         };
-        
+
         // Удаляем ТОЛЬКО черновики (Draft). Активные и другие статусы не удаляем.
         const isDraftStatus = (tc) => {
             const statusId = tc?.status?.id;
@@ -7929,16 +7780,16 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
         const toKeep = [];
         const duplicateGroups = []; // Массив для хранения информации о группах дублей
         const skippedNonDraft = []; // Дубли, которые нельзя удалить из-за статуса
-        
+
         for (const [key, group] of Object.entries(groups)) {
             if (group.length <= 1) {
                 // Нет дублей в группе
                 toKeep.push(...group);
                 continue;
             }
-            
+
             console.log(`[cleanup-duplicates] Найдена группа дублей (${group.length} шт.): "${group[0].name}"`);
-            
+
             // Вычисляем score для каждого тест-кейса в группе
             const casesWithScores = await Promise.all(
                 group.map(async (tc) => {
@@ -7950,7 +7801,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                     };
                 })
             );
-            
+
             // Сортируем по убыванию score с дополнительными критериями для разрешения ничьих.
             // ВАЖНО: это сортировка "лучшего" — но удаляем мы ТОЛЬКО Draft.
             const compareByBest = (a, b) => {
@@ -7961,7 +7812,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                 if (a.scoreData.stepsCount > 0 && b.scoreData.stepsCount === 0) {
                     return -1; // a с шагами, b без шагов - a лучше
                 }
-                
+
                 // 0.1. Если оба без шагов, но у одного есть precondition/expected - он лучше
                 if (a.scoreData.stepsCount === 0 && b.scoreData.stepsCount === 0) {
                     const aHasContent = a.scoreData.hasPrecondition || a.scoreData.hasExpectedResult;
@@ -7970,29 +7821,29 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                         return bHasContent ? 1 : -1; // Тот, у кого есть precondition или expected, лучше
                     }
                 }
-                
+
                 // 1. Основной критерий - общий score
                 if (b.score !== a.score) {
                     return b.score - a.score;
                 }
-                
+
                 // 2. Если score одинаковый - предпочитаем больше шагов
                 if (b.scoreData.stepsCount !== a.scoreData.stepsCount) {
                     return b.scoreData.stepsCount - a.scoreData.stepsCount;
                 }
-                
+
                 // 3. Если шаги одинаковые - предпочитаем больше общую длину шагов
                 if (b.scoreData.stepsTotalLength !== a.scoreData.stepsTotalLength) {
                     return b.scoreData.stepsTotalLength - a.scoreData.stepsTotalLength;
                 }
-                
+
                 // 4. Если все одинаково - предпочитаем тот, у которого есть precondition и expected result
                 const aHasBoth = a.scoreData.hasPrecondition && a.scoreData.hasExpectedResult;
                 const bHasBoth = b.scoreData.hasPrecondition && b.scoreData.hasExpectedResult;
                 if (aHasBoth !== bHasBoth) {
                     return bHasBoth ? 1 : -1;
                 }
-                
+
                 // 5. Если все абсолютно одинаково - оставляем более старый (меньший ID, обычно создан раньше)
                 return a.case.id - b.case.id;
             };
@@ -8072,12 +7923,12 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                 });
             });
         }
-        
+
         // Удаляем дубли — параллельно с ограничением (ускоряет операцию)
         const deleted = [];
         const errors = [];
         const deleteLimit = pLimit(5); // одновременно не более 5 запросов к Allure
-        
+
         await Promise.all(
             toDelete.map(tc =>
                 deleteLimit(async () => {
@@ -8092,7 +7943,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                 })
             )
         );
-        
+
         const result = {
             success: true,
             totalCases: allCases.length,
@@ -8102,9 +7953,9 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
             skippedNonDraft: skippedNonDraft.length > 0 ? skippedNonDraft : undefined,
             errors: errors.length > 0 ? errors : undefined
         };
-        
+
         console.log(`[cleanup-duplicates] Завершено. Удалено ${deleted.length} дублей из ${allCases.length} тест-кейсов`);
-        
+
         res.json(result);
     } catch (err) {
         console.error('[cleanup-duplicates] Ошибка при очистке дублей:', err);
@@ -8392,8 +8243,7 @@ app.get('/api/cleanup-duplicates-status/:taskId', async (req, res) => {
  * POST /api/perfect-examples
  * Сохраняет тест-кейсы как идеальные примеры для улучшения генерации
  */
-app.post('/api/perfect-examples', async (req, res) =>
-{
+app.post('/api/perfect-examples', async (req, res) => {
     const { testCases, projectId } = req.body;
 
     if (!Array.isArray(testCases) || testCases.length === 0) {
@@ -8422,8 +8272,7 @@ app.post('/api/perfect-examples', async (req, res) =>
  * GET /api/perfect-examples/stats
  * Получает статистику по идеальным примерам
  */
-app.get('/api/perfect-examples/stats', async (req, res) =>
-{
+app.get('/api/perfect-examples/stats', async (req, res) => {
     const { projectId } = req.query;
 
     try {
@@ -8439,8 +8288,7 @@ app.get('/api/perfect-examples/stats', async (req, res) =>
  * DELETE /api/perfect-examples/:id
  * Удаляет идеальный пример по ID
  */
-app.delete('/api/perfect-examples/:id', async (req, res) =>
-{
+app.delete('/api/perfect-examples/:id', async (req, res) => {
     const { id } = req.params;
 
     try {
@@ -8461,8 +8309,7 @@ app.delete('/api/perfect-examples/:id', async (req, res) =>
  * Исправляет тест-кейсы по промпту с использованием LLM и инструментов для запроса требований
  * ✅ НОВАЯ АРХИТЕКТУРА: Использует персистентный контекст диалога для сохранения истории между вызовами
  */
-app.post('/api/fix-test-cases', async (req, res) =>
-{
+app.post('/api/fix-test-cases', async (req, res) => {
     const { testCases, fixPrompt, projectId, bearerToken, requirements, taskId: providedTaskId } = req.body;
 
     if (!Array.isArray(testCases) || !fixPrompt || typeof fixPrompt !== 'string' || !fixPrompt.trim()) {
@@ -8524,8 +8371,7 @@ app.post('/api/fix-test-cases', async (req, res) =>
  * POST /api/fix-test-cases/rollback
  * Откатить к предыдущему снимку состояния
  */
-app.post('/api/fix-test-cases/rollback', async (req, res) =>
-{
+app.post('/api/fix-test-cases/rollback', async (req, res) => {
     const { taskId, snapshotIndex = -1 } = req.body;
 
     if (!taskId) {
@@ -8551,8 +8397,7 @@ app.post('/api/fix-test-cases/rollback', async (req, res) =>
  * GET /api/fix-test-cases/context/:taskId
  * Получить информацию о контексте задачи
  */
-app.get('/api/fix-test-cases/context/:taskId', async (req, res) =>
-{
+app.get('/api/fix-test-cases/context/:taskId', async (req, res) => {
     const { taskId } = req.params;
 
     try {
@@ -8589,8 +8434,7 @@ app.get('/api/fix-test-cases/context/:taskId', async (req, res) =>
  * DELETE /api/fix-test-cases/context/:taskId
  * Удалить контекст задачи
  */
-app.delete('/api/fix-test-cases/context/:taskId', async (req, res) =>
-{
+app.delete('/api/fix-test-cases/context/:taskId', async (req, res) => {
     const { taskId } = req.params;
 
     try {
@@ -8602,8 +8446,7 @@ app.delete('/api/fix-test-cases/context/:taskId', async (req, res) =>
     }
 });
 
-function mergePreservingOriginals (originalCase, modifiedCase, fixPrompt = '')
-{
+function mergePreservingOriginals(originalCase, modifiedCase, fixPrompt = '') {
     if (!originalCase) {
         return modifiedCase;
     }
@@ -8663,8 +8506,7 @@ function mergePreservingOriginals (originalCase, modifiedCase, fixPrompt = '')
  * @param {string} [options.requirements] - Требования (если нужно)
  * @returns {Promise<Array>} - Массив исправленных тест-кейсов
  */
-async function fixTestCasesAsync ({ taskId, testCases, fixPrompt, projectId, bearerToken, requirements })
-{
+async function fixTestCasesAsync({ taskId, testCases, fixPrompt, projectId, bearerToken, requirements }) {
     if (!taskId) {
         throw new Error('[fixTestCasesAsync] taskId обязателен для сохранения контекста диалога');
     }
@@ -8709,8 +8551,7 @@ async function fixTestCasesAsync ({ taskId, testCases, fixPrompt, projectId, bea
 
     // Шаг 3: Создаем contextFetcher для запроса требований из Confluence при необходимости
     const contextFetcher = bearerToken
-        ? async (requestedPageId) =>
-        {
+        ? async (requestedPageId) => {
             try {
                 if (requestedPageId == null) return '';
                 const requestedIdStr = String(requestedPageId);
@@ -9046,8 +8887,7 @@ ${JSON.stringify(chunk, null, 2)}
             const tools = [buildSubmitFixedCasesTool(), ...interactiveTools];
 
             // Создаем handler для submit_fixed_cases
-            const fixedCasesHandler = async (args) =>
-            {
+            const fixedCasesHandler = async (args) => {
                 console.log(`[fixTestCasesAsync] Получены исправленные ТК через tool: ${args.cases?.length || 0} кейсов`);
                 return { success: true, message: `Принято ${args.cases?.length || 0} исправленных тест-кейсов` };
             };
@@ -9128,8 +8968,7 @@ ${userPrompt}`;
             // ✅ ВОССТАНОВЛЕНИЕ ID ПЕРЕД валидацией: если модель не вернула id, восстанавливаем по индексу или другим полям
             if (fixedCases.length > 0) {
                 // Функция восстановления id
-                const casesWithIds = fixedCases.map((fixed, index) =>
-                {
+                const casesWithIds = fixedCases.map((fixed, index) => {
                     // Если id уже есть и валиден - возвращаем как есть
                     if (fixed.id && fixed.id !== 'undefined' && fixed.id !== undefined && fixed.id !== null) {
                         return fixed;
@@ -9159,8 +8998,7 @@ ${userPrompt}`;
                     // ✅ FALLBACK 3: Пытаемся найти по частичному совпадению title
                     if (fixed.title) {
                         const titleWords = fixed.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-                        const original = chunk.find(oc =>
-                        {
+                        const original = chunk.find(oc => {
                             if (!oc.title) return false;
                             const ocTitleWords = oc.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
                             const matches = titleWords.filter(w => ocTitleWords.includes(w));
@@ -9202,8 +9040,7 @@ ${userPrompt}`;
             if (fixedCases.length > 0) {
                 console.log(`[fixTestCasesAsync] ✅ Чанк ${chunkIdx + 1}: исправлено ${fixedCases.length} ТК`);
                 // Обновляем исправленные ТК в результирующем списке
-                fixedCases.forEach(fixedCase =>
-                {
+                fixedCases.forEach(fixedCase => {
                     // ✅ КРИТИЧНО: Ищем старый тест-кейс по ID
                     let index = allFixedCases.findIndex(tc => tc.id === fixedCase.id);
 
@@ -9260,14 +9097,12 @@ ${userPrompt}`;
  * @param {string} fixPrompt - Промпт с описанием доработок
  * @returns {Array} - Массив тест-кейсов для правки
  */
-function identifyTargetCases (testCases, fixPrompt)
-{
+function identifyTargetCases(testCases, fixPrompt) {
     const promptLower = (fixPrompt || '').toLowerCase();
     const targetCases = [];
     const seenCaseIds = new Set();
 
-    const addCase = (tc) =>
-    {
+    const addCase = (tc) => {
         const key = tc.id != null ? `id:${tc.id}` : `${tc.feature || ''}:${tc.story || ''}:${tc.title || ''}`;
         if (seenCaseIds.has(key)) {
             return;
@@ -9290,8 +9125,7 @@ function identifyTargetCases (testCases, fixPrompt)
         console.log(`[identifyTargetCases] Применяем фильтр по регулярным выражениям: ${regexFilters.map(r => r.toString()).join(', ')}`);
     }
 
-    const matchesRegexFilters = (tc) =>
-    {
+    const matchesRegexFilters = (tc) => {
         if (!regexFilters.length) return false;
         const valuesToCheck = [
             tc.id != null ? String(tc.id) : '',
@@ -9312,8 +9146,7 @@ function identifyTargetCases (testCases, fixPrompt)
     const isFrontend = /frontend|фронтенд|front-end/i.test(fixPrompt);
     const isBackend = /backend|бэкенд|back-end/i.test(fixPrompt);
 
-    testCases.forEach(tc =>
-    {
+    testCases.forEach(tc => {
         const titleLower = (tc.title || '').toLowerCase();
         const layer = (tc.layer || '').toLowerCase();
         const tcIdLower = tc.id != null ? String(tc.id).toLowerCase() : '';
@@ -9376,16 +9209,14 @@ function identifyTargetCases (testCases, fixPrompt)
     return targetCases;
 }
 
-function extractIdFiltersFromPrompt (fixPrompt = '')
-{
+function extractIdFiltersFromPrompt(fixPrompt = '') {
     const ids = new Set();
     if (!fixPrompt) {
         return ids;
     }
 
     const normalized = fixPrompt.replace(/\r/g, ' ');
-    const addId = (rawId) =>
-    {
+    const addId = (rawId) => {
         if (rawId == null) return;
         const cleaned = String(rawId).trim().replace(/^["']|["']$/g, '');
         if (!cleaned) return;
@@ -9411,8 +9242,7 @@ function extractIdFiltersFromPrompt (fixPrompt = '')
     return ids;
 }
 
-function extractRegexFiltersFromPrompt (fixPrompt = '')
-{
+function extractRegexFiltersFromPrompt(fixPrompt = '') {
     const filters = [];
     if (!fixPrompt) {
         return filters;
@@ -9423,8 +9253,7 @@ function extractRegexFiltersFromPrompt (fixPrompt = '')
     let match;
     while ((match = keywordPattern.exec(normalized)) !== null) {
         const chunk = match[2] || '';
-        chunk.split(/\s*,\s*/).forEach(part =>
-        {
+        chunk.split(/\s*,\s*/).forEach(part => {
             const regex = buildRegexFromRaw(part.trim());
             if (regex) {
                 filters.push(regex);
@@ -9435,8 +9264,7 @@ function extractRegexFiltersFromPrompt (fixPrompt = '')
     return filters;
 }
 
-function buildRegexFromRaw (rawPattern)
-{
+function buildRegexFromRaw(rawPattern) {
     if (!rawPattern) {
         return null;
     }
@@ -9476,15 +9304,13 @@ function buildRegexFromRaw (rawPattern)
     }
 }
 
-function extractStepCleanupRules (fixPrompt = '')
-{
+function extractStepCleanupRules(fixPrompt = '') {
     const tokens = new Set();
     if (!fixPrompt) {
         return [];
     }
 
-    const addToken = (token) =>
-    {
+    const addToken = (token) => {
         const normalized = (token || '').trim().toLowerCase();
         if (normalized) {
             tokens.add(normalized);
@@ -9511,8 +9337,7 @@ function extractStepCleanupRules (fixPrompt = '')
     return Array.from(tokens).map(token => ({ type: 'contains', token }));
 }
 
-function evaluateStepCleanup (originalCase, modifiedCase, cleanupRules)
-{
+function evaluateStepCleanup(originalCase, modifiedCase, cleanupRules) {
     if (!cleanupRules.length) {
         return { allowed: false, removedCount: 0 };
     }
@@ -9536,20 +9361,17 @@ function evaluateStepCleanup (originalCase, modifiedCase, cleanupRules)
     };
 }
 
-function diffSteps (originalSteps = [], modifiedSteps = [])
-{
+function diffSteps(originalSteps = [], modifiedSteps = []) {
     const original = Array.isArray(originalSteps) ? originalSteps.map(canonicalStepValue) : [];
     const modified = Array.isArray(modifiedSteps) ? modifiedSteps.map(canonicalStepValue) : [];
 
     const modifiedCounters = new Map();
-    modified.forEach(value =>
-    {
+    modified.forEach(value => {
         modifiedCounters.set(value, (modifiedCounters.get(value) || 0) + 1);
     });
 
     const removed = [];
-    original.forEach(value =>
-    {
+    original.forEach(value => {
         const counter = modifiedCounters.get(value) || 0;
         if (counter > 0) {
             modifiedCounters.set(value, counter - 1);
@@ -9559,8 +9381,7 @@ function diffSteps (originalSteps = [], modifiedSteps = [])
     });
 
     const added = [];
-    modifiedCounters.forEach((count, value) =>
-    {
+    modifiedCounters.forEach((count, value) => {
         if (count > 0) {
             for (let i = 0; i < count; i++) {
                 added.push(value);
@@ -9571,8 +9392,7 @@ function diffSteps (originalSteps = [], modifiedSteps = [])
     return { removed, added };
 }
 
-function canonicalStepValue (step)
-{
+function canonicalStepValue(step) {
     if (step == null) {
         return '';
     }
@@ -9603,8 +9423,7 @@ function canonicalStepValue (step)
  * @param {Array} originalCases - Исходные ТК для этого чанка (для маппинга)
  * @returns {Array} - Массив исправленных тест-кейсов
  */
-function extractFixedCasesFromResponse (aiResponse, originalCases)
-{
+function extractFixedCasesFromResponse(aiResponse, originalCases) {
     const fixedCases = [];
 
     // ✅ Проверка на пустой response
@@ -9644,8 +9463,7 @@ function extractFixedCasesFromResponse (aiResponse, originalCases)
 
                 if (args.cases && Array.isArray(args.cases)) {
                     // Маппим исправленные ТК к исходным по ID
-                    args.cases.forEach(fixedCase =>
-                    {
+                    args.cases.forEach(fixedCase => {
                         // ✅ СНАЧАЛА: Ищем по id (если есть)
                         let original = fixedCase.id
                             ? originalCases.find(oc => oc.id === fixedCase.id)
@@ -9793,8 +9611,7 @@ function extractFixedCasesFromResponse (aiResponse, originalCases)
                         }
 
                         if (parsed.cases && Array.isArray(parsed.cases)) {
-                            parsed.cases.forEach(fixedCase =>
-                            {
+                            parsed.cases.forEach(fixedCase => {
                                 // ✅ СНАЧАЛА: Ищем по id (если есть)
                                 let original = fixedCase.id
                                     ? originalCases.find(oc => oc.id === fixedCase.id)
@@ -9939,8 +9756,7 @@ function extractFixedCasesFromResponse (aiResponse, originalCases)
 
                             if (extractedObjects.length > 0) {
                                 console.log(`[extractFixedCasesFromResponse] ✅ Fallback: извлечено ${extractedObjects.length} объектов напрямую из массива`);
-                                extractedObjects.forEach(fixedCase =>
-                                {
+                                extractedObjects.forEach(fixedCase => {
                                     // ✅ СНАЧАЛА: Ищем по id (если есть)
                                     let original = fixedCase.id
                                         ? originalCases.find(oc => oc.id === fixedCase.id)
@@ -10002,8 +9818,7 @@ function extractFixedCasesFromResponse (aiResponse, originalCases)
                         }
 
                         if (Array.isArray(parsed)) {
-                            parsed.forEach(fixedCase =>
-                            {
+                            parsed.forEach(fixedCase => {
                                 // ✅ СНАЧАЛА: Ищем по id (если есть)
                                 let original = fixedCase.id
                                     ? originalCases.find(oc => oc.id === fixedCase.id)
@@ -10051,8 +9866,7 @@ function extractFixedCasesFromResponse (aiResponse, originalCases)
  * @param {Array} testCases - массив тест-кейсов
  * @returns {Array} - массив тест-кейсов с параметризацией
  */
-function autoParameterizeSimilarTests (testCases)
-{
+function autoParameterizeSimilarTests(testCases) {
     if (!Array.isArray(testCases) || testCases.length === 0) return testCases;
 
     const processed = new Set();
@@ -10101,8 +9915,7 @@ function autoParameterizeSimilarTests (testCases)
  * Находит тест-кейс по логической сигнатуре (title + feature + story + scenario)
  * Используется для поиска дубликатов при перегенерации
  */
-function findTestCaseBySignature (testCases, targetCase)
-{
+function findTestCaseBySignature(testCases, targetCase) {
     if (!targetCase || !Array.isArray(testCases)) return null;
 
     const normalize = (text) => String(text || '')
@@ -10144,10 +9957,8 @@ function findTestCaseBySignature (testCases, targetCase)
  * Глобальный реестр сигнатур для предотвращения дублей на этапе генерации
  * Архитектурное решение для устранения дублей при chunking и перегенерации
  */
-class GlobalSignatureRegistry
-{
-    constructor ()
-    {
+class GlobalSignatureRegistry {
+    constructor() {
         // signature -> { testCaseId, testCase, expectedHash, stepsHash }
         this.registry = new Map();
         // expectedHash -> [testCaseIds] для кластеризации по expected
@@ -10159,8 +9970,7 @@ class GlobalSignatureRegistry
     /**
      * Нормализует текст для сравнения
      */
-    normalize (text)
-    {
+    normalize(text) {
         return String(text || '')
             .toLowerCase()
             .replace(/[^a-zа-я0-9]+/gi, ' ')
@@ -10171,8 +9981,7 @@ class GlobalSignatureRegistry
     /**
      * Извлекает текст из шага
      */
-    stepToText (step)
-    {
+    stepToText(step) {
         // Поддерживаем форматы: строка, объект с action, объект с text (для обратной совместимости)
         if (typeof step === 'string') return step;
         if (typeof step === 'object' && step !== null) {
@@ -10185,8 +9994,7 @@ class GlobalSignatureRegistry
      * Строит базовую сигнатуру (без steps и expected)
      * Используется для обнаружения дублей даже при улучшении шагов
      */
-    buildSignature (testCase)
-    {
+    buildSignature(testCase) {
         const layer = this.normalize(testCase.layer);
         const isE2E = layer === 'e2e tests';
 
@@ -10208,8 +10016,7 @@ class GlobalSignatureRegistry
     /**
      * Строит строгую сигнатуру (с учетом steps и expected)
      */
-    buildStrictSignature (testCase)
-    {
+    buildStrictSignature(testCase) {
         const layer = this.normalize(testCase.layer);
         const isE2E = layer === 'e2e tests';
 
@@ -10240,8 +10047,7 @@ class GlobalSignatureRegistry
      * Проверяет, существует ли кейс с такой сигнатурой
      * @returns {Object|null} { existingId, existingCase, isDuplicate } или null
      */
-    checkDuplicate (testCase)
-    {
+    checkDuplicate(testCase) {
         const signature = this.buildSignature(testCase);
         const strictSignature = this.buildStrictSignature(testCase);
 
@@ -10274,8 +10080,7 @@ class GlobalSignatureRegistry
      * Регистрирует тест-кейс в реестре
      * @returns {boolean} true если зарегистрирован, false если был дубликат
      */
-    register (testCase)
-    {
+    register(testCase) {
         const signature = this.buildSignature(testCase);
         const strictSignature = this.buildStrictSignature(testCase);
         const duplicate = this.checkDuplicate(testCase);
@@ -10316,8 +10121,7 @@ class GlobalSignatureRegistry
     /**
      * Заменяет существующий кейс новым (при перегенерации)
      */
-    replace (existingId, newTestCase)
-    {
+    replace(existingId, newTestCase) {
         // Находим старую запись
         let oldEntry = null;
         for (const [sig, entry] of this.registry.entries()) {
@@ -10350,8 +10154,7 @@ class GlobalSignatureRegistry
     /**
      * Получает список уже занятых expected для Feature/Story (для промпта)
      */
-    getOccupiedExpecteds (feature, story)
-    {
+    getOccupiedExpecteds(feature, story) {
         const normalizedFeature = this.normalize(feature);
         const normalizedStory = this.normalize(story);
         const occupied = [];
@@ -10376,8 +10179,7 @@ class GlobalSignatureRegistry
      * Проверяет и обновляет бюджет E2E для feature+story
      * @returns {boolean} true если можно добавить E2E, false если бюджет исчерпан
      */
-    checkE2EBudget (feature, story, maxE2E = 2)
-    {
+    checkE2EBudget(feature, story, maxE2E = 2) {
         const key = `${this.normalize(feature)}::${this.normalize(story)}`;
         const budget = this.pyramidBudget.get(key) || { e2eCount: 0, maxE2E };
 
@@ -10393,8 +10195,7 @@ class GlobalSignatureRegistry
     /**
      * Получает статистику реестра
      */
-    getStats ()
-    {
+    getStats() {
         return {
             totalRegistered: this.registry.size / 2, // Каждый кейс регистрируется дважды (base + strict)
             expectedClusters: this.expectedClusters.size,
@@ -10405,8 +10206,7 @@ class GlobalSignatureRegistry
     /**
      * Очищает реестр
      */
-    clear ()
-    {
+    clear() {
         this.registry.clear();
         this.expectedClusters.clear();
         this.pyramidBudget.clear();
@@ -10417,8 +10217,7 @@ class GlobalSignatureRegistry
  * Нормализует шаги Integration frontend тестов
  * Переносит технические шаги (API вызовы) в precondition
  */
-function normalizeIntegrationFrontendSteps (testCase)
-{
+function normalizeIntegrationFrontendSteps(testCase) {
     if (!testCase || testCase.layer !== 'Integration frontend Tests') {
         return testCase;
     }
@@ -10484,8 +10283,7 @@ function normalizeIntegrationFrontendSteps (testCase)
             : 0;
 
         // Добавляем технические шаги с правильной нумерацией
-        const newLines = technicalSteps.map((step, i) =>
-        {
+        const newLines = technicalSteps.map((step, i) => {
             maxNumber++;
             return `${maxNumber}. ${step}`;
         });
@@ -10523,13 +10321,11 @@ function normalizeIntegrationFrontendSteps (testCase)
  * Проверяет, являются ли два E2E теста дубликатами по шагам
  * Если шаги одинаковые, но тайтлы разные - это косвенный дубликат
  */
-function areE2EStepsDuplicate (test1, test2)
-{
+function areE2EStepsDuplicate(test1, test2) {
     if (test1.layer !== 'E2E Tests' || test2.layer !== 'E2E Tests') return false;
     if (test1.feature !== test2.feature || test1.story !== test2.story) return false;
 
-    const normalizeStep = (step) =>
-    {
+    const normalizeStep = (step) => {
         // Поддерживаем форматы: строка, объект с action, объект с text (для обратной совместимости)
         const text = typeof step === 'string'
             ? step
@@ -10555,8 +10351,7 @@ function areE2EStepsDuplicate (test1, test2)
  * Заменяет существующие кейсы вместо добавления новых
  * Улучшено: более агрессивная дедупликация по шагам для E2E
  */
-function smartMergeTestCases (originalCases, newCases, registry)
-{
+function smartMergeTestCases(originalCases, newCases, registry) {
     if (!Array.isArray(originalCases) || !Array.isArray(newCases)) {
         return originalCases || [];
     }
@@ -10655,8 +10450,7 @@ function smartMergeTestCases (originalCases, newCases, registry)
     return result;
 }
 
-function deduplicateTestCases (testCases, stage = 'final')
-{
+function deduplicateTestCases(testCases, stage = 'final') {
     if (!Array.isArray(testCases) || testCases.length === 0) {
         return Array.isArray(testCases) ? testCases : [];
     }
@@ -10667,8 +10461,7 @@ function deduplicateTestCases (testCases, stage = 'final')
         .replace(/\s+/g, ' ')
         .trim();
 
-    const stepToText = (step) =>
-    {
+    const stepToText = (step) => {
         // Поддерживаем форматы: строка, объект с action, объект с text (для обратной совместимости)
         if (typeof step === 'string') return step;
         if (typeof step === 'object' && step !== null) {
@@ -10685,8 +10478,7 @@ function deduplicateTestCases (testCases, stage = 'final')
 
     // ✅ БАЗОВАЯ сигнатура для дедупликации (БЕЗ steps и expected)
     // Позволяет находить дубликаты даже если шаги были улучшены при перегенерации
-    const buildSignature = (testCase) =>
-    {
+    const buildSignature = (testCase) => {
         const layer = normalize(testCase.layer);
         const isE2E = layer === 'e2e tests';
 
@@ -10707,8 +10499,7 @@ function deduplicateTestCases (testCases, stage = 'final')
 
     // ✅ СТРОГАЯ сигнатура для точной дедупликации (С учетом steps и expected, БЕЗ title)
     // Используется как ОСНОВНАЯ для финальной дедупликации, чтобы схлопывать тесты с одинаковыми шагами, но разными заголовками
-    const buildStrictSignature = (testCase) =>
-    {
+    const buildStrictSignature = (testCase) => {
         const layer = normalize(testCase.layer);
         const isE2E = layer === 'e2e tests';
 
@@ -10860,8 +10651,7 @@ function deduplicateTestCases (testCases, stage = 'final')
 /**
  * Проверяет, похожи ли два теста (одинаковая логика, разные значения)
  */
-function areTestsSimilar (test1, test2)
-{
+function areTestsSimilar(test1, test2) {
     // Должны быть одинаковые: layer, feature, story, scenario, steps (структура)
     if (test1.layer !== test2.layer) return false;
     if (test1.feature !== test2.feature) return false;
@@ -10908,8 +10698,7 @@ function areTestsSimilar (test1, test2)
 /**
  * Нормализует steps для сравнения (убирает конкретные значения)
  */
-function normalizeStepsForComparison (steps)
-{
+function normalizeStepsForComparison(steps) {
     return steps
         .replace(/\d+-значный/g, 'N-значный')
         .replace(/\d+/g, 'N')
@@ -10920,8 +10709,7 @@ function normalizeStepsForComparison (steps)
 /**
  * Находит различия в значениях между тестами
  */
-function findValueDifferences (test1, test2)
-{
+function findValueDifferences(test1, test2) {
     const diffs = [];
 
     // Ищем различия в title
@@ -10999,8 +10787,7 @@ function findValueDifferences (test1, test2)
 /**
  * Извлекает значение из строки
  */
-function extractValue (str)
-{
+function extractValue(str) {
     const match = str.match(/(\d+)/);
     return match ? match[1] : str.trim();
 }
@@ -11008,8 +10795,7 @@ function extractValue (str)
 /**
  * Объединяет похожие тесты в один параметризованный
  */
-function mergeSimilarTests (similarTests)
-{
+function mergeSimilarTests(similarTests) {
     if (similarTests.length < 2) return null;
 
     const base = similarTests[0];
@@ -11069,8 +10855,7 @@ function mergeSimilarTests (similarTests)
     }
 
     // Формируем examples на основе исходных тестов
-    const examples = similarTests.map((test, idx) =>
-    {
+    const examples = similarTests.map((test, idx) => {
         const exampleParams = [];
         for (const param of parameters) {
             if (variantResultConfig && param.name === 'Вариант результата') {
@@ -11094,8 +10879,7 @@ function mergeSimilarTests (similarTests)
     let newTitle = base.title || '';
     for (const param of parameters) {
         // Убираем конкретные значения из title
-        param.values.forEach(val =>
-        {
+        param.values.forEach(val => {
             newTitle = newTitle.replace(new RegExp(val, 'gi'), `{${param.name}}`);
         });
     }
@@ -11107,8 +10891,7 @@ function mergeSimilarTests (similarTests)
     // Обновляем expected, делая его более общим
     let newExpected = base.expected || '';
     for (const param of parameters) {
-        param.values.forEach(val =>
-        {
+        param.values.forEach(val => {
             newExpected = newExpected.replace(new RegExp(val, 'gi'), `{${param.name}}`);
         });
     }
@@ -11129,13 +10912,11 @@ function mergeSimilarTests (similarTests)
 /**
  * Извлекает значение параметра из теста
  */
-function extractParameterValue (test, paramName)
-{
+function extractParameterValue(test, paramName) {
     const title = String(test.title || '').toLowerCase();
     const expected = String(test.expected || '').toLowerCase();
     // ✅ Исправляем обработку steps: извлекаем текст из объектов
-    const steps = (test.steps || []).map(s =>
-    {
+    const steps = (test.steps || []).map(s => {
         if (typeof s === 'string') return s;
         if (typeof s === 'object' && s !== null) {
             return s.action || s.text || s.body || '';
@@ -11172,8 +10953,7 @@ function extractParameterValue (test, paramName)
     return null;
 }
 
-async function generateTestCasesAsync (taskId, inputData)
-{
+async function generateTestCasesAsync(taskId, inputData) {
     // Объявляем переменные в начале функции
     let finalTestCases = [];
     const projectId = inputData?.projectId || inputData?.project_id; // ✅ ProjectId для Allure API
@@ -11196,8 +10976,7 @@ async function generateTestCasesAsync (taskId, inputData)
         });
 
         // === Вспомогательные функции ===
-        function buildModelIndex (model)
-        {
+        function buildModelIndex(model) {
             const scenarioSet = new Set();
             const codeTo = new Map();              // "код шага" → { scenario, story, feature }
             const scenarioToParent = new Map();    // "сценарий" → { story, feature }
@@ -11218,8 +10997,7 @@ async function generateTestCasesAsync (taskId, inputData)
             return { scenarioSet, codeTo, scenarioToParent, storyToFeature };
         }
 
-        function findSimilarRequirements (requiredIds, missingIds)
-        {
+        function findSimilarRequirements(requiredIds, missingIds) {
             const similar = [];
 
             for (const missing of missingIds) {
@@ -11243,8 +11021,7 @@ async function generateTestCasesAsync (taskId, inputData)
             return similar;
         }
 
-        function checkRequirementsCoverage (testCases, requirements)
-        {
+        function checkRequirementsCoverage(testCases, requirements) {
             console.log(`[checkRequirementsCoverage] Проверка покрытия требований по requirementId...`);
 
             // Собираем все requirementId из требований (извлекаем разделы)
@@ -11334,13 +11111,11 @@ async function generateTestCasesAsync (taskId, inputData)
         }
 
         // ✅ ФУНКЦИЯ ВАЛИДАЦИИ ТЕСТ-КЕЙСОВ ПО СТАЙЛ-ГАЙДУ
-        function validateTestCasesByStyleGuide (testCases, styleGuidePrompt)
-        {
+        function validateTestCasesByStyleGuide(testCases, styleGuidePrompt) {
             const issues = [];
 
             // ✅ Вспомогательная функция для извлечения текста шага
-            const getStepText = (step) =>
-            {
+            const getStepText = (step) => {
                 // Поддерживаем форматы: строка, объект с action, объект с text (для обратной совместимости)
                 if (typeof step === 'string') {
                     return step;
@@ -11354,8 +11129,7 @@ async function generateTestCasesAsync (taskId, inputData)
             const normalizeText = (text) => String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
             const scenarioStepMap = new Map();
 
-            testCases.forEach((tc, idx) =>
-            {
+            testCases.forEach((tc, idx) => {
                 const tcNum = idx + 1;
                 const title = tc.title || '';
                 const steps = Array.isArray(tc.steps) ? tc.steps : [];
@@ -11394,16 +11168,14 @@ async function generateTestCasesAsync (taskId, inputData)
                 const normalizedScenario = normalizeText(scenarioText);
                 const normalizedTitle = normalizeText(title);
                 if (normalizedScenario) {
-                    normalizedStepTexts.forEach((stepText, stepIdx) =>
-                    {
+                    normalizedStepTexts.forEach((stepText, stepIdx) => {
                         if (stepText && stepText === normalizedScenario) {
                             issues.push(`Тест-кейс ${tcNum} "${title}": шаг ${stepIdx + 1} дословно повторяет scenario "${scenarioText}". Шаг должен детализировать действие, а не копировать сценарий.`);
                         }
                     });
                 }
                 if (normalizedTitle) {
-                    normalizedStepTexts.forEach((stepText, stepIdx) =>
-                    {
+                    normalizedStepTexts.forEach((stepText, stepIdx) => {
                         if (stepText && stepText === normalizedTitle) {
                             issues.push(`Тест-кейс ${tcNum} "${title}": шаг ${stepIdx + 1} дословно повторяет title. Шаг должен описывать конкретное действие пользователя.`);
                         }
@@ -11411,8 +11183,7 @@ async function generateTestCasesAsync (taskId, inputData)
                 }
 
                 // ✅ КРИТИЧНО: Проверка неконкретных шагов
-                const vagueSteps = steps.filter(step =>
-                {
+                const vagueSteps = steps.filter(step => {
                     const stepText = getStepText(step);
                     const stepTextLower = stepText.toLowerCase();
                     // Проверяем слишком короткие или абстрактные шаги
@@ -11446,8 +11217,7 @@ async function generateTestCasesAsync (taskId, inputData)
                 if (layer === 'E2E Tests') {
                     const hasApiDetails = /(GET|POST|PUT|DELETE|PATCH)\s+\/[^"'\s]+|http:\/\/|https:\/\/|эндпоинт|endpoint|api|статус\s*[-_]?код|status\s*code|deal\.|previousBankRegNumber|operationCode|status\s*\d{3}|\b200\b|\b400\b|\b404\b|\b500\b/gi;
                     // ✅ Исправляем обработку steps: извлекаем текст из объектов
-                    const stepsText = steps.map(step =>
-                    {
+                    const stepsText = steps.map(step => {
                         if (typeof step === 'string') return step;
                         if (typeof step === 'object' && step !== null) {
                             return step.action || step.text || step.body || '';
@@ -11462,8 +11232,7 @@ async function generateTestCasesAsync (taskId, inputData)
 
                 // ✅ НОВАЯ ПРОВЕРКА 1.7: E2E тесты не должны содержать параметризацию с множеством технических вариантов (коды операций, статусы, параметры API)
                 if (layer === 'E2E Tests') {
-                    const hasTechnicalParametrization = tc.parameters && Array.isArray(tc.parameters) && tc.parameters.some(p =>
-                    {
+                    const hasTechnicalParametrization = tc.parameters && Array.isArray(tc.parameters) && tc.parameters.some(p => {
                         const paramName = String(p.name || '').toLowerCase();
                         const paramValues = Array.isArray(p.values) ? p.values : [];
                         // Проверяем, не являются ли параметры техническими (коды операций, статусы, параметры API)
@@ -11543,8 +11312,7 @@ async function generateTestCasesAsync (taskId, inputData)
 
                     if (isAuthorizedInPrecondition && steps.length > 0) {
                         // Проверяем, есть ли в шагах шаг авторизации
-                        const hasAuthStep = steps.some(step =>
-                        {
+                        const hasAuthStep = steps.some(step => {
                             const stepText = getStepText(step).toLowerCase();
                             return /авторизоваться|войти\s+в\s+систему|войти|залогиниться/i.test(stepText);
                         });
@@ -11556,8 +11324,7 @@ async function generateTestCasesAsync (taskId, inputData)
                 }
 
                 // Проверка шагов
-                steps.forEach((step, stepIdx) =>
-                {
+                steps.forEach((step, stepIdx) => {
                     const stepText = getStepText(step);
                     const stepLower = stepText.toLowerCase();
 
@@ -11616,8 +11383,7 @@ async function generateTestCasesAsync (taskId, inputData)
                 // Проверка типа теста
                 if (layer === 'Integration backend Tests') {
                     // Backend тесты не должны содержать UI-действия
-                    const uiActions = steps.some(step =>
-                    {
+                    const uiActions = steps.some(step => {
                         const stepText = getStepText(step);
                         return /нажать|кликнуть|выбрать|заполнить|ввести/i.test(stepText) && !stepText.includes('Выполнить');
                     });
@@ -11636,8 +11402,7 @@ async function generateTestCasesAsync (taskId, inputData)
                     }
 
                     // Frontend тесты не должны содержать технические действия
-                    const technicalActions = steps.filter(step =>
-                    {
+                    const technicalActions = steps.filter(step => {
                         const stepText = getStepText(step);
                         return /выполнить\s+(post|get|put|delete|patch)/i.test(stepText) ||
                             /^дождаться/i.test(stepText) ||
@@ -11654,8 +11419,7 @@ async function generateTestCasesAsync (taskId, inputData)
                 // Проверка параметризации
                 if (tc.parameters && Array.isArray(tc.parameters) && tc.parameters.length > 0) {
                     // Проверяем использование параметров в steps и expected
-                    const hasParamsInSteps = steps.some(step =>
-                    {
+                    const hasParamsInSteps = steps.some(step => {
                         const stepText = getStepText(step);
                         return stepText.includes('{{');
                     });
@@ -11672,8 +11436,7 @@ async function generateTestCasesAsync (taskId, inputData)
                 }
             });
 
-            scenarioStepMap.forEach((entries) =>
-            {
+            scenarioStepMap.forEach((entries) => {
                 if (entries.length <= 1) return;
                 const layer = entries[0].layer || '';
                 if (!layer.toLowerCase().includes('integration frontend')) return;
@@ -11687,8 +11450,7 @@ async function generateTestCasesAsync (taskId, inputData)
         }
 
         // ✅ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Поиск соответствующего чанка модели для тест-кейса
-        function findMatchingModelChunk (testCase, modelStructure)
-        {
+        function findMatchingModelChunk(testCase, modelStructure) {
             if (!testCase || !modelStructure) return null;
 
             const feature = testCase.feature;
@@ -11715,16 +11477,14 @@ async function generateTestCasesAsync (taskId, inputData)
             return null;
         }
 
-        function validateTestPyramid (testCases, modelStructure)
-        {
+        function validateTestPyramid(testCases, modelStructure) {
             console.log(`[validateTestPyramid] Проверка соблюдения пирамиды тестирования...`);
 
             const S = modelStructure.reduce((sum, f) => sum + (f.stories || []).length, 0);
             const Sc = modelStructure.reduce((sum, f) =>
                 sum + (f.stories || []).reduce((s, st) => s + (st.scenarios || []).length, 0), 0);
 
-            const layerCounts = testCases.reduce((acc, tc) =>
-            {
+            const layerCounts = testCases.reduce((acc, tc) => {
                 acc[tc.layer] = (acc[tc.layer] || 0) + 1;
                 return acc;
             }, {});
@@ -11768,8 +11528,7 @@ async function generateTestCasesAsync (taskId, inputData)
 
 
         // ✅ НОВАЯ ФУНКЦИЯ: Проверка дублей тест-кейсов
-        function detectDuplicates (testCases)
-        {
+        function detectDuplicates(testCases) {
             console.log(`[detectDuplicates] Проверка дублей среди ${testCases.length} тест-кейсов...`);
             const duplicates = [];
             const processed = new Set();
@@ -11840,8 +11599,7 @@ async function generateTestCasesAsync (taskId, inputData)
         }
 
         // Вспомогательная функция для расчета схожести строк
-        function calculateSimilarity (str1, str2)
-        {
+        function calculateSimilarity(str1, str2) {
             const longer = str1.length > str2.length ? str1 : str2;
             const shorter = str1.length > str2.length ? str2 : str1;
             if (longer.length === 0) return 1.0;
@@ -11850,8 +11608,7 @@ async function generateTestCasesAsync (taskId, inputData)
             return (longer.length - distance) / longer.length;
         }
 
-        function levenshteinDistance (str1, str2)
-        {
+        function levenshteinDistance(str1, str2) {
             const matrix = [];
             for (let i = 0; i <= str2.length; i++) {
                 matrix[i] = [i];
@@ -11876,8 +11633,7 @@ async function generateTestCasesAsync (taskId, inputData)
         }
 
         // ✅ НОВАЯ ФУНКЦИЯ: Проверка pairwise в параметрах и примерах
-        function validatePairwise (testCase)
-        {
+        function validatePairwise(testCase) {
             if (!testCase.parameters || !Array.isArray(testCase.parameters) || testCase.parameters.length === 0) {
                 return { valid: true, issues: [] };
             }
@@ -11916,8 +11672,7 @@ async function generateTestCasesAsync (taskId, inputData)
             let coveredPairsCount = undefined;
             if (params.length >= 2 && examples.length > 0) {
                 const paramValues = {};
-                params.forEach(p =>
-                {
+                params.forEach(p => {
                     paramValues[p.name] = new Set(p.values || []);
                 });
 
@@ -11930,19 +11685,16 @@ async function generateTestCasesAsync (taskId, inputData)
                 }
 
                 const coveredPairs = new Set();
-                examples.forEach(example =>
-                {
+                examples.forEach(example => {
                     if (!example.parameters) return;
                     const exampleParams = {};
-                    example.parameters.forEach(p =>
-                    {
+                    example.parameters.forEach(p => {
                         const name = p.name || p.parameter;
                         const value = p.value;
                         exampleParams[name] = value;
                     });
 
-                    pairs.forEach(([param1, param2]) =>
-                    {
+                    pairs.forEach(([param1, param2]) => {
                         if (exampleParams[param1] !== undefined && exampleParams[param2] !== undefined) {
                             coveredPairs.add(`${param1}=${exampleParams[param1]}|${param2}=${exampleParams[param2]}`);
                         }
@@ -11982,8 +11734,7 @@ async function generateTestCasesAsync (taskId, inputData)
 
         // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Проверка покрытия требований через модель (БЕЗ регулярных выражений!)
         // Покрытие определяется через тестовую модель (Feature/Story/Scenario), а не через парсинг текста
-        function checkRequirementsCoverageFixed (testCases, requirements, modelStructure)
-        {
+        function checkRequirementsCoverageFixed(testCases, requirements, modelStructure) {
             console.log(`[checkRequirementsCoverageFixed] Проверка покрытия требований через модель (БЕЗ регулярных выражений)...`);
 
             if (!modelStructure || !Array.isArray(modelStructure) || modelStructure.length === 0) {
@@ -12031,8 +11782,7 @@ async function generateTestCasesAsync (taskId, inputData)
             const coveredStories = new Set();
             const storyToTestCases = new Map(); // story -> количество тест-кейсов
 
-            testCases.forEach(tc =>
-            {
+            testCases.forEach(tc => {
                 if (tc.feature && tc.story) {
                     const storyKey = `${tc.feature}|||${tc.story}`;
                     coveredStories.add(storyKey);
@@ -12046,8 +11796,7 @@ async function generateTestCasesAsync (taskId, inputData)
             });
 
             // Находим непокрытые Stories
-            const missingStories = allStories.filter(s =>
-            {
+            const missingStories = allStories.filter(s => {
                 const storyKey = `${s.feature}|||${s.story}`;
                 return !coveredStories.has(storyKey);
             });
@@ -12056,8 +11805,7 @@ async function generateTestCasesAsync (taskId, inputData)
             const coveredRequirementIds = new Set();
             const allRequirementIds = new Set();
 
-            allStories.forEach(s =>
-            {
+            allStories.forEach(s => {
                 if (s.requirement) {
                     allRequirementIds.add(s.requirement);
                     if (coveredStories.has(`${s.feature}|||${s.story}`)) {
@@ -12101,8 +11849,7 @@ async function generateTestCasesAsync (taskId, inputData)
         // Покрытие теперь определяется через модель, без регулярных выражений
 
         // ✅ НОВАЯ ФУНКЦИЯ: Комплексная динамическая валидация качества
-        async function validateQualityDynamically (testCases, modelStructure, requirements, sharedStepsMap, systemPrompt, baseCaseModelOptions)
-        {
+        async function validateQualityDynamically(testCases, modelStructure, requirements, sharedStepsMap, systemPrompt, baseCaseModelOptions) {
             console.log(`[validateQualityDynamically] Запуск комплексной валидации качества ${testCases.length} тест-кейсов...`);
 
             const allIssues = [];
@@ -12113,8 +11860,7 @@ async function generateTestCasesAsync (taskId, inputData)
             const styleGuideIssues = validateTestCasesByStyleGuide(testCases, systemPrompt);
             if (styleGuideIssues.length > 0) {
                 // Фильтруем только критичные ошибки для перегенерации
-                const criticalStyleIssues = styleGuideIssues.filter(issue =>
-                {
+                const criticalStyleIssues = styleGuideIssues.filter(issue => {
                     return issue.includes('"Полный цикл"') ||
                         issue.includes('слово "E2E"') ||
                         issue.includes('глагола действия') ||
@@ -12128,8 +11874,7 @@ async function generateTestCasesAsync (taskId, inputData)
                     console.log(`[validateQualityDynamically] ⚠️ Найдено ${criticalStyleIssues.length} критичных семантических ошибок:`);
                     criticalStyleIssues.forEach(issue => console.log(`  - ${issue}`));
 
-                    criticalStyleIssues.forEach((issue, idx) =>
-                    {
+                    criticalStyleIssues.forEach((issue, idx) => {
                         // Определяем тип ошибки по содержимому
                         let issueType = 'semantic_error';
                         if (issue.includes('"Полный цикл"') || issue.includes('слово "E2E"')) {
@@ -12169,8 +11914,7 @@ async function generateTestCasesAsync (taskId, inputData)
             console.log(`[validateQualityDynamically] Проверка 1: Дубли...`);
             const duplicates = detectDuplicates(testCases);
             if (duplicates.length > 0) {
-                duplicates.forEach(dup =>
-                {
+                duplicates.forEach(dup => {
                     allIssues.push({
                         type: 'duplicate',
                         severity: 'high',
@@ -12187,8 +11931,7 @@ async function generateTestCasesAsync (taskId, inputData)
 
             // Проверка 2: Pairwise в параметрах
             console.log(`[validateQualityDynamically] Проверка 2: Pairwise в параметрах...`);
-            testCases.forEach((tc, idx) =>
-            {
+            testCases.forEach((tc, idx) => {
                 if (tc.parameters && tc.parameters.length > 0) {
                     const pairwiseValidation = validatePairwise(tc);
                     if (!pairwiseValidation.valid) {
@@ -12275,8 +12018,7 @@ async function generateTestCasesAsync (taskId, inputData)
 
 
         // НОВАЯ ФУНКЦИЯ: Догенерация тест-кейсов для недостающих требований (асинхронная версия)
-        async function gapFillRequirements (requirements, missingRequirements, systemPrompt, modelStructure)
-        {
+        async function gapFillRequirements(requirements, missingRequirements, systemPrompt, modelStructure) {
             console.log(`[gapFillRequirements-ASYNC] Догенерируем тест-кейсы для ${missingRequirements.length} недостающих функциональностей`);
 
             // ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Генерируем allowedForChunk и allowedScenarios
@@ -12561,10 +12303,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return allGapCases;
         }
 
-        function fixAgainstModel (testCases, idx)
-        {
-            return testCases.map(tc =>
-            {
+        function fixAgainstModel(testCases, idx) {
+            return testCases.map(tc => {
                 const title = (tc.title || '').toLowerCase();
                 const steps = (tc.steps || []).map(s => s.toLowerCase()).join(' ');
                 const expected = (tc.expected || '').toLowerCase();
@@ -12640,12 +12380,10 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         /**
          * Заменяет упоминания параметров в шагах на формат {{Название параметра}} для Allure TestOps
          */
-        function injectParameterPlaceholders (testCases)
-        {
+        function injectParameterPlaceholders(testCases) {
             let totalReplacements = 0;
 
-            const result = testCases.map(tc =>
-            {
+            const result = testCases.map(tc => {
                 // Если нет параметров, возвращаем как есть
                 if (!Array.isArray(tc.parameters) || tc.parameters.length === 0) {
                     return tc;
@@ -12661,8 +12399,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 }
 
                 // Обрабатываем шаги
-                const processedSteps = (tc.steps || []).map(step =>
-                {
+                const processedSteps = (tc.steps || []).map(step => {
                     // Поддерживаем форматы: строка, объект с sharedStepId, объект с action/expectedResult
                     if (typeof step === 'object' && step !== null) {
                         // Если это shared step, сохраняем как есть
@@ -12675,8 +12412,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                             let stepModified = false;
 
                             // Для каждого параметра ищем его упоминания в action
-                            parameterNames.forEach(paramName =>
-                            {
+                            parameterNames.forEach(paramName => {
                                 // Проверяем, не использован ли уже формат {{Название параметра}}
                                 if (processedAction.includes(`{{${paramName}}}`)) {
                                     return; // Уже в правильном формате
@@ -12705,8 +12441,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                                     // 3. Прямое упоминание в контексте "поля X", "значение X", "X из" (только если название достаточно уникальное)
                                     {
                                         pattern: new RegExp(`(?:поля|значение|значения|параметр)\\s+["']?${escapeRegex(paramName)}["']?`, 'gi'),
-                                        replacement: (match) =>
-                                        {
+                                        replacement: (match) => {
                                             // Сохраняем контекст, заменяя только название параметра
                                             return match.replace(new RegExp(escapeRegex(paramName), 'gi'), `{{${paramName}}}`);
                                         }
@@ -12750,8 +12485,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                     let stepModified = false;
 
                     // Для каждого параметра ищем его упоминания в шаге
-                    parameterNames.forEach(paramName =>
-                    {
+                    parameterNames.forEach(paramName => {
                         // Проверяем, не использован ли уже формат {{Название параметра}}
                         if (processedStep.includes(`{{${paramName}}}`)) {
                             return; // Уже в правильном формате
@@ -12780,8 +12514,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                             // 3. Прямое упоминание в контексте "поля X", "значение X", "X из" (только если название достаточно уникальное)
                             {
                                 pattern: new RegExp(`(?:поля|значение|значения|параметр)\\s+["']?${escapeRegex(paramName)}["']?`, 'gi'),
-                                replacement: (match) =>
-                                {
+                                replacement: (match) => {
                                     // Сохраняем контекст, заменяя только название параметра
                                     return match.replace(new RegExp(escapeRegex(paramName), 'gi'), `{{${paramName}}}`);
                                 }
@@ -12836,8 +12569,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             /^убедиться/i
         ];
 
-        function stepToText (step)
-        {
+        function stepToText(step) {
             // Поддерживаем форматы: строка, объект с action, объект с text (для обратной совместимости)
             if (typeof step === 'string') return step;
             if (typeof step === 'object' && step !== null) {
@@ -12846,13 +12578,11 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return String(step || '');
         }
 
-        function escapeRegex (str)
-        {
+        function escapeRegex(str) {
             return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         }
 
-        const sanitize = (arr) =>
-        {
+        const sanitize = (arr) => {
             console.log(`[sanitize] Обрабатываем ${arr?.length || 0} кейсов`);
             const ALLOWED_LAYERS = new Set([
                 "E2E Tests",
@@ -12861,8 +12591,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             ]);
             const trimText = (s, n = 1200) => String(s ?? '').trim().slice(0, n);
             const allowedCodeSet = new Set(allowedCodes);
-            const take = (s, n) =>
-            {
+            const take = (s, n) => {
                 const t = trimText(s, n);
                 return t ? t : undefined;
             };
@@ -12871,8 +12600,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             const seenLogic = new Map();
 
             // ✅ Общая функция нормализации
-            function normalizeText (text)
-            {
+            function normalizeText(text) {
                 return String(text || '')
                     .toLowerCase()
                     .replace(/\b(успешн\w+|сбор и передача|передача и сбор|отправка|передача)\b/gi, '<ACTION>')
@@ -12884,8 +12612,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                     .replace(/\s+/g, ' ').trim();
             }
 
-            function normalizeStepForSignature (step)
-            {
+            function normalizeStepForSignature(step) {
                 const raw = stepToText(step);
                 if (!raw) return '';
                 const trimmed = raw.trim();
@@ -12896,8 +12623,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 return trimmed.toLowerCase().replace(/\s+/g, ' ');
             }
 
-            function getLogicSignature (testCase)
-            {
+            function getLogicSignature(testCase) {
                 // ✅ ИСПРАВЛЕНО: учитываем parameters в сигнатуре
                 const paramsSignature = (testCase.parameters || [])
                     .map(p => `${p.name}:${(p.values || []).sort().join(',')}`)
@@ -12919,8 +12645,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
              * @param {Array} modelStructure - Структура тестовой модели
              * @returns {Object} - { valid, errors, correctedFeature, correctedStory, correctedScenario }
              */
-            function computeStoryMatchScore (textPayload, storyText)
-            {
+            function computeStoryMatchScore(textPayload, storyText) {
                 const payloadWords = normalizeText(textPayload).split(/\s+/).filter(w => w.length > 3);
                 const storyWords = normalizeText(storyText).split(/\s+/).filter(w => w.length > 3);
                 if (!payloadWords.length || !storyWords.length) return 0;
@@ -12929,8 +12654,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 return overlap.length / storyWords.length;
             }
 
-            function findBestMatchingStory (testCase, feature)
-            {
+            function findBestMatchingStory(testCase, feature) {
                 if (!feature || !Array.isArray(feature.stories)) return null;
                 const payload = [
                     testCase.title,
@@ -12956,8 +12680,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 return null;
             }
 
-            function validateModelBinding (testCase, modelStructure)
-            {
+            function validateModelBinding(testCase, modelStructure) {
                 const errors = [];
                 let correctedFeature = testCase.feature;
                 let correctedStory = testCase.story;
@@ -12982,8 +12705,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                     errors.push(`Feature "${testCase.feature}" не найдена в модели`);
 
                     // Пытаемся найти похожую
-                    const similarFeature = modelStructure.find(f =>
-                    {
+                    const similarFeature = modelStructure.find(f => {
                         const keywords = normalizeText(testCase.feature).split(/\s+/).filter(w => w.length > 3);
                         return keywords.some(kw => normalizeText(f.text).includes(kw));
                     });
@@ -13020,8 +12742,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
                     // Пытаемся найти похожую в найденной Feature
                     if (foundFeature) {
-                        const similarStory = (foundFeature.stories || []).find(s =>
-                        {
+                        const similarStory = (foundFeature.stories || []).find(s => {
                             const keywords = normalizeText(testCase.story).split(/\s+/).filter(w => w.length > 3);
                             return keywords.some(kw => normalizeText(s.text).includes(kw));
                         });
@@ -13090,8 +12811,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
             return (arr || [])
                 .filter(x => x && typeof x === 'object')
-                .map(x =>
-                {
+                .map(x => {
                     // ✅ ДОРАБОТКА 1: Валидация привязки к модели
                     const validationResult = validateModelBinding(x, modelStructure);
 
@@ -13111,8 +12831,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
                     // ✅ ИСПРАВЛЕНО: очищаем Steps от слова "Проверить"
                     // ✅ Исправляем обработку steps: извлекаем текст из объектов перед trimText
-                    let steps = Array.isArray(x.steps) ? x.steps.map(s =>
-                    {
+                    let steps = Array.isArray(x.steps) ? x.steps.map(s => {
                         // Сначала извлекаем текст из объекта, затем применяем trimText
                         let stepText;
                         if (typeof s === 'string') {
@@ -13124,8 +12843,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                         }
                         return trimText(stepText, 600);
                     }).slice(0, 40) : [];
-                    steps = steps.map(step =>
-                    {
+                    steps = steps.map(step => {
                         if (typeof step === 'string' && step.toLowerCase().startsWith('проверить')) {
                             console.warn(`[sanitize] ⚠️ Шаг начинается с "Проверить": "${step}"`);
                             // Переносим в Expected
@@ -13196,8 +12914,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                         _validationErrors: validationResult.errors
                     };
                 })
-                .filter(x =>
-                {
+                .filter(x => {
                     if (!x.title || !x.steps?.length || !x.expected || !x.layer) return false;
 
                     // ✅ ДОРАБОТКА 1: Фильтруем тесты с критичными ошибками валидации
@@ -13224,8 +12941,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                     seenLogic.set(signature, x.title);
                     return true;
                 })
-                .map(x =>
-                {
+                .map(x => {
                     // Удаляем служебное поле _validationErrors перед возвратом
                     if (x._validationErrors) {
                         delete x._validationErrors;
@@ -13254,8 +12970,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             }
             : null;
 
-        const appendRequirementLink = (linksInput) =>
-        {
+        const appendRequirementLink = (linksInput) => {
             const normalizedLinks = Array.isArray(linksInput) ? [...linksInput] : [];
             if (requirementLinkEntry) {
                 const alreadyHas = normalizedLinks.some(link => link && link.url === requirementLinkEntry.url);
@@ -13395,16 +13110,14 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         }
 
         // ✅ ФУНКЦИЯ ДЛЯ ГЛУБОКОГО СРАВНЕНИЯ МОДЕЛЕЙ (объявлена один раз в начале функции)
-        const normalizeModelForComparison = (obj) =>
-        {
+        const normalizeModelForComparison = (obj) => {
             if (obj === null || obj === undefined) return obj;
             if (typeof obj !== 'object') return obj;
             if (Array.isArray(obj)) {
                 return obj.map(normalizeModelForComparison);
             }
             const sorted = {};
-            Object.keys(obj).sort().forEach(key =>
-            {
+            Object.keys(obj).sort().forEach(key => {
                 sorted[key] = normalizeModelForComparison(obj[key]);
             });
             return sorted;
@@ -13453,8 +13166,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                             const stepIds = sharedStep?.children || [];
 
                             // Извлекаем шаги из sharedStepScenarioSteps
-                            const steps = stepIds.map(stepId =>
-                            {
+                            const steps = stepIds.map(stepId => {
                                 const step = scenario?.sharedStepScenarioSteps?.[stepId];
                                 return step;
                             }).filter(Boolean);
@@ -13462,8 +13174,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                             // Если нет шагов в sharedStepScenarioSteps, пробуем scenarioSteps
                             if (steps.length === 0) {
                                 const rootChildren = scenario?.root?.children || [];
-                                steps.push(...rootChildren.map(stepId =>
-                                {
+                                steps.push(...rootChildren.map(stepId => {
                                     const step = scenario?.scenarioSteps?.[stepId];
                                     return step;
                                 }).filter(Boolean));
@@ -13474,12 +13185,10 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                             ) || false;
 
                             // Извлекаем тексты шагов из TipTap формата
-                            const stepTexts = steps.map(step =>
-                            {
+                            const stepTexts = steps.map(step => {
                                 if (step.bodyJson?.content) {
                                     // Извлекаем текст из TipTap структуры
-                                    const extractText = (node) =>
-                                    {
+                                    const extractText = (node) => {
                                         if (node.type === 'text') return node.text || '';
                                         if (node.content && Array.isArray(node.content)) {
                                             return node.content.map(extractText).join('');
@@ -13492,11 +13201,9 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                             }).filter(Boolean);
 
                             // Извлекаем Expected Result (если есть)
-                            const expectedResults = steps.map(step =>
-                            {
+                            const expectedResults = steps.map(step => {
                                 if (step.expectedResultJson?.content) {
-                                    const extractText = (node) =>
-                                    {
+                                    const extractText = (node) => {
                                         if (node.type === 'text') return node.text || '';
                                         if (node.content && Array.isArray(node.content)) {
                                             return node.content.map(extractText).join('');
@@ -13524,8 +13231,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                             // ✅ ДЕТАЛЬНЫЙ ЛОГ для debug режима
                             if (skipAllureAPICalls) {
                                 console.log(`[DEBUG MODE] 📋 Shared Step "${ss.name}" (ID: ${ss.id}):`);
-                                stepTexts.forEach((step, idx) =>
-                                {
+                                stepTexts.forEach((step, idx) => {
                                     console.log(`[DEBUG MODE]    ${idx + 1}. ${step}`);
                                 });
                                 if (expectedResults.length > 0) {
@@ -13552,12 +13258,10 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                         console.log(`\n[DEBUG MODE] ═══════════════════════════════════════════════════════════`);
                         console.log(`[DEBUG MODE] 📊 ИТОГО ЗАГРУЖЕНО ${sharedStepsDetailsForPrompt.length} SHARED STEPS ИЗ ПРОЕКТА ${projectId}:`);
                         console.log(`[DEBUG MODE] ═══════════════════════════════════════════════════════════\n`);
-                        sharedStepsDetailsForPrompt.forEach((ss, idx) =>
-                        {
+                        sharedStepsDetailsForPrompt.forEach((ss, idx) => {
                             console.log(`[DEBUG MODE] ${idx + 1}. "${ss.name}" (ID: ${ss.id}):`);
                             if (ss.steps.length > 0) {
-                                ss.steps.forEach((step, stepIdx) =>
-                                {
+                                ss.steps.forEach((step, stepIdx) => {
                                     console.log(`[DEBUG MODE]    ${stepIdx + 1}. ${step}`);
                                 });
                             } else {
@@ -13623,8 +13327,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             });
         }
 
-        function buildRequirementToStoryMapping (modelStructure)
-        {
+        function buildRequirementToStoryMapping(modelStructure) {
             const mapping = {};
 
             for (const feature of (modelStructure || [])) {
@@ -13643,8 +13346,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         }
 
         // ✅ НОВАЯ ФУНКЦИЯ: Извлечение текстовых названий из модели по ID/BEM
-        function extractTextFromModel (modelStructure, fieldType, identifier)
-        {
+        function extractTextFromModel(modelStructure, fieldType, identifier) {
             if (!modelStructure || !identifier) return identifier;
 
             // Если уже текстовое название (не UUID и не BEM-класс) - возвращаем как есть
@@ -13688,8 +13390,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         const requirementToStoryMapping = buildRequirementToStoryMapping(modelStructure);
 
         // === ФУНКЦИЯ ПОИСКА STORY ПО ТРЕБОВАНИЮ ===
-        function findStoryByRequirement (modelStructure, requirementId)
-        {
+        function findStoryByRequirement(modelStructure, requirementId) {
             for (const feature of (modelStructure || [])) {
                 for (const story of (feature.stories || [])) {
                     if (story.requirement === requirementId) {
@@ -13811,8 +13512,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         ));
 
         const contextFetcher = bearerToken
-            ? async (requestedPageId) =>
-            {
+            ? async (requestedPageId) => {
                 try {
                     if (requestedPageId == null) return '';
                     const requestedIdStr = String(requestedPageId);
@@ -13851,12 +13551,9 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             : '**Как работать с дополнительным контекстом:**\nДополнительные источники не предоставлены. Генерируй тест-кейсы, опираясь на текст требований.\n';
 
         // ====== УЛУЧШЕНИЕ: Функция-обертка для контроля таймаутов ======
-        async function withTimeout (promise, ms, operationName = 'AI call')
-        {
-            const timeout = new Promise((_, reject) =>
-            {
-                const id = setTimeout(() =>
-                {
+        async function withTimeout(promise, ms, operationName = 'AI call') {
+            const timeout = new Promise((_, reject) => {
+                const id = setTimeout(() => {
                     clearTimeout(id);
                     reject(new Error(`Операция "${operationName}" превысила таймаут в ${ms / 1000}с`));
                 }, ms);
@@ -13865,8 +13562,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         }
 
         // ✅ ОПТИМИЗИРОВАННАЯ ВЕРСИЯ: ONE-PASS вместо TWO-PASS
-        function splitByStoriesOptimized (modelStructure)
-        {
+        function splitByStoriesOptimized(modelStructure) {
             const chunks = [];
             const MAX_SCENARIOS = 5; // увеличено для меньшего числа вызовов
 
@@ -13907,8 +13603,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
 
         // ✅ ФИЛЬТРАЦИЯ ТРЕБОВАНИЙ ПО РЕЛЕВАНТНОСТИ
-        function filterRelevantRequirements (requirements, chunk)
-        {
+        function filterRelevantRequirements(requirements, chunk) {
             // Защита от undefined
             if (!chunk || !Array.isArray(chunk) || chunk.length === 0 || !chunk[0] || !chunk[0].stories || !Array.isArray(chunk[0].stories) || chunk[0].stories.length === 0) {
                 console.warn('[filterRelevantRequirements] Некорректная структура chunk, возвращаем все требования');
@@ -13924,15 +13619,13 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 ...scenarios.flatMap(s => s.split(/\s+/))
             ].filter(w => w.length > 3)); // только слова > 3 символов
 
-            return requirements.filter(req =>
-            {
+            return requirements.filter(req => {
                 const reqLower = req.toLowerCase();
                 return Array.from(keywords).some(kw => reqLower.includes(kw));
             }).slice(0, 20); // максимум 20 релевантных требований
         }
 
-        function normalizeEndpoint (raw)
-        {
+        function normalizeEndpoint(raw) {
             if (!raw) return null;
             let endpoint = raw.trim();
             endpoint = endpoint.replace(/^\*\*/g, '').replace(/\*\*$/g, '');
@@ -13946,8 +13639,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return endpoint;
         }
 
-        function extractInlineJsonSnippet (context, maxLength = 1200)
-        {
+        function extractInlineJsonSnippet(context, maxLength = 1200) {
             if (!context) return null;
             const fencedMatch = context.match(/```(?:json)?([\s\S]{10,2000}?)```/i);
             if (fencedMatch && safeTrim(fencedMatch[1])) {
@@ -13969,15 +13661,13 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return null;
         }
 
-        function isJsonReference (label, href)
-        {
+        function isJsonReference(label, href) {
             const labelLower = (label || '').toLowerCase();
             const hrefLower = (href || '').toLowerCase();
             return labelLower.includes('.json') || hrefLower.includes('.json');
         }
 
-        function extractMockReferenceFromContext (endpoint, contextSegment)
-        {
+        function extractMockReferenceFromContext(endpoint, contextSegment) {
             if (!contextSegment) return null;
 
             const inlineJson = extractInlineJsonSnippet(contextSegment);
@@ -13992,8 +13682,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return null;
         }
 
-        function extractApiMocksFromText (text)
-        {
+        function extractApiMocksFromText(text) {
             const source = safeTrim(text) ? text : '';
             if (!source) return [];
 
@@ -14031,8 +13720,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return [...mocks.values()].slice(0, 10);
         }
 
-        function buildEntryPointPreconditionStep (existingPrecondition = '')
-        {
+        function buildEntryPointPreconditionStep(existingPrecondition = '') {
             const normalized = (existingPrecondition || '')
                 .replace(/^предварительное условие[:\s]*/i, '')
                 .trim();
@@ -14052,8 +13740,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return `Осуществлен переход: ${withoutIndex}`;
         }
 
-        function formatMockStep (mock)
-        {
+        function formatMockStep(mock) {
             if (!mock) return null;
             if (mock.type === 'inline' && mock.inlineJson) {
                 const trimmed = mock.inlineJson.trim();
@@ -14063,8 +13750,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return null;
         }
 
-        function formatPreconditionBlock (steps)
-        {
+        function formatPreconditionBlock(steps) {
             const cleaned = steps.filter(step => safeTrim(step));
             if (!cleaned.length) return '';
             const seen = new Set();
@@ -14081,8 +13767,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
 
         // ✅ Функция-заглушка для некорректной структуры chunk
-        function buildContextPromptFallback (existingE2E = [])
-        {
+        function buildContextPromptFallback(existingE2E = []) {
             return `
 🎯 ЗАДАЧА: Генерация тестов (структура chunk некорректна, используем базовые значения)
 
@@ -14097,8 +13782,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         }
 
         // ✅ УНИФИЦИРОВАННЫЙ КОНТЕКСТНЫЙ ПРОМПТ (не противоречит system prompt)
-        function buildContextPrompt (chunk, existingE2E = [])
-        {
+        function buildContextPrompt(chunk, existingE2E = []) {
             // Защита от undefined
             if (!chunk || !Array.isArray(chunk) || chunk.length === 0 || !chunk[0] || !chunk[0].stories || !Array.isArray(chunk[0].stories) || chunk[0].stories.length === 0) {
                 console.warn('[buildContextPrompt] Некорректная структура chunk, используем значения по умолчанию');
@@ -14163,8 +13847,7 @@ ${existingE2E.length > 0 ? existingE2E.map(t => `  - ${t.title}`).join('\n') : '
 `.trim();
         }
 
-        function collectAllowedCodes (modelChunk)
-        {
+        function collectAllowedCodes(modelChunk) {
             const set = new Set();
             for (const f of modelChunk) for (const st of (f.stories || []))
                 for (const sc of (st.scenarios || [])) for (const cd of (sc.codes || []))
@@ -14172,8 +13855,7 @@ ${existingE2E.length > 0 ? existingE2E.map(t => `  - ${t.title}`).join('\n') : '
             return [...set];
         }
 
-        function collectAllowedScenarios (modelChunk)
-        {
+        function collectAllowedScenarios(modelChunk) {
             const set = new Set();
             for (const f of modelChunk) for (const st of (f.stories || []))
                 for (const sc of (st.scenarios || []))
@@ -14182,15 +13864,14 @@ ${existingE2E.length > 0 ? existingE2E.map(t => `  - ${t.title}`).join('\n') : '
         }
 
 
-        function buildTestCaseSystemPrompt ({
+        function buildTestCaseSystemPrompt({
             mode = 'FULL',
             includeBackendTests = true,
             scenariosCount = 0,
             storiesCount = 0,
             featuresCount = 1,
             targetLayer = null
-        })
-        {
+        }) {
             // ═══════════════════════════════════════════════════════════════
             // РАСЧЕТ ЛИМИТОВ (ИСПОЛЬЗУЕМ RULES)
             // ═══════════════════════════════════════════════════════════════
@@ -14546,14 +14227,13 @@ Codes: [{ "text": "Возвращается 200 OK с {transactionId}", "type": 
                 s + (st.scenarios || []).reduce((sc, scn) => sc + (scn.codes?.length || 0), 0), 0), 0);
         const F = modelStructure.length; // Количество Features
 
-        function buildCovenant ({
+        function buildCovenant({
             mode = 'FULL',
             includeBackendTests = true,
             scenariosCount = 0,
             storiesCount = 0,
             featuresCount = 1
-        })
-        {
+        }) {
             const needsE2E = mode === 'FULL' || mode === 'BATCH';
             const effectiveFeaturesCount = Math.max(1, featuresCount);
 
@@ -14607,14 +14287,13 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
             extra: { transforms: 'middle-out' }
         };
 
-        const composeUserPrompt = (corePrompt) =>
-        {
+        const composeUserPrompt = (corePrompt) => {
             if (!toolInstruction) return corePrompt;
             const trimmedInstruction = toolInstruction.endsWith('\n') ? toolInstruction : `${toolInstruction}\n`;
             return `${trimmedInstruction}${corePrompt}`;
         };
 
-        async function runTestCaseLLM ({
+        async function runTestCaseLLM({
             taskContextId = taskId,
             systemPrompt = baseSystemPrompt,
             userPrompt,
@@ -14622,8 +14301,7 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
             modelOverrides = {},
             persistContext = true,
             responseFormat = TEST_CASE_RESPONSE_FORMAT
-        })
-        {
+        }) {
             const decoratedUserPrompt = composeUserPrompt(userPrompt);
             const combinedTools = [...interactiveTools];
             const finalToolNames = [];
@@ -14686,8 +14364,7 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
 
         // === tool-schema с жёстким enum для сценариев ===
         // ✅ ДОРАБОТКА 2: Обновлена функция для поддержки reqStructure
-        const buildSubmitCasesToolStrict = (allowedCodes = [], allowedScenarios = [], reqStructure = null) =>
-        {
+        const buildSubmitCasesToolStrict = (allowedCodes = [], allowedScenarios = [], reqStructure = null) => {
             // ✅ ИСПРАВЛЕНО: Извлекаем допустимые feature/story из modelStructure (не из reqStructure)
             // reqStructure может быть устаревшим, всегда используем актуальную modelStructure
             let allowedFeatures = [];
@@ -14857,8 +14534,7 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
         }
 
         // ✅ ФУНКЦИЯ ИЗВЛЕЧЕНИЯ КЕЙСОВ ИЗ ОТВЕТА AI
-        function extractCasesFromResponse (ai, existingCases = [])
-        {
+        function extractCasesFromResponse(ai, existingCases = []) {
             const allTestCases = [];
             // ✅ КРИТИЧНО: Используем существующие тест-кейсы для проверки уникальности ID
             const usedIds = new Set(existingCases.map(tc => tc.id));
@@ -15054,7 +14730,7 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
          * @param {Object} options.signatureRegistry - Реестр сигнатур для дедупликации
          * @returns {Promise<Array>} Массив E2E тест-кейсов
          */
-        async function generateE2ETests ({
+        async function generateE2ETests({
             fullTestModel,
             requirements,
             existingTestCases = [],
@@ -15062,8 +14738,7 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
             taskId,
             sharedStepsDetailsForPrompt = [],
             signatureRegistry = null
-        })
-        {
+        }) {
             if (!fullTestModel || !Array.isArray(fullTestModel) || fullTestModel.length === 0) {
                 console.warn('[generateE2ETests] ⚠️ Полная модель пуста, пропускаем генерацию E2E');
                 return [];
@@ -15272,8 +14947,7 @@ ${Array.isArray(requirements) ? requirements.join('\n\n') : (requirements || '')
         }
 
         // ✅ ОПТИМИЗИРОВАННАЯ ВЕРСИЯ: ONE-SHOT с fallback + Few-Shot Learning + Logic Extraction
-        async function genForChunkOptimized (chunk, requirements, existingE2E = [], modelStructure, reqStructure = null, contextId = null, existingCases = [], logicConstraints = null, isNegativePass = false, includeBackendTests = true, signatureRegistry = null)
-        {
+        async function genForChunkOptimized(chunk, requirements, existingE2E = [], modelStructure, reqStructure = null, contextId = null, existingCases = [], logicConstraints = null, isNegativePass = false, includeBackendTests = true, signatureRegistry = null) {
             const contextPrompt = buildContextPrompt(chunk, existingE2E);
             const relevantReqs = filterRelevantRequirements(requirements, chunk);
             // ✅ ИСПРАВЛЕНО: Используем ПОЛНУЮ модель для enum, а не только chunk
@@ -15553,8 +15227,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                         // 1. Позитивные тесты (без слов "негатив", "ошибка", "невалид", "граничн" в title)
                         // 2. Негативные с параметризацией (есть examples)
                         // 3. Остальные негативные
-                        const sortedIntegration = integrationCases.sort((a, b) =>
-                        {
+                        const sortedIntegration = integrationCases.sort((a, b) => {
                             const aTitle = (a.title || '').toLowerCase();
                             const bTitle = (b.title || '').toLowerCase();
                             const aIsPositive = !aTitle.includes('негатив') && !aTitle.includes('ошибка') && !aTitle.includes('невалид') && !aTitle.includes('граничн');
@@ -15656,8 +15329,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                         // 1. Позитивные тесты (без слов "негатив", "ошибка", "невалид", "граничн" в title)
                         // 2. Негативные с параметризацией (есть examples)
                         // 3. Остальные негативные
-                        const sortedIntegration = integrationCases.sort((a, b) =>
-                        {
+                        const sortedIntegration = integrationCases.sort((a, b) => {
                             const aTitle = (a.title || '').toLowerCase();
                             const bTitle = (b.title || '').toLowerCase();
                             const aIsPositive = !aTitle.includes('негатив') && !aTitle.includes('ошибка') && !aTitle.includes('невалид') && !aTitle.includes('граничн');
@@ -15845,8 +15517,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                         );
 
                         // Используем Promise.race для таймаута
-                        const timeoutPromise = new Promise((_, reject) =>
-                        {
+                        const timeoutPromise = new Promise((_, reject) => {
                             setTimeout(() => reject(new Error(`Таймаут генерации chunk ${i + 1}: превышено ${CHUNK_TIMEOUT_MS / 1000 / 60} минут`)), CHUNK_TIMEOUT_MS);
                         });
 
@@ -16114,8 +15785,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
             // Дополнительная проверка для Integration тестов с scenario
             // Используем простую нормализацию строк для сравнения
             const normalizeForComparison = (str) => (str || '').toLowerCase().trim().replace(/\s+/g, ' ');
-            allCases = allCases.filter(testCase =>
-            {
+            allCases = allCases.filter(testCase => {
                 if (testCase.layer?.includes('Integration') && testCase.scenario) {
                     // Проверяем, что scenario существует в модели
                     let scenarioExists = false;
@@ -16356,8 +16026,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
             console.log(`[Coverage] Scenarios: ${scenarioCoverage.covered}/${scenarioCoverage.total} (${scenarioCoverage.coveragePercent}%)`);
             if (scenarioCoverage.missing.length > 0) {
                 console.warn(`[Coverage] Не покрыто ${scenarioCoverage.missing.length} scenarios:`);
-                scenarioCoverage.missing.slice(0, 5).forEach(sc =>
-                {
+                scenarioCoverage.missing.slice(0, 5).forEach(sc => {
                     console.warn(`  ❌ ${sc.feature} → ${sc.story} → ${sc.scenario}`);
                 });
                 if (scenarioCoverage.missing.length > 5) {
@@ -16366,8 +16035,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
             }
         }
         console.log(`[generate-test-cases-async] Layer distribution:`,
-            finalTestCases.reduce((acc, tc) =>
-            {
+            finalTestCases.reduce((acc, tc) => {
                 acc[tc.layer] = (acc[tc.layer] || 0) + 1;
                 return acc;
             }, {}));
@@ -16688,8 +16356,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
         // ✅ ПРОВЕРКА: Сравниваем originalModel (сохраненную в начале) с extractedModel (входящей моделью)
         // Используем глубокое сравнение через JSON.stringify (без регулярок и статических проверок)
         // Это гарантирует, что модель не изменилась в процессе генерации
-        function deepEqual (obj1, obj2)
-        {
+        function deepEqual(obj1, obj2) {
             return JSON.stringify(obj1) === JSON.stringify(obj2);
         }
 
@@ -16789,8 +16456,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
     }
 }
 
-app.post('/api/generate-test-cases-async', async (req, res) =>
-{
+app.post('/api/generate-test-cases-async', async (req, res) => {
     try {
         const taskId = uuidv4();
 
@@ -16829,8 +16495,7 @@ app.post('/api/generate-test-cases-async', async (req, res) =>
         const startTime = Date.now();
 
         // Функция для проверки таймаута
-        const checkTimeout = async () =>
-        {
+        const checkTimeout = async () => {
             const elapsed = Date.now() - startTime;
             if (elapsed > MAX_TIMEOUT_MS) {
                 console.error(`[generate-test-cases-async] ⏱️ Таймаут генерации для taskId=${taskId}: ${elapsed}ms > ${MAX_TIMEOUT_MS}ms`);
@@ -16845,8 +16510,7 @@ app.post('/api/generate-test-cases-async', async (req, res) =>
         };
 
         // Запускаем генерацию с обработкой ошибок и таймаутом
-        generateTestCasesAsync(taskId, req.body).catch(async (error) =>
-        {
+        generateTestCasesAsync(taskId, req.body).catch(async (error) => {
             console.error(`[generate-test-cases-async] ❌ Необработанная ошибка в generateTestCasesAsync для taskId=${taskId}:`, error);
             await db('generation_tasks').where('id', taskId).update({
                 status: 'failed',
@@ -16856,8 +16520,7 @@ app.post('/api/generate-test-cases-async', async (req, res) =>
         });
 
         // Периодически проверяем таймаут (каждые 5 минут)
-        const timeoutCheckInterval = setInterval(async () =>
-        {
+        const timeoutCheckInterval = setInterval(async () => {
             const task = await db('generation_tasks').where('id', taskId).first();
             if (!task || task.status !== 'processing') {
                 clearInterval(timeoutCheckInterval);
@@ -16887,8 +16550,7 @@ app.post('/api/generate-test-cases-async', async (req, res) =>
 // Простое кэширование статуса задач (5 секунд)
 const taskStatusCache = new Map();
 
-app.get('/api/generate-test-cases-status/:taskId', async (req, res) =>
-{
+app.get('/api/generate-test-cases-status/:taskId', async (req, res) => {
     try {
         const taskId = req.params.taskId;
         const cacheKey = `status_${taskId}`;
@@ -16969,8 +16631,7 @@ app.get('/api/generate-test-cases-status/:taskId', async (req, res) =>
 });
 
 // Отмена задачи генерации
-app.post('/api/cancel-generation/:taskId', async (req, res) =>
-{
+app.post('/api/cancel-generation/:taskId', async (req, res) => {
     try {
         const { taskId } = req.params;
 
@@ -16998,8 +16659,7 @@ app.post('/api/cancel-generation/:taskId', async (req, res) =>
  * @param {string} projectName - Название проекта (для root topic)
  * @returns {Buffer} - ZIP архив с XMind файлом
  */
-function generateXMindFile (testModel, projectName = 'Test Model')
-{
+function generateXMindFile(testModel, projectName = 'Test Model') {
     const STYLE_IDS = {
         e2e: 'b-e2e',
         integration: 'b-int',
@@ -17048,24 +16708,20 @@ function generateXMindFile (testModel, projectName = 'Test Model')
     }
 
     // Строим иерархию из формата test model
-    const featureTopics = testModel.map((feature) =>
-    {
+    const featureTopics = testModel.map((feature) => {
         const featureName = feature.text || feature.id || 'Unnamed Feature';
         const stories = feature.stories || [];
 
-        const storyTopics = stories.map((story) =>
-        {
+        const storyTopics = stories.map((story) => {
             const storyName = story.text || story.id || 'Unnamed Story';
             const scenarios = story.scenarios || [];
 
-            const scenarioTopics = scenarios.map((scenario) =>
-            {
+            const scenarioTopics = scenarios.map((scenario) => {
                 const scenarioName = scenario.text || scenario.id || 'Unnamed Scenario';
                 const codes = scenario.codes || [];
 
                 // Создаем children из codes
-                const codeTopics = codes.map((code) =>
-                {
+                const codeTopics = codes.map((code) => {
                     const codeName = code.text || code.id || 'Unnamed Code';
                     const codeType = code.type || 'frontend';
 
@@ -17163,8 +16819,7 @@ function generateXMindFile (testModel, projectName = 'Test Model')
 
 // API эндпоинт для генерации XMind файла
 // Принимает test model в формате: [{id, text, stories: [{id, text, scenarios: [{id, text, codes: [{id, text, type}]}]}]}]
-app.post('/api/generate-xmind', async (req, res) =>
-{
+app.post('/api/generate-xmind', async (req, res) => {
     try {
         // Поддерживаем оба формата для обратной совместимости
         let testModel = req.body.testModel || req.body.treeData;
@@ -17173,14 +16828,10 @@ app.post('/api/generate-xmind', async (req, res) =>
         // Если передан treeData (старый формат UI), преобразуем в test model формат
         if (testModel && !Array.isArray(testModel) && typeof testModel === 'object') {
             // Преобразуем treeData в test model формат
-            testModel = Object.entries(testModel).map(([featureName, featureData]) =>
-            {
-                const stories = Object.entries(featureData.stories || {}).map(([storyName, storyData]) =>
-                {
-                    const scenarios = Object.entries(storyData.scenarios || {}).map(([scenarioName, scenarioData]) =>
-                    {
-                        const codes = Object.entries(scenarioData.codes || {}).map(([codeName, codeData]) =>
-                        {
+            testModel = Object.entries(testModel).map(([featureName, featureData]) => {
+                const stories = Object.entries(featureData.stories || {}).map(([storyName, storyData]) => {
+                    const scenarios = Object.entries(storyData.scenarios || {}).map(([scenarioName, scenarioData]) => {
+                        const codes = Object.entries(scenarioData.codes || {}).map(([codeName, codeData]) => {
                             // Определяем type из cases или используем дефолт
                             const hasFE = (codeData.cases || []).some(c => (c.layer || "").toLowerCase().includes("frontend"));
                             const hasBE = (codeData.cases || []).some(c => (c.layer || "").toLowerCase().includes("backend"));
@@ -17234,7 +16885,6 @@ app.post('/api/generate-xmind', async (req, res) =>
 });
 
 // Запуск сервера
-app.listen(PORT, () =>
-{
+app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
