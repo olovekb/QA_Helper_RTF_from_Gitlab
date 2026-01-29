@@ -9,7 +9,8 @@ import { uploadMiddleware, handleJsonUpload } from './api/upload.js'; // Имп�
 import { getProjectStructure } from './api/structure.js'; // Импорт функционала для получения структуры Allure
 import { handleComponentMapping, deleteComponentMapping, getComponentMappings, getPageMappings, savePageDependencies, getFunctionalBlockPageComponentLinks } from './api/components.js'; // Импорт функционала для маппинга
 import { getHeatmapData, getReleaseVersions, getTestCoverageData } from './api/heatmap.js'; // Импорт функционала для тепловой карты
-import { createTestPlan } from './api/launch.js'; // Импорт функционала для создания тест-планов
+import { createTestPlan } from './api/launch.js'; // Импорт функционала для создания запусков
+import { createTestPlanAPI } from './api/testplan.js'; // Импорт функционала для создания тест-планов
 import config from './config/index.js'; // Импорт конфигурации проекта
 import { logInfo, logError } from './utils/logger.js'; // Импорт логгера для информационных и ошибочных сообщений
 import { logServerError } from './api/errors.js';
@@ -147,13 +148,22 @@ app.get('/api/heatmap/release-versions', getReleaseVersions);
 app.delete('/api/components/:componentId', deleteComponentMapping);
 
 /**
- * Создание тест-плана на основе данных
+ * Создание запуска в Allure
  * @route POST /api/launch
- * @param {string} jiraTaskUrl - URL задачи в Jira
+ * @param {string} jiraTaskUrl - URL задачи в Jira (опционально)
  * @param {string} projectId - ID проекта
- * @param {Array} functionalBlocks - Список функциональных блоков
+ * @param {Object} componentMappings - Маппинги компонентов
  */
 app.post('/api/launch', createTestPlan);
+
+/**
+ * Создание тест-плана в Allure
+ * @route POST /api/testplan
+ * @param {string} projectId - ID проекта
+ * @param {Object} componentMappings - Маппинги компонентов
+ * @param {string} jiraLink - URL задачи в Jira (опционально)
+ */
+app.post('/api/testplan', createTestPlanAPI);
 
 // Обработка всех маршрутов для React SPA (перенаправление на index.html)
 app.get('*', (req, res) => {

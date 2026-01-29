@@ -319,7 +319,7 @@ const TIAPage = ({ projects }) => {
 
     const handleCreateTestPlan = () => {
         if (mode === 'light') {
-            setError('Переключитесь в режим маппинга для создания тест-плана.');
+            setError('Переключитесь в режим маппинга для создания запуска.');
             return;
         }
         if (!projectId) {
@@ -544,13 +544,31 @@ const TIAPage = ({ projects }) => {
 
             const { id } = response.data;
             const allureLink = `${config.url}/launch/${id}`;
-            setSuccessMessage('Тест-план успешно создан!');
+            setSuccessMessage('Запуск успешно создан!');
             setAllureLink(allureLink);
         } catch (err) {
-            if (err.response && err.response.status === 400 && err.response.data.error === 'На выбранных блоках отсутствуют тест-кейсы. Добавьте хотя бы один для возможности создания тест-плана.') {
-                setError(err.response.data.error);
+            // Парсим структурированные ошибки от backend
+            if (err.response && err.response.data) {
+                const errorData = err.response.data;
+
+                // Специфические ошибки с кодами
+                if (errorData.code === 'NO_TEST_CASES') {
+                    setError(errorData.error);
+                } else if (errorData.code === 'JOBS_MAPPING_ERROR') {
+                    setError(`${errorData.error}${errorData.details ? ` (${errorData.details})` : ''}`);
+                } else if (errorData.code === 'ALLURE_API_ERROR') {
+                    setError(`${errorData.error}${errorData.details ? `: ${errorData.details}` : ''}`);
+                } else if (errorData.error) {
+                    // Общая ошибка с сообщением
+                    setError(errorData.error);
+                } else {
+                    // Fallback
+                    setError('Произошла ошибка при создании запуска. Проверьте данные и повторите попытку.');
+                }
+
+                logError('Test plan creation error', errorData.details || err.message);
             } else {
-                setError('Произошла ошибка при создании тест-плана. Проверьте данные и повторите попытку.');
+                setError('Произошла ошибка при создании запуска. Проверьте данные и повторите попытку.');
                 logError('Test plan creation error', err.message);
             }
         } finally {
@@ -558,7 +576,59 @@ const TIAPage = ({ projects }) => {
         }
     };
 
-    const handleMappingConfirm = async () => {
+    // Создание настоящего тест-плана (не запуска) через /api/testplan
+    const createActualTestPlan = async () => {
+        try {
+            const allFolderIds = new Set();
+            Object.values(componentMappings).forEach(folderIds => folderIds.forEach(id => allFolderIds.add(id)));
+
+            const components = extractComponents();
+            const pageDependencies = buildPageDependencies(components);
+
+            const requestBody = {
+                projectId,
+                jiraLink,
+                componentMappings,
+                pageDependencies,
+            };
+
+            const response = await axios.post(`${config.TIAUrl}/api/testplan`, requestBody, {
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const { id, testCasesCount } = response.data;
+            const allureLink = `${config.url}/testplan/${id}`;
+            setSuccessMessage(`Тест-план успешно создан! (${testCasesCount || 'N/A'} тест-кейсов)`);
+            setAllureLink(allureLink);
+        } catch (err) {
+            // Парсим структурированные ошибки от backend
+            if (err.response && err.response.data) {
+                const errorData = err.response.data;
+
+                // Специфические ошибки с кодами
+                if (errorData.code === 'NO_TEST_CASES') {
+                    setError(errorData.error);
+                } else if (errorData.code === 'NO_GROUPS') {
+                    setError(errorData.error);
+                } else if (errorData.code === 'ALLURE_API_ERROR') {
+                    setError(`${errorData.error}${errorData.details ? `: ${errorData.details}` : ''}`);
+                } else if (errorData.error) {
+                    setError(errorData.error);
+                } else {
+                    setError('Произошла ошибка при создании тест-плана.');
+                }
+
+                logError('Test plan creation error', errorData.details || err.message);
+            } else {
+                setError('Произошла ошибка при создании тест-плана.');
+                logError('Test plan creation error', err.message);
+            }
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleMappingConfirm = async (createType = 'launch') => {
         setIsMappingLoading(true); // Включаем лоудер для маппинга
         try {
             // Предварительно вычисляем данные один раз перед циклом
@@ -568,7 +638,7 @@ const TIAPage = ({ projects }) => {
             // Сохраняем ВСЕ компоненты, включая те, у которых маппинги были удалены (пустой массив)
             // Это необходимо для удаления старых маппингов из БД
 
-            // Запускаем сохранения параллельно пачками по 5 штук
+            // Запускаем сохранения параллельно пачками по 2 штук
             const chunkSize = 2
             for (let i = 0; i < components.length; i += chunkSize) {
                 const chunk = components.slice(i, i + chunkSize);
@@ -578,13 +648,19 @@ const TIAPage = ({ projects }) => {
                 }));
             }
 
-            await createTestPlan();
+            // Вызываем нужную функцию в зависимости от типа
+            if (createType === 'testplan') {
+                await createActualTestPlan();
+            } else {
+                await createTestPlan(); // Создает launch
+            }
+
             setShowMappingModal(false);
         } catch (err) {
             setError(err.message);
             logError('Mapping confirmation error', err.message);
         } finally {
-            setIsMappingLoading(false); // Выключаем лоудер
+            setIsLoading(false); // Выключаем лоудер
         }
     };
 
@@ -2016,7 +2092,7 @@ const TIAPage = ({ projects }) => {
                         {successMessage}
                         {allureLink && (
                             <a href={allureLink} target="_blank" rel="noopener noreferrer" style={styles.successLink}>
-                                Перейти к тест-плану в Allure
+                                Перейти к запуску в Allure
                             </a>
                         )}
                     </div>
@@ -2810,13 +2886,25 @@ const TIAPage = ({ projects }) => {
                                     : 'Сохранить маппинг'}
                             </button>
                             <button
-                                onClick={handleMappingConfirm}
+                                onClick={() => handleMappingConfirm('launch')}
                                 style={styles.modalButtonConfirm}
                                 disabled={isPartialSaving || isMappingLoading || isMappingConfirmButtonDisabled}
                             >
                                 {isMappingLoading
                                     ? <Loader style={{ width: 20, height: 20 }} />
-                                    : 'Подтвердить и создать'}
+                                    : 'Создать запуск'}
+                            </button>
+                            <button
+                                onClick={() => handleMappingConfirm('testplan')}
+                                style={{
+                                    ...styles.modalButtonConfirm,
+                                    backgroundColor: '#28a745', // Зеленый цвет для тест-плана
+                                }}
+                                disabled={isPartialSaving || isMappingLoading || isMappingConfirmButtonDisabled}
+                            >
+                                {isMappingLoading
+                                    ? <Loader style={{ width: 20, height: 20 }} />
+                                    : 'Создать тест-план'}
                             </button>
                         </div>
                     </div>

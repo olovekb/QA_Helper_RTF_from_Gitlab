@@ -176,11 +176,14 @@ export async function createTestPlan(req, res) {
     const { projectId, jiraLink, componentMappings, pageDependencies } = req.body;
 
     try {
-        if (!projectId || !jiraLink || !componentMappings) {
-            return res.status(400).json({ error: 'Необходимо указать projectId, jiraLink и componentMappings.' });
+        if (!projectId || !componentMappings) {
+            return res.status(400).json({
+                error: 'Необходимо указать projectId и componentMappings.',
+                code: 'MISSING_PARAMETERS'
+            });
         }
 
-        logInfo(`Входные данные: projectId=${projectId}, jiraLink=${jiraLink}, components=${Object.keys(componentMappings).length}`);
+        logInfo(`Входные данные: projectId=${projectId}, jiraLink=${jiraLink || 'не указана'}, components=${Object.keys(componentMappings).length}`);
 
         // 1. Собираем ID групп (уникальные)
         const allFolderIds = new Set();
@@ -222,9 +225,16 @@ export async function createTestPlan(req, res) {
             logWarn(`Ошибка получения IntegrationID: ${e.message}. Используем дефолт ${integrationId}`);
         }
 
-        // 3. Подготовка Issue Key
-        const jiraIssueKeyMatch = jiraLink.match(/\/browse\/([A-Z]+-\d+)$/);
-        const jiraIssueKey = jiraIssueKeyMatch ? jiraIssueKeyMatch[1] : jiraLink.split('/').pop();
+        // 3. Подготовка Issue Key (если jiraLink указан)
+        let launchName = 'Регресс тестирование';
+        let issues = [];
+
+        if (jiraLink) {
+            const jiraIssueKeyMatch = jiraLink.match(/\/browse\/([A-Z]+-\d+)$/);
+            const jiraIssueKey = jiraIssueKeyMatch ? jiraIssueKeyMatch[1] : jiraLink.split('/').pop();
+            launchName = `Регресс тестирование ${jiraIssueKey}`;
+            issues = [{ integrationId, name: jiraIssueKey }];
+        }
 
         // 4. Формируем тело запроса (Сразу с jobsMapping!)
         let requestBody = {
@@ -240,8 +250,8 @@ export async function createTestPlan(req, res) {
                 treeId: treeId,
                 deleted: false,
             },
-            launchName: `Регресс тестирование ${jiraIssueKey}`,
-            issues: [{ integrationId, name: jiraIssueKey }],
+            launchName,
+            issues,
         };
 
         // Если удалось получить JobID, добавляем его сразу
@@ -296,13 +306,30 @@ export async function createTestPlan(req, res) {
             let errorData = {};
             try { errorData = JSON.parse(responseText); } catch (e) { }
 
+            // Проверка на отсутствие тест-кейсов (специфическая ошибка от Allure)
+            if (errorData.message && errorData.message.includes('test-case-bulk.nothing-to-run')) {
+                return res.status(400).json({
+                    error: 'На выбранных блоках отсутствуют тест-кейсы. Добавьте хотя бы один для возможности создания тест-плана.',
+                    code: 'NO_TEST_CASES'
+                });
+            }
+
             if (errorData.errors && errorData.errors.some(e => e.field === 'jobsMapping')) {
                 // Этого происходить не должно, так как мы получили jobId на шаге 2a.
                 // Но если случилось - кидаем ошибку, ретраить смысла нет, сервер устал.
-                throw new Error(`Allure требует jobsMapping, но мы не смогли его получить. Проверьте настройки проекта.`);
+                return res.status(500).json({
+                    error: 'Не удалось получить настройки проекта (jobsMapping). Проверьте конфигурацию проекта в Allure.',
+                    code: 'JOBS_MAPPING_ERROR',
+                    details: errorData.message || 'Требуется jobsMapping'
+                });
             }
 
-            throw new Error(`Ошибка Allure (${testPlanResponse.status}): ${responseText.substring(0, 200)}...`);
+            // Общая ошибка от Allure с деталями
+            return res.status(testPlanResponse.status).json({
+                error: 'Ошибка при создании тест-плана в Allure',
+                code: 'ALLURE_API_ERROR',
+                details: errorData.message || responseText.substring(0, 200)
+            });
         }
 
         // 7. Успех
