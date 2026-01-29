@@ -96,11 +96,13 @@ export async function createTestPlanAPI(req, res) {
         }
 
         // 4. Формируем тело запроса для testplan API
+        // Используем структуру как в рабочем curl примере
+        // inverted:true с пустыми массивами = выбрать все тест-кейсы проекта
         const requestBody = {
             projectId: parseInt(projectId, 10),
             treeSelection: {
-                inverted: false,
-                groupsInclude,
+                inverted: true,
+                groupsInclude: [],
                 groupsExclude: [],
                 leafsInclude: [],
                 leafsExclude: [],
@@ -109,7 +111,7 @@ export async function createTestPlanAPI(req, res) {
             name: testPlanName
         };
 
-        logInfo(`Отправляем запрос создания тест-плана (Групп: ${groupsInclude.length})`);
+        logInfo(`Отправляем запрос создания тест-плана с именем: ${testPlanName}`);
 
         // 5. Отправка запроса в Allure testplan API
         const testPlanUrl = `${config.allureBaseUrl}/api/testplan`;
