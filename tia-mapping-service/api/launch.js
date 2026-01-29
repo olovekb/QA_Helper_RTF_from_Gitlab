@@ -234,6 +234,10 @@ export async function createTestPlan(req, res) {
             const jiraIssueKey = jiraIssueKeyMatch ? jiraIssueKeyMatch[1] : jiraLink.split('/').pop();
             launchName = `Регресс тестирование ${jiraIssueKey}`;
             issues = [{ integrationId, name: jiraIssueKey }];
+        } else {
+            // Если задача не указана, добавляем текущую дату
+            const today = new Date().toLocaleDateString('ru-RU');
+            launchName = `Регресс тестирование ${today}`;
         }
 
         // 4. Формируем тело запроса (Сразу с jobsMapping!)

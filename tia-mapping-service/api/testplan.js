@@ -93,16 +93,19 @@ export async function createTestPlanAPI(req, res) {
             const jiraIssueKeyMatch = jiraLink.match(/\/browse\/([A-Z]+-\d+)$/);
             const jiraIssueKey = jiraIssueKeyMatch ? jiraIssueKeyMatch[1] : jiraLink.split('/').pop();
             testPlanName = `Регресс тестирование ${jiraIssueKey}`;
+        } else {
+            // Если задача не указана, добавляем текущую дату
+            const today = new Date().toLocaleDateString('ru-RU');
+            testPlanName = `Регресс тестирование ${today}`;
         }
 
         // 4. Формируем тело запроса для testplan API
-        // Используем структуру как в рабочем curl примере
-        // inverted:true с пустыми массивами = выбрать все тест-кейсы проекта
+        // ВАЖНО: используем inverted:false и указываем конкретные группы в groupsInclude
         const requestBody = {
             projectId: parseInt(projectId, 10),
             treeSelection: {
-                inverted: true,
-                groupsInclude: [],
+                inverted: false,  // false = выбрать только указанные группы
+                groupsInclude: groupsInclude,  // Массив ID выбранных блоков
                 groupsExclude: [],
                 leafsInclude: [],
                 leafsExclude: [],
@@ -111,7 +114,8 @@ export async function createTestPlanAPI(req, res) {
             name: testPlanName
         };
 
-        logInfo(`Отправляем запрос создания тест-плана с именем: ${testPlanName}`);
+        logInfo(`Отправляем запрос создания тест-плана: ${testPlanName}, групп: ${groupsInclude.length}`);
+        logInfo(`groupsInclude содержимое: ${JSON.stringify(groupsInclude)}`);
 
         // 5. Отправка запроса в Allure testplan API
         const testPlanUrl = `${config.allureBaseUrl}/api/testplan`;
