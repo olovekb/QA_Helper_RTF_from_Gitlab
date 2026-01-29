@@ -456,7 +456,7 @@ const TIAPage = ({ projects }) => {
             // Сохраняем ВСЕ компоненты, включая те, у которых маппинги были удалены (пустой массив)
             // Это необходимо для удаления старых маппингов из БД
             // Запускаем сохранения параллельно пачками по 5 штук, чтобы не заблокировать браузер и не перегрузить сеть
-            const chunkSize = 5;
+            const chunkSize = 2;
             for (let i = 0; i < components.length; i += chunkSize) {
                 const chunk = components.slice(i, i + chunkSize);
                 await Promise.all(chunk.map(c => {
@@ -569,7 +569,7 @@ const TIAPage = ({ projects }) => {
             // Это необходимо для удаления старых маппингов из БД
 
             // Запускаем сохранения параллельно пачками по 5 штук
-            const chunkSize = 5;
+            const chunkSize = 2
             for (let i = 0; i < components.length; i += chunkSize) {
                 const chunk = components.slice(i, i + chunkSize);
                 await Promise.all(chunk.map(component => {

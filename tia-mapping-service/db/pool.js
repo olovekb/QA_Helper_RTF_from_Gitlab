@@ -18,6 +18,11 @@ const databasePool = knex({
     pool: {
         min: 2, // Минимальное количество подключений в пуле
         max: 50, // Максимальное количество подключений в пуле
+        acquireTimeoutMillis: 60000, // Дай больше времени на получение коннекта
+        createTimeoutMillis: 30000,
+        idleTimeoutMillis: 30000,
+        reapIntervalMillis: 1000,
+        createRetryIntervalMillis: 100
     },
 });
 
