@@ -231,7 +231,12 @@ const HeatmapPage = ({ projects }) => {
 
             setShowMappingModal(false);
             alert('История успешно импортирована!');
-            fetchHeatmapData();
+            loadAvailableVersions();
+            if (activeTab === 'code') {
+                loadHeatmapData();
+            } else {
+                loadTestCoverageData();
+            }
         } catch (err) {
             console.error('Ошибка при сохранении истории:', err);
             alert(`Ошибка при сохранении: ${err.response?.data?.error || err.message}`);
