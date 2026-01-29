@@ -107,6 +107,7 @@ app.patch('/api/components/:componentId', handleComponentMapping); // Обнов
 app.post('/api/components/page-dependencies', savePageDependencies); // Сохранение связей Page -> компоненты
 app.get('/api/components', getComponentMappings);
 app.get('/api/components/page-mappings', getPageMappings); // Получение маппингов функциональных блоков для Page
+app.post('/api/components/page-mappings', getPageMappings); // Получение маппингов функциональных блоков для Page (POST для больших списков)
 app.get('/api/components/functional-block-links', getFunctionalBlockPageComponentLinks); // Получение явных связей функциональный блок -> Page -> компонент
 
 /**

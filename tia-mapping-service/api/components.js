@@ -90,8 +90,8 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
     // Нормализуем pageDependencies: устанавливаем default для componentType
     const normalizedDeps = pageDependencies.map(dep => ({
         ...dep,
-        componentType: (dep.componentType && ['component', 'page'].includes(dep.componentType)) 
-            ? dep.componentType 
+        componentType: (dep.componentType && ['component', 'page'].includes(dep.componentType))
+            ? dep.componentType
             : 'component' // Default если отсутствует, null, undefined или невалидное значение
     }));
 
@@ -114,7 +114,7 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
             })
             .del();
     }
-    
+
     // Используем normalizedDeps для дальнейшей обработки
     const finalDeps = Array.from(uniqueDeps.values());
 
@@ -135,7 +135,7 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
                         component_name: dep.componentName
                     })
                     .first();
-                
+
                 if (existingComponent) {
                     realComponentType = existingComponent.component_type;
                 } else {
@@ -143,7 +143,7 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
                     realComponentType = 'frontend';
                 }
             }
-            
+
             // Находим или создаём компонент с реальным типом
             const component = await findOrCreateComponent(
                 projectId,
@@ -188,33 +188,33 @@ export async function handleComponentMapping(req, res) {
     try {
         // Логируем входящие данные для отладки
         logInfo(`Входящий запрос: pageDependencies=${JSON.stringify(pageDependencies)}`);
-        
+
         // Нормализуем pageDependencies перед валидацией (устанавливаем default для componentType)
         let normalizedPageDependencies = pageDependencies;
         if (normalizedPageDependencies && Array.isArray(normalizedPageDependencies)) {
             normalizedPageDependencies = normalizedPageDependencies.map((dep, index) => {
                 // Обрабатываем все возможные случаи: отсутствует, null, undefined, '', невалидное значение
                 let normalizedComponentType = dep.componentType;
-                
+
                 // Проверяем, что значение либо отсутствует, либо невалидно
-                if (normalizedComponentType === undefined || 
-                    normalizedComponentType === null || 
-                    normalizedComponentType === '' || 
+                if (normalizedComponentType === undefined ||
+                    normalizedComponentType === null ||
+                    normalizedComponentType === '' ||
                     (typeof normalizedComponentType === 'string' && !['component', 'page'].includes(normalizedComponentType))) {
                     normalizedComponentType = 'component';
                 }
-                
+
                 logInfo(`Нормализация pageDependencies[${index}]: было="${dep.componentType}" (тип: ${typeof dep.componentType}), стало="${normalizedComponentType}"`);
-                
+
                 return {
                     ...dep,
                     componentType: normalizedComponentType
                 };
             });
         }
-        
+
         logInfo(`После нормализации: pageDependencies=${JSON.stringify(normalizedPageDependencies)}`);
-        
+
         // Нормализуем changeDate: преобразуем в ISO формат если нужно, или устанавливаем null
         let normalizedChangeDate = changeDate;
         if (normalizedChangeDate === '' || normalizedChangeDate === null || normalizedChangeDate === undefined) {
@@ -245,24 +245,24 @@ export async function handleComponentMapping(req, res) {
                 normalizedChangeDate = null;
             }
         }
-        
+
         // Валидация входных данных
-        const { error, value } = componentValidationSchema.validate({ 
-            projectId, 
-            componentType, 
-            componentName, 
-            functionalBlock, 
-            pageDependencies: normalizedPageDependencies, 
-            releaseVersion, 
-            releaseVersions, 
-            changeDate: normalizedChangeDate, 
-            isBugFix 
-        }, { 
+        const { error, value } = componentValidationSchema.validate({
+            projectId,
+            componentType,
+            componentName,
+            functionalBlock,
+            pageDependencies: normalizedPageDependencies,
+            releaseVersion,
+            releaseVersions,
+            changeDate: normalizedChangeDate,
+            isBugFix
+        }, {
             abortEarly: false, // Показывать все ошибки валидации
             stripUnknown: true, // Удалять неизвестные поля
             convert: true // Включаем автоматическое преобразование типов
         });
-        
+
         if (error) {
             const errorMessages = error.details.map(d => d.message).join('; ');
             logError(`Ошибка валидации данных для маппинга компонента: ${errorMessages}`);
@@ -271,7 +271,7 @@ export async function handleComponentMapping(req, res) {
             logError(`Детали ошибки: ${JSON.stringify(error.details, null, 2)}`);
             return res.status(400).json({ error: errorMessages });
         }
-        
+
         // Используем нормализованные значения из валидации
         const validatedPageDependencies = value.pageDependencies;
         const validatedChangeDate = value.changeDate; // Может быть null или ISO строка
@@ -300,7 +300,7 @@ export async function handleComponentMapping(req, res) {
         if (isBugFix === true && (normalizedReleaseVersions.length > 0 || validatedChangeDate)) {
             try {
                 const defectsToInsert = [];
-                
+
                 // Если есть версии, создаём запись для каждой версии
                 if (normalizedReleaseVersions.length > 0) {
                     for (const version of normalizedReleaseVersions) {
@@ -380,11 +380,11 @@ export async function handleComponentMapping(req, res) {
             // 5. Сохраняем связи Page -> компоненты, если они переданы
             if (validatedPageDependencies && validatedPageDependencies.length > 0) {
                 await savePageComponentDependencies(projectId, validatedPageDependencies);
-                
+
                 // 5.5. Автоматический маппинг функциональных блоков из связанных Page
                 // Если компонент связан с Page, которая уже имеет маппинг с функциональными блоками,
                 // автоматически передаём эти блоки компоненту
-                
+
                 // Получаем уже созданные связи компонента (после шага 4)
                 const existingBlockIds = new Set(
                     (await databasePool('component_functional_blocks')
@@ -392,12 +392,12 @@ export async function handleComponentMapping(req, res) {
                         .select('functional_block_id'))
                         .map(fb => fb.functional_block_id)
                 );
-                
+
                 const autoMappedBlocks = new Set();
-                
+
                 for (const pageDep of validatedPageDependencies) {
                     const pageName = pageDep.pageName;
-                    
+
                     // Ищем маппинги функциональных блоков для этой Page
                     // Сначала проверяем новую структуру (components + component_functional_blocks)
                     const pageComponent = await databasePool('components')
@@ -407,7 +407,7 @@ export async function handleComponentMapping(req, res) {
                             component_name: pageName
                         })
                         .first();
-                    
+
                     if (pageComponent) {
                         // Находим функциональные блоки через новую структуру
                         const pageFunctionalBlocks = await databasePool('component_functional_blocks')
@@ -417,14 +417,14 @@ export async function handleComponentMapping(req, res) {
                                 'functional_blocks.project_id': projectId
                             })
                             .select('functional_blocks.id', 'functional_blocks.allure_id');
-                        
+
                         for (const fb of pageFunctionalBlocks) {
                             if (!existingBlockIds.has(fb.id)) {
                                 autoMappedBlocks.add(fb.id);
                             }
                         }
                     }
-                    
+
                     // Если не найдено в новой структуре, проверяем старую (component_mappings)
                     if (autoMappedBlocks.size === 0 || !pageComponent) {
                         const oldPageMappings = await databasePool('component_mappings')
@@ -436,7 +436,7 @@ export async function handleComponentMapping(req, res) {
                                 'functional_blocks.project_id': projectId
                             })
                             .select('functional_blocks.id', 'functional_blocks.allure_id');
-                        
+
                         for (const fb of oldPageMappings) {
                             if (!existingBlockIds.has(fb.id)) {
                                 autoMappedBlocks.add(fb.id);
@@ -444,7 +444,7 @@ export async function handleComponentMapping(req, res) {
                         }
                     }
                 }
-                
+
                 // Создаём автоматические связи для найденных функциональных блоков
                 if (autoMappedBlocks.size > 0) {
                     const autoLinks = [];
@@ -455,7 +455,7 @@ export async function handleComponentMapping(req, res) {
                             created_at: databasePool.fn.now(),
                         });
                     }
-                    
+
                     if (autoLinks.length > 0) {
                         await databasePool('component_functional_blocks')
                             .insert(autoLinks)
@@ -482,16 +482,16 @@ export async function handleComponentMapping(req, res) {
             }));
 
             if (functionalBlocks.length > 0) {
-                res.status(201).json({ 
-                    message: 'Маппинги успешно созданы.', 
+                res.status(201).json({
+                    message: 'Маппинги успешно созданы.',
                     mappings: responseMappings,
-                    component_id: component.id 
+                    component_id: component.id
                 });
             } else {
-                res.status(200).json({ 
-                    message: 'Все маппинги успешно удалены.', 
+                res.status(200).json({
+                    message: 'Все маппинги успешно удалены.',
                     mappings: [],
-                    component_id: component.id 
+                    component_id: component.id
                 });
             }
         } else if (req.method === 'PATCH') {
@@ -524,9 +524,9 @@ export async function handleComponentMapping(req, res) {
                 .ignore();
 
             logInfo(`Обновлён маппинг для компонента с ID ${component.id} в проекте ${projectId}`);
-            res.status(200).json({ 
-                message: 'Маппинг успешно обновлён.', 
-                component_id: component.id 
+            res.status(200).json({
+                message: 'Маппинг успешно обновлён.',
+                component_id: component.id
             });
         }
     } catch (error) {
@@ -542,15 +542,17 @@ export async function handleComponentMapping(req, res) {
  * @returns {void}
  */
 export async function getPageMappings(req, res) {
-    const { projectId, pageNames } = req.query;
+    const { projectId: queryProjectId, pageNames: queryPageNames } = req.query;
+    const { projectId: bodyProjectId, pageNames: bodyPageNames } = req.body || {};
+
+    const projectId = queryProjectId || bodyProjectId;
+    const pageNames = queryPageNames || bodyPageNames;
 
     try {
         if (!projectId) {
             return res.status(400).json({ error: 'Необходимо указать projectId.' });
         }
 
-        // pageNames может прийти как массив или как строка (если один элемент)
-        // Express автоматически парсит повторяющиеся query параметры в массив
         // pageNames может прийти как массив или как строка (если один элемент)
         // Express автоматически парсит повторяющиеся query параметры в массив
         let pageNamesArray = [];
@@ -562,65 +564,78 @@ export async function getPageMappings(req, res) {
                 pageNamesArray = [pageNames];
             }
         }
-        
-        logInfo(`Получен запрос маппингов для Page: projectId=${projectId}, pageNames (raw)=${JSON.stringify(pageNames)}, pageNamesArray=${JSON.stringify(pageNamesArray)}`);
+
+        logInfo(`Получен запрос маппингов для Page: projectId=${projectId}, pageNames Count=${pageNamesArray.length}`);
 
         const pageMappings = {};
 
-        for (const pageName of pageNamesArray) {
-            const mappings = [];
+        // 1. Получаем все компоненты типа 'page' для заданных имен (новая структура)
+        const pageComponents = await databasePool('components')
+            .whereIn('component_name', pageNamesArray)
+            .andWhere({
+                project_id: projectId,
+                component_type: 'page'
+            });
 
-            // Проверяем новую структуру (components + component_functional_blocks)
-            const pageComponent = await databasePool('components')
-                .where({
-                    project_id: projectId,
-                    component_type: 'page',
-                    component_name: pageName
-                })
-                .first();
+        const pageComponentIds = pageComponents.map(c => c.id);
+        const nameToIdMap = new Map(pageComponents.map(c => [c.component_name, c.id]));
 
-            if (pageComponent) {
-                const newMappings = await databasePool('component_functional_blocks')
-                    .join('functional_blocks', 'component_functional_blocks.functional_block_id', 'functional_blocks.id')
-                    .where({
-                        'component_functional_blocks.component_id': pageComponent.id,
-                        'functional_blocks.project_id': projectId
-                    })
-                    .select(
-                        'functional_blocks.allure_id',
-                        'functional_blocks.name as functional_block_name'
-                    );
-
-                mappings.push(...newMappings.map(m => ({
-                    functional_block_allure_id: m.allure_id,
-                    functional_block_name: m.functional_block_name
-                })));
-            }
-
-            // Проверяем старую структуру (component_mappings)
-            const oldMappings = await databasePool('component_mappings')
-                .join('functional_blocks', 'component_mappings.functional_block_id', 'functional_blocks.id')
-                .where({
-                    'component_mappings.project_id': projectId,
-                    'component_mappings.component_type': 'page',
-                    'component_mappings.component_name': pageName,
-                    'functional_blocks.project_id': projectId
-                })
+        // 2. Получаем все маппинги для этих компонентов (новая структура)
+        let allNewMappings = [];
+        if (pageComponentIds.length > 0) {
+            allNewMappings = await databasePool('component_functional_blocks')
+                .join('functional_blocks', 'component_functional_blocks.functional_block_id', 'functional_blocks.id')
+                .whereIn('component_functional_blocks.component_id', pageComponentIds)
                 .select(
+                    'component_functional_blocks.component_id',
                     'functional_blocks.allure_id',
                     'functional_blocks.name as functional_block_name'
                 );
+        }
 
-            // Объединяем результаты, убирая дубликаты по allure_id
+        // 3. Получаем все маппинги из старой структуры
+        const allOldMappings = await databasePool('component_mappings')
+            .join('functional_blocks', 'component_mappings.functional_block_id', 'functional_blocks.id')
+            .whereIn('component_name', pageNamesArray)
+            .andWhere({
+                'component_mappings.project_id': projectId,
+                'component_mappings.component_type': 'page'
+            })
+            .select(
+                'component_mappings.component_name',
+                'functional_blocks.allure_id',
+                'functional_blocks.name as functional_block_name'
+            );
+
+        // 4. Группируем результаты
+        for (const pageName of pageNamesArray) {
             const uniqueMappings = new Map();
-            [...mappings, ...oldMappings.map(m => ({
-                functional_block_allure_id: m.allure_id,
-                functional_block_name: m.functional_block_name
-            }))].forEach(m => {
-                if (!uniqueMappings.has(m.functional_block_allure_id)) {
-                    uniqueMappings.set(m.functional_block_allure_id, m);
-                }
-            });
+
+            // Из новой структуры
+            const compId = nameToIdMap.get(pageName);
+            if (compId) {
+                allNewMappings
+                    .filter(m => m.component_id === compId)
+                    .forEach(m => {
+                        uniqueMappings.set(m.allure_id, {
+                            functional_block_allure_id: m.allure_id,
+                            functional_block_name: m.functional_block_name
+                        });
+                    });
+            }
+
+            // Из старой структуры
+            allOldMappings
+                .filter(m => m.component_name === pageName)
+                .forEach(m => {
+                    const allureId = m.allure_id;
+                    if (!uniqueMappings.has(allureId)) {
+                        uniqueMappings.set(allureId, {
+                            functional_block_allure_id: allureId,
+                            functional_block_name: m.functional_block_name
+                        });
+                    }
+                });
 
             pageMappings[pageName] = Array.from(uniqueMappings.values());
         }
@@ -677,7 +692,7 @@ export async function getComponentMappings(req, res) {
                     functional_blocks: []
                 });
             }
-            
+
             if (row.functional_block_id) {
                 componentMap.get(key).functional_blocks.push({
                     functional_block_id: row.functional_block_id,

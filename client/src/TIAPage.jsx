@@ -381,19 +381,11 @@ const TIAPage = ({ projects }) => {
                         const pageNames = [...new Set(pageDependencies.map(dep => dep.pageName))].filter(name => name); // Убираем пустые значения
 
                         if (pageNames.length > 0) {
-                            // Запрашиваем маппинги для всех Page одним запросом
-                            // Передаем pageNames как массив строк в query параметрах
-                            // Используем URLSearchParams для правильной передачи массива
-                            const params = new URLSearchParams();
-                            params.append('projectId', projectId);
-                            pageNames.forEach(pageName => {
-                                if (pageName && typeof pageName === 'string') {
-                                    params.append('pageNames', pageName);
-                                }
+                            console.log(`Запрашиваем маппинги для Page: ${pageNames.length} шт.`);
+                            const response = await axios.post(`${config.TIAUrl}/api/components/page-mappings`, {
+                                projectId,
+                                pageNames
                             });
-
-                            console.log(`Запрашиваем маппинги для Page: ${pageNames.join(', ')}`);
-                            const response = await axios.get(`${config.TIAUrl}/api/components/page-mappings?${params.toString()}`);
 
                             const { pageMappings } = response.data;
 
@@ -458,7 +450,7 @@ const TIAPage = ({ projects }) => {
             // Сохраняем ВСЕ компоненты, включая те, у которых маппинги были удалены (пустой массив)
             // Это необходимо для удаления старых маппингов из БД
             // Запускаем сохранения параллельно пачками по 5 штук, чтобы не заблокировать браузер и не перегрузить сеть
-            const chunkSize = 2;
+            const chunkSize = 5;
             for (let i = 0; i < components.length; i += chunkSize) {
                 const chunk = components.slice(i, i + chunkSize);
                 await Promise.all(chunk.map(c => {
@@ -729,8 +721,8 @@ const TIAPage = ({ projects }) => {
             // Сохраняем ВСЕ компоненты, включая те, у которых маппинги были удалены (пустой массив)
             // Это необходимо для удаления старых маппингов из БД
 
-            // Запускаем сохранения параллельно пачками по 2 штук
-            const chunkSize = 2
+            // Запускаем сохранения параллельно пачками по 5 штук
+            const chunkSize = 5
             for (let i = 0; i < components.length; i += chunkSize) {
                 const chunk = components.slice(i, i + chunkSize);
                 await Promise.all(chunk.map(component => {
