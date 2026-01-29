@@ -8,7 +8,7 @@ import pLimit from 'p-limit'; // Импорт p-limit
 // Импортируем функцию getTreeId из launch.js (можно вынести в utils если нужно)
 // Для простоты продублируем здесь
 const cache = new Map();
-const limit = pLimit(10); // Ограничение параллельных запросов
+const limit = pLimit(5); // Ограничение параллельных запросов (снижено с 20 до 5 для стабильности)
 
 /**
  * Рекурсивно собирает ID всех листьев (тест-кейсов) для заданного узла (папки)
@@ -26,12 +26,16 @@ async function collectAllLeaves(projectId, treeId, nodeId, visitedNodes = new Se
     let page = 0;
     let hasMore = true;
 
-    while (hasMore) {
+    const MAX_PAGES = 50; // Защита от бесконечного цикла
+    while (hasMore && page < MAX_PAGES) {
         // Запрашиваем детей узла (и группы и листья)
         const url = `${config.allureBaseUrl}/api/v2/project/${projectId}/test-case/tree/tree-node?treeId=${treeId}&parentNodeId=${nodeId}&page=${page}&size=100`;
 
         try {
-            const response = await fetchWithAuth(url, { headers: { ...authHeaders } });
+            // logInfo(`[DEBUG] Запрос детей для узла ${nodeId}, стр ${page}`);
+            // Увеличиваем таймаут до 60 секунд для запросов API Allure
+            const response = await fetchWithAuth(url, { headers: { ...authHeaders }, timeout: 60000 });
+            // logInfo(`[DEBUG] Ответ получен для узла ${nodeId}, стр ${page}`);
             if (!response.ok) {
                 logError(`Ошибка получения детей для узла ${nodeId}: ${response.statusText}`);
                 break;
@@ -116,151 +120,145 @@ async function getTreeId(projectId) {
 export async function createTestPlanAPI(req, res) {
     const { projectId, componentMappings, jiraLink, pageDependencies } = req.body;
 
-    try {
-        if (!projectId || !componentMappings) {
-            return res.status(400).json({
-                error: 'Необходимо указать projectId и componentMappings.',
-                code: 'MISSING_PARAMETERS'
-            });
-        }
+    if (!projectId || !componentMappings) {
+        return res.status(400).json({
+            error: 'Необходимо указать projectId и componentMappings.',
+            code: 'MISSING_PARAMETERS'
+        });
+    }
 
-        logInfo(`Создание тест-плана: projectId=${projectId}, jiraLink=${jiraLink || 'не указана'}, components=${Object.keys(componentMappings).length}`);
+    // 1. Собираем ID групп. Если переданы полные пути (groupsIncludePaths), используем их.
+    // Иначе собираем ID из componentMappings (fallback для старых клиентов или прямых вызовов)
+    const groupsInclude = [];
 
-        // 1. Собираем уникальные ID функциональных блоков из componentMappings
-        const allBlockIds = new Set();
-        Object.values(componentMappings).forEach(blockIds => {
-            if (Array.isArray(blockIds)) {
-                blockIds.forEach(id => allBlockIds.add(parseInt(id, 10)));
+    if (req.body.groupsIncludePaths && Array.isArray(req.body.groupsIncludePaths) && req.body.groupsIncludePaths.length > 0) {
+        logInfo(`Используем переданные полные пути (groupsIncludePaths): ${req.body.groupsIncludePaths.length} путей`);
+        req.body.groupsIncludePaths.forEach(path => {
+            if (Array.isArray(path)) {
+                const validPath = path.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
+                if (validPath.length > 0) groupsInclude.push(validPath);
             }
         });
+    } else {
+        logInfo(`groupsIncludePaths не переданы, используем fallback logic (одиночные ID)`);
+        const processedIds = new Set();
+        Object.values(componentMappings).forEach(blockIds => {
+            if (Array.isArray(blockIds)) {
+                blockIds.forEach(idVal => {
+                    const id = parseInt(idVal, 10);
+                    if (!isNaN(id) && !processedIds.has(id)) {
+                        processedIds.add(id);
+                        groupsInclude.push([id]); // [[ID]] - путь из одного элемента
+                    }
+                });
+            }
+        });
+    }
 
-        const uniqueBlockIds = Array.from(allBlockIds).filter(id => !isNaN(id));
+    if (groupsInclude.length === 0) {
+        return res.status(400).json({
+            error: 'Не найдены функциональные блоки для тест-плана',
+            code: 'NO_BLOCKS'
+        });
+    }
 
-        if (uniqueBlockIds.length === 0) {
-            return res.status(400).json({
-                error: 'Не найдены функциональные блоки для тест-плана',
-                code: 'NO_BLOCKS'
-            });
-        }
+    logInfo(`Создание тест-плана (nested groups): projectId=${projectId}, групп=${groupsInclude.length}`);
 
-        logInfo(`Собрано ${uniqueBlockIds.length} уникальных ID функциональных блоков`);
+    // Настраиваем стриминг (чтобы клиент видел прогресс)
+    res.setHeader('Content-Type', 'application/x-ndjson');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    const sendEvent = (type, data = {}) => res.write(JSON.stringify({ type, ...data }) + '\n');
 
-        // 2. Получаем TreeID (нужен для запроса структуры)
+    try {
+        sendEvent('init', { totalBlocks: groupsInclude.length });
+
+        // 2. Получаем TreeID
         const treeId = await getTreeId(projectId);
 
-        // 3. Собираем ID всех тест-кейсов (листьев) рекурсивно для каждого выбранного блока
-        logInfo(`Начинаем сбор тест-кейсов для ${uniqueBlockIds.length} функциональных блоков...`);
-
-        const allLeafIds = new Set();
-        const collectedLeavesPromises = uniqueBlockIds.map(blockId =>
-            limit(async () => {
-                try {
-                    const leaves = await collectAllLeaves(projectId, treeId, blockId);
-                    logInfo(`Для блока ${blockId} найдено ${leaves.length} тест-кейсов`);
-                    return leaves;
-                } catch (e) {
-                    logError(`Ошибка сбора листьев для блока ${blockId}: ${e.message}`);
-                    return [];
-                }
-            })
-        );
-
-        const leavesResults = await Promise.all(collectedLeavesPromises);
-        leavesResults.forEach(leaves => leaves.forEach(id => allLeafIds.add(id)));
-
-        const leafsInclude = Array.from(allLeafIds);
-
-        if (leafsInclude.length === 0) {
-            return res.status(400).json({
-                error: 'Не найдено ни одного тест-кейса в выбранных функциональных блоках',
-                code: 'NO_TEST_CASES'
-            });
-        }
-
-        logInfo(`Всего собрано ${leafsInclude.length} уникальных ID тест-кейсов`);
-
-        // 4. Формируем название тест-плана
+        // 3. Формируем название
         let testPlanName = 'Регресс тестирование';
         if (jiraLink) {
-            const jiraIssueKeyMatch = jiraLink.match(/\/browse\/([A-Z]+-\d+)$/);
-            const jiraIssueKey = jiraIssueKeyMatch ? jiraIssueKeyMatch[1] : jiraLink.split('/').pop();
-            testPlanName = `Регресс тестирование ${jiraIssueKey}`;
+            const match = jiraLink.match(/\/browse\/([A-Z]+-\d+)$/);
+            testPlanName = `Регресс тестирование ${match ? match[1] : jiraLink.split('/').pop()}`;
         } else {
-            // Если задача не указана, добавляем текущую дату
-            const today = new Date().toLocaleDateString('ru-RU');
-            testPlanName = `Регресс тестирование ${today}`;
+            testPlanName = `Регресс тестирование ${new Date().toLocaleDateString('ru-RU')}`;
         }
 
-        // 5. Формируем тело запроса для testplan API
-        // Используем leafsInclude с плоским списком ID тест-кейсов - это надежный способ
+        sendEvent('progress', { current: groupsInclude.length, total: groupsInclude.length, message: 'Отправка запроса в Allure...' });
+
+        // 4. Тело запроса - ВАЖНО: передаем groupsInclude вложенными массивами (как в UI)
+        // Allure API требует List<List<Long>> (пути?), а не плоский список.
+        const treeSelection = {
+            inverted: false,
+            groupsInclude: groupsInclude,
+            groupsExclude: [],
+            leafsInclude: [],
+            leafsExclude: [],
+            kind: 'TreeSelectionDto'
+        };
+
         const requestBody = {
             projectId: parseInt(projectId, 10),
-            treeSelection: {
-                inverted: false,
-                groupsInclude: [],
-                groupsExclude: [],
-                leafsInclude: leafsInclude,  // Массив ID тест-кейсов
-                leafsExclude: [],
-                kind: 'TreeSelectionDto'
-            },
+            treeSelection: treeSelection,
             treeId: treeId,
             name: testPlanName
         };
 
-        logInfo(`Отправляем запрос создания тест-плана: ${testPlanName}`);
-        logInfo(`leafsInclude содержит ${leafsInclude.length} тест-кейсов (первые 10): ${JSON.stringify(leafsInclude.slice(0, 10))}`);
-        logInfo(`Полное тело запроса: ${JSON.stringify(requestBody, null, 2)}`);
+        logInfo(`Отправляем запрос создания тест-плана (структура обновлена): ${JSON.stringify(requestBody)}`);
 
-        // 6. Отправка запроса в Allure testplan API
+        // 5. Запрос к Allure
+        // Возвращаем /api/testplan, так как /api/rs/testplan мб не тем энпоинтом
         const testPlanUrl = `${config.allureBaseUrl}/api/testplan`;
-        const testPlanResponse = await fetchWithAuth(testPlanUrl, {
+
+        const response = await fetchWithAuth(testPlanUrl, {
             method: 'POST',
-            headers: {
-                ...authHeaders,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(requestBody)
+            body: JSON.stringify(requestBody),
+            headers: { ...authHeaders, 'Content-Type': 'application/json' },
+            timeout: 60000 // 60s timeout
         });
 
-        const responseText = await testPlanResponse.text();
+        const text = await response.text();
 
-        // 6. Обработка результата
-        if (!testPlanResponse.ok) {
-            let errorData = {};
-            try { errorData = JSON.parse(responseText); } catch (e) { }
+        if (!response.ok) {
+            let errorDetails = text;
+            try { errorDetails = JSON.parse(text).message; } catch (e) { }
 
-            logError(`Ошибка создания тест-плана: ${testPlanResponse.status}`, responseText);
-
-            return res.status(testPlanResponse.status).json({
+            logError(`Ошибка API Allure: ${response.status}`, text);
+            sendEvent('error', {
                 error: 'Ошибка при создании тест-плана в Allure',
                 code: 'ALLURE_API_ERROR',
-                details: errorData.message || responseText.substring(0, 200)
+                details: errorDetails
             });
+            res.end();
+            return;
         }
 
-        // 7. Успех
-        const responseData = JSON.parse(responseText);
-        logInfo(`Тест-план создан! ID: ${responseData.id}, Тест-кейсов: ${responseData.testCasesCount || 'N/A'}`);
+        const data = JSON.parse(text);
 
-        // 8. Сохраняем связи Page -> Components (асинхронно)
+        // 6. Сохраняем связи (фон)
         if (pageDependencies && pageDependencies.length > 0) {
             try {
-                await savePageComponentDependencies(projectId, pageDependencies);
+                savePageComponentDependencies(projectId, pageDependencies).catch(e => logWarn(`Связи не сохранены (фон): ${e.message}`));
             } catch (depError) {
-                logWarn(`Связи не сохранены (некритично): ${depError.message}`);
+                logWarn(`Связи не сохранены: ${depError.message}`);
             }
         }
 
-        res.status(200).json({
-            id: responseData.id,
-            testCasesCount: responseData.testCasesCount || 0
+        logInfo(`Тест-план создан: ID ${data.id}`);
+        sendEvent('result', {
+            id: data.id,
+            testCasesCount: data.testCasesCount || 0
         });
+        res.end();
 
     } catch (error) {
         logError(`FATAL error createTestPlanAPI: ${error.message}`);
-        res.status(500).json({
-            error: 'Ошибка создания тест-плана',
-            details: error.message
-        });
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Внутренняя ошибка сервера', details: error.message });
+        } else {
+            sendEvent('error', { error: 'Внутренняя ошибка сервера', details: error.message });
+            res.end();
+        }
     }
 }

@@ -15,6 +15,8 @@ const TIAPage = ({ projects }) => {
     const [folders, setFolders] = useState([]);
     const [expandedFolders, setExpandedFolders] = useState({});
     const [isLoading, setIsLoading] = useState(false);
+    const [loadingState, setLoadingState] = useState({ launch: false, testplan: false }); // Раздельные состояния загрузки
+    const [progress, setProgress] = useState(null); // Состояние прогресса { current, total, message }
     const [structureLoading, setStructureLoading] = useState(false); // Лоудер для загрузки блоков
     const [error, setError] = useState('');
     const [successMessage, setSuccessMessage] = useState('');
@@ -522,7 +524,23 @@ const TIAPage = ({ projects }) => {
         return findInFolders(folders);
     };
 
+    const findFolderPath = (nodes, targetId, currentPath = []) => {
+        for (const node of nodes) {
+            const nodeId = node.id;
+            const newPath = [...currentPath, nodeId];
+            if (String(nodeId) === String(targetId)) {
+                return newPath;
+            }
+            if (node.children) {
+                const found = findFolderPath(node.children, targetId, newPath);
+                if (found) return found;
+            }
+        }
+        return null;
+    };
+
     const createTestPlan = async () => {
+        setLoadingState(prev => ({ ...prev, launch: true }));
         try {
             const allFolderIds = new Set();
             Object.values(componentMappings).forEach(folderIds => folderIds.forEach(id => allFolderIds.add(id)));
@@ -571,16 +589,34 @@ const TIAPage = ({ projects }) => {
                 setError('Произошла ошибка при создании запуска. Проверьте данные и повторите попытку.');
                 logError('Test plan creation error', err.message);
             }
-        } finally {
+            setLoadingState(prev => ({ ...prev, launch: false }));
             setIsLoading(false);
         }
     };
 
-    // Создание настоящего тест-плана (не запуска) через /api/testplan
+    // Создание настоящего тест-плана (не запуска) через /api/testplan с поддержкой стриминга прогресса
     const createActualTestPlan = async () => {
+        setLoadingState(prev => ({ ...prev, testplan: true }));
+        setProgress({ message: 'Инициализация...' });
+        setError(null);
+        setSuccessMessage(null);
+
         try {
-            const allFolderIds = new Set();
-            Object.values(componentMappings).forEach(folderIds => folderIds.forEach(id => allFolderIds.add(id)));
+            // Собираем полные пути для всех выбранных папок
+            const groupsIncludePaths = [];
+            Object.values(componentMappings).forEach(folderIds => {
+                if (Array.isArray(folderIds)) {
+                    folderIds.forEach(id => {
+                        const path = findFolderPath(folders, id);
+                        if (path) {
+                            groupsIncludePaths.push(path);
+                        } else {
+                            // Если путь не найден, добавляем хотя бы сам ID как путь (fallback)
+                            groupsIncludePaths.push([parseInt(id, 10)]);
+                        }
+                    });
+                }
+            });
 
             const components = extractComponents();
             const pageDependencies = buildPageDependencies(components);
@@ -589,19 +625,70 @@ const TIAPage = ({ projects }) => {
                 projectId,
                 jiraLink,
                 componentMappings,
+                groupsIncludePaths, // Отправляем вычисленные пути
                 pageDependencies,
             };
 
-            const response = await axios.post(`${config.TIAUrl}/api/testplan`, requestBody, {
+            // Используем fetch для стриминга (чтения прогресса)
+            const response = await fetch(`${config.TIAUrl}/api/testplan`, {
+                method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
             });
 
-            const { id, testCasesCount } = response.data;
-            const allureLink = `${config.url}/testplan/${id}`;
-            setSuccessMessage(`Тест-план успешно создан! (${testCasesCount || 'N/A'} тест-кейсов)`);
-            setAllureLink(allureLink);
+            // Если вернулся обычный JSON с ошибкой (например 400 Bad Request при валидации)
+            const contentType = response.headers.get('content-type');
+            if (!response.ok && contentType && contentType.includes('application/json')) {
+                const errorJson = await response.json();
+                throw { response: { data: errorJson } }; // Эмулируем формат axios error
+            }
+
+            // Читаем NDJSON поток
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // Сохраняем неполную строку
+
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const event = JSON.parse(line);
+
+                        if (event.type === 'init') {
+                            setProgress({ total: event.totalBlocks, current: 0, message: 'Сбор тест-кейсов...' });
+                        } else if (event.type === 'progress') {
+                            setProgress(prev => ({
+                                ...prev,
+                                current: event.current,
+                                total: event.total,
+                                message: event.message || `Обработка: ${event.current} / ${event.total}`
+                            }));
+                        } else if (event.type === 'error') {
+                            // Бросаем ошибку, которую перехватит catch
+                            throw { response: { data: event } };
+                        } else if (event.type === 'result') {
+                            const { id, testCasesCount } = event;
+                            const allureLink = `${config.url}/testplan/${id}`;
+                            setSuccessMessage(`Тест-план успешно создан! (${testCasesCount || 'N/A'} тест-кейсов)`);
+                            setAllureLink(allureLink);
+                        }
+                    } catch (e) {
+                        // Если ошибка внутри цикла чтения (например JSON parse error или throw выше)
+                        if (e.response) throw e; // Пробрасываем нашу ошибку данные
+                        console.error('Error parsing stream line:', line, e);
+                    }
+                }
+            }
+
         } catch (err) {
-            // Парсим структурированные ошибки от backend
+            // Парсим структурированные ошибки от backend (или наши эмулированные)
             if (err.response && err.response.data) {
                 const errorData = err.response.data;
 
@@ -617,19 +704,21 @@ const TIAPage = ({ projects }) => {
                 } else {
                     setError('Произошла ошибка при создании тест-плана.');
                 }
-
-                logError('Test plan creation error', errorData.details || err.message);
+                logError('Test plan creation error', errorData.details || errorData.error);
             } else {
-                setError('Произошла ошибка при создании тест-плана.');
+                // Сетевые ошибки или ошибки fetch
+                setError(`Произошла ошибка при создании тест-плана: ${err.message}`);
                 logError('Test plan creation error', err.message);
             }
         } finally {
-            setIsLoading(false);
+            setLoadingState(prev => ({ ...prev, testplan: false }));
+            setProgress(null);
         }
     };
 
     const handleMappingConfirm = async (createType = 'launch') => {
         setIsMappingLoading(true); // Включаем лоудер для маппинга
+        setLoadingState(prev => ({ ...prev, [createType]: true })); // Включаем кнопку сразу
         try {
             // Предварительно вычисляем данные один раз перед циклом
             const allComponents = extractComponents();
@@ -2887,10 +2976,14 @@ const TIAPage = ({ projects }) => {
                             </button>
                             <button
                                 onClick={() => handleMappingConfirm('launch')}
-                                style={styles.modalButtonConfirm}
-                                disabled={isPartialSaving || isMappingLoading || isMappingConfirmButtonDisabled}
+                                style={{
+                                    ...styles.modalButtonConfirm,
+                                    opacity: (loadingState.testplan || loadingState.launch) ? 0.7 : 1,
+                                    cursor: (loadingState.testplan || loadingState.launch) ? 'not-allowed' : 'pointer'
+                                }}
+                                disabled={isPartialSaving || isMappingLoading || loadingState.launch || loadingState.testplan || isMappingConfirmButtonDisabled}
                             >
-                                {isMappingLoading
+                                {loadingState.launch
                                     ? <Loader style={{ width: 20, height: 20 }} />
                                     : 'Создать запуск'}
                             </button>
@@ -2898,19 +2991,44 @@ const TIAPage = ({ projects }) => {
                                 onClick={() => handleMappingConfirm('testplan')}
                                 style={{
                                     ...styles.modalButtonConfirm,
-                                    backgroundColor: '#28a745', // Зеленый цвет для тест-плана
+                                    backgroundColor: '#28a745',
+                                    opacity: (loadingState.testplan || loadingState.launch) ? 0.7 : 1,
+                                    cursor: (loadingState.testplan || loadingState.launch) ? 'not-allowed' : 'pointer'
                                 }}
-                                disabled={isPartialSaving || isMappingLoading || isMappingConfirmButtonDisabled}
+                                disabled={isPartialSaving || isMappingLoading || loadingState.launch || loadingState.testplan || isMappingConfirmButtonDisabled}
                             >
-                                {isMappingLoading
+                                {loadingState.testplan
                                     ? <Loader style={{ width: 20, height: 20 }} />
                                     : 'Создать тест-план'}
                             </button>
                         </div>
+                        {progress && (
+                            <div style={{ marginTop: '15px', width: '100%', textAlign: 'center' }}>
+                                <div style={{ marginBottom: '5px', fontSize: '14px', color: '#555' }}>
+                                    {progress.message}
+                                </div>
+                                {progress.total > 0 && (
+                                    <div style={{ width: '100%', height: '8px', backgroundColor: '#e9ecef', borderRadius: '4px', overflow: 'hidden' }}>
+                                        <div
+                                            style={{
+                                                width: `${(progress.current / progress.total) * 100}%`,
+                                                height: '100%',
+                                                backgroundColor: '#28a745',
+                                                transition: 'width 0.3s ease'
+                                            }}
+                                        />
+                                    </div>
+                                )}
+                                {progress.total > 0 && (
+                                    <div style={{ fontSize: '12px', color: '#777', marginTop: '2px' }}>
+                                        {progress.current} / {progress.total}
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
-
         </div>
     );
 };

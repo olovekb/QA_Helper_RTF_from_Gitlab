@@ -91,32 +91,59 @@ export async function fetchWithAuth(url, options = {}) {
         ...(options.headers || {}), // Дополнительные заголовки из запроса
     };
 
-    // Выполняем запрос с текущими заголовками
-    const response = await fetch(url, {
-        ...options,
-        headers: requestHeaders,
-    });
+    // Настройка таймаута (по умолчанию 30 секунд)
+    const timeout = options.timeout || 30000;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-    // Проверяем, не истёк ли токен (код 401)
-    if (response.status === 401) {
-        logWarn(`401 Unauthorized для URL: ${url}. Обновляем токен...`); // Логирование предупреждения
+    try {
+        // Выполняем запрос с текущими заголовками
+        const response = await fetch(url, {
+            ...options,
+            headers: requestHeaders,
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
 
-        try {
-            const newToken = await refreshJwtToken(); // Получаем новый токен
-            requestHeaders['Authorization'] = `Bearer ${newToken}`; // Обновляем заголовки для повторного запроса
+        // Проверяем, не истёк ли токен (код 401)
+        if (response.status === 401) {
+            logWarn(`401 Unauthorized для URL: ${url}. Обновляем токен...`); // Логирование предупреждения
 
-            // Повторяем запрос с новым токеном
-            return await fetch(url, {
-                ...options,
-                headers: requestHeaders,
-            });
-        } catch (error) {
-            logError('Не удалось обновить токен:', error.message); // Логирование ошибки
-            throw new Error('Не удалось авторизоваться. Проверьте доступы.'); // Выбрасываем ошибку
+            try {
+                const newToken = await refreshJwtToken(); // Получаем новый токен
+                requestHeaders['Authorization'] = `Bearer ${newToken}`; // Обновляем заголовки для повторного запроса
+
+                // Повторяем запрос с новым токеном (тоже с таймаутом)
+                const retryController = new AbortController();
+                const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
+
+                try {
+                    const retryResponse = await fetch(url, {
+                        ...options,
+                        headers: requestHeaders,
+                        signal: retryController.signal
+                    });
+                    clearTimeout(retryTimeoutId);
+                    return retryResponse;
+                } catch (retryError) {
+                    clearTimeout(retryTimeoutId);
+                    throw retryError;
+                }
+
+            } catch (error) {
+                logError('Не удалось обновить токен:', error.message); // Логирование ошибки
+                throw new Error('Не удалось авторизоваться. Проверьте доступы.'); // Выбрасываем ошибку
+            }
         }
-    }
 
-    return response; // Возвращаем успешный ответ
+        return response; // Возвращаем успешный ответ
+    } catch (error) {
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+            throw new Error(`Запрос к ${url} превысил таймаут ${timeout}ms`);
+        }
+        throw error;
+    }
 }
 
 /**

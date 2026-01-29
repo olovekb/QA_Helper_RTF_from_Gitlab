@@ -247,7 +247,8 @@ app.listen(config.port, async () => {
 
     // Применяем миграции при запуске
     try {
-        await runMigrations();
+        // await runMigrations();
+        logInfo('Автоматическое применение миграций отключено для стабильности. Используйте POST /api/migrations/run');
     } catch (error) {
         logError('Ошибка при автоматическом применении миграций при запуске:', error.message);
         // Не останавливаем сервер, продолжаем работу
