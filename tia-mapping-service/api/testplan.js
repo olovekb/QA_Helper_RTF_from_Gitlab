@@ -2,10 +2,67 @@ import { fetchWithAuth, authHeaders } from '../utils/allureAuth.js';
 import config from '../config/index.js';
 import { logError, logInfo, logWarn } from '../utils/logger.js';
 import { savePageComponentDependencies } from './components.js';
+import databasePool from '../db/pool.js';
+import pLimit from 'p-limit'; // Импорт p-limit
 
 // Импортируем функцию getTreeId из launch.js (можно вынести в utils если нужно)
 // Для простоты продублируем здесь
 const cache = new Map();
+const limit = pLimit(10); // Ограничение параллельных запросов
+
+/**
+ * Рекурсивно собирает ID всех листьев (тест-кейсов) для заданного узла (папки)
+ * @param {string} projectId
+ * @param {number} treeId
+ * @param {number} nodeId
+ * @param {Set<number>} visitedNodes - защита от циклов
+ * @returns {Promise<Array<number>>}
+ */
+async function collectAllLeaves(projectId, treeId, nodeId, visitedNodes = new Set()) {
+    if (visitedNodes.has(nodeId)) return [];
+    visitedNodes.add(nodeId);
+
+    const leaves = [];
+    let page = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+        // Запрашиваем детей узла (и группы и листья)
+        const url = `${config.allureBaseUrl}/api/v2/project/${projectId}/test-case/tree/tree-node?treeId=${treeId}&parentNodeId=${nodeId}&page=${page}&size=100`;
+
+        try {
+            const response = await fetchWithAuth(url, { headers: { ...authHeaders } });
+            if (!response.ok) {
+                logError(`Ошибка получения детей для узла ${nodeId}: ${response.statusText}`);
+                break;
+            }
+
+            const data = await response.json();
+            const children = data.children?.content || [];
+
+            // 1. Собираем листья текущего уровня (Важно: берем testCaseId, а не id узла!)
+            children.filter(child => child.type === 'LEAF').forEach(leaf => leaves.push(leaf.testCaseId));
+
+            // 2. Рекурсивно обрабатываем подпапки
+            const groupChildren = children.filter(child => child.type === 'GROUP');
+            if (groupChildren.length > 0) {
+                const nestedLeavesResults = await Promise.all(groupChildren.map(group =>
+                    limit(() => collectAllLeaves(projectId, treeId, group.id, visitedNodes))
+                ));
+                nestedLeavesResults.forEach(nestedLeaves => leaves.push(...nestedLeaves));
+            }
+
+            // Пагинация
+            if (children.length < 100) hasMore = false;
+            page++;
+        } catch (error) {
+            logError(`Ошибка при запросе листьев для узла ${nodeId}:`, error.message);
+            break;
+        }
+    }
+
+    return leaves;
+}
 
 async function getTreeId(projectId) {
     try {
@@ -49,6 +106,8 @@ async function getTreeId(projectId) {
     }
 }
 
+
+
 /**
  * Создание тест-плана через API Allure
  * @param {Object} req - Объект запроса Express
@@ -67,27 +126,60 @@ export async function createTestPlanAPI(req, res) {
 
         logInfo(`Создание тест-плана: projectId=${projectId}, jiraLink=${jiraLink || 'не указана'}, components=${Object.keys(componentMappings).length}`);
 
-        // 1. Собираем ID групп (уникальные)
-        const allFolderIds = new Set();
-        Object.values(componentMappings).forEach(folderIds => {
-            if (Array.isArray(folderIds)) {
-                folderIds.forEach(id => allFolderIds.add(parseInt(id, 10)));
+        // 1. Собираем уникальные ID функциональных блоков из componentMappings
+        const allBlockIds = new Set();
+        Object.values(componentMappings).forEach(blockIds => {
+            if (Array.isArray(blockIds)) {
+                blockIds.forEach(id => allBlockIds.add(parseInt(id, 10)));
             }
         });
 
-        const groupsInclude = Array.from(allFolderIds).filter(id => !isNaN(id));
+        const uniqueBlockIds = Array.from(allBlockIds).filter(id => !isNaN(id));
 
-        if (groupsInclude.length === 0) {
+        if (uniqueBlockIds.length === 0) {
             return res.status(400).json({
-                error: 'Не найдены группы для тест-плана (groupsInclude пустой)',
-                code: 'NO_GROUPS'
+                error: 'Не найдены функциональные блоки для тест-плана',
+                code: 'NO_BLOCKS'
             });
         }
 
-        // 2. Получаем TreeID
+        logInfo(`Собрано ${uniqueBlockIds.length} уникальных ID функциональных блоков`);
+
+        // 2. Получаем TreeID (нужен для запроса структуры)
         const treeId = await getTreeId(projectId);
 
-        // 3. Формируем название тест-плана
+        // 3. Собираем ID всех тест-кейсов (листьев) рекурсивно для каждого выбранного блока
+        logInfo(`Начинаем сбор тест-кейсов для ${uniqueBlockIds.length} функциональных блоков...`);
+
+        const allLeafIds = new Set();
+        const collectedLeavesPromises = uniqueBlockIds.map(blockId =>
+            limit(async () => {
+                try {
+                    const leaves = await collectAllLeaves(projectId, treeId, blockId);
+                    logInfo(`Для блока ${blockId} найдено ${leaves.length} тест-кейсов`);
+                    return leaves;
+                } catch (e) {
+                    logError(`Ошибка сбора листьев для блока ${blockId}: ${e.message}`);
+                    return [];
+                }
+            })
+        );
+
+        const leavesResults = await Promise.all(collectedLeavesPromises);
+        leavesResults.forEach(leaves => leaves.forEach(id => allLeafIds.add(id)));
+
+        const leafsInclude = Array.from(allLeafIds);
+
+        if (leafsInclude.length === 0) {
+            return res.status(400).json({
+                error: 'Не найдено ни одного тест-кейса в выбранных функциональных блоках',
+                code: 'NO_TEST_CASES'
+            });
+        }
+
+        logInfo(`Всего собрано ${leafsInclude.length} уникальных ID тест-кейсов`);
+
+        // 4. Формируем название тест-плана
         let testPlanName = 'Регресс тестирование';
         if (jiraLink) {
             const jiraIssueKeyMatch = jiraLink.match(/\/browse\/([A-Z]+-\d+)$/);
@@ -99,32 +191,27 @@ export async function createTestPlanAPI(req, res) {
             testPlanName = `Регресс тестирование ${today}`;
         }
 
-        // 4. Формируем тело запроса для testplan API
-        // КРИТИЧНО: У нас ID тест-кейсов (leafs), а не групп (groups)!
-        // Поэтому используем leafsInclude, а не groupsInclude
-        // Каждый ID оборачиваем в массив для формата [[id1], [id2], ...]
-        const leafsIncludeFormatted = groupsInclude.map(id => [id]);
-
+        // 5. Формируем тело запроса для testplan API
+        // Используем leafsInclude с плоским списком ID тест-кейсов - это надежный способ
         const requestBody = {
             projectId: parseInt(projectId, 10),
             treeSelection: {
                 inverted: false,
-                groupsInclude: [],  // Пустой - у нас нет ID групп/папок
+                groupsInclude: [],
                 groupsExclude: [],
-                leafsInclude: leafsIncludeFormatted,  // ID тест-кейсов идут сюда!
+                leafsInclude: leafsInclude,  // Массив ID тест-кейсов
                 leafsExclude: [],
                 kind: 'TreeSelectionDto'
             },
-            treeId: treeId,  // Добавляем treeId как в curl
+            treeId: treeId,
             name: testPlanName
         };
 
         logInfo(`Отправляем запрос создания тест-плана: ${testPlanName}`);
-        logInfo(`Собрано ${groupsInclude.length} уникальных ID тест-кейсов`);
-        logInfo(`leafsInclude (первые 10): ${JSON.stringify(leafsIncludeFormatted.slice(0, 10))}`);
+        logInfo(`leafsInclude содержит ${leafsInclude.length} тест-кейсов (первые 10): ${JSON.stringify(leafsInclude.slice(0, 10))}`);
         logInfo(`Полное тело запроса: ${JSON.stringify(requestBody, null, 2)}`);
 
-        // 5. Отправка запроса в Allure testplan API
+        // 6. Отправка запроса в Allure testplan API
         const testPlanUrl = `${config.allureBaseUrl}/api/testplan`;
         const testPlanResponse = await fetchWithAuth(testPlanUrl, {
             method: 'POST',
