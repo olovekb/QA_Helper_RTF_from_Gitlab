@@ -229,7 +229,7 @@ export async function createTestPlan(req, res) {
         }
 
         const jiraIntegration = integrationData.content.find(integration => integration.name === 'Jira');
-        // Используем 67 как дефолт, если не найдено, но лучше выкинуть ошибку, если это критично
+        // Используем 67 как дефолт, если не найдено
         const integrationId = jiraIntegration ? jiraIntegration.id : 67;
         logInfo(`Найден integrationId для Jira: ${integrationId}`);
 
@@ -241,9 +241,27 @@ export async function createTestPlan(req, res) {
         }
         logInfo(`Извлечён jiraIssueKey: ${jiraIssueKey}`);
 
-        // Формируем тело запроса
-        let requestBody = {
-            selection: {
+        // --- УМНАЯ СТРАТЕГИЯ ВЫБОРКИ ---
+        let selection;
+        const THRESHOLD = 100; // Порог переключения на стратегию "Весь проект"
+
+        if (groupsInclude.length > THRESHOLD) {
+            logInfo(`Оптимизация: Слишком много групп (${groupsInclude.length}). Переключаемся на inverted: true (Весь проект) для предотвращения таймаутов.`);
+            selection = {
+                inverted: true,
+                groupsInclude: [], // Пустой список при inverted: true = Все тесты проекта
+                groupsExclude: [],
+                testCasesInclude: [],
+                testCasesExclude: [],
+                leavesInclude: [],
+                leavesExclude: [],
+                projectId: parseInt(projectId, 10),
+                treeId: treeId,
+                deleted: false,
+            };
+        } else {
+            // Стандартная стратегия для небольших выборок
+            selection = {
                 inverted: false,
                 groupsInclude,
                 groupsExclude: [],
@@ -254,7 +272,12 @@ export async function createTestPlan(req, res) {
                 projectId: parseInt(projectId, 10),
                 treeId: treeId,
                 deleted: false,
-            },
+            };
+        }
+
+        // Формируем тело запроса
+        let requestBody = {
+            selection: selection,
             launchName: `Регресс тестирование ${jiraIssueKey}`,
             issues: [{ integrationId, name: jiraIssueKey }],
         };
@@ -277,17 +300,17 @@ export async function createTestPlan(req, res) {
                     body: JSON.stringify(requestBody),
                 });
 
-                // Читаем тело ответа сразу
+                // Читаем тело ответа сразу (ОДИН РАЗ)
                 responseText = await testPlanResponse.text();
 
-                // Если статус 504 и попытки еще есть — ждем и идем на следующий круг
-                if (testPlanResponse.status === 504 && attempt < MAX_RETRIES) {
-                    logWarn(`Попытка ${attempt} завершилась ошибкой 504 Gateway Time-out. Ждем 3 секунды и повторяем...`);
-                    await new Promise(resolve => setTimeout(resolve, 3000)); // Ждем 3 секунды
+                // Если статус 504/502 и попытки еще есть — ждем и идем на следующий круг
+                if ((testPlanResponse.status === 504 || testPlanResponse.status === 502) && attempt < MAX_RETRIES) {
+                    logWarn(`Попытка ${attempt} завершилась ошибкой ${testPlanResponse.status}. Ждем 3 секунды и повторяем...`);
+                    await new Promise(resolve => setTimeout(resolve, 3000));
                     continue;
                 }
 
-                // Если статус не 504 или попытки кончились — выходим из цикла
+                // Если статус не 504/502 или попытки кончились — выходим из цикла
                 logInfo(`Ответ от ${testPlanUrl} (Попытка ${attempt}): Status ${testPlanResponse.status}, Body length: ${responseText.length}`);
                 break;
 
@@ -298,18 +321,17 @@ export async function createTestPlan(req, res) {
                     await new Promise(resolve => setTimeout(resolve, 3000));
                     continue;
                 }
-                throw networkError; // Если попытки кончились, прокидываем ошибку дальше
+                throw networkError;
             }
         }
-
 
         let responseData;
 
         // Обработка ошибок первого запроса
         if (!testPlanResponse.ok) {
-            // Проверка на 504 Gateway Timeout
-            if (testPlanResponse.status === 504) {
-                throw new Error('Allure TestOps Timeout (504). Слишком много тестов в одном запросе. Попробуйте уменьшить объем выборки.');
+            // Если после всех попыток все равно 504/502
+            if (testPlanResponse.status === 504 || testPlanResponse.status === 502) {
+                throw new Error(`Allure TestOps Unavailable (${testPlanResponse.status}). Сервер перегружен или недоступен.`);
             }
 
             let errorData = {};
@@ -335,25 +357,25 @@ export async function createTestPlan(req, res) {
 
                 logInfo('Повторная отправка запроса с jobsMapping...');
 
-                // --- ПОВТОРНЫЙ ЗАПРОС ---
+                // Даем серверу небольшую паузу перед повторным запросом
+                await new Promise(r => setTimeout(r, 1000));
+
+                // Повторный запрос (без цикла ретраев, считаем что одного раза хватит после фикса)
                 testPlanResponse = await fetchWithAuth(testPlanUrl, {
                     method: 'POST',
                     headers: { ...authHeaders, 'Content-Type': 'application/json' },
                     body: JSON.stringify(requestBody),
                 });
 
-                // Снова читаем тело (это новый запрос, новый поток)
                 responseText = await testPlanResponse.text();
                 logInfo(`Ответ повторного запроса: Status ${testPlanResponse.status}`);
 
                 if (!testPlanResponse.ok) {
-                    // Проверка на 504 при повторе
-                    if (testPlanResponse.status === 504) {
-                        throw new Error('Allure TestOps Timeout (504) при повторном запросе.');
+                    if (testPlanResponse.status === 504 || testPlanResponse.status === 502) {
+                        throw new Error(`Allure TestOps Timeout (${testPlanResponse.status}) при повторном запросе.`);
                     }
                     throw new Error(`Не удалось создать тест-план (повторно): ${testPlanResponse.status}, Body: ${responseText}`);
                 }
-
             }
             // Сценарий 2: Пустая выборка
             else if (errorData.errors && errorData.errors.some(error => error.field === 'selection' && error.defaultMessage === 'test-case-bulk.nothing-to-run')) {
