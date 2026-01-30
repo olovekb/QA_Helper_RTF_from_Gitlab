@@ -50,6 +50,8 @@ const TIAPage = ({ projects }) => {
     ]);
     const [unassignedFolderIds, setUnassignedFolderIds] = useState([]); // Блоки без назначения
     const [splitProgress, setSplitProgress] = useState(null); // { current: 1, total: 3, launchName: 'Запуск 1' }
+    const [expandedSplitFolders, setExpandedSplitFolders] = useState({}); // Раскрытые папки в Split Modal
+
 
 
 
@@ -3113,110 +3115,195 @@ const TIAPage = ({ projects }) => {
                             display: 'flex',
                             overflow: 'hidden'
                         }}>
-                            {/* Left Column — Unassigned Blocks */}
+                            {/* Left Column — Unassigned Blocks (Tree View) */}
                             <div style={{
-                                width: '350px',
+                                width: '450px',
                                 borderRight: '1px solid #e2e8f0',
-                                backgroundColor: '#f8fafc',
+                                backgroundColor: '#fff',
                                 display: 'flex',
                                 flexDirection: 'column',
                                 flexShrink: 0
                             }}>
                                 <div style={{
-                                    padding: '16px 20px',
+                                    padding: '14px 18px',
                                     borderBottom: '1px solid #e2e8f0',
                                     fontWeight: 600,
                                     fontSize: '14px',
-                                    color: '#475569'
+                                    color: '#1e293b',
+                                    backgroundColor: '#f8fafc'
                                 }}>
                                     📦 Блоки без назначения ({unassignedFolderIds.length})
                                 </div>
                                 <div style={{
                                     flex: 1,
                                     overflowY: 'auto',
-                                    padding: '12px'
+                                    padding: '8px 0'
                                 }}>
                                     {unassignedFolderIds.length === 0 ? (
                                         <div style={{
-                                            padding: '24px',
+                                            padding: '32px 20px',
                                             textAlign: 'center',
-                                            color: '#94a3b8',
+                                            color: '#64748b',
                                             fontSize: '13px'
                                         }}>
-                                            Все блоки распределены по запускам
+                                            ✓ Все блоки распределены по запускам
                                         </div>
                                     ) : (
-                                        unassignedFolderIds.map(folderId => {
-                                            const folder = folders.flatMap(function flatten(f) {
-                                                return [f, ...(f.children || []).flatMap(flatten)];
-                                            }).find(f => f.id.toString() === folderId.toString());
-                                            return (
-                                                <div key={folderId} style={{
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'space-between',
-                                                    padding: '10px 12px',
-                                                    marginBottom: '6px',
-                                                    backgroundColor: '#fff',
-                                                    borderRadius: '10px',
-                                                    border: '1px solid #e2e8f0',
-                                                    fontSize: '13px'
-                                                }}>
-                                                    <span style={{ color: '#334155', fontWeight: 500 }}>
-                                                        {folder?.name || `ID: ${folderId}`}
-                                                    </span>
-                                                    {/* Dropdown to add to launch */}
-                                                    <select
-                                                        onChange={(e) => {
-                                                            const targetLaunchIndex = parseInt(e.target.value, 10);
-                                                            if (isNaN(targetLaunchIndex)) return;
+                                        /* Recursive Tree Rendering */
+                                        (() => {
+                                            const unassignedSet = new Set(unassignedFolderIds.map(id => id.toString()));
 
-                                                            // Add to launch
-                                                            const updated = [...launchGroups];
-                                                            if (!updated[targetLaunchIndex].folderIds.includes(folderId)) {
-                                                                updated[targetLaunchIndex].folderIds.push(folderId);
-                                                            }
-                                                            setLaunchGroups(updated);
+                                            // Helper to get all children IDs recursively
+                                            const getAllChildIds = (folder) => {
+                                                const ids = [folder.id.toString()];
+                                                (folder.children || []).forEach(child => {
+                                                    ids.push(...getAllChildIds(child));
+                                                });
+                                                return ids;
+                                            };
 
-                                                            // Remove from unassigned
-                                                            setUnassignedFolderIds(prev => prev.filter(id => id !== folderId));
+                                            // Helper to check if folder or any children are unassigned
+                                            const hasUnassignedItems = (folder) => {
+                                                if (unassignedSet.has(folder.id.toString())) return true;
+                                                return (folder.children || []).some(hasUnassignedItems);
+                                            };
 
-                                                            e.target.value = '';
-                                                        }}
-                                                        style={{
-                                                            padding: '4px 8px',
-                                                            borderRadius: '6px',
-                                                            border: '1px solid #cbd5e1',
-                                                            fontSize: '12px',
-                                                            cursor: 'pointer',
-                                                            backgroundColor: '#fff'
-                                                        }}
-                                                        defaultValue=""
-                                                    >
-                                                        <option value="" disabled>➕ В запуск</option>
-                                                        {launchGroups.map((g, idx) => (
-                                                            <option key={g.id} value={idx}>
-                                                                {idx + 1}. {g.name.substring(0, 20)}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </div>
-                                            );
-                                        })
+                                            // Render tree node
+                                            const renderTreeNode = (folder, depth = 0) => {
+                                                if (!hasUnassignedItems(folder)) return null;
+
+                                                const folderId = folder.id.toString();
+                                                const isUnassigned = unassignedSet.has(folderId);
+                                                const hasChildren = folder.children && folder.children.length > 0;
+                                                const isExpanded = expandedSplitFolders[folderId];
+                                                const childrenWithUnassigned = (folder.children || []).filter(hasUnassignedItems);
+
+                                                return (
+                                                    <div key={folderId}>
+                                                        <div style={{
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            padding: '8px 12px',
+                                                            paddingLeft: `${12 + depth * 20}px`,
+                                                            borderBottom: '1px solid #f1f5f9',
+                                                            backgroundColor: isUnassigned ? '#fff' : '#fafbfc',
+                                                            cursor: 'pointer'
+                                                        }}>
+                                                            {/* Expand/Collapse */}
+                                                            {hasChildren && childrenWithUnassigned.length > 0 ? (
+                                                                <button
+                                                                    onClick={() => setExpandedSplitFolders(prev => ({
+                                                                        ...prev,
+                                                                        [folderId]: !prev[folderId]
+                                                                    }))}
+                                                                    style={{
+                                                                        background: 'none',
+                                                                        border: 'none',
+                                                                        padding: '2px 6px',
+                                                                        cursor: 'pointer',
+                                                                        fontSize: '12px',
+                                                                        color: '#64748b',
+                                                                        marginRight: '4px'
+                                                                    }}
+                                                                >
+                                                                    {isExpanded ? '▼' : '▶'}
+                                                                </button>
+                                                            ) : (
+                                                                <span style={{ width: '24px' }} />
+                                                            )}
+
+                                                            {/* Folder name */}
+                                                            <span style={{
+                                                                flex: 1,
+                                                                fontSize: '13px',
+                                                                fontWeight: isUnassigned ? 500 : 400,
+                                                                color: '#1e293b',
+                                                                overflow: 'hidden',
+                                                                textOverflow: 'ellipsis',
+                                                                whiteSpace: 'nowrap'
+                                                            }}>
+                                                                {folder.name}
+                                                                {folder.testCasesCount > 0 && (
+                                                                    <span style={{
+                                                                        marginLeft: '6px',
+                                                                        fontSize: '11px',
+                                                                        color: '#94a3b8'
+                                                                    }}>
+                                                                        ({folder.testCasesCount})
+                                                                    </span>
+                                                                )}
+                                                            </span>
+
+                                                            {/* Add to Launch dropdown */}
+                                                            {isUnassigned && (
+                                                                <select
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                    onChange={(e) => {
+                                                                        const targetIdx = parseInt(e.target.value, 10);
+                                                                        if (isNaN(targetIdx)) return;
+
+                                                                        // Get all child IDs to add
+                                                                        const idsToAdd = getAllChildIds(folder).filter(id => unassignedSet.has(id));
+
+                                                                        // Add to launch
+                                                                        const updated = [...launchGroups];
+                                                                        idsToAdd.forEach(id => {
+                                                                            if (!updated[targetIdx].folderIds.includes(id)) {
+                                                                                updated[targetIdx].folderIds.push(id);
+                                                                            }
+                                                                        });
+                                                                        setLaunchGroups(updated);
+
+                                                                        // Remove from unassigned
+                                                                        setUnassignedFolderIds(prev => prev.filter(id => !idsToAdd.includes(id.toString())));
+
+                                                                        e.target.value = '';
+                                                                    }}
+                                                                    style={{
+                                                                        padding: '4px 8px',
+                                                                        borderRadius: '6px',
+                                                                        border: '1px solid #e2e8f0',
+                                                                        fontSize: '11px',
+                                                                        cursor: 'pointer',
+                                                                        backgroundColor: '#f8fafc',
+                                                                        color: '#475569'
+                                                                    }}
+                                                                    defaultValue=""
+                                                                >
+                                                                    <option value="" disabled>➕ В запуск</option>
+                                                                    {launchGroups.map((g, idx) => (
+                                                                        <option key={g.id} value={idx}>
+                                                                            {idx + 1}. {g.name.substring(0, 18)}
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                            )}
+                                                        </div>
+
+                                                        {/* Render children if expanded */}
+                                                        {isExpanded && childrenWithUnassigned.map(child =>
+                                                            renderTreeNode(child, depth + 1)
+                                                        )}
+                                                    </div>
+                                                );
+                                            };
+
+                                            return folders.map(folder => renderTreeNode(folder, 0));
+                                        })()
                                     )}
                                 </div>
 
                                 {/* Quick actions */}
                                 {unassignedFolderIds.length > 0 && launchGroups.length > 0 && (
                                     <div style={{
-                                        padding: '12px',
-                                        borderTop: '1px solid #e2e8f0'
+                                        padding: '12px 14px',
+                                        borderTop: '1px solid #e2e8f0',
+                                        backgroundColor: '#f8fafc'
                                     }}>
                                         <button
                                             onClick={() => {
-                                                // Add all to first launch
                                                 const updated = [...launchGroups];
-                                                updated[0].folderIds = [...new Set([...updated[0].folderIds, ...unassignedFolderIds])];
+                                                updated[0].folderIds = [...new Set([...updated[0].folderIds, ...unassignedFolderIds.map(id => id.toString())])];
                                                 setLaunchGroups(updated);
                                                 setUnassignedFolderIds([]);
                                             }}
@@ -3237,6 +3324,7 @@ const TIAPage = ({ projects }) => {
                                     </div>
                                 )}
                             </div>
+
 
                             {/* Right Column — Launches */}
                             <div style={{
