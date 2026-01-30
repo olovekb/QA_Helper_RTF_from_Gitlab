@@ -48,7 +48,9 @@ const TIAPage = ({ projects }) => {
     const [launchGroups, setLaunchGroups] = useState([
         { id: 'launch-1', name: 'Регресс тестирование', folderIds: [] }
     ]);
+    const [unassignedFolderIds, setUnassignedFolderIds] = useState([]); // Блоки без назначения
     const [splitProgress, setSplitProgress] = useState(null); // { current: 1, total: 3, launchName: 'Запуск 1' }
+
 
 
     const navigate = useNavigate(); // Для навигации назад
@@ -730,9 +732,12 @@ const TIAPage = ({ projects }) => {
                 defaultName = `Регресс тестирование ${new Date().toLocaleDateString('ru-RU')}`;
             }
 
-            // Инициализируем launchGroups с одним запуском, содержащим все блоки
+            // Все блоки изначально в пуле "без назначения"
+            setUnassignedFolderIds(allFolderIds);
+
+            // Инициализируем launchGroups с одним запуском (пустым)
             setLaunchGroups([
-                { id: 'launch-1', name: defaultName, folderIds: allFolderIds }
+                { id: 'launch-1', name: defaultName, folderIds: [] }
             ]);
 
             // Закрываем Mapping Modal, открываем Split Modal
@@ -3065,9 +3070,9 @@ const TIAPage = ({ projects }) => {
                     <div style={{
                         backgroundColor: '#fff',
                         borderRadius: '24px',
-                        width: '90%',
-                        maxWidth: '1000px',
-                        maxHeight: '85vh',
+                        width: '95%',
+                        maxWidth: '1400px',
+                        maxHeight: '90vh',
                         display: 'flex',
                         flexDirection: 'column',
                         boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
@@ -3075,18 +3080,18 @@ const TIAPage = ({ projects }) => {
                     }}>
                         {/* Header */}
                         <div style={{
-                            padding: '24px 32px',
+                            padding: '20px 28px',
                             borderBottom: '1px solid #e2e8f0',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'space-between'
                         }}>
                             <div>
-                                <h2 style={{ margin: 0, fontSize: '24px', fontWeight: 700, color: '#1e293b' }}>
+                                <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 700, color: '#1e293b' }}>
                                     Разделение на запуски
                                 </h2>
-                                <p style={{ margin: '4px 0 0', fontSize: '14px', color: '#64748b' }}>
-                                    Распределите функциональные блоки по отдельным запускам
+                                <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#64748b' }}>
+                                    Перетащите блоки из левой панели в нужный запуск
                                 </p>
                             </div>
                             <button
@@ -3094,195 +3099,328 @@ const TIAPage = ({ projects }) => {
                                 style={{
                                     background: 'none',
                                     border: 'none',
-                                    fontSize: '28px',
+                                    fontSize: '24px',
                                     color: '#94a3b8',
                                     cursor: 'pointer',
-                                    padding: '8px',
-                                    borderRadius: '8px',
-                                    transition: 'all 0.2s'
+                                    padding: '8px'
                                 }}
                             >×</button>
                         </div>
 
-                        {/* Content */}
+                        {/* Two-column content */}
                         <div style={{
                             flex: 1,
-                            padding: '24px 32px',
-                            overflowY: 'auto',
                             display: 'flex',
-                            flexDirection: 'column',
-                            gap: '20px'
+                            overflow: 'hidden'
                         }}>
-                            {/* Launch Groups */}
-                            {launchGroups.map((group, groupIndex) => (
-                                <div key={group.id} style={{
-                                    backgroundColor: '#f8fafc',
-                                    borderRadius: '16px',
-                                    padding: '20px',
-                                    border: '1px solid #e2e8f0'
+                            {/* Left Column — Unassigned Blocks */}
+                            <div style={{
+                                width: '350px',
+                                borderRight: '1px solid #e2e8f0',
+                                backgroundColor: '#f8fafc',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                flexShrink: 0
+                            }}>
+                                <div style={{
+                                    padding: '16px 20px',
+                                    borderBottom: '1px solid #e2e8f0',
+                                    fontWeight: 600,
+                                    fontSize: '14px',
+                                    color: '#475569'
                                 }}>
+                                    📦 Блоки без назначения ({unassignedFolderIds.length})
+                                </div>
+                                <div style={{
+                                    flex: 1,
+                                    overflowY: 'auto',
+                                    padding: '12px'
+                                }}>
+                                    {unassignedFolderIds.length === 0 ? (
+                                        <div style={{
+                                            padding: '24px',
+                                            textAlign: 'center',
+                                            color: '#94a3b8',
+                                            fontSize: '13px'
+                                        }}>
+                                            Все блоки распределены по запускам
+                                        </div>
+                                    ) : (
+                                        unassignedFolderIds.map(folderId => {
+                                            const folder = folders.flatMap(function flatten(f) {
+                                                return [f, ...(f.children || []).flatMap(flatten)];
+                                            }).find(f => f.id.toString() === folderId.toString());
+                                            return (
+                                                <div key={folderId} style={{
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'space-between',
+                                                    padding: '10px 12px',
+                                                    marginBottom: '6px',
+                                                    backgroundColor: '#fff',
+                                                    borderRadius: '10px',
+                                                    border: '1px solid #e2e8f0',
+                                                    fontSize: '13px'
+                                                }}>
+                                                    <span style={{ color: '#334155', fontWeight: 500 }}>
+                                                        {folder?.name || `ID: ${folderId}`}
+                                                    </span>
+                                                    {/* Dropdown to add to launch */}
+                                                    <select
+                                                        onChange={(e) => {
+                                                            const targetLaunchIndex = parseInt(e.target.value, 10);
+                                                            if (isNaN(targetLaunchIndex)) return;
+
+                                                            // Add to launch
+                                                            const updated = [...launchGroups];
+                                                            if (!updated[targetLaunchIndex].folderIds.includes(folderId)) {
+                                                                updated[targetLaunchIndex].folderIds.push(folderId);
+                                                            }
+                                                            setLaunchGroups(updated);
+
+                                                            // Remove from unassigned
+                                                            setUnassignedFolderIds(prev => prev.filter(id => id !== folderId));
+
+                                                            e.target.value = '';
+                                                        }}
+                                                        style={{
+                                                            padding: '4px 8px',
+                                                            borderRadius: '6px',
+                                                            border: '1px solid #cbd5e1',
+                                                            fontSize: '12px',
+                                                            cursor: 'pointer',
+                                                            backgroundColor: '#fff'
+                                                        }}
+                                                        defaultValue=""
+                                                    >
+                                                        <option value="" disabled>➕ В запуск</option>
+                                                        {launchGroups.map((g, idx) => (
+                                                            <option key={g.id} value={idx}>
+                                                                {idx + 1}. {g.name.substring(0, 20)}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                            );
+                                        })
+                                    )}
+                                </div>
+
+                                {/* Quick actions */}
+                                {unassignedFolderIds.length > 0 && launchGroups.length > 0 && (
                                     <div style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '12px',
-                                        marginBottom: '16px'
+                                        padding: '12px',
+                                        borderTop: '1px solid #e2e8f0'
                                     }}>
-                                        <span style={{
-                                            width: '32px',
-                                            height: '32px',
-                                            borderRadius: '8px',
-                                            backgroundColor: '#6366f1',
-                                            color: '#fff',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            fontWeight: 600,
-                                            fontSize: '14px'
-                                        }}>{groupIndex + 1}</span>
-                                        <input
-                                            type="text"
-                                            value={group.name}
-                                            onChange={(e) => {
+                                        <button
+                                            onClick={() => {
+                                                // Add all to first launch
                                                 const updated = [...launchGroups];
-                                                updated[groupIndex].name = e.target.value;
+                                                updated[0].folderIds = [...new Set([...updated[0].folderIds, ...unassignedFolderIds])];
                                                 setLaunchGroups(updated);
+                                                setUnassignedFolderIds([]);
                                             }}
                                             style={{
-                                                flex: 1,
-                                                padding: '10px 14px',
-                                                fontSize: '16px',
+                                                width: '100%',
+                                                padding: '10px',
+                                                backgroundColor: '#6366f1',
+                                                color: '#fff',
+                                                border: 'none',
+                                                borderRadius: '8px',
+                                                fontSize: '13px',
                                                 fontWeight: 500,
-                                                border: '1px solid #e2e8f0',
-                                                borderRadius: '10px',
-                                                outline: 'none',
-                                                transition: 'border-color 0.2s'
+                                                cursor: 'pointer'
                                             }}
-                                            placeholder="Название запуска"
-                                        />
-                                        {launchGroups.length > 1 && (
-                                            <button
-                                                onClick={() => {
-                                                    const updated = launchGroups.filter((_, i) => i !== groupIndex);
+                                        >
+                                            Добавить все в Запуск 1
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Right Column — Launches */}
+                            <div style={{
+                                flex: 1,
+                                overflowY: 'auto',
+                                padding: '20px'
+                            }}>
+                                {launchGroups.map((group, groupIndex) => (
+                                    <div key={group.id} style={{
+                                        backgroundColor: '#f8fafc',
+                                        borderRadius: '16px',
+                                        padding: '18px',
+                                        marginBottom: '16px',
+                                        border: '1px solid #e2e8f0'
+                                    }}>
+                                        <div style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '12px',
+                                            marginBottom: '14px'
+                                        }}>
+                                            <span style={{
+                                                width: '28px',
+                                                height: '28px',
+                                                borderRadius: '7px',
+                                                backgroundColor: '#6366f1',
+                                                color: '#fff',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                fontWeight: 600,
+                                                fontSize: '13px'
+                                            }}>{groupIndex + 1}</span>
+                                            <input
+                                                type="text"
+                                                value={group.name}
+                                                onChange={(e) => {
+                                                    const updated = [...launchGroups];
+                                                    updated[groupIndex].name = e.target.value;
                                                     setLaunchGroups(updated);
                                                 }}
                                                 style={{
-                                                    background: 'none',
-                                                    border: 'none',
-                                                    color: '#ef4444',
-                                                    cursor: 'pointer',
-                                                    fontSize: '20px',
-                                                    padding: '8px'
+                                                    flex: 1,
+                                                    padding: '8px 12px',
+                                                    fontSize: '15px',
+                                                    fontWeight: 500,
+                                                    border: '1px solid #e2e8f0',
+                                                    borderRadius: '8px',
+                                                    outline: 'none'
                                                 }}
-                                            >🗑️</button>
-                                        )}
-                                    </div>
+                                                placeholder="Название запуска"
+                                            />
+                                            {launchGroups.length > 1 && (
+                                                <button
+                                                    onClick={() => {
+                                                        // Return blocks to unassigned
+                                                        setUnassignedFolderIds(prev => [...prev, ...group.folderIds]);
+                                                        // Remove launch
+                                                        setLaunchGroups(launchGroups.filter((_, i) => i !== groupIndex));
+                                                    }}
+                                                    style={{
+                                                        background: 'none',
+                                                        border: 'none',
+                                                        color: '#ef4444',
+                                                        cursor: 'pointer',
+                                                        fontSize: '18px',
+                                                        padding: '6px'
+                                                    }}
+                                                    title="Удалить запуск"
+                                                >🗑️</button>
+                                            )}
+                                        </div>
 
-                                    {/* Blocks in this group */}
-                                    <div style={{
-                                        display: 'flex',
-                                        flexWrap: 'wrap',
-                                        gap: '8px',
-                                        minHeight: '40px'
-                                    }}>
-                                        {group.folderIds.length === 0 ? (
-                                            <span style={{ color: '#94a3b8', fontSize: '14px' }}>
-                                                Нет блоков — перетащите или выберите из списка
-                                            </span>
-                                        ) : (
-                                            group.folderIds.map(folderId => {
-                                                const folder = folders.flatMap(function flatten(f) {
-                                                    return [f, ...(f.children || []).flatMap(flatten)];
-                                                }).find(f => f.id.toString() === folderId.toString());
-                                                return (
-                                                    <span key={folderId} style={{
-                                                        backgroundColor: '#6366f1',
-                                                        color: '#fff',
-                                                        padding: '6px 12px',
-                                                        borderRadius: '8px',
-                                                        fontSize: '13px',
-                                                        fontWeight: 500,
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: '6px'
-                                                    }}>
-                                                        {folder?.name || `ID: ${folderId}`}
-                                                        <button
-                                                            onClick={() => {
-                                                                const updated = [...launchGroups];
-                                                                updated[groupIndex].folderIds = updated[groupIndex].folderIds.filter(id => id !== folderId);
-                                                                setLaunchGroups(updated);
-                                                            }}
-                                                            style={{
-                                                                background: 'none',
-                                                                border: 'none',
-                                                                color: 'rgba(255,255,255,0.8)',
-                                                                cursor: 'pointer',
-                                                                fontSize: '14px',
-                                                                padding: 0
-                                                            }}
-                                                        >×</button>
-                                                    </span>
-                                                );
-                                            })
-                                        )}
-                                    </div>
+                                        {/* Assigned blocks as tags */}
+                                        <div style={{
+                                            display: 'flex',
+                                            flexWrap: 'wrap',
+                                            gap: '8px',
+                                            minHeight: '36px'
+                                        }}>
+                                            {group.folderIds.length === 0 ? (
+                                                <span style={{ color: '#94a3b8', fontSize: '13px', fontStyle: 'italic' }}>
+                                                    Нет блоков — добавьте из левой панели
+                                                </span>
+                                            ) : (
+                                                group.folderIds.map(folderId => {
+                                                    const folder = folders.flatMap(function flatten(f) {
+                                                        return [f, ...(f.children || []).flatMap(flatten)];
+                                                    }).find(f => f.id.toString() === folderId.toString());
+                                                    return (
+                                                        <span key={folderId} style={{
+                                                            backgroundColor: '#6366f1',
+                                                            color: '#fff',
+                                                            padding: '5px 10px',
+                                                            borderRadius: '6px',
+                                                            fontSize: '12px',
+                                                            fontWeight: 500,
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            gap: '6px'
+                                                        }}>
+                                                            {folder?.name || `ID: ${folderId}`}
+                                                            <button
+                                                                onClick={() => {
+                                                                    // Remove from this launch
+                                                                    const updated = [...launchGroups];
+                                                                    updated[groupIndex].folderIds = updated[groupIndex].folderIds.filter(id => id !== folderId);
+                                                                    setLaunchGroups(updated);
+                                                                    // Return to unassigned
+                                                                    setUnassignedFolderIds(prev => [...prev, folderId]);
+                                                                }}
+                                                                style={{
+                                                                    background: 'none',
+                                                                    border: 'none',
+                                                                    color: 'rgba(255,255,255,0.8)',
+                                                                    cursor: 'pointer',
+                                                                    fontSize: '14px',
+                                                                    padding: 0,
+                                                                    lineHeight: 1
+                                                                }}
+                                                                title="Вернуть в пул"
+                                                            >×</button>
+                                                        </span>
+                                                    );
+                                                })
+                                            )}
+                                        </div>
 
-                                    {/* Stats */}
-                                    <div style={{ marginTop: '12px', fontSize: '13px', color: '#64748b' }}>
-                                        {group.folderIds.length} блоков
+                                        <div style={{ marginTop: '10px', fontSize: '12px', color: '#64748b' }}>
+                                            {group.folderIds.length} блоков
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
+                                ))}
 
-                            {/* Add Launch Button */}
-                            <button
-                                onClick={() => {
-                                    const newId = `launch-${launchGroups.length + 1}`;
-                                    setLaunchGroups([...launchGroups, {
-                                        id: newId,
-                                        name: `Запуск ${launchGroups.length + 1}`,
-                                        folderIds: []
-                                    }]);
-                                }}
-                                style={{
-                                    padding: '14px',
-                                    border: '2px dashed #cbd5e1',
-                                    borderRadius: '12px',
-                                    backgroundColor: 'transparent',
-                                    color: '#64748b',
-                                    fontSize: '14px',
-                                    fontWeight: 500,
-                                    cursor: 'pointer',
-                                    transition: 'all 0.2s'
-                                }}
-                            >
-                                ➕ Добавить запуск
-                            </button>
+                                {/* Add Launch Button */}
+                                <button
+                                    onClick={() => {
+                                        const newId = `launch-${Date.now()}`;
+                                        setLaunchGroups([...launchGroups, {
+                                            id: newId,
+                                            name: `Запуск ${launchGroups.length + 1}`,
+                                            folderIds: []
+                                        }]);
+                                    }}
+                                    style={{
+                                        width: '100%',
+                                        padding: '14px',
+                                        border: '2px dashed #cbd5e1',
+                                        borderRadius: '12px',
+                                        backgroundColor: 'transparent',
+                                        color: '#64748b',
+                                        fontSize: '14px',
+                                        fontWeight: 500,
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    ➕ Добавить запуск
+                                </button>
+                            </div>
                         </div>
 
                         {/* Footer */}
                         <div style={{
-                            padding: '20px 32px',
+                            padding: '16px 28px',
                             borderTop: '1px solid #e2e8f0',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'space-between',
                             backgroundColor: '#f8fafc'
                         }}>
-                            <div style={{ fontSize: '14px', color: '#64748b' }}>
-                                Всего: {launchGroups.reduce((sum, g) => sum + g.folderIds.length, 0)} блоков
-                                в {launchGroups.filter(g => g.folderIds.length > 0).length} запусках
+                            <div style={{ fontSize: '13px', color: '#64748b' }}>
+                                Назначено: {launchGroups.reduce((sum, g) => sum + g.folderIds.length, 0)} блоков •
+                                Без назначения: {unassignedFolderIds.length}
                             </div>
                             <div style={{ display: 'flex', gap: '12px' }}>
                                 <button
                                     onClick={() => setShowSplitModal(false)}
                                     style={{
-                                        padding: '12px 24px',
-                                        borderRadius: '10px',
+                                        padding: '10px 20px',
+                                        borderRadius: '8px',
                                         border: '1px solid #e2e8f0',
                                         backgroundColor: '#fff',
                                         color: '#64748b',
-                                        fontSize: '14px',
+                                        fontSize: '13px',
                                         fontWeight: 500,
                                         cursor: 'pointer'
                                     }}
@@ -3291,23 +3429,26 @@ const TIAPage = ({ projects }) => {
                                     onClick={createMultipleLaunches}
                                     disabled={loadingState.launch || launchGroups.every(g => g.folderIds.length === 0)}
                                     style={{
-                                        padding: '12px 28px',
-                                        borderRadius: '10px',
+                                        padding: '10px 24px',
+                                        borderRadius: '8px',
                                         border: 'none',
-                                        background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                                        background: launchGroups.every(g => g.folderIds.length === 0)
+                                            ? '#94a3b8'
+                                            : 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
                                         color: '#fff',
-                                        fontSize: '14px',
+                                        fontSize: '13px',
                                         fontWeight: 600,
                                         cursor: launchGroups.every(g => g.folderIds.length === 0) ? 'not-allowed' : 'pointer',
-                                        opacity: launchGroups.every(g => g.folderIds.length === 0) ? 0.5 : 1,
-                                        boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)',
-                                        transition: 'all 0.2s'
+                                        boxShadow: launchGroups.every(g => g.folderIds.length === 0) ? 'none' : '0 4px 12px rgba(99, 102, 241, 0.3)'
                                     }}
                                 >
                                     {loadingState.launch ? (
                                         <span>Создание... {splitProgress ? `(${splitProgress.current}/${splitProgress.total})` : ''}</span>
                                     ) : (
-                                        `Создать ${launchGroups.filter(g => g.folderIds.length > 0).length} запуск${launchGroups.filter(g => g.folderIds.length > 0).length === 1 ? '' : 'а'}`
+                                        (() => {
+                                            const count = launchGroups.filter(g => g.folderIds.length > 0).length;
+                                            return `Создать ${count} запуск${count === 1 ? '' : count > 1 && count < 5 ? 'а' : 'ов'}`;
+                                        })()
                                     )}
                                 </button>
                             </div>
@@ -3317,8 +3458,7 @@ const TIAPage = ({ projects }) => {
                         {splitProgress && (
                             <div style={{
                                 height: '4px',
-                                backgroundColor: '#e2e8f0',
-                                position: 'relative'
+                                backgroundColor: '#e2e8f0'
                             }}>
                                 <div style={{
                                     height: '100%',
@@ -3331,6 +3471,7 @@ const TIAPage = ({ projects }) => {
                     </div>
                 </div>
             )}
+
         </div>
     );
 };
