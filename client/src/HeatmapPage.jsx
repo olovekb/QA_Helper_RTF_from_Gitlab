@@ -132,19 +132,19 @@ const HeatmapPage = ({ projects }) => {
 
     const versionOptions = availableVersions.map(v => ({ value: v, label: v }));
 
-    // Загрузка структуры Allure для маппинга
+    // Загрузка функциональных блоков из БД для маппинга
     const fetchFolders = async () => {
         if (!projectId) return;
         try {
-            const response = await axios.get(`${config.structureUrl}/folders?projectId=${projectId}`);
+            const response = await axios.get(`${config.TIAUrl}/api/functional-blocks?projectId=${projectId}`);
             if (response.data && Array.isArray(response.data)) {
                 setFolders(response.data);
             } else {
                 setFolders([]);
-                console.warn('Получен некорректный формат структуры Allure:', response.data);
+                console.warn('Получен некорректный формат функциональных блоков:', response.data);
             }
         } catch (err) {
-            console.error('Ошибка при загрузке структуры Allure:', err);
+            console.error('Ошибка при загрузке функциональных блоков:', err);
             setFolders([]);
         }
     };
@@ -180,8 +180,18 @@ const HeatmapPage = ({ projects }) => {
                     affected_components: []
                 };
 
-                const componentsObj = json.unique_affected_components || {};
-                Object.keys(componentsObj).forEach(compName => {
+                let componentsToProcess = [];
+
+                if (json.unique_affected_components) {
+                    componentsToProcess = Object.keys(json.unique_affected_components);
+                } else if (json.global_risks && Array.isArray(json.global_risks)) {
+                    // Поддержка формата с global_risks
+                    componentsToProcess = json.global_risks
+                        .map(risk => risk.source)
+                        .filter(source => source);
+                }
+
+                componentsToProcess.forEach(compName => {
                     item.affected_components.push(compName);
                     uniqueComponentsSet.add(compName);
                 });
@@ -1321,10 +1331,7 @@ const HeatmapPage = ({ projects }) => {
                                                 transition: 'background-color 0.2s'
                                             }}>
                                                 <td style={{ padding: '16px 20px', fontWeight: 600, color: '#1e293b', fontSize: '14px', borderBottom: '1px solid #f1f5f9' }}>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                        <span style={{ fontSize: '16px' }}>🧩</span>
-                                                        {compName}
-                                                    </div>
+                                                    {compName}
                                                 </td>
                                                 <td style={{ padding: '12px 20px', borderBottom: '1px solid #f1f5f9' }}>
                                                     <Select

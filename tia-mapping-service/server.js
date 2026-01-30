@@ -111,6 +111,29 @@ app.post('/api/components/page-mappings', getPageMappings); // Получени�
 app.get('/api/components/functional-block-links', getFunctionalBlockPageComponentLinks); // Получение явных связей функциональный блок -> Page -> компонент
 
 /**
+ * Получение списка функциональных блоков для проекта (для dropdown маппинга)
+ * @route GET /api/functional-blocks
+ * @param {string} projectId - ID проекта
+ */
+app.get('/api/functional-blocks', async (req, res) => {
+    const { projectId } = req.query;
+    if (!projectId) {
+        return res.status(400).json({ error: 'Необходимо указать projectId.' });
+    }
+    try {
+        const knex = (await import('./db/connection.js')).default;
+        const blocks = await knex('functional_blocks')
+            .where({ project_id: projectId })
+            .select('id', 'name', 'allure_id', 'custom_field_name')
+            .orderBy('name', 'asc');
+        res.json(blocks);
+    } catch (error) {
+        logError(`Ошибка получения функциональных блоков для проекта ${projectId}:`, error.message);
+        res.status(500).json({ error: 'Ошибка при получении функциональных блоков.', details: error.message });
+    }
+});
+
+/**
  * Получение данных для тепловой карты дефектов
  * @route GET /api/heatmap
  * @param {string} projectId - ID проекта

@@ -70,7 +70,21 @@ export async function getHeatmapData(req, res) {
 
         // Фильтр по версиям релиза
         if (parsedReleaseVersions && parsedReleaseVersions.length > 0) {
-            query = query.whereIn('component_defects.release_version', parsedReleaseVersions);
+            query = query.where(builder => {
+                // Если есть "Без версии", добавляем условие OR release_version IS NULL
+                if (parsedReleaseVersions.includes('Без версии')) {
+                    builder.whereNull('component_defects.release_version');
+
+                    // Если есть другие версии кроме "Без версии"
+                    const concreteVersions = parsedReleaseVersions.filter(v => v !== 'Без версии');
+                    if (concreteVersions.length > 0) {
+                        builder.orWhereIn('component_defects.release_version', concreteVersions);
+                    }
+                } else {
+                    // Стандартная фильтрация
+                    builder.whereIn('component_defects.release_version', parsedReleaseVersions);
+                }
+            });
         }
 
         // Фильтр по типу (баги или общий)
@@ -134,12 +148,11 @@ export async function getReleaseVersions(req, res) {
             return res.status(400).json({ error: 'Необходимо указать projectId.' });
         }
 
+        // Получаем версии, включая NULL (для которых нет версии)
         let query = databasePool('component_defects')
             .join('components', 'component_defects.component_id', 'components.id')
             .where({ 'components.project_id': projectId })
-            .select('component_defects.release_version')
-            .distinct()
-            .whereNotNull('component_defects.release_version')
+            .distinct('component_defects.release_version')
             .orderBy('component_defects.release_version', 'desc');
 
         // Фильтр по дате для ограничения списка версий
@@ -151,9 +164,14 @@ export async function getReleaseVersions(req, res) {
         }
 
         const results = await query;
-        const versions = results.map(row => row.release_version).filter(v => v);
 
-        res.status(200).json({ versions });
+        // Преобразуем результаты: null -> 'Без версии'
+        const versions = results.map(row => row.release_version || 'Без версии');
+
+        // Убираем дубликаты, если 'Без версии' встретилось несколько раз (хотя distinct должен сработать, но null и '' могут быть разными)
+        const uniqueVersions = [...new Set(versions)];
+
+        res.status(200).json({ versions: uniqueVersions });
     } catch (error) {
         logError(`Ошибка при получении списка версий:`, error.message);
         res.status(500).json({ error: 'Произошла ошибка при получении списка версий.', details: error.message });
