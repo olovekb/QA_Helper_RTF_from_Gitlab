@@ -311,7 +311,9 @@ export async function handleComponentMapping(req, res) {
                             component_id: component.id,
                             release_version: version || null,
                             change_date: validatedChangeDate || null,
-                            created_at: databasePool.fn.now(),
+                            issue_key: null,
+                            mr_iid: null,
+                            is_bug_fix: true
                         });
                     }
                 } else if (validatedChangeDate) {
@@ -320,16 +322,27 @@ export async function handleComponentMapping(req, res) {
                         component_id: component.id,
                         release_version: null,
                         change_date: validatedChangeDate || null,
-                        created_at: databasePool.fn.now(),
+                        issue_key: null,
+                        mr_iid: null,
+                        is_bug_fix: true
                     });
                 }
 
                 if (defectsToInsert.length > 0) {
-                    // Используем onConflict для дедупликации - только добавляем, не меняем существующие
+                    // Используем onConflict для дедупликации с новым индексом idx_component_defects_unique_v3
+                    // Индекс включает: component_id, change_date, issue_key, mr_iid, release_version
                     await databasePool('component_defects')
-                        .insert(defectsToInsert)
-                        .onConflict(['component_id', 'release_version', 'change_date'])
-                        .ignore(); // Игнорируем дубликаты (только добавляем новые)
+                        .insert(defectsToInsert.map(r => ({
+                            component_id: r.component_id,
+                            release_version: r.release_version,
+                            change_date: r.change_date,
+                            issue_key: r.issue_key,
+                            is_bug_fix: r.is_bug_fix,
+                            mr_iid: r.mr_iid,
+                            created_at: databasePool.fn.now()
+                        })))
+                        .onConflict(['component_id', 'change_date', 'issue_key', 'mr_iid', 'release_version'])
+                        .ignore();
                     logInfo(`Сохранено ${defectsToInsert.length} дефектов для компонента ${componentName} (${componentType}) в проекте ${projectId}`);
                 }
             } catch (defectError) {

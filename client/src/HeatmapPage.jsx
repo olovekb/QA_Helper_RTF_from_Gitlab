@@ -37,6 +37,7 @@ const HeatmapPage = ({ projects }) => {
     const [unmappedComponents, setUnmappedComponents] = useState([]);
     const [componentMappings, setComponentMappings] = useState({});
     const [folders, setFolders] = useState([]);
+    const [folderNamesCache, setFolderNamesCache] = useState({}); // Кэш названий функц. блоков
     const [parsedHistoryItems, setParsedHistoryItems] = useState([]);
 
     // Загрузка доступных версий при изменении проекта или дат
@@ -215,6 +216,7 @@ const HeatmapPage = ({ projects }) => {
 
             const mappingsMap = {};
             const unmapped = [];
+            const namesCache = {}; // Локальный кэш для этой партии
 
             componentNames.forEach(name => {
                 const found = existingMappings.filter(m => m.component_name === name);
@@ -222,10 +224,18 @@ const HeatmapPage = ({ projects }) => {
                     // Используем Set для того чтобы не дублировать ID
                     const blockIds = [...new Set(found.map(m => m.functional_block_id))];
                     mappingsMap[name] = blockIds;
+                    // Кэшируем названия функциональных блоков
+                    found.forEach(m => {
+                        if (m.functional_block_id && m.functional_block_name) {
+                            namesCache[m.functional_block_id] = m.functional_block_name;
+                        }
+                    });
                 } else {
                     unmapped.push(name);
                 }
             });
+
+            setFolderNamesCache(prev => ({ ...prev, ...namesCache }));
 
             setComponentMappings(mappingsMap);
             setUnmappedComponents(unmapped);
@@ -1339,7 +1349,8 @@ const HeatmapPage = ({ projects }) => {
                                                         options={(folders || []).map(f => ({ value: f.id, label: f.name }))}
                                                         value={(componentMappings[compName] || []).map(id => {
                                                             const folder = folders.find(f => f.id === id);
-                                                            return { value: id, label: folder ? folder.name : id };
+                                                            const cachedName = folderNamesCache[id];
+                                                            return { value: id, label: folder?.name || cachedName || id };
                                                         })}
                                                         onChange={(selected) => {
                                                             setComponentMappings(prev => ({

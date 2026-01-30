@@ -276,40 +276,48 @@ export async function getTestCoverageData(req, res) {
             .sort((a, b) => b.defectCount - a.defectCount);
 
         // Теперь получаем данные по роутам
-        let routesQuery = databasePool('page_component_dependencies as pcd')
+        // Используем подзапрос для избежания декартова произведения:
+        // Сначала получаем уникальные пары (defect_id, route), затем группируем по route
+
+        // Строим подзапрос для уникальных пар defect-route
+        let defectRouteSubquery = databasePool('page_component_dependencies as pcd')
             .join('components as c', 'pcd.component_id', 'c.id')
-            .leftJoin('component_defects as cd', 'cd.component_id', 'c.id')
+            .join('component_defects as cd', 'cd.component_id', 'c.id')
             .where({ 'pcd.project_id': projectId })
             .whereNotNull('pcd.page_route')
-            .where('pcd.page_route', '!=', '');
+            .where('pcd.page_route', '!=', '')
+            .select(
+                'pcd.page_route',
+                'cd.id as defect_id'
+            );
 
-        // Применяем фильтры к дефектам
+        // Применяем фильтры к дефектам в подзапросе
         if (startDate && endDate) {
-            routesQuery = routesQuery.whereBetween('cd.change_date', [startDate, endDate]);
+            defectRouteSubquery = defectRouteSubquery.whereBetween('cd.change_date', [startDate, endDate]);
         } else if (startDate) {
-            routesQuery = routesQuery.where('cd.change_date', '>=', startDate);
+            defectRouteSubquery = defectRouteSubquery.where('cd.change_date', '>=', startDate);
         } else if (endDate) {
-            routesQuery = routesQuery.where('cd.change_date', '<=', endDate);
+            defectRouteSubquery = defectRouteSubquery.where('cd.change_date', '<=', endDate);
         }
 
         if (parsedReleaseVersions && parsedReleaseVersions.length > 0) {
-            routesQuery = routesQuery.whereIn('cd.release_version', parsedReleaseVersions);
+            defectRouteSubquery = defectRouteSubquery.whereIn('cd.release_version', parsedReleaseVersions);
         }
 
         if (parsedIsBugFix !== undefined) {
-            routesQuery = routesQuery.where('cd.is_bug_fix', parsedIsBugFix);
+            defectRouteSubquery = defectRouteSubquery.where('cd.is_bug_fix', parsedIsBugFix);
         }
 
-        routesQuery = routesQuery
-            .select(
-                'pcd.page_route',
-                databasePool.raw('COUNT(DISTINCT cd.id) as total_defects')
-            )
-            .groupBy('pcd.page_route')
-            .having(databasePool.raw('COUNT(DISTINCT cd.id)'), '>', 0)
-            .orderBy('total_defects', 'desc');
+        // Группируем подзапрос для получения уникальных пар
+        defectRouteSubquery = defectRouteSubquery.distinct();
 
-        const routesResults = await routesQuery;
+        // Внешний запрос: группируем по роуту и считаем уникальные дефекты
+        const routesResults = await databasePool
+            .from(defectRouteSubquery.as('unique_defect_routes'))
+            .select('page_route')
+            .count('defect_id as total_defects')
+            .groupBy('page_route')
+            .orderBy('total_defects', 'desc');
 
         // Считаем общее количество дефектов по роутам
         let totalRoutesDefects = 0;
@@ -452,9 +460,11 @@ export async function bulkImportHistory(req, res) {
                 const chunkSize = 500;
                 for (let i = 0; i < defectInserts.length; i += chunkSize) {
                     const chunk = defectInserts.slice(i, i + chunkSize);
+                    // Используем onConflict для дедупликации - индекс idx_component_defects_unique_v3
+                    // включает: component_id, change_date, issue_key, mr_iid, release_version
                     await trx('component_defects')
                         .insert(chunk)
-                        .onConflict(['component_id', 'mr_iid', 'change_date', 'release_version'])
+                        .onConflict(['component_id', 'change_date', 'issue_key', 'mr_iid', 'release_version'])
                         .ignore();
                 }
             }
