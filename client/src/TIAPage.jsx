@@ -629,7 +629,7 @@ const TIAPage = ({ projects }) => {
                 try {
                     const requestBody = {
                         projectId,
-                        jiraLink,
+                        jiraLink: group.jiraLink || '', // Use launch-specific Jira link
                         launchName: group.name,
                         groupsInclude: group.folderIds.map(id => parseInt(id, 10)),
                         componentMappings // Даём componentMappings для pageDependencies
@@ -739,7 +739,7 @@ const TIAPage = ({ projects }) => {
 
             // Инициализируем launchGroups с одним запуском (пустым)
             setLaunchGroups([
-                { id: 'launch-1', name: defaultName, folderIds: [] }
+                { id: 'launch-1', name: defaultName, folderIds: [], jiraLink: jiraLink || '' }
             ]);
 
             // Закрываем Mapping Modal, открываем Split Modal
@@ -2186,17 +2186,7 @@ const TIAPage = ({ projects }) => {
                     </div>
                 </div>
 
-                <div style={styles.formGroup}>
-                    <label style={styles.label}>Ссылка на задачу Jira:</label>
-                    <input
-                        type="text"
-                        value={jiraLink}
-                        onChange={handleJiraLinkChange}
-                        placeholder="https://jira.abanking.ru/browse/CTMM-528"
-                        style={styles.jiraInput}
-                        disabled={isLoading || structureLoading}
-                    />
-                </div>
+                {/* Jira link moved to Split Modal - each launch has its own Jira link */}
 
                 {mode === 'mapping' && (
                     structureLoading ? (
@@ -2784,8 +2774,8 @@ const TIAPage = ({ projects }) => {
                                                         </div>
                                                     )}
 
-                                                    {/* Где используется */}
-                                                    {pages.length > 0 && (
+                                                    {/* Где используется — скрывать если > 10 Pages */}
+                                                    {pages.length > 0 && pages.length <= 10 && (
                                                         <div style={{ marginTop: '12px' }}>
                                                             <div style={{
                                                                 fontSize: '12px',
@@ -2846,6 +2836,19 @@ const TIAPage = ({ projects }) => {
                                                             </div>
                                                         </div>
                                                     )}
+                                                    {/* Для > 10 pages — показать только счетчик */}
+                                                    {pages.length > 10 && (
+                                                        <div style={{ marginTop: '12px' }}>
+                                                            <span style={{
+                                                                fontSize: '12px',
+                                                                color: '#6c757d',
+                                                                fontWeight: 600
+                                                            }}>
+                                                                Используется на {pages.length} страницах
+                                                            </span>
+                                                        </div>
+                                                    )}
+
 
                                                     {/* Выбранные маппинги */}
                                                     {hasMapping && (
@@ -3234,15 +3237,15 @@ const TIAPage = ({ projects }) => {
                                                                 )}
                                                             </span>
 
-                                                            {/* Add to Launch dropdown */}
-                                                            {isUnassigned && (
+                                                            {/* Add to Launch dropdown — show for any folder with unassigned items */}
+                                                            {(isUnassigned || childrenWithUnassigned.length > 0) && (
                                                                 <select
                                                                     onClick={(e) => e.stopPropagation()}
                                                                     onChange={(e) => {
                                                                         const targetIdx = parseInt(e.target.value, 10);
                                                                         if (isNaN(targetIdx)) return;
 
-                                                                        // Get all child IDs to add
+                                                                        // Get all child IDs to add (only unassigned ones)
                                                                         const idsToAdd = getAllChildIds(folder).filter(id => unassignedSet.has(id));
 
                                                                         // Add to launch
@@ -3278,6 +3281,7 @@ const TIAPage = ({ projects }) => {
                                                                     ))}
                                                                 </select>
                                                             )}
+
                                                         </div>
 
                                                         {/* Render children if expanded */}
@@ -3398,6 +3402,29 @@ const TIAPage = ({ projects }) => {
                                             )}
                                         </div>
 
+                                        {/* Jira Link input */}
+                                        <div style={{ marginBottom: '12px' }}>
+                                            <input
+                                                type="text"
+                                                value={group.jiraLink || ''}
+                                                onChange={(e) => {
+                                                    const updated = [...launchGroups];
+                                                    updated[groupIndex].jiraLink = e.target.value;
+                                                    setLaunchGroups(updated);
+                                                }}
+                                                style={{
+                                                    width: '100%',
+                                                    padding: '8px 12px',
+                                                    fontSize: '12px',
+                                                    border: '1px solid #e2e8f0',
+                                                    borderRadius: '6px',
+                                                    outline: 'none',
+                                                    color: '#475569'
+                                                }}
+                                                placeholder="🔗 Ссылка на задачу Jira (опционально)"
+                                            />
+                                        </div>
+
                                         {/* Assigned blocks as tags */}
                                         <div style={{
                                             display: 'flex',
@@ -3466,7 +3493,8 @@ const TIAPage = ({ projects }) => {
                                         setLaunchGroups([...launchGroups, {
                                             id: newId,
                                             name: `Запуск ${launchGroups.length + 1}`,
-                                            folderIds: []
+                                            folderIds: [],
+                                            jiraLink: ''
                                         }]);
                                     }}
                                     style={{

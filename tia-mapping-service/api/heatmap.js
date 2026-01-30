@@ -385,13 +385,16 @@ export async function bulkImportHistory(req, res) {
                 for (const [compName, fbIds] of Object.entries(mappings)) {
                     const compId = nameToIdMap.get(compName);
                     if (compId && Array.isArray(fbIds)) {
+                        // Фильтруем null/undefined значения
+                        const validFbIds = fbIds.filter(fbId => fbId != null && fbId !== '');
+
                         // Удаляем старые маппинги этого компонента перед вставкой новых
                         await trx('component_functional_blocks')
                             .where({ component_id: compId })
                             .del();
 
-                        if (fbIds.length > 0) {
-                            const mappingInserts = fbIds.map(fbId => ({
+                        if (validFbIds.length > 0) {
+                            const mappingInserts = validFbIds.map(fbId => ({
                                 component_id: compId,
                                 functional_block_id: fbId
                             }));
@@ -400,6 +403,7 @@ export async function bulkImportHistory(req, res) {
                     }
                 }
             }
+
 
             // 5. Вставляем историю дефектов
             const defectInserts = [];

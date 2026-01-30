@@ -57,6 +57,14 @@ const HeatmapPage = ({ projects }) => {
         }
     }, [projectId, startDate, endDate, selectedVersions, isBugFix, activeTab]);
 
+    // Загрузка структуры Allure при изменении проекта
+    useEffect(() => {
+        if (projectId) {
+            fetchFolders();
+        }
+    }, [projectId]);
+
+
     const loadAvailableVersions = async () => {
         try {
             const params = new URLSearchParams({ projectId });
