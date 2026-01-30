@@ -10,7 +10,7 @@ import { getProjectStructure } from './api/structure.js'; // Импорт фун
 import { handleComponentMapping, deleteComponentMapping, getComponentMappings, getPageMappings, savePageDependencies, getFunctionalBlockPageComponentLinks } from './api/components.js'; // Импорт функционала для маппинга
 import { getHeatmapData, getReleaseVersions, getTestCoverageData, bulkImportHistory } from './api/heatmap.js'; // Импорт функционала для тепловой карты
 import { createTestPlan } from './api/launch.js'; // Импорт функционала для создания запусков
-import { createTestPlanAPI } from './api/testplan.js'; // Импорт функционала для создания тест-планов
+// testplan.js removed - functionality replaced by launch splitting modal
 import config from './config/index.js'; // Импорт конфигурации проекта
 import { logInfo, logError } from './utils/logger.js'; // Импорт логгера для информационных и ошибочных сообщений
 import { logServerError } from './api/errors.js';
@@ -158,14 +158,7 @@ app.delete('/api/components/:componentId', deleteComponentMapping);
  */
 app.post('/api/launch', createTestPlan);
 
-/**
- * Создание тест-плана в Allure
- * @route POST /api/testplan
- * @param {string} projectId - ID проекта
- * @param {Object} componentMappings - Маппинги компонентов
- * @param {string} jiraLink - URL задачи в Jira (опционально)
- */
-app.post('/api/testplan', createTestPlanAPI);
+// /api/testplan removed - functionality replaced by launch splitting modal
 
 // Обработка всех маршрутов для React SPA (перенаправление на index.html)
 app.get('*', (req, res) => {

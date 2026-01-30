@@ -95,24 +95,14 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
             : 'component' // Default если отсутствует, null, undefined или невалидное значение
     }));
 
-    // Удаляем существующие связи для этих страниц и компонентов
     // Используем уникальный ключ для предотвращения дублирования
+    // Удаление предварительных записей НЕ требуется, т.к. onConflict().merge() обновит существующие
     const uniqueDeps = new Map();
     for (const dep of normalizedDeps) {
         const key = `${projectId}_${dep.pageName}_${dep.componentName}`;
         if (!uniqueDeps.has(key)) {
             uniqueDeps.set(key, dep);
         }
-    }
-
-    for (const dep of uniqueDeps.values()) {
-        await databasePool('page_component_dependencies')
-            .where({
-                project_id: projectId,
-                page_name: dep.pageName,
-                component_name: dep.componentName
-            })
-            .del();
     }
 
     // Используем normalizedDeps для дальнейшей обработки
@@ -167,16 +157,29 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
     const newDependencies = Array.from(uniqueDepsMap.values());
 
     if (newDependencies.length > 0) {
-        // Используем onConflict для предотвращения дублирования при повторной вставке
-        await databasePool('page_component_dependencies')
-            .insert(newDependencies)
-            .onConflict(['project_id', 'page_name', 'component_name'])
-            .merge({
-                page_route: databasePool.raw('EXCLUDED.page_route'),
-                component_type: databasePool.raw('EXCLUDED.component_type'),
-                component_id: databasePool.raw('EXCLUDED.component_id'),
-                updated_at: databasePool.fn.now(),
-            });
+        // PostgreSQL has a limit of ~32767 parameters per query
+        // Each row has 6 parameters, so we limit to 500 rows per batch (500 * 6 = 3000 params, well under limit)
+        const BATCH_SIZE = 500;
+        const totalBatches = Math.ceil(newDependencies.length / BATCH_SIZE);
+
+        for (let i = 0; i < newDependencies.length; i += BATCH_SIZE) {
+            const batch = newDependencies.slice(i, i + BATCH_SIZE);
+            const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+
+            await databasePool('page_component_dependencies')
+                .insert(batch)
+                .onConflict(['project_id', 'page_name', 'component_name'])
+                .merge({
+                    page_route: databasePool.raw('EXCLUDED.page_route'),
+                    component_type: databasePool.raw('EXCLUDED.component_type'),
+                    component_id: databasePool.raw('EXCLUDED.component_id'),
+                    updated_at: databasePool.fn.now(),
+                });
+
+            if (totalBatches > 1) {
+                logInfo(`Batch ${batchNumber}/${totalBatches}: inserted ${batch.length} page dependencies`);
+            }
+        }
         logInfo(`Сохранено ${newDependencies.length} связей Page -> компоненты для проекта ${projectId}`);
     }
 }

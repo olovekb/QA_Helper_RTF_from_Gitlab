@@ -43,6 +43,14 @@ const TIAPage = ({ projects }) => {
     const [showMappingModal, setShowMappingModal] = useState(false); // Управление модальным окном
     const [isMappingLoading, setIsMappingLoading] = useState(false); // Лоудер для маппинга
 
+    // Состояния для Split Modal (разделение на несколько запусков)
+    const [showSplitModal, setShowSplitModal] = useState(false);
+    const [launchGroups, setLaunchGroups] = useState([
+        { id: 'launch-1', name: 'Регресс тестирование', folderIds: [] }
+    ]);
+    const [splitProgress, setSplitProgress] = useState(null); // { current: 1, total: 3, launchName: 'Запуск 1' }
+
+
     const navigate = useNavigate(); // Для навигации назад
 
     useEffect(() => {
@@ -588,141 +596,115 @@ const TIAPage = ({ projects }) => {
         }
     };
 
-    // Создание настоящего тест-плана (не запуска) через /api/testplan с поддержкой стриминга прогресса
-    const createActualTestPlan = async () => {
-        setLoadingState(prev => ({ ...prev, testplan: true }));
-        setProgress({ message: 'Инициализация...' });
-        setError(null);
-        setSuccessMessage(null);
+    // Создание нескольких запусков последовательно (Split-режим)
+    const createMultipleLaunches = async () => {
+        setLoadingState(prev => ({ ...prev, launch: true }));
+        setError('');
+        setSuccessMessage('');
+        setAllureLink('');
+
+        const createdLaunches = [];
+        const failedLaunches = [];
 
         try {
-            // Собираем полные пути для всех выбранных папок
-            const groupsIncludePaths = [];
-            Object.values(componentMappings).forEach(folderIds => {
-                if (Array.isArray(folderIds)) {
-                    folderIds.forEach(id => {
-                        const path = findFolderPath(folders, id);
-                        if (path) {
-                            groupsIncludePaths.push(path);
-                        } else {
-                            // Если путь не найден, добавляем хотя бы сам ID как путь (fallback)
-                            groupsIncludePaths.push([parseInt(id, 10)]);
-                        }
-                    });
+            for (let i = 0; i < launchGroups.length; i++) {
+                const group = launchGroups[i];
+
+                // Пропускаем группы без блоков
+                if (!group.folderIds || group.folderIds.length === 0) {
+                    continue;
                 }
-            });
 
-            const components = extractComponents();
-            const pageDependencies = buildPageDependencies(components);
+                // Обновляем прогресс
+                setSplitProgress({
+                    current: i + 1,
+                    total: launchGroups.length,
+                    launchName: group.name
+                });
 
-            const requestBody = {
-                projectId,
-                jiraLink,
-                componentMappings,
-                groupsIncludePaths, // Отправляем вычисленные пути
-                pageDependencies,
-            };
+                try {
+                    const requestBody = {
+                        projectId,
+                        jiraLink,
+                        launchName: group.name,
+                        groupsInclude: group.folderIds.map(id => parseInt(id, 10)),
+                        componentMappings // Даём componentMappings для pageDependencies
+                    };
 
-            // Используем fetch для стриминга (чтения прогресса)
-            const response = await fetch(`${config.TIAUrl}/api/testplan`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestBody)
-            });
+                    const response = await axios.post(`${config.TIAUrl}/api/launch`, requestBody, {
+                        headers: { 'Content-Type': 'application/json' },
+                    });
 
-            // Если вернулся обычный JSON с ошибкой (например 400 Bad Request при валидации)
-            const contentType = response.headers.get('content-type');
-            if (!response.ok && contentType && contentType.includes('application/json')) {
-                const errorJson = await response.json();
-                throw { response: { data: errorJson } }; // Эмулируем формат axios error
+                    const { id } = response.data;
+                    createdLaunches.push({
+                        name: group.name,
+                        id,
+                        link: `${config.url}/launch/${id}`
+                    });
+                } catch (err) {
+                    const errorMsg = err.response?.data?.error || err.message;
+                    failedLaunches.push({
+                        name: group.name,
+                        error: errorMsg
+                    });
+                    logError(`Failed to create launch "${group.name}"`, errorMsg);
+                }
             }
 
-            // Читаем NDJSON поток
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop(); // Сохраняем неполную строку
-
-                for (const line of lines) {
-                    if (!line.trim()) continue;
-                    try {
-                        const event = JSON.parse(line);
-
-                        if (event.type === 'init') {
-                            setProgress({ total: event.totalBlocks, current: 0, message: 'Сбор тест-кейсов...' });
-                        } else if (event.type === 'progress') {
-                            setProgress(prev => ({
-                                ...prev,
-                                current: event.current,
-                                total: event.total,
-                                message: event.message || `Обработка: ${event.current} / ${event.total}`
-                            }));
-                        } else if (event.type === 'error') {
-                            // Бросаем ошибку, которую перехватит catch
-                            throw { response: { data: event } };
-                        } else if (event.type === 'result') {
-                            const { id, testCasesCount } = event;
-                            const allureLink = `${config.url}/testplan/${id}`;
-                            setSuccessMessage(`Тест-план успешно создан! (${testCasesCount || 'N/A'} тест-кейсов)`);
-                            setAllureLink(allureLink);
-                        }
-                    } catch (e) {
-                        // Если ошибка внутри цикла чтения (например JSON parse error или throw выше)
-                        if (e.response) throw e; // Пробрасываем нашу ошибку данные
-                        console.error('Error parsing stream line:', line, e);
-                    }
+            // Формируем итоговое сообщение
+            if (createdLaunches.length > 0) {
+                if (createdLaunches.length === 1) {
+                    setSuccessMessage(`Запуск "${createdLaunches[0].name}" успешно создан!`);
+                    setAllureLink(createdLaunches[0].link);
+                } else {
+                    setSuccessMessage(`Успешно создано ${createdLaunches.length} запусков!`);
+                    // Для нескольких запусков ссылку покажем на первый
+                    setAllureLink(createdLaunches[0].link);
                 }
+            }
+
+            if (failedLaunches.length > 0) {
+                const failedNames = failedLaunches.map(f => f.name).join(', ');
+                setError(`Не удалось создать: ${failedNames}`);
+            }
+
+            // Закрываем Split Modal при успехе
+            if (createdLaunches.length > 0 && failedLaunches.length === 0) {
+                setShowSplitModal(false);
             }
 
         } catch (err) {
-            // Парсим структурированные ошибки от backend (или наши эмулированные)
-            if (err.response && err.response.data) {
-                const errorData = err.response.data;
-
-                // Специфические ошибки с кодами
-                if (errorData.code === 'NO_TEST_CASES') {
-                    setError(errorData.error);
-                } else if (errorData.code === 'NO_GROUPS') {
-                    setError(errorData.error);
-                } else if (errorData.code === 'ALLURE_API_ERROR') {
-                    setError(`${errorData.error}${errorData.details ? `: ${errorData.details}` : ''}`);
-                } else if (errorData.error) {
-                    setError(errorData.error);
-                } else {
-                    setError('Произошла ошибка при создании тест-плана.');
-                }
-                logError('Test plan creation error', errorData.details || errorData.error);
-            } else {
-                // Сетевые ошибки или ошибки fetch
-                setError(`Произошла ошибка при создании тест-плана: ${err.message}`);
-                logError('Test plan creation error', err.message);
-            }
+            setError(`Ошибка при создании запусков: ${err.message}`);
+            logError('Multiple launches creation error', err.message);
         } finally {
-            setLoadingState(prev => ({ ...prev, testplan: false }));
-            setProgress(null);
+            setLoadingState(prev => ({ ...prev, launch: false }));
+            setSplitProgress(null);
         }
     };
 
-    const handleMappingConfirm = async (createType = 'launch') => {
-        setIsMappingLoading(true); // Включаем лоудер для маппинга
-        setLoadingState(prev => ({ ...prev, [createType]: true })); // Включаем кнопку сразу
+    // Собрать все уникальные folderIds из componentMappings
+    const getAllSelectedFolderIds = () => {
+        const allFolderIds = new Set();
+        Object.values(componentMappings).forEach(folderIds => {
+            if (Array.isArray(folderIds)) {
+                folderIds.forEach(id => allFolderIds.add(id.toString()));
+            }
+        });
+        return Array.from(allFolderIds);
+    };
+
+    // Открытие Split Modal с предзаполненными данными
+    const handleOpenSplitModal = async () => {
+        setIsMappingLoading(true);
+        setLoadingState(prev => ({ ...prev, launch: true }));
+
         try {
             // Предварительно вычисляем данные один раз перед циклом
             const allComponents = extractComponents();
             const allPageDependencies = buildPageDependencies(allComponents);
 
             // Сохраняем ВСЕ компоненты, включая те, у которых маппинги были удалены (пустой массив)
-            // Это необходимо для удаления старых маппингов из БД
-
-            // Запускаем сохранения параллельно пачками по 5 штук
-            const chunkSize = 5
+            const chunkSize = 5;
             for (let i = 0; i < components.length; i += chunkSize) {
                 const chunk = components.slice(i, i + chunkSize);
                 await Promise.all(chunk.map(component => {
@@ -731,21 +713,73 @@ const TIAPage = ({ projects }) => {
                 }));
             }
 
-            // Вызываем нужную функцию в зависимости от типа
-            if (createType === 'testplan') {
-                await createActualTestPlan();
-            } else {
-                await createTestPlan(); // Создает launch
+            // Собираем все выбранные блоки
+            const allFolderIds = getAllSelectedFolderIds();
+
+            if (allFolderIds.length === 0) {
+                setError('Не выбрано ни одного функционального блока для запуска.');
+                return;
             }
 
+            // Формируем название по умолчанию
+            let defaultName = 'Регресс тестирование';
+            if (jiraLink) {
+                const match = jiraLink.match(/\/browse\/([A-Z]+-\d+)$/);
+                defaultName = `Регресс тестирование ${match ? match[1] : jiraLink.split('/').pop()}`;
+            } else {
+                defaultName = `Регресс тестирование ${new Date().toLocaleDateString('ru-RU')}`;
+            }
+
+            // Инициализируем launchGroups с одним запуском, содержащим все блоки
+            setLaunchGroups([
+                { id: 'launch-1', name: defaultName, folderIds: allFolderIds }
+            ]);
+
+            // Закрываем Mapping Modal, открываем Split Modal
+            setShowMappingModal(false);
+            setShowSplitModal(true);
+        } catch (err) {
+            setError(err.message);
+            logError('Error preparing split modal', err.message);
+        } finally {
+            setIsMappingLoading(false);
+            setLoadingState(prev => ({ ...prev, launch: false }));
+        }
+    };
+
+    // Legacy: handleMappingConfirm теперь вызывает handleOpenSplitModal для launch
+    const handleMappingConfirm = async (createType = 'launch') => {
+        // Для launch — открываем Split Modal
+        if (createType === 'launch') {
+            await handleOpenSplitModal();
+            return;
+        }
+
+        // Для других типов (если останутся) — старая логика
+        setIsMappingLoading(true);
+        setLoadingState(prev => ({ ...prev, [createType]: true }));
+        try {
+            const allComponents = extractComponents();
+            const allPageDependencies = buildPageDependencies(allComponents);
+
+            const chunkSize = 5;
+            for (let i = 0; i < components.length; i += chunkSize) {
+                const chunk = components.slice(i, i + chunkSize);
+                await Promise.all(chunk.map(component => {
+                    const folderIds = componentMappings[component.id] || [];
+                    return saveComponentMapping(component, folderIds, allComponents, allPageDependencies);
+                }));
+            }
+
+            await createTestPlan();
             setShowMappingModal(false);
         } catch (err) {
             setError(err.message);
             logError('Mapping confirmation error', err.message);
         } finally {
             setIsLoading(false);
-            setIsMappingLoading(false); // Обязательно сбрасываем состояние загрузки маппинга
-            setLoadingState(prev => ({ ...prev, [createType]: false })); // Сброс состояния кнопки
+            setIsMappingLoading(false);
+            setLoadingState(prev => ({ ...prev, [createType]: false }));
         }
     };
 
@@ -2983,20 +3017,6 @@ const TIAPage = ({ projects }) => {
                                     ? <Loader style={{ width: 20, height: 20 }} />
                                     : 'Создать запуск'}
                             </button>
-                            <button
-                                onClick={() => handleMappingConfirm('testplan')}
-                                style={{
-                                    ...styles.modalButtonConfirm,
-                                    backgroundColor: '#28a745',
-                                    opacity: (loadingState.testplan || loadingState.launch) ? 0.7 : 1,
-                                    cursor: (loadingState.testplan || loadingState.launch) ? 'not-allowed' : 'pointer'
-                                }}
-                                disabled={isPartialSaving || isMappingLoading || loadingState.launch || loadingState.testplan || isMappingConfirmButtonDisabled}
-                            >
-                                {loadingState.testplan
-                                    ? <Loader style={{ width: 20, height: 20 }} />
-                                    : 'Создать тест-план'}
-                            </button>
                         </div>
                         {progress && (
                             <div style={{ marginTop: '15px', width: '100%', textAlign: 'center' }}>
@@ -3020,6 +3040,292 @@ const TIAPage = ({ projects }) => {
                                         {progress.current} / {progress.total}
                                     </div>
                                 )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Split Modal — разделение на несколько запусков */}
+            {showSplitModal && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                    backdropFilter: 'blur(8px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 2000,
+                    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+                }}>
+                    <div style={{
+                        backgroundColor: '#fff',
+                        borderRadius: '24px',
+                        width: '90%',
+                        maxWidth: '1000px',
+                        maxHeight: '85vh',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+                        overflow: 'hidden'
+                    }}>
+                        {/* Header */}
+                        <div style={{
+                            padding: '24px 32px',
+                            borderBottom: '1px solid #e2e8f0',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between'
+                        }}>
+                            <div>
+                                <h2 style={{ margin: 0, fontSize: '24px', fontWeight: 700, color: '#1e293b' }}>
+                                    Разделение на запуски
+                                </h2>
+                                <p style={{ margin: '4px 0 0', fontSize: '14px', color: '#64748b' }}>
+                                    Распределите функциональные блоки по отдельным запускам
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setShowSplitModal(false)}
+                                style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    fontSize: '28px',
+                                    color: '#94a3b8',
+                                    cursor: 'pointer',
+                                    padding: '8px',
+                                    borderRadius: '8px',
+                                    transition: 'all 0.2s'
+                                }}
+                            >×</button>
+                        </div>
+
+                        {/* Content */}
+                        <div style={{
+                            flex: 1,
+                            padding: '24px 32px',
+                            overflowY: 'auto',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '20px'
+                        }}>
+                            {/* Launch Groups */}
+                            {launchGroups.map((group, groupIndex) => (
+                                <div key={group.id} style={{
+                                    backgroundColor: '#f8fafc',
+                                    borderRadius: '16px',
+                                    padding: '20px',
+                                    border: '1px solid #e2e8f0'
+                                }}>
+                                    <div style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '12px',
+                                        marginBottom: '16px'
+                                    }}>
+                                        <span style={{
+                                            width: '32px',
+                                            height: '32px',
+                                            borderRadius: '8px',
+                                            backgroundColor: '#6366f1',
+                                            color: '#fff',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            fontWeight: 600,
+                                            fontSize: '14px'
+                                        }}>{groupIndex + 1}</span>
+                                        <input
+                                            type="text"
+                                            value={group.name}
+                                            onChange={(e) => {
+                                                const updated = [...launchGroups];
+                                                updated[groupIndex].name = e.target.value;
+                                                setLaunchGroups(updated);
+                                            }}
+                                            style={{
+                                                flex: 1,
+                                                padding: '10px 14px',
+                                                fontSize: '16px',
+                                                fontWeight: 500,
+                                                border: '1px solid #e2e8f0',
+                                                borderRadius: '10px',
+                                                outline: 'none',
+                                                transition: 'border-color 0.2s'
+                                            }}
+                                            placeholder="Название запуска"
+                                        />
+                                        {launchGroups.length > 1 && (
+                                            <button
+                                                onClick={() => {
+                                                    const updated = launchGroups.filter((_, i) => i !== groupIndex);
+                                                    setLaunchGroups(updated);
+                                                }}
+                                                style={{
+                                                    background: 'none',
+                                                    border: 'none',
+                                                    color: '#ef4444',
+                                                    cursor: 'pointer',
+                                                    fontSize: '20px',
+                                                    padding: '8px'
+                                                }}
+                                            >🗑️</button>
+                                        )}
+                                    </div>
+
+                                    {/* Blocks in this group */}
+                                    <div style={{
+                                        display: 'flex',
+                                        flexWrap: 'wrap',
+                                        gap: '8px',
+                                        minHeight: '40px'
+                                    }}>
+                                        {group.folderIds.length === 0 ? (
+                                            <span style={{ color: '#94a3b8', fontSize: '14px' }}>
+                                                Нет блоков — перетащите или выберите из списка
+                                            </span>
+                                        ) : (
+                                            group.folderIds.map(folderId => {
+                                                const folder = folders.flatMap(function flatten(f) {
+                                                    return [f, ...(f.children || []).flatMap(flatten)];
+                                                }).find(f => f.id.toString() === folderId.toString());
+                                                return (
+                                                    <span key={folderId} style={{
+                                                        backgroundColor: '#6366f1',
+                                                        color: '#fff',
+                                                        padding: '6px 12px',
+                                                        borderRadius: '8px',
+                                                        fontSize: '13px',
+                                                        fontWeight: 500,
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '6px'
+                                                    }}>
+                                                        {folder?.name || `ID: ${folderId}`}
+                                                        <button
+                                                            onClick={() => {
+                                                                const updated = [...launchGroups];
+                                                                updated[groupIndex].folderIds = updated[groupIndex].folderIds.filter(id => id !== folderId);
+                                                                setLaunchGroups(updated);
+                                                            }}
+                                                            style={{
+                                                                background: 'none',
+                                                                border: 'none',
+                                                                color: 'rgba(255,255,255,0.8)',
+                                                                cursor: 'pointer',
+                                                                fontSize: '14px',
+                                                                padding: 0
+                                                            }}
+                                                        >×</button>
+                                                    </span>
+                                                );
+                                            })
+                                        )}
+                                    </div>
+
+                                    {/* Stats */}
+                                    <div style={{ marginTop: '12px', fontSize: '13px', color: '#64748b' }}>
+                                        {group.folderIds.length} блоков
+                                    </div>
+                                </div>
+                            ))}
+
+                            {/* Add Launch Button */}
+                            <button
+                                onClick={() => {
+                                    const newId = `launch-${launchGroups.length + 1}`;
+                                    setLaunchGroups([...launchGroups, {
+                                        id: newId,
+                                        name: `Запуск ${launchGroups.length + 1}`,
+                                        folderIds: []
+                                    }]);
+                                }}
+                                style={{
+                                    padding: '14px',
+                                    border: '2px dashed #cbd5e1',
+                                    borderRadius: '12px',
+                                    backgroundColor: 'transparent',
+                                    color: '#64748b',
+                                    fontSize: '14px',
+                                    fontWeight: 500,
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                ➕ Добавить запуск
+                            </button>
+                        </div>
+
+                        {/* Footer */}
+                        <div style={{
+                            padding: '20px 32px',
+                            borderTop: '1px solid #e2e8f0',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            backgroundColor: '#f8fafc'
+                        }}>
+                            <div style={{ fontSize: '14px', color: '#64748b' }}>
+                                Всего: {launchGroups.reduce((sum, g) => sum + g.folderIds.length, 0)} блоков
+                                в {launchGroups.filter(g => g.folderIds.length > 0).length} запусках
+                            </div>
+                            <div style={{ display: 'flex', gap: '12px' }}>
+                                <button
+                                    onClick={() => setShowSplitModal(false)}
+                                    style={{
+                                        padding: '12px 24px',
+                                        borderRadius: '10px',
+                                        border: '1px solid #e2e8f0',
+                                        backgroundColor: '#fff',
+                                        color: '#64748b',
+                                        fontSize: '14px',
+                                        fontWeight: 500,
+                                        cursor: 'pointer'
+                                    }}
+                                >Отмена</button>
+                                <button
+                                    onClick={createMultipleLaunches}
+                                    disabled={loadingState.launch || launchGroups.every(g => g.folderIds.length === 0)}
+                                    style={{
+                                        padding: '12px 28px',
+                                        borderRadius: '10px',
+                                        border: 'none',
+                                        background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                                        color: '#fff',
+                                        fontSize: '14px',
+                                        fontWeight: 600,
+                                        cursor: launchGroups.every(g => g.folderIds.length === 0) ? 'not-allowed' : 'pointer',
+                                        opacity: launchGroups.every(g => g.folderIds.length === 0) ? 0.5 : 1,
+                                        boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)',
+                                        transition: 'all 0.2s'
+                                    }}
+                                >
+                                    {loadingState.launch ? (
+                                        <span>Создание... {splitProgress ? `(${splitProgress.current}/${splitProgress.total})` : ''}</span>
+                                    ) : (
+                                        `Создать ${launchGroups.filter(g => g.folderIds.length > 0).length} запуск${launchGroups.filter(g => g.folderIds.length > 0).length === 1 ? '' : 'а'}`
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Progress bar */}
+                        {splitProgress && (
+                            <div style={{
+                                height: '4px',
+                                backgroundColor: '#e2e8f0',
+                                position: 'relative'
+                            }}>
+                                <div style={{
+                                    height: '100%',
+                                    width: `${(splitProgress.current / splitProgress.total) * 100}%`,
+                                    background: 'linear-gradient(90deg, #6366f1, #8b5cf6)',
+                                    transition: 'width 0.3s ease'
+                                }} />
                             </div>
                         )}
                     </div>

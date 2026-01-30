@@ -167,33 +167,65 @@ async function setJobsMapping(projectId, treeId, jobId) {
 }
 
 /**
- * Создание тест-плана
+ * Создание тест-плана (запуска)
  * @param {Object} req - Объект запроса Express с данными для тест-плана
  * @param {Object} res - Объект ответа Express
  * @returns {void}
+ * 
+ * Поддерживаемые параметры body:
+ * - projectId (обязательный)
+ * - componentMappings (обязательный, если не передан groupsInclude)
+ * - jiraLink (опциональный)
+ * - pageDependencies (опциональный)
+ * - launchName (опциональный) - кастомное название запуска
+ * - groupsInclude (опциональный) - явный список ID групп (для split-режима)
  */
 export async function createTestPlan(req, res) {
-    const { projectId, jiraLink, componentMappings, pageDependencies } = req.body;
+    const {
+        projectId,
+        jiraLink,
+        componentMappings,
+        pageDependencies,
+        launchName: customLaunchName,
+        groupsInclude: explicitGroupsInclude
+    } = req.body;
 
     try {
-        if (!projectId || !componentMappings) {
+        // Валидация: нужен либо componentMappings, либо явный groupsInclude
+        if (!projectId) {
             return res.status(400).json({
-                error: 'Необходимо указать projectId и componentMappings.',
+                error: 'Необходимо указать projectId.',
                 code: 'MISSING_PARAMETERS'
             });
         }
 
-        logInfo(`Входные данные: projectId=${projectId}, jiraLink=${jiraLink || 'не указана'}, components=${Object.keys(componentMappings).length}`);
+        if (!componentMappings && (!explicitGroupsInclude || explicitGroupsInclude.length === 0)) {
+            return res.status(400).json({
+                error: 'Необходимо указать componentMappings или groupsInclude.',
+                code: 'MISSING_PARAMETERS'
+            });
+        }
 
-        // 1. Собираем ID групп (уникальные)
-        const allFolderIds = new Set();
-        Object.values(componentMappings).forEach(folderIds => {
-            if (Array.isArray(folderIds)) {
-                folderIds.forEach(id => allFolderIds.add(parseInt(id, 10)));
-            }
-        });
+        logInfo(`Входные данные: projectId=${projectId}, jiraLink=${jiraLink || 'не указана'}, customName=${customLaunchName || 'нет'}, explicitGroups=${explicitGroupsInclude ? explicitGroupsInclude.length : 'нет'}`);
 
-        const groupsInclude = Array.from(allFolderIds).filter(id => !isNaN(id));
+        // 1. Определяем groupsInclude
+        let groupsInclude;
+
+        if (explicitGroupsInclude && explicitGroupsInclude.length > 0) {
+            // Split-режим: используем явно переданные группы
+            groupsInclude = explicitGroupsInclude.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
+            logInfo(`Используем явные groupsInclude: ${groupsInclude.length} групп`);
+        } else {
+            // Legacy-режим: вычисляем из componentMappings
+            const allFolderIds = new Set();
+            Object.values(componentMappings).forEach(folderIds => {
+                if (Array.isArray(folderIds)) {
+                    folderIds.forEach(id => allFolderIds.add(parseInt(id, 10)));
+                }
+            });
+            groupsInclude = Array.from(allFolderIds).filter(id => !isNaN(id));
+            logInfo(`Вычислены groupsInclude из mappings: ${groupsInclude.length} групп`);
+        }
 
         if (groupsInclude.length === 0) {
             throw new Error('Не найдены группы для запуска (groupsInclude пустой)');
@@ -225,11 +257,15 @@ export async function createTestPlan(req, res) {
             logWarn(`Ошибка получения IntegrationID: ${e.message}. Используем дефолт ${integrationId}`);
         }
 
-        // 3. Подготовка Issue Key (если jiraLink указан)
-        let launchName = 'Регресс тестирование';
+        // 3. Подготовка названия запуска и Issue Key
+        let launchName;
         let issues = [];
 
-        if (jiraLink) {
+        if (customLaunchName) {
+            // Split-режим: используем кастомное название
+            launchName = customLaunchName;
+            logInfo(`Используем кастомное название запуска: ${launchName}`);
+        } else if (jiraLink) {
             const jiraIssueKeyMatch = jiraLink.match(/\/browse\/([A-Z]+-\d+)$/);
             const jiraIssueKey = jiraIssueKeyMatch ? jiraIssueKeyMatch[1] : jiraLink.split('/').pop();
             launchName = `Регресс тестирование ${jiraIssueKey}`;

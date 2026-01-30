@@ -129,9 +129,15 @@ const HeatmapPage = ({ projects }) => {
         if (!projectId) return;
         try {
             const response = await axios.get(`${config.structureUrl}/folders?projectId=${projectId}`);
-            setFolders(response.data);
+            if (response.data && Array.isArray(response.data)) {
+                setFolders(response.data);
+            } else {
+                setFolders([]);
+                console.warn('Получен некорректный формат структуры Allure:', response.data);
+            }
         } catch (err) {
             console.error('Ошибка при загрузке структуры Allure:', err);
+            setFolders([]);
         }
     };
 
@@ -362,29 +368,81 @@ const HeatmapPage = ({ projects }) => {
     }
 
     return (
-        <div style={{ ...styles.container, padding: '24px' }}>
-            <h1 style={{ ...styles.header, marginBottom: '24px' }}>
-                3.2. Тепловая карта дефектов
-            </h1>
+        <div style={{
+            padding: '40px',
+            maxWidth: '1440px',
+            margin: '0 auto',
+            fontFamily: '"Inter", -apple-system, sans-serif',
+            color: '#1e293b',
+            backgroundColor: '#f8fafc',
+            minHeight: '100vh'
+        }}>
+            <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '40px'
+            }}>
+                <h1 style={{
+                    fontSize: '36px',
+                    fontWeight: 800,
+                    color: '#0f172a',
+                    margin: 0,
+                    letterSpacing: '-0.02em'
+                }}>
+                    3.2. Тепловая карта дефектов
+                </h1>
+                <button
+                    onClick={() => setShowImportModal(true)}
+                    disabled={!projectId}
+                    style={{
+                        padding: '0 28px',
+                        height: '52px',
+                        backgroundColor: '#6366f1',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '14px',
+                        fontWeight: 600,
+                        fontSize: '15px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                        boxShadow: '0 4px 14px rgba(99, 102, 241, 0.3)',
+                        opacity: !projectId ? 0.5 : 1,
+                    }}
+                    onMouseOver={(e) => !projectId ? null : (e.currentTarget.style.backgroundColor = '#4f46e5', e.currentTarget.style.transform = 'translateY(-2px)')}
+                    onMouseOut={(e) => !projectId ? null : (e.currentTarget.style.backgroundColor = '#6366f1', e.currentTarget.style.transform = 'translateY(0)')}
+                >
+                    <span style={{ fontSize: '20px' }}>⚡</span> Импорт истории TIA
+                </button>
+            </div>
 
-            {/* Вкладки */}
+            {/* Современные вкладки */}
             <div style={{
                 display: 'flex',
                 gap: '8px',
-                marginBottom: '24px',
-                borderBottom: `2px solid ${styles.borderLight}`,
+                marginBottom: '32px',
+                backgroundColor: '#f1f5f9',
+                padding: '6px',
+                borderRadius: '16px',
+                width: 'fit-content',
+                border: '1px solid #e2e8f0'
             }}>
                 <button
                     onClick={() => setActiveTab('code')}
                     style={{
-                        padding: '12px 24px',
+                        padding: '12px 28px',
                         border: 'none',
-                        borderBottom: activeTab === 'code' ? `3px solid ${styles.primary}` : '3px solid transparent',
-                        backgroundColor: 'transparent',
-                        color: activeTab === 'code' ? styles.primary : '#666',
-                        fontSize: '16px',
-                        fontWeight: activeTab === 'code' ? 600 : 400,
+                        borderRadius: '12px',
+                        backgroundColor: activeTab === 'code' ? '#fff' : 'transparent',
+                        color: activeTab === 'code' ? '#0f172a' : '#64748b',
+                        fontSize: '14px',
+                        fontWeight: 700,
                         cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        boxShadow: activeTab === 'code' ? '0 4px 12px rgba(0,0,0,0.08)' : 'none',
                     }}
                 >
                     Code Coverage
@@ -392,14 +450,16 @@ const HeatmapPage = ({ projects }) => {
                 <button
                     onClick={() => setActiveTab('test')}
                     style={{
-                        padding: '12px 24px',
+                        padding: '12px 28px',
                         border: 'none',
-                        borderBottom: activeTab === 'test' ? `3px solid ${styles.primary}` : '3px solid transparent',
-                        backgroundColor: 'transparent',
-                        color: activeTab === 'test' ? styles.primary : '#666',
-                        fontSize: '16px',
-                        fontWeight: activeTab === 'test' ? 600 : 400,
+                        borderRadius: '12px',
+                        backgroundColor: activeTab === 'test' ? '#fff' : 'transparent',
+                        color: activeTab === 'test' ? '#0f172a' : '#64748b',
+                        fontSize: '14px',
+                        fontWeight: 700,
                         cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        boxShadow: activeTab === 'test' ? '0 4px 12px rgba(0,0,0,0.08)' : 'none',
                     }}
                 >
                     Test Coverage
@@ -407,46 +467,45 @@ const HeatmapPage = ({ projects }) => {
             </div>
 
             {/* Фильтры и действия */}
+            {/* Контейнер фильтров */}
             <div style={{
                 backgroundColor: '#fff',
-                padding: '24px',
-                borderRadius: '12px',
-                marginBottom: '24px',
-                border: `1px solid ${styles.borderLight}`,
-                boxShadow: '0 2px 12px rgba(0,0,0,0.05)',
+                padding: '32px',
+                borderRadius: '24px',
+                marginBottom: '40px',
+                border: '1px solid #e2e8f0',
+                boxShadow: '0 4px 24px rgba(0,0,0,0.02)',
             }}>
                 <div style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    gap: '24px',
-                    alignItems: 'flex-start'
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                    gap: '32px',
+                    alignItems: 'end'
                 }}>
-                    {/* Выбор проекта */}
-                    <div style={{ flex: '1 1 200px' }}>
-                        <label style={{
-                            display: 'block',
-                            marginBottom: '8px',
-                            fontWeight: 600,
-                            color: '#333',
-                            fontSize: '14px'
-                        }}>
-                            Проект:
-                        </label>
+                    {/* Поле Проекта */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            Целевой проект
+                        </span>
                         <select
                             value={projectId}
                             onChange={(e) => setProjectId(e.target.value)}
                             style={{
                                 width: '100%',
-                                padding: '10px 12px',
-                                border: `1px solid ${styles.borderLight}`,
-                                borderRadius: '6px',
-                                fontSize: '14px',
-                                backgroundColor: '#fff',
-                                color: '#000',
-                                height: '42px',
+                                padding: '0 20px',
+                                border: '1px solid #e2e8f0',
+                                borderRadius: '14px',
+                                fontSize: '15px',
+                                backgroundColor: '#fcfdfe',
+                                color: '#1e293b',
+                                height: '52px',
+                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                                outline: 'none',
                             }}
+                            onFocus={(e) => (e.target.style.borderColor = '#6366f1', e.target.style.boxShadow = '0 0 0 4px rgba(99, 102, 241, 0.1)')}
+                            onBlur={(e) => (e.target.style.borderColor = '#e2e8f0', e.target.style.boxShadow = 'none')}
                         >
-                            <option value="">Выберите проект</option>
+                            <option value="">Выберите проект для анализа</option>
                             {projects?.map(project => (
                                 <option key={project.id} value={project.id}>
                                     {project.name}
@@ -455,90 +514,77 @@ const HeatmapPage = ({ projects }) => {
                         </select>
                     </div>
 
-                    {/* Диапазон дат */}
-                    <div style={{ flex: '2 1 350px' }}>
-                        <label style={{
-                            display: 'block',
-                            marginBottom: '8px',
-                            fontWeight: 600,
-                            color: '#333',
-                            fontSize: '14px'
+                    {/* Поле Периода */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            Период данных
+                        </span>
+                        <div style={{
+                            display: 'flex',
+                            backgroundColor: '#fcfdfe',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '14px',
+                            height: '52px',
+                            overflow: 'hidden',
+                            transition: 'all 0.2s ease'
                         }}>
-                            Диапазон дат (необязательно):
-                        </label>
-                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                             <input
                                 type="date"
                                 value={startDate}
                                 onChange={(e) => setStartDate(e.target.value)}
-                                style={{
-                                    flex: 1,
-                                    padding: '10px 12px',
-                                    border: `1px solid ${styles.borderLight}`,
-                                    borderRadius: '6px',
-                                    fontSize: '14px',
-                                    height: '42px',
-                                }}
+                                style={{ flex: 1, border: 'none', background: 'transparent', fontSize: '14px', color: '#1e293b', padding: '0 16px', outline: 'none' }}
                             />
-                            <span style={{ color: '#666', fontWeight: 600 }}>—</span>
+                            <div style={{ width: '1px', height: '24px', backgroundColor: '#e2e8f0', alignSelf: 'center' }} />
                             <input
                                 type="date"
                                 value={endDate}
                                 onChange={(e) => setEndDate(e.target.value)}
-                                style={{
-                                    flex: 1,
-                                    padding: '10px 12px',
-                                    border: `1px solid ${styles.borderLight}`,
-                                    borderRadius: '6px',
-                                    fontSize: '14px',
-                                    height: '42px',
-                                }}
+                                style={{ flex: 1, border: 'none', background: 'transparent', fontSize: '14px', color: '#1e293b', padding: '0 16px', outline: 'none' }}
                             />
                         </div>
                     </div>
 
-                    {/* Версии релизов */}
-                    <div style={{ flex: '1.5 1 250px' }}>
-                        <label style={{
-                            display: 'block',
-                            marginBottom: '8px',
-                            fontWeight: 600,
-                            color: '#333',
-                            fontSize: '14px'
-                        }}>
-                            Версии релизов:
-                        </label>
+                    {/* Поле Релизов */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            Версии продукта
+                        </span>
                         <Select
                             isMulti
                             options={versionOptions}
                             value={selectedVersions.map(v => ({ value: v, label: v }))}
                             onChange={handleVersionChange}
-                            placeholder="Выберите версии..."
+                            placeholder="Любые версии"
                             isClearable
                             styles={{
-                                control: (base) => ({
+                                control: (base, state) => ({
                                     ...base,
-                                    borderColor: styles.borderLight,
-                                    borderRadius: '6px',
+                                    borderColor: state.isFocused ? '#6366f1' : '#e2e8f0',
+                                    borderRadius: '14px',
                                     fontSize: '14px',
-                                    minHeight: '42px',
-                                    boxShadow: 'none',
+                                    minHeight: '52px',
+                                    backgroundColor: '#fcfdfe',
+                                    boxShadow: state.isFocused ? '0 0 0 4px rgba(99, 102, 241, 0.1)' : 'none',
+                                    '&:hover': { borderColor: state.isFocused ? '#6366f1' : '#cbd5e1' }
                                 }),
+                                multiValue: (base) => ({
+                                    ...base,
+                                    backgroundColor: '#eff6ff',
+                                    borderRadius: '10px',
+                                    padding: '2px 8px',
+                                    border: '1px solid #dbeafe'
+                                }),
+                                multiValueLabel: (base) => ({ ...base, color: '#1e3a8a', fontWeight: 600 }),
+                                placeholder: (base) => ({ ...base, color: '#94a3b8' })
                             }}
                         />
                     </div>
 
-                    {/* Тип */}
-                    <div style={{ flex: '1 1 150px' }}>
-                        <label style={{
-                            display: 'block',
-                            marginBottom: '8px',
-                            fontWeight: 600,
-                            color: '#333',
-                            fontSize: '14px'
-                        }}>
-                            Тип:
-                        </label>
+                    {/* Поле Типа */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            Категория изменений
+                        </span>
                         <select
                             value={isBugFix === null ? 'all' : isBugFix ? 'bugs' : 'general'}
                             onChange={(e) => {
@@ -547,83 +593,79 @@ const HeatmapPage = ({ projects }) => {
                             }}
                             style={{
                                 width: '100%',
-                                padding: '10px 12px',
-                                border: `1px solid ${styles.borderLight}`,
-                                borderRadius: '6px',
-                                fontSize: '14px',
-                                backgroundColor: '#fff',
-                                height: '42px',
+                                padding: '0 20px',
+                                border: '1px solid #e2e8f0',
+                                borderRadius: '14px',
+                                fontSize: '15px',
+                                backgroundColor: '#fcfdfe',
+                                height: '52px',
+                                outline: 'none',
+                                transition: 'all 0.2s ease',
                             }}
+                            onFocus={(e) => (e.target.style.borderColor = '#6366f1', e.target.style.boxShadow = '0 0 0 4px rgba(99, 102, 241, 0.1)')}
+                            onBlur={(e) => (e.target.style.borderColor = '#e2e8f0', e.target.style.boxShadow = 'none')}
                         >
-                            <option value="all">Все</option>
-                            <option value="bugs">Только баги</option>
-                            <option value="general">Общий</option>
+                            <option value="all">Все (BugFix + New Feature)</option>
+                            <option value="bugs">Только исправления багов</option>
+                            <option value="general">Только новые функции</option>
                         </select>
-                    </div>
-
-                    {/* Кнопка импорта */}
-                    <div style={{ flex: '0 0 auto', alignSelf: 'flex-end' }}>
-                        <button
-                            onClick={() => setShowImportModal(true)}
-                            disabled={!projectId}
-                            style={{
-                                ...styles.submitButton,
-                                padding: '10px 20px',
-                                height: '42px',
-                                backgroundColor: '#6f42c1', // Purple for history import
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '8px',
-                            }}
-                        >
-                            <span>📅</span> Загрузить историю
-                        </button>
                     </div>
                 </div>
             </div>
 
             {/* График и легенда */}
             {loading && (
-                <div style={{ textAlign: 'center', padding: '40px', color: '#000' }}>
-                    Загрузка данных...
+                <div style={{ textAlign: 'center', padding: '100px', color: '#64748b' }}>
+                    <div style={{ width: '40px', height: '40px', border: '3px solid #f1f5f9', borderTopColor: '#6366f1', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 16px' }} />
+                    <div style={{ fontWeight: 600 }}>Загрузка данных...</div>
                 </div>
             )}
 
             {error && (
                 <div style={{
-                    backgroundColor: '#fff5f5',
-                    border: '1px solid #dc3545',
-                    borderRadius: '8px',
-                    padding: '16px',
-                    marginBottom: '24px',
-                    color: '#dc3545',
+                    backgroundColor: '#fef2f2',
+                    border: '1px solid #fee2e2',
+                    borderRadius: '16px',
+                    padding: '24px',
+                    marginBottom: '32px',
+                    color: '#dc2626',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px'
                 }}>
-                    {error}
+                    <span style={{ fontSize: '20px' }}>⚠️</span>
+                    <div>
+                        <div style={{ fontWeight: 700, marginBottom: '2px' }}>Ошибка загрузки</div>
+                        <div style={{ fontSize: '14px', opacity: 0.8 }}>{error}</div>
+                    </div>
                 </div>
             )}
 
             {!loading && !error && activeTab === 'code' && heatmapData && (
                 <div style={{
                     backgroundColor: '#fff',
-                    padding: '24px',
-                    borderRadius: '8px',
-                    border: `1px solid ${styles.borderLight}`,
+                    padding: '32px',
+                    borderRadius: '24px',
+                    border: '1px solid #e2e8f0',
+                    boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
+                    marginBottom: '40px'
                 }}>
-                    <h2 style={{ ...styles.subHeader, marginBottom: '16px' }}>
-                        Тепловая карта дефектов
+                    <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', marginBottom: '24px', letterSpacing: '-0.01em' }}>
+                        Распределение дефектов по компонентам
                     </h2>
 
                     <div style={{
                         display: 'flex',
-                        gap: '32px',
-                        flexWrap: 'nowrap',
-                        alignItems: 'flex-start'
+                        gap: '40px',
+                        flexWrap: 'wrap',
+                        alignItems: 'center'
                     }}>
                         {/* Donut Chart */}
                         <div style={{
-                            flex: '0 0 500px',
-                            width: '500px',
-                            maxWidth: '100%'
+                            flex: '0 0 400px',
+                            width: '400px',
+                            maxWidth: '100%',
+                            position: 'relative'
                         }}>
                             <ResponsiveContainer width="100%" height={400}>
                                 <PieChart>
@@ -633,20 +675,18 @@ const HeatmapPage = ({ projects }) => {
                                         cy="50%"
                                         labelLine={false}
                                         label={renderCustomLabel}
-                                        outerRadius={120}
-                                        innerRadius={60}
+                                        outerRadius={140}
+                                        innerRadius={85}
                                         fill="#8884d8"
                                         dataKey="value"
+                                        stroke="none"
                                         onClick={(data) => setSelectedComponent(data.name)}
                                     >
                                         {chartData.map((entry, index) => (
                                             <Cell
                                                 key={`cell-${index}`}
                                                 fill={entry.color}
-                                                style={{
-                                                    cursor: 'pointer',
-                                                    filter: selectedComponent === entry.name ? 'brightness(1.2)' : 'none',
-                                                }}
+                                                style={{ filter: selectedComponent === entry.name ? 'drop-shadow(0 0 8px rgba(0,0,0,0.2))' : 'none', cursor: 'pointer' }}
                                             />
                                         ))}
                                     </Pie>
@@ -654,21 +694,19 @@ const HeatmapPage = ({ projects }) => {
                                 </PieChart>
                             </ResponsiveContainer>
                             <div style={{
+                                position: 'absolute',
+                                top: '50%',
+                                left: '50%',
+                                transform: 'translate(-50%, -50%)',
                                 textAlign: 'center',
-                                marginTop: '16px',
-                                fontSize: '24px',
-                                fontWeight: 700,
-                                color: '#000',
+                                pointerEvents: 'none'
                             }}>
-                                {heatmapData.totalDefects.toLocaleString()}
-                            </div>
-                            <div style={{
-                                textAlign: 'center',
-                                marginTop: '4px',
-                                fontSize: '14px',
-                                color: '#000',
-                            }}>
-                                Всего дефектов
+                                <div style={{ fontSize: '40px', fontWeight: 900, color: '#0f172a', lineHeight: 1 }}>
+                                    {heatmapData.totalDefects.toLocaleString()}
+                                </div>
+                                <div style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginTop: '4px', letterSpacing: '0.05em' }}>
+                                    Дефектов
+                                </div>
                             </div>
                         </div>
 
@@ -678,13 +716,12 @@ const HeatmapPage = ({ projects }) => {
                             minWidth: '300px',
                             maxHeight: '500px',
                             overflowY: 'auto',
-                            overflowX: 'hidden'
+                            padding: '12px'
                         }}>
                             <div style={{
                                 display: 'grid',
-                                gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-                                gap: '8px',
-                                fontSize: '12px',
+                                gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
+                                gap: '12px',
                             }}>
                                 {heatmapData.components.map((item, index) => {
                                     const color = index < COLORS.length ? COLORS[index] : '#cccccc';
@@ -696,21 +733,26 @@ const HeatmapPage = ({ projects }) => {
                                             style={{
                                                 display: 'flex',
                                                 alignItems: 'center',
-                                                gap: '8px',
-                                                padding: '6px 8px',
-                                                borderRadius: '4px',
+                                                gap: '12px',
+                                                padding: '12px 16px',
+                                                borderRadius: '16px',
                                                 cursor: 'pointer',
-                                                backgroundColor: isSelected ? '#f0f0f0' : 'transparent',
-                                                border: isSelected ? `2px solid ${color}` : '1px solid transparent',
+                                                backgroundColor: isSelected ? '#eff6ff' : '#fcfdfe',
+                                                border: `1.5px solid ${isSelected ? '#6366f1' : '#e2e8f0'}`,
+                                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                                                boxShadow: isSelected ? '0 4px 12px rgba(99, 102, 241, 0.1)' : 'none',
                                             }}
+                                            onMouseOver={(e) => !isSelected && (e.currentTarget.style.borderColor = '#cbd5e1', e.currentTarget.style.backgroundColor = '#f8fafc')}
+                                            onMouseOut={(e) => !isSelected && (e.currentTarget.style.borderColor = '#e2e8f0', e.currentTarget.style.backgroundColor = '#fcfdfe')}
                                         >
                                             <div
                                                 style={{
-                                                    width: '12px',
-                                                    height: '12px',
-                                                    borderRadius: '2px',
+                                                    width: '14px',
+                                                    height: '14px',
+                                                    borderRadius: '50%',
                                                     backgroundColor: color,
                                                     flexShrink: 0,
+                                                    boxShadow: `0 0 0 3px ${color}20`
                                                 }}
                                             />
                                             <span style={{
@@ -718,14 +760,16 @@ const HeatmapPage = ({ projects }) => {
                                                 overflow: 'hidden',
                                                 textOverflow: 'ellipsis',
                                                 whiteSpace: 'nowrap',
-                                                color: '#000',
+                                                color: isSelected ? '#1e3a8a' : '#475569',
+                                                fontWeight: isSelected ? 700 : 500,
+                                                fontSize: '14px'
                                             }}>
                                                 {item.componentName}
                                             </span>
                                             <span style={{
-                                                fontWeight: 600,
-                                                color: '#000',
-                                                flexShrink: 0,
+                                                fontWeight: 800,
+                                                color: isSelected ? '#1e3a8a' : '#1e293b',
+                                                fontSize: '13px'
                                             }}>
                                                 {item.percentage}%
                                             </span>
@@ -751,40 +795,41 @@ const HeatmapPage = ({ projects }) => {
                         {/* Функциональные блоки */}
                         <div style={{
                             backgroundColor: '#fff',
-                            padding: '24px',
-                            borderRadius: '8px',
-                            border: `1px solid ${styles.borderLight}`,
+                            padding: '32px',
+                            borderRadius: '24px',
+                            border: '1px solid #e2e8f0',
+                            boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
                             flex: '1 1 0',
-                            minWidth: '600px',
+                            minWidth: '500px',
                         }}>
-                            <h2 style={{ ...styles.subHeader, marginBottom: '16px' }}>
-                                Test Coverage - Функциональные блоки
+                            <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a', marginBottom: '24px' }}>
+                                Функциональные блоки
                             </h2>
 
                             <div style={{
                                 display: 'flex',
-                                gap: '32px',
-                                flexWrap: 'nowrap',
-                                alignItems: 'flex-start'
+                                flexDirection: 'column',
+                                gap: '24px',
+                                alignItems: 'center'
                             }}>
-                                {/* Donut Chart для функциональных блоков */}
+                                {/* Donut Chart */}
                                 <div style={{
-                                    flex: '0 0 400px',
-                                    width: '400px',
-                                    maxWidth: '100%'
+                                    width: '100%',
+                                    maxWidth: '350px',
+                                    position: 'relative'
                                 }}>
-                                    <ResponsiveContainer width="100%" height={400}>
+                                    <ResponsiveContainer width="100%" height={300}>
                                         <PieChart>
                                             <Pie
                                                 data={testCoverageChartData}
                                                 cx="50%"
                                                 cy="50%"
                                                 labelLine={false}
-                                                label={renderCustomLabel}
-                                                outerRadius={120}
-                                                innerRadius={60}
+                                                outerRadius={110}
+                                                innerRadius={70}
                                                 fill="#8884d8"
                                                 dataKey="value"
+                                                stroke="none"
                                             >
                                                 {testCoverageChartData.map((entry, index) => (
                                                     <Cell
@@ -797,37 +842,33 @@ const HeatmapPage = ({ projects }) => {
                                         </PieChart>
                                     </ResponsiveContainer>
                                     <div style={{
+                                        position: 'absolute',
+                                        top: '50%',
+                                        left: '50%',
+                                        transform: 'translate(-50%, -50%)',
                                         textAlign: 'center',
-                                        marginTop: '16px',
-                                        fontSize: '24px',
-                                        fontWeight: 700,
-                                        color: '#000',
+                                        pointerEvents: 'none'
                                     }}>
-                                        {testCoverageData.totalDefects.toLocaleString()}
-                                    </div>
-                                    <div style={{
-                                        textAlign: 'center',
-                                        marginTop: '4px',
-                                        fontSize: '14px',
-                                        color: '#000',
-                                    }}>
-                                        Всего дефектов
+                                        <div style={{ fontSize: '28px', fontWeight: 900, color: '#0f172a' }}>
+                                            {testCoverageData.totalDefects}
+                                        </div>
+                                        <div style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
+                                            Дефектов
+                                        </div>
                                     </div>
                                 </div>
 
-                                {/* Легенда для функциональных блоков */}
+                                {/* Легенда */}
                                 <div style={{
-                                    flex: '1 1 auto',
-                                    minWidth: '250px',
-                                    maxHeight: '500px',
+                                    width: '100%',
+                                    maxHeight: '300px',
                                     overflowY: 'auto',
-                                    overflowX: 'hidden'
+                                    padding: '4px'
                                 }}>
                                     <div style={{
                                         display: 'grid',
                                         gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
                                         gap: '8px',
-                                        fontSize: '12px',
                                     }}>
                                         {testCoverageData.functionalBlocks.map((item, index) => {
                                             const color = index < COLORS.length ? COLORS[index] : '#cccccc';
@@ -837,16 +878,18 @@ const HeatmapPage = ({ projects }) => {
                                                     style={{
                                                         display: 'flex',
                                                         alignItems: 'center',
-                                                        gap: '8px',
-                                                        padding: '6px 8px',
-                                                        borderRadius: '4px',
+                                                        gap: '10px',
+                                                        padding: '10px 12px',
+                                                        borderRadius: '12px',
+                                                        backgroundColor: '#f8fafc',
+                                                        border: '1px solid #f1f5f9'
                                                     }}
                                                 >
                                                     <div
                                                         style={{
-                                                            width: '12px',
-                                                            height: '12px',
-                                                            borderRadius: '2px',
+                                                            width: '10px',
+                                                            height: '10px',
+                                                            borderRadius: '50%',
                                                             backgroundColor: color,
                                                             flexShrink: 0,
                                                         }}
@@ -856,14 +899,16 @@ const HeatmapPage = ({ projects }) => {
                                                         overflow: 'hidden',
                                                         textOverflow: 'ellipsis',
                                                         whiteSpace: 'nowrap',
-                                                        color: '#000',
+                                                        color: '#475569',
+                                                        fontWeight: 500,
+                                                        fontSize: '13px'
                                                     }}>
                                                         {item.functionalBlockName}
                                                     </span>
                                                     <span style={{
-                                                        fontWeight: 600,
-                                                        color: '#000',
-                                                        flexShrink: 0,
+                                                        fontWeight: 700,
+                                                        color: '#1e293b',
+                                                        fontSize: '12px'
                                                     }}>
                                                         {item.percentage}%
                                                     </span>
@@ -879,40 +924,41 @@ const HeatmapPage = ({ projects }) => {
                         {testCoverageData.routes && testCoverageData.routes.length > 0 && (
                             <div style={{
                                 backgroundColor: '#fff',
-                                padding: '24px',
-                                borderRadius: '8px',
-                                border: `1px solid ${styles.borderLight}`,
+                                padding: '32px',
+                                borderRadius: '24px',
+                                border: '1px solid #e2e8f0',
+                                boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
                                 flex: '1 1 0',
-                                minWidth: '600px',
+                                minWidth: '500px',
                             }}>
-                                <h2 style={{ ...styles.subHeader, marginBottom: '16px' }}>
-                                    Test Coverage - Роуты
+                                <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a', marginBottom: '24px' }}>
+                                    Статистика по Роутам
                                 </h2>
 
                                 <div style={{
                                     display: 'flex',
-                                    gap: '32px',
-                                    flexWrap: 'nowrap',
-                                    alignItems: 'flex-start'
+                                    flexDirection: 'column',
+                                    gap: '24px',
+                                    alignItems: 'center'
                                 }}>
-                                    {/* Donut Chart для роутов */}
+                                    {/* Donut Chart */}
                                     <div style={{
-                                        flex: '0 0 400px',
-                                        width: '400px',
-                                        maxWidth: '100%'
+                                        width: '100%',
+                                        maxWidth: '350px',
+                                        position: 'relative'
                                     }}>
-                                        <ResponsiveContainer width="100%" height={400}>
+                                        <ResponsiveContainer width="100%" height={300}>
                                             <PieChart>
                                                 <Pie
                                                     data={routesChartData}
                                                     cx="50%"
                                                     cy="50%"
                                                     labelLine={false}
-                                                    label={renderCustomLabel}
-                                                    outerRadius={120}
-                                                    innerRadius={60}
+                                                    outerRadius={110}
+                                                    innerRadius={70}
                                                     fill="#8884d8"
                                                     dataKey="value"
+                                                    stroke="none"
                                                 >
                                                     {routesChartData.map((entry, index) => (
                                                         <Cell
@@ -925,37 +971,33 @@ const HeatmapPage = ({ projects }) => {
                                             </PieChart>
                                         </ResponsiveContainer>
                                         <div style={{
+                                            position: 'absolute',
+                                            top: '50%',
+                                            left: '50%',
+                                            transform: 'translate(-50%, -50%)',
                                             textAlign: 'center',
-                                            marginTop: '16px',
-                                            fontSize: '24px',
-                                            fontWeight: 700,
-                                            color: '#000',
+                                            pointerEvents: 'none'
                                         }}>
-                                            {testCoverageData.totalRoutesDefects.toLocaleString()}
-                                        </div>
-                                        <div style={{
-                                            textAlign: 'center',
-                                            marginTop: '4px',
-                                            fontSize: '14px',
-                                            color: '#000',
-                                        }}>
-                                            Всего дефектов по роутам
+                                            <div style={{ fontSize: '28px', fontWeight: 900, color: '#0f172a' }}>
+                                                {testCoverageData.totalRoutesDefects}
+                                            </div>
+                                            <div style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
+                                                Дефектов
+                                            </div>
                                         </div>
                                     </div>
 
-                                    {/* Легенда для роутов */}
+                                    {/* Легенда */}
                                     <div style={{
-                                        flex: '1 1 auto',
-                                        minWidth: '250px',
-                                        maxHeight: '500px',
+                                        width: '100%',
+                                        maxHeight: '300px',
                                         overflowY: 'auto',
-                                        overflowX: 'hidden'
+                                        padding: '4px'
                                     }}>
                                         <div style={{
                                             display: 'grid',
                                             gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
                                             gap: '8px',
-                                            fontSize: '12px',
                                         }}>
                                             {testCoverageData.routes.map((item, index) => {
                                                 const color = index < COLORS.length ? COLORS[index] : '#cccccc';
@@ -965,16 +1007,18 @@ const HeatmapPage = ({ projects }) => {
                                                         style={{
                                                             display: 'flex',
                                                             alignItems: 'center',
-                                                            gap: '8px',
-                                                            padding: '6px 8px',
-                                                            borderRadius: '4px',
+                                                            gap: '10px',
+                                                            padding: '10px 12px',
+                                                            borderRadius: '12px',
+                                                            backgroundColor: '#f8fafc',
+                                                            border: '1px solid #f1f5f9'
                                                         }}
                                                     >
                                                         <div
                                                             style={{
-                                                                width: '12px',
-                                                                height: '12px',
-                                                                borderRadius: '2px',
+                                                                width: '10px',
+                                                                height: '10px',
+                                                                borderRadius: '50%',
                                                                 backgroundColor: color,
                                                                 flexShrink: 0,
                                                             }}
@@ -984,14 +1028,16 @@ const HeatmapPage = ({ projects }) => {
                                                             overflow: 'hidden',
                                                             textOverflow: 'ellipsis',
                                                             whiteSpace: 'nowrap',
-                                                            color: '#000',
+                                                            color: '#475569',
+                                                            fontWeight: 500,
+                                                            fontSize: '13px'
                                                         }}>
                                                             {item.route}
                                                         </span>
                                                         <span style={{
-                                                            fontWeight: 600,
-                                                            color: '#000',
-                                                            flexShrink: 0,
+                                                            fontWeight: 700,
+                                                            color: '#1e293b',
+                                                            fontSize: '12px'
                                                         }}>
                                                             {item.percentage}%
                                                         </span>
@@ -1008,61 +1054,153 @@ const HeatmapPage = ({ projects }) => {
             )}
             {/* Модальное окно массового импорта */}
             {showImportModal && (
-                <div style={styles.modalOverlay}>
-                    <div style={{ ...styles.modalContent, width: '600px' }}>
-                        <div style={styles.modalHeader}>
-                            <h2 style={styles.modalTitle}>Загрузка истории TIA (JSON)</h2>
-                            <button onClick={() => setShowImportModal(false)} style={styles.closeButton}>×</button>
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+                    backdropFilter: 'blur(8px)',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    zIndex: 2000,
+                    animation: 'fadeIn 0.2s ease-out',
+                }}>
+                    <div style={{
+                        backgroundColor: '#fff',
+                        width: '600px',
+                        borderRadius: '24px',
+                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                        overflow: 'hidden',
+                        fontFamily: '"Inter", sans-serif'
+                    }}>
+                        <div style={{
+                            padding: '24px 32px',
+                            borderBottom: '1px solid #e2e8f0',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            background: '#fcfdfe'
+                        }}>
+                            <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: 0 }}>Загрузка истории TIA</h2>
+                            <button
+                                onClick={() => setShowImportModal(false)}
+                                style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    fontSize: '24px',
+                                    color: '#94a3b8',
+                                    cursor: 'pointer',
+                                    padding: '4px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'color 0.2s'
+                                }}
+                                onMouseOver={(e) => e.currentTarget.style.color = '#475569'}
+                                onMouseOut={(e) => e.currentTarget.style.color = '#94a3b8'}
+                            >©</button>
                         </div>
-                        <div style={{ padding: '20px' }}>
-                            <p style={{ marginBottom: '15px', color: '#666' }}>
-                                Выберите один или несколько JSON-отчетов TIA для импорта истории дефектов.
+
+                        <div style={{ padding: '32px' }}>
+                            <p style={{ marginBottom: '24px', color: '#64748b', fontSize: '14px', lineHeight: '1.6' }}>
+                                Выберите файлы отчетов в формате JSON для массового импорта истории дефектов и привязки их к текущему проекту.
                             </p>
 
-                            <input
-                                type="file"
-                                multiple
-                                accept=".json"
-                                onChange={(e) => setImportFiles(Array.from(e.target.files))}
-                                style={{
-                                    width: '100%',
-                                    padding: '10px',
-                                    border: `2px dashed ${styles.borderLight}`,
-                                    borderRadius: '8px',
-                                    marginBottom: '20px',
-                                    cursor: 'pointer'
-                                }}
-                            />
-
-                            {importFiles.length > 0 && (
-                                <div style={{ marginBottom: '20px' }}>
-                                    <strong>Выбрано файлов: {importFiles.length}</strong>
+                            <div style={{
+                                position: 'relative',
+                                marginBottom: '24px',
+                                border: '2px dashed #e2e8f0',
+                                borderRadius: '16px',
+                                padding: '40px 20px',
+                                textAlign: 'center',
+                                transition: 'all 0.2s ease',
+                                backgroundColor: '#f8fafc',
+                                cursor: 'pointer'
+                            }}
+                                onMouseOver={(e) => (e.currentTarget.style.borderColor = '#6366f1', e.currentTarget.style.backgroundColor = '#f1f5f9')}
+                                onMouseOut={(e) => (e.currentTarget.style.borderColor = '#e2e8f0', e.currentTarget.style.backgroundColor = '#f8fafc')}
+                            >
+                                <input
+                                    type="file"
+                                    multiple
+                                    accept=".json"
+                                    onChange={(e) => setImportFiles(Array.from(e.target.files))}
+                                    style={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        width: '100%',
+                                        height: '100%',
+                                        opacity: 0,
+                                        cursor: 'pointer'
+                                    }}
+                                />
+                                <div style={{ fontSize: '32px', marginBottom: '12px' }}>📁</div>
+                                <div style={{ fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                                    {importFiles.length > 0 ? `Выбрано файлов: ${importFiles.length}` : 'Нажмите для выбора JSON файлов'}
                                 </div>
-                            )}
+                                <div style={{ fontSize: '12px', color: '#94a3b8' }}>Перетащите файлы сюда или кликните для обзора</div>
+                            </div>
 
                             {importProcessing && (
                                 <div style={{
-                                    padding: '15px',
-                                    backgroundColor: '#f8f9fa',
-                                    borderRadius: '8px',
-                                    maxHeight: '200px',
+                                    padding: '20px',
+                                    backgroundColor: '#0f172a',
+                                    borderRadius: '12px',
+                                    maxHeight: '180px',
                                     overflowY: 'auto',
-                                    marginBottom: '20px',
-                                    fontSize: '12px',
-                                    fontFamily: 'monospace'
+                                    marginBottom: '24px',
+                                    fontSize: '13px',
+                                    fontFamily: '"SF Mono", "Fira Code", monospace',
+                                    color: '#38bdf8',
+                                    boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)'
                                 }}>
-                                    {importLog.map((log, i) => <div key={i}>{log}</div>)}
+                                    {importLog.map((log, i) => (
+                                        <div key={i} style={{ marginBottom: '4px', opacity: i === importLog.length - 1 ? 1 : 0.7 }}>
+                                            <span style={{ color: '#64748b' }}>[{new Date().toLocaleTimeString()}]</span> {log}
+                                        </div>
+                                    ))}
+                                    <div id="import-log-end" />
                                 </div>
                             )}
 
                             {importError && (
-                                <div style={{ color: 'red', marginBottom: '20px' }}>{importError}</div>
+                                <div style={{
+                                    padding: '16px',
+                                    backgroundColor: '#fef2f2',
+                                    border: '1px solid #fee2e2',
+                                    borderRadius: '12px',
+                                    color: '#dc2626',
+                                    fontSize: '14px',
+                                    marginBottom: '24px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '12px'
+                                }}>
+                                    <span>⚠️</span> {importError}
+                                </div>
                             )}
 
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
                                 <button
                                     onClick={() => setShowImportModal(false)}
-                                    style={styles.cancelButton}
+                                    style={{
+                                        padding: '0 24px',
+                                        height: '48px',
+                                        backgroundColor: '#fff',
+                                        color: '#64748b',
+                                        border: '1px solid #e2e8f0',
+                                        borderRadius: '12px',
+                                        fontWeight: 600,
+                                        fontSize: '14px',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s'
+                                    }}
+                                    onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#f8fafc', e.currentTarget.style.borderColor = '#cbd5e1')}
+                                    onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#fff', e.currentTarget.style.borderColor = '#e2e8f0')}
                                     disabled={importProcessing}
                                 >
                                     Отмена
@@ -1071,11 +1209,28 @@ const HeatmapPage = ({ projects }) => {
                                     onClick={handleProcessFiles}
                                     disabled={importFiles.length === 0 || importProcessing}
                                     style={{
-                                        ...styles.submitButton,
+                                        padding: '0 24px',
+                                        height: '48px',
+                                        backgroundColor: '#6366f1',
+                                        color: '#fff',
+                                        border: 'none',
+                                        borderRadius: '12px',
+                                        fontWeight: 700,
+                                        fontSize: '14px',
+                                        cursor: 'pointer',
+                                        boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)',
+                                        transition: 'all 0.2s',
                                         opacity: (importFiles.length === 0 || importProcessing) ? 0.6 : 1
                                     }}
+                                    onMouseOver={(e) => (importFiles.length > 0 && !importProcessing) && (e.currentTarget.style.backgroundColor = '#4f46e5', e.currentTarget.style.transform = 'translateY(-1px)')}
+                                    onMouseOut={(e) => (importFiles.length > 0 && !importProcessing) && (e.currentTarget.style.backgroundColor = '#6366f1', e.currentTarget.style.transform = 'translateY(0)')}
                                 >
-                                    {importProcessing ? 'Обработка...' : 'Начать обработку'}
+                                    {importProcessing ? (
+                                        <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />
+                                            Обработка...
+                                        </span>
+                                    ) : 'Начать импорт'}
                                 </button>
                             </div>
                         </div>
@@ -1085,66 +1240,172 @@ const HeatmapPage = ({ projects }) => {
 
             {/* Модальное окно маппинга для импорта */}
             {showMappingModal && (
-                <div style={styles.modalOverlay}>
-                    <div style={{ ...styles.modalContent, width: '900px', maxWidth: '95vw', maxHeight: '90vh' }}>
-                        <div style={styles.modalHeader}>
-                            <h2 style={styles.modalTitle}>Маппинг компонентов</h2>
-                            <button onClick={() => setShowMappingModal(false)} style={styles.closeButton}>×</button>
-                        </div>
-                        <div style={{ padding: '20px', overflowY: 'auto', flex: 1 }}>
-                            <p style={{ marginBottom: '15px' }}>
-                                Для корректного отображения <strong>Test Coverage</strong> необходимо связать найденные компоненты с функциональными блоками Allure.
-                            </p>
-
-                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                <thead>
-                                    <tr style={{ borderBottom: `2px solid ${styles.borderLight}`, textAlign: 'left' }}>
-                                        <th style={{ padding: '10px' }}>Компонент</th>
-                                        <th style={{ padding: '10px' }}>Функциональные блоки Allure</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {[...unmappedComponents, ...Object.keys(componentMappings)].sort().map(compName => (
-                                        <tr key={compName} style={{ borderBottom: `1px solid ${styles.borderLight}` }}>
-                                            <td style={{ padding: '10px', fontWeight: 600 }}>{compName}</td>
-                                            <td style={{ padding: '10px' }}>
-                                                <Select
-                                                    isMulti
-                                                    options={folders.map(f => ({ value: f.id, label: f.name }))}
-                                                    value={(componentMappings[compName] || []).map(id => {
-                                                        const folder = folders.find(f => f.id === id);
-                                                        return { value: id, label: folder ? folder.name : id };
-                                                    })}
-                                                    onChange={(selected) => {
-                                                        setComponentMappings(prev => ({
-                                                            ...prev,
-                                                            [compName]: selected ? selected.map(s => s.value) : []
-                                                        }));
-                                                    }}
-                                                    placeholder="Выберите блоки..."
-                                                    styles={{
-                                                        control: (base) => ({ ...base, fontSize: '13px' })
-                                                    }}
-                                                />
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                        <div style={{ padding: '20px', borderTop: `1px solid ${styles.borderLight}`, display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+                    backdropFilter: 'blur(8px)',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    zIndex: 2000,
+                    animation: 'fadeIn 0.2s ease-out',
+                }}>
+                    <div style={{
+                        backgroundColor: '#fff',
+                        width: '1000px',
+                        maxWidth: '95vw',
+                        maxHeight: '90vh',
+                        borderRadius: '24px',
+                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                        overflow: 'hidden',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        fontFamily: '"Inter", sans-serif'
+                    }}>
+                        <div style={{
+                            padding: '24px 32px',
+                            borderBottom: '1px solid #e2e8f0',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            background: '#fcfdfe'
+                        }}>
+                            <div>
+                                <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: 0 }}>Маппинг компонентов</h2>
+                                <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>Свяжите компоненты из отчета с функциональными блоками Allure</div>
+                            </div>
                             <button
                                 onClick={() => setShowMappingModal(false)}
-                                style={styles.cancelButton}
+                                style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    fontSize: '24px',
+                                    color: '#94a3b8',
+                                    cursor: 'pointer',
+                                    padding: '4px'
+                                }}
+                            >©</button>
+                        </div>
+
+                        <div style={{ padding: '32px', overflowY: 'auto', flex: 1, backgroundColor: '#f8fafc' }}>
+                            <div style={{
+                                backgroundColor: '#fff',
+                                borderRadius: '16px',
+                                border: '1px solid #e2e8f0',
+                                overflow: 'hidden',
+                                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)'
+                            }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                    <thead style={{ backgroundColor: '#fcfdfe' }}>
+                                        <tr>
+                                            <th style={{ padding: '16px 20px', textAlign: 'left', fontSize: '13px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #e2e8f0' }}>Компонент</th>
+                                            <th style={{ padding: '16px 20px', textAlign: 'left', fontSize: '13px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #e2e8f0' }}>Функциональные блоки Allure</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {[...unmappedComponents, ...Object.keys(componentMappings)].sort().map((compName, idx) => (
+                                            <tr key={compName} style={{
+                                                backgroundColor: idx % 2 === 0 ? '#fff' : '#fcfdfe',
+                                                transition: 'background-color 0.2s'
+                                            }}>
+                                                <td style={{ padding: '16px 20px', fontWeight: 600, color: '#1e293b', fontSize: '14px', borderBottom: '1px solid #f1f5f9' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        <span style={{ fontSize: '16px' }}>🧩</span>
+                                                        {compName}
+                                                    </div>
+                                                </td>
+                                                <td style={{ padding: '12px 20px', borderBottom: '1px solid #f1f5f9' }}>
+                                                    <Select
+                                                        isMulti
+                                                        options={(folders || []).map(f => ({ value: f.id, label: f.name }))}
+                                                        value={(componentMappings[compName] || []).map(id => {
+                                                            const folder = folders.find(f => f.id === id);
+                                                            return { value: id, label: folder ? folder.name : id };
+                                                        })}
+                                                        onChange={(selected) => {
+                                                            setComponentMappings(prev => ({
+                                                                ...prev,
+                                                                [compName]: selected ? selected.map(s => s.value) : []
+                                                            }));
+                                                        }}
+                                                        placeholder="Выберите блоки для привязки..."
+                                                        styles={{
+                                                            control: (base, state) => ({
+                                                                ...base,
+                                                                borderColor: state.isFocused ? '#6366f1' : '#e2e8f0',
+                                                                borderRadius: '10px',
+                                                                fontSize: '13px',
+                                                                minHeight: '40px',
+                                                                backgroundColor: state.isFocused ? '#fff' : '#fcfdfe',
+                                                                boxShadow: state.isFocused ? '0 0 0 3px rgba(99, 102, 241, 0.1)' : 'none',
+                                                            }),
+                                                            multiValue: (base) => ({
+                                                                ...base,
+                                                                backgroundColor: '#eff6ff',
+                                                                borderRadius: '6px',
+                                                                border: '1px solid #dbeafe'
+                                                            }),
+                                                            multiValueLabel: (base) => ({ ...base, color: '#1e3a8a', fontWeight: 600 }),
+                                                        }}
+                                                    />
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div style={{
+                            padding: '24px 32px',
+                            borderTop: '1px solid #e2e8f0',
+                            display: 'flex',
+                            justifyContent: 'flex-end',
+                            gap: '12px',
+                            background: '#fcfdfe'
+                        }}>
+                            <button
+                                onClick={() => setShowMappingModal(false)}
+                                style={{
+                                    padding: '0 24px',
+                                    height: '48px',
+                                    backgroundColor: '#fff',
+                                    color: '#64748b',
+                                    border: '1px solid #e2e8f0',
+                                    borderRadius: '12px',
+                                    fontWeight: 600,
+                                    fontSize: '14px',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s'
+                                }}
                             >
-                                Отмена
+                                Назад к выбору файлов
                             </button>
                             <button
                                 onClick={handleSaveBulkHistory}
                                 disabled={loading}
-                                style={styles.submitButton}
+                                style={{
+                                    padding: '0 32px',
+                                    height: '48px',
+                                    backgroundColor: '#10b981',
+                                    color: '#fff',
+                                    border: 'none',
+                                    borderRadius: '12px',
+                                    fontWeight: 700,
+                                    fontSize: '14px',
+                                    cursor: 'pointer',
+                                    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.2)',
+                                    transition: 'all 0.2s',
+                                    opacity: loading ? 0.6 : 1
+                                }}
+                                onMouseOver={(e) => !loading && (e.currentTarget.style.backgroundColor = '#059669', e.currentTarget.style.transform = 'translateY(-1px)')}
+                                onMouseOut={(e) => !loading && (e.currentTarget.style.backgroundColor = '#10b981', e.currentTarget.style.transform = 'translateY(0)')}
                             >
-                                {loading ? 'Сохранение...' : 'Завершить импорт'}
+                                {loading ? 'Сохранение...' : 'Завершить импорт и маппинг'}
                             </button>
                         </div>
                     </div>
