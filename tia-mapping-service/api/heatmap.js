@@ -543,6 +543,60 @@ export async function bulkImportHistory(req, res) {
                         .ignore();
                 }
             }
+
+            // 6. Обрабатываем зависимости страниц (Page Dependencies) из items
+            // Если в item есть pages с depends_on_components, сохраняем их
+            const pageDepInserts = [];
+            items.forEach(item => {
+                if (item.pages && Array.isArray(item.pages)) {
+                    item.pages.forEach(page => {
+                        const pageName = page.page_meta?.name;
+                        const pageRoute = page.page_meta?.route || '';
+
+                        if (pageName && page.depends_on_components && Array.isArray(page.depends_on_components)) {
+                            page.depends_on_components.forEach(compName => {
+                                const compId = nameToIdMap.get(compName);
+                                if (compId) {
+                                    // Проверяем, не добавляли ли мы уже такую зависимость в этом батче
+                                    const exists = pageDepInserts.some(p =>
+                                        p.component_id === compId && p.page_name === pageName && p.page_route === pageRoute
+                                    );
+
+                                    if (!exists) {
+                                        pageDepInserts.push({
+                                            component_id: compId,
+                                            page_name: pageName,
+                                            page_route: pageRoute
+                                        });
+                                    }
+                                }
+                            });
+                        }
+                    });
+                }
+            });
+
+            if (pageDepInserts.length > 0) {
+                // Вставляем зависимости страниц, игнорируя дубликаты
+                // Предполагаем, что есть уникальный индекс или ограничение (обычно component_id + page_name)
+                // Если уникального индекса нет, то может быть дублирование. 
+                // Но лучше попробовать insert.
+                const pdChunkSize = 500;
+                for (let i = 0; i < pageDepInserts.length; i += pdChunkSize) {
+                    const chunk = pageDepInserts.slice(i, i + pdChunkSize);
+
+                    // Используем onConflict. Предположим, что есть уникальный ключ по component_id и page_name
+                    // Если нет, просто insert (или distinct select перед вставкой, но это сложно в транзакции без блокировок)
+                    // Лучше использовать .onConflict().ignore() если знаем констрейнт.
+                    // Из миграции 20241229_add_page_component_types_and_dependencies.js:
+                    // table.unique(['component_id', 'page_name', 'page_route']);
+
+                    await trx('page_component_dependencies')
+                        .insert(chunk)
+                        .onConflict(['component_id', 'page_name', 'page_route'])
+                        .ignore();
+                }
+            }
         });
 
         logInfo(`Массовый импорт успешно завершен для проекта ${projectId}`);
