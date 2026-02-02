@@ -20,6 +20,7 @@ const HeatmapPage = ({ projects }) => {
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
     const [selectedVersions, setSelectedVersions] = useState([]);
+    const [side, setSide] = useState('all'); // 'all', 'frontend', 'backend'
     const [availableVersions, setAvailableVersions] = useState([]);
     const [isBugFix, setIsBugFix] = useState(null); // null - все, true - только баги, false - общий
     const [heatmapData, setHeatmapData] = useState(null);
@@ -51,6 +52,8 @@ const HeatmapPage = ({ projects }) => {
     const [mappingFilter, setMappingFilter] = useState('');
     const [folderSearchTerm, setFolderSearchTerm] = useState('');
     const [expandedFolders, setExpandedFolders] = useState({});
+    const [expandedComponentFolders, setExpandedComponentFolders] = useState({});
+    const [expandedPageLists, setExpandedPageLists] = useState({});
 
     // Загрузка доступных версий при изменении проекта или дат
     useEffect(() => {
@@ -68,7 +71,7 @@ const HeatmapPage = ({ projects }) => {
                 loadTestCoverageData();
             }
         }
-    }, [projectId, startDate, endDate, selectedVersions, isBugFix, activeTab]);
+    }, [projectId, startDate, endDate, selectedVersions, isBugFix, activeTab, side]);
 
     // Загрузка структуры Allure при изменении проекта
     useEffect(() => {
@@ -104,6 +107,9 @@ const HeatmapPage = ({ projects }) => {
             if (isBugFix !== null) {
                 params.append('isBugFix', isBugFix.toString());
             }
+            if (side !== 'all') {
+                params.append('componentType', side);
+            }
 
             const response = await axios.get(`${config.TIAUrl}/api/heatmap?${params}`);
             setHeatmapData(response.data);
@@ -127,6 +133,9 @@ const HeatmapPage = ({ projects }) => {
             }
             if (isBugFix !== null) {
                 params.append('isBugFix', isBugFix.toString());
+            }
+            if (side !== 'all') {
+                params.append('componentType', side);
             }
 
             const response = await axios.get(`${config.TIAUrl}/api/heatmap/test-coverage?${params}`);
@@ -192,10 +201,12 @@ const HeatmapPage = ({ projects }) => {
                     merged_at: json.merged_at,
                     web_url: json.web_url,
                     release_version: json.project_version || json.release_version,
-                    affected_components: []
+                    affected_components: [],
+                    component_details: {} // New: Store rich metadata
                 };
 
                 let componentsToProcess = [];
+                const uniqueMap = json.unique_affected_components || {};
 
                 if (json.unique_affected_components) {
                     componentsToProcess = Object.keys(json.unique_affected_components);
@@ -207,8 +218,31 @@ const HeatmapPage = ({ projects }) => {
                 }
 
                 componentsToProcess.forEach(compName => {
-                    item.affected_components.push(compName);
+                    // Определяем тип компонента
+                    let type = 'component';
+                    if (json.Controllers && json.Controllers[compName]) {
+                        type = 'backend';
+                    } else if (json.pages && json.pages.some(p => p.page_meta?.name === compName || (p.depends_on_components || []).includes(compName))) {
+                        type = 'frontend';
+                    } else if (json.frontendComponent && json.frontendComponent[compName]) {
+                        type = 'frontend';
+                    }
+
+                    item.affected_components.push({ name: compName, type });
                     uniqueComponentsSet.add(compName);
+
+                    // Собираем детали для компонента
+                    const detail = uniqueMap[compName] || {};
+                    item.component_details[compName] = {
+                        risk: detail.risk_level || 'LOW',
+                        file_path: detail.file_path || '',
+                        change_source: detail.change_source || '',
+                        type, // Сохраняем тип в деталях
+                        pages_count: (json.pages || []).filter(p => (p.depends_on_components || []).includes(compName)).length,
+                        pages: (json.pages || [])
+                            .filter(p => (p.depends_on_components || []).includes(compName))
+                            .map(p => p.page_meta?.name || 'Unknown')
+                    };
                 });
 
                 allParsedItems.push(item);
@@ -554,10 +588,200 @@ const HeatmapPage = ({ projects }) => {
         });
     };
 
+    const buildComponentTree = (components) => {
+        const root = { name: 'Root', children: {}, items: [] };
+        components.forEach(name => {
+            const parts = name.split('/');
+            if (parts.length === 1) {
+                root.items.push(name);
+                return;
+            }
+            let current = root;
+            for (let i = 0; i < parts.length - 1; i++) {
+                const part = parts[i];
+                if (!current.children[part]) {
+                    current.children[part] = { name: part, children: {}, items: [] };
+                }
+                current = current.children[part];
+            }
+            current.items.push(name);
+        });
+        return root;
+    };
+
+    const renderComponentItem = (compName, level = 0) => {
+        const isSelected = selectedComponentForMapping === compName;
+        const hasMapping = componentMappings[compName] && componentMappings[compName].length > 0;
+
+        // Агрегируем детали по всем вхождениям компонента
+        const details = parsedHistoryItems
+            .filter(item => item.component_details && item.component_details[compName])
+            .map(item => item.component_details[compName]);
+
+        const maxRisk = details.some(d => d.risk === 'HIGH') ? 'HIGH' :
+            details.some(d => d.risk === 'MEDIUM') ? 'MEDIUM' : 'LOW';
+        const totalPages = details.reduce((sum, d) => sum + (d.pages_count || 0), 0);
+        const firstFilePath = details.find(d => d.file_path)?.file_path || '';
+
+        const riskColor = maxRisk === 'HIGH' ? '#dc3545' :
+            maxRisk === 'MEDIUM' ? '#ffc107' : '#22c55e';
+        const bgColor = isSelected ? '#eff6ff' : '#fff';
+
+        return (
+            <div
+                key={compName}
+                onClick={() => setSelectedComponentForMapping(compName)}
+                style={{
+                    padding: '12px',
+                    marginBottom: '8px',
+                    marginLeft: `${level * 16}px`,
+                    borderRadius: '8px',
+                    backgroundColor: bgColor,
+                    border: isSelected ? '1px solid #3b82f6' : '1px solid #e2e8f0',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    borderLeft: isSelected ? '4px solid #3b82f6' : '1px solid #e2e8f0',
+                    boxShadow: isSelected ? '0 4px 6px -1px rgba(59, 130, 246, 0.1)' : 'none'
+                }}
+            >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <div style={{ fontWeight: 700, fontSize: '13px', color: '#1e293b', wordBreak: 'break-all', flex: 1 }}>
+                        {compName.split('/').pop()}
+                    </div>
+                    <div style={{
+                        padding: '2px 8px',
+                        borderRadius: '4px',
+                        backgroundColor: riskColor,
+                        color: '#fff',
+                        fontSize: '9px',
+                        fontWeight: 800,
+                        marginLeft: '8px',
+                        flexShrink: 0
+                    }}>
+                        {maxRisk}
+                    </div>
+                </div>
+
+                {firstFilePath && (
+                    <div style={{ fontSize: '10px', color: '#64748b', marginBottom: '6px', fontFamily: 'monospace', wordBreak: 'break-all', opacity: 0.8 }}>
+                        {firstFilePath.split('/').pop()}
+                    </div>
+                )}
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div style={{ fontSize: '10px', color: hasMapping ? '#22c55e' : '#dc3545', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
+                            {hasMapping ? '✓ Связан' : '⚠️ Не связан'}
+                        </div>
+                        {totalPages > 0 && (
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setExpandedPageLists(prev => ({ ...prev, [compName]: !prev[compName] }));
+                                }}
+                                style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    color: '#3b82f6',
+                                    fontSize: '10px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    padding: 0
+                                }}
+                            >
+                                Pages: {totalPages} {expandedPageLists[compName] ? '▲' : '▼'}
+                            </button>
+                        )}
+                    </div>
+
+                    {expandedPageLists[compName] && (
+                        <div style={{
+                            marginTop: '8px',
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: '4px',
+                            padding: '8px',
+                            backgroundColor: '#f8fafc',
+                            borderRadius: '6px',
+                            border: '1px solid #e2e8f0'
+                        }}>
+                            {Array.from(new Set(details.flatMap(d => d.pages || []))).sort().map((pageName, pidx) => (
+                                <span
+                                    key={`${compName}-page-${pidx}`}
+                                    style={{
+                                        padding: '2px 6px',
+                                        backgroundColor: '#e2e8f0',
+                                        color: '#475569',
+                                        borderRadius: '4px',
+                                        fontSize: '9px',
+                                        fontWeight: 600
+                                    }}
+                                >
+                                    {pageName}
+                                </span>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
+    const renderComponentTree = (node, level = 0, path = '') => {
+        const sortedChildren = Object.keys(node.children).sort();
+        const sortedItems = node.items.sort();
+
+        return (
+            <div key={path || 'root'}>
+                {sortedChildren.map(childName => {
+                    const childPath = path ? `${path}/${childName}` : childName;
+                    const isExpanded = expandedComponentFolders[childPath];
+                    return (
+                        <div key={childPath} style={{ marginBottom: '4px' }}>
+                            <div
+                                onClick={() => setExpandedComponentFolders(prev => ({ ...prev, [childPath]: !prev[childPath] }))}
+                                style={{
+                                    padding: '8px 12px',
+                                    paddingLeft: `${level * 16 + 12}px`,
+                                    fontSize: '12px',
+                                    fontWeight: 700,
+                                    color: '#475569',
+                                    backgroundColor: '#f1f5f9',
+                                    borderRadius: '8px',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    userSelect: 'none',
+                                    border: '1px solid #e2e8f0',
+                                    transition: 'all 0.2s'
+                                }}
+                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#e2e8f0'}
+                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#f1f5f9'}
+                            >
+                                <span style={{ fontSize: '10px', color: '#94a3b8' }}>{isExpanded ? '▼' : '►'}</span>
+                                <span style={{ fontSize: '14px' }}>📁</span>
+                                {childName}
+                            </div>
+                            {isExpanded && (
+                                <div style={{ marginTop: '4px' }}>
+                                    {renderComponentTree(node.children[childName], level + 1, childPath)}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+                {sortedItems.map(compName => renderComponentItem(compName, level))}
+            </div>
+        );
+    };
+
     const handleSaveBulkHistory = async (force = false) => {
         // Валидация незамапленных компонентов
         if (!force) {
-            const allComponents = Array.from(new Set(parsedHistoryItems.flatMap(item => item.affected_components)));
+            const allComponents = Array.from(new Set(parsedHistoryItems.flatMap(item =>
+                item.affected_components.map(c => typeof c === 'string' ? c : c.name)
+            )));
             const trulyUnmapped = allComponents.filter(name => !componentMappings[name] || componentMappings[name].length === 0);
 
             if (trulyUnmapped.length > 0) {
@@ -865,8 +1089,8 @@ const HeatmapPage = ({ projects }) => {
             }}>
                 <div style={{
                     display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-                    gap: '32px',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+                    gap: '24px',
                     alignItems: 'end'
                 }}>
                     {/* Поле Проекта */}
@@ -999,6 +1223,36 @@ const HeatmapPage = ({ projects }) => {
                             <option value="general">Только новые функции</option>
                         </select>
                     </div>
+
+                    {/* Поле Стороны (Front/Back) */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            Сторона системы
+                        </span>
+                        <select
+                            value={side}
+                            onChange={(e) => setSide(e.target.value)}
+                            style={{
+                                width: '100%',
+                                padding: '0 20px',
+                                border: '1px solid #e2e8f0',
+                                borderRadius: '14px',
+                                fontSize: '15px',
+                                fontWeight: 500,
+                                color: '#0f172a',
+                                backgroundColor: '#fcfdfe',
+                                height: '52px',
+                                outline: 'none',
+                                transition: 'all 0.2s ease',
+                            }}
+                            onFocus={(e) => (e.target.style.borderColor = '#6366f1', e.target.style.boxShadow = '0 0 0 4px rgba(99, 102, 241, 0.1)')}
+                            onBlur={(e) => (e.target.style.borderColor = '#e2e8f0', e.target.style.boxShadow = 'none')}
+                        >
+                            <option value="all">Все стороны</option>
+                            <option value="frontend">Frontend</option>
+                            <option value="backend">Backend</option>
+                        </select>
+                    </div>
                 </div>
             </div>
 
@@ -1039,9 +1293,44 @@ const HeatmapPage = ({ projects }) => {
                     boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
                     marginBottom: '40px'
                 }}>
-                    <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', marginBottom: '24px', letterSpacing: '-0.01em' }}>
-                        Распределение дефектов по компонентам
-                    </h2>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                        <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.01em' }}>
+                            Распределение дефектов по компонентам
+                        </h2>
+
+                        {heatmapData.pageStats && (
+                            <div style={{
+                                padding: '12px 24px',
+                                backgroundColor: '#f8fafc',
+                                borderRadius: '16px',
+                                border: '1px solid #e2e8f0',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '20px'
+                            }}>
+                                <div style={{ textAlign: 'right' }}>
+                                    <div style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                        Page Coverage
+                                    </div>
+                                    <div style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a' }}>
+                                        {heatmapData.pageStats.affectedPages} <span style={{ color: '#94a3b8', fontSize: '14px', fontWeight: 500 }}>/ {heatmapData.pageStats.totalProjectPages}</span>
+                                    </div>
+                                </div>
+                                <div style={{
+                                    width: '1px',
+                                    height: '30px',
+                                    backgroundColor: '#e2e8f0'
+                                }} />
+                                <div style={{
+                                    fontSize: '24px',
+                                    fontWeight: 900,
+                                    color: parseFloat(heatmapData.pageStats.coveragePercent) > 50 ? '#dc2626' : '#6366f1'
+                                }}>
+                                    {heatmapData.pageStats.coveragePercent}%
+                                </div>
+                            </div>
+                        )}
+                    </div>
 
                     <div style={{
                         display: 'flex',
@@ -1158,6 +1447,152 @@ const HeatmapPage = ({ projects }) => {
                                             <span style={{
                                                 fontWeight: 800,
                                                 color: isSelected ? '#1e3a8a' : '#1e293b',
+                                                fontSize: '13px'
+                                            }}>
+                                                {item.percentage}%
+                                            </span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Статистика по Страницам (Перенесено в блок Code Coverage) */}
+            {!loading && !error && activeTab === 'code' && testCoverageData?.pages && testCoverageData.pages.length > 0 && (
+                <div style={{
+                    backgroundColor: '#fff',
+                    padding: '32px',
+                    borderRadius: '24px',
+                    border: '1px solid #e2e8f0',
+                    boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
+                    marginBottom: '40px'
+                }}>
+                    <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', marginBottom: '24px', letterSpacing: '-0.01em' }}>
+                        Статистика по Страницам
+                    </h2>
+
+                    <div style={{
+                        display: 'flex',
+                        gap: '40px',
+                        flexWrap: 'wrap',
+                        alignItems: 'center'
+                    }}>
+                        {/* Donut Chart */}
+                        <div style={{
+                            flex: '0 0 350px',
+                            width: '350px',
+                            maxWidth: '100%',
+                            position: 'relative'
+                        }}>
+                            <ResponsiveContainer width="100%" height={300}>
+                                <PieChart>
+                                    <Pie
+                                        data={pagesChartData}
+                                        cx="50%"
+                                        cy="50%"
+                                        labelLine={false}
+                                        outerRadius={110}
+                                        innerRadius={70}
+                                        fill="#8884d8"
+                                        dataKey="value"
+                                        stroke="none"
+                                    >
+                                        {pagesChartData.map((entry, index) => (
+                                            <Cell
+                                                key={`cell-page-code-${index}`}
+                                                fill={entry.color}
+                                            />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip content={<CustomTooltip />} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                            <div style={{
+                                position: 'absolute',
+                                top: '50%',
+                                left: '50%',
+                                transform: 'translate(-50%, -50%)',
+                                textAlign: 'center',
+                                pointerEvents: 'none'
+                            }}>
+                                <div style={{ fontSize: '28px', fontWeight: 900, color: '#0f172a' }}>
+                                    {testCoverageData.totalPagesDefects}
+                                </div>
+                                <div style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
+                                    Дефектов
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Легенда */}
+                        <div style={{
+                            flex: '1 1 auto',
+                            minWidth: '300px',
+                            maxHeight: '400px',
+                            overflowY: 'auto',
+                            padding: '4px'
+                        }}>
+                            <div style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+                                gap: '8px',
+                            }}>
+                                {testCoverageData.pages.map((item, index) => {
+                                    const color = index < COLORS.length ? COLORS[index] : '#cccccc';
+                                    return (
+                                        <div
+                                            key={item.pageName}
+                                            style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '12px',
+                                                padding: '12px 16px',
+                                                borderRadius: '16px',
+                                                backgroundColor: '#f8fafc',
+                                                border: '1px solid #e2e8f0',
+                                                transition: 'all 0.2s'
+                                            }}
+                                            onMouseOver={(e) => (e.currentTarget.style.borderColor = '#cbd5e1', e.currentTarget.style.backgroundColor = '#fff')}
+                                            onMouseOut={(e) => (e.currentTarget.style.borderColor = '#e2e8f0', e.currentTarget.style.backgroundColor = '#f8fafc')}
+                                        >
+                                            <div
+                                                style={{
+                                                    width: '12px',
+                                                    height: '12px',
+                                                    borderRadius: '50%',
+                                                    backgroundColor: color,
+                                                    flexShrink: 0,
+                                                }}
+                                            />
+                                            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                                                <span style={{
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    whiteSpace: 'nowrap',
+                                                    color: '#475569',
+                                                    fontWeight: 600,
+                                                    fontSize: '14px'
+                                                }}>
+                                                    {item.pageName}
+                                                </span>
+                                                {item.pageRoute && (
+                                                    <span style={{
+                                                        fontSize: '10px',
+                                                        color: '#94a3b8',
+                                                        textTransform: 'uppercase',
+                                                        fontWeight: 700,
+                                                        letterSpacing: '0.02em'
+                                                    }}>
+                                                        {item.pageRoute}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <span style={{
+                                                fontWeight: 800,
+                                                color: '#1e293b',
                                                 fontSize: '13px'
                                             }}>
                                                 {item.percentage}%
@@ -1450,146 +1885,7 @@ const HeatmapPage = ({ projects }) => {
                             </div>
                         )}
 
-                        {/* Статистика по Страницам */}
-                        {testCoverageData.pages && testCoverageData.pages.length > 0 && (
-                            <div style={{
-                                backgroundColor: '#fff',
-                                padding: '32px',
-                                borderRadius: '24px',
-                                border: '1px solid #e2e8f0',
-                                boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
-                                flex: '1 1 0',
-                                minWidth: '500px',
-                            }}>
-                                <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a', marginBottom: '24px' }}>
-                                    Статистика по Страницам
-                                </h2>
 
-                                <div style={{
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: '24px',
-                                    alignItems: 'center'
-                                }}>
-                                    {/* Donut Chart */}
-                                    <div style={{
-                                        width: '100%',
-                                        maxWidth: '350px',
-                                        position: 'relative'
-                                    }}>
-                                        <ResponsiveContainer width="100%" height={300}>
-                                            <PieChart>
-                                                <Pie
-                                                    data={pagesChartData}
-                                                    cx="50%"
-                                                    cy="50%"
-                                                    labelLine={false}
-                                                    outerRadius={110}
-                                                    innerRadius={70}
-                                                    fill="#8884d8"
-                                                    dataKey="value"
-                                                    stroke="none"
-                                                >
-                                                    {pagesChartData.map((entry, index) => (
-                                                        <Cell
-                                                            key={`cell-page-${index}`}
-                                                            fill={entry.color}
-                                                        />
-                                                    ))}
-                                                </Pie>
-                                                <Tooltip content={<CustomTooltip />} />
-                                            </PieChart>
-                                        </ResponsiveContainer>
-                                        <div style={{
-                                            position: 'absolute',
-                                            top: '50%',
-                                            left: '50%',
-                                            transform: 'translate(-50%, -50%)',
-                                            textAlign: 'center',
-                                            pointerEvents: 'none'
-                                        }}>
-                                            <div style={{ fontSize: '28px', fontWeight: 900, color: '#0f172a' }}>
-                                                {testCoverageData.totalPagesDefects}
-                                            </div>
-                                            <div style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
-                                                Дефектов
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Легенда */}
-                                    <div style={{
-                                        width: '100%',
-                                        maxHeight: '300px',
-                                        overflowY: 'auto',
-                                        padding: '4px'
-                                    }}>
-                                        <div style={{
-                                            display: 'grid',
-                                            gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-                                            gap: '8px',
-                                        }}>
-                                            {testCoverageData.pages.map((item, index) => {
-                                                const color = index < COLORS.length ? COLORS[index] : '#cccccc';
-                                                return (
-                                                    <div
-                                                        key={item.pageName}
-                                                        style={{
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            gap: '10px',
-                                                            padding: '10px 12px',
-                                                            borderRadius: '12px',
-                                                            backgroundColor: '#f8fafc',
-                                                            border: '1px solid #f1f5f9'
-                                                        }}
-                                                    >
-                                                        <div
-                                                            style={{
-                                                                width: '10px',
-                                                                height: '10px',
-                                                                borderRadius: '50%',
-                                                                backgroundColor: color,
-                                                                flexShrink: 0,
-                                                            }}
-                                                        />
-                                                        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                                                            <span style={{
-                                                                overflow: 'hidden',
-                                                                textOverflow: 'ellipsis',
-                                                                whiteSpace: 'nowrap',
-                                                                color: '#475569',
-                                                                fontWeight: 500,
-                                                                fontSize: '13px'
-                                                            }}>
-                                                                {item.pageName}
-                                                            </span>
-                                                            {item.pageRoute && (
-                                                                <span style={{
-                                                                    fontSize: '10px',
-                                                                    color: '#94a3b8',
-                                                                    textTransform: 'uppercase',
-                                                                    fontWeight: 600
-                                                                }}>
-                                                                    {item.pageRoute}
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                        <span style={{
-                                                            fontWeight: 700,
-                                                            color: '#1e293b',
-                                                            fontSize: '12px'
-                                                        }}>
-                                                            {item.percentage}%
-                                                        </span>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
                     </div>
                 </div>
             )}
@@ -1822,29 +2118,49 @@ const HeatmapPage = ({ projects }) => {
                                     <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: 0 }}>Маппинг компонентов</h2>
                                     <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>Свяжите компоненты из отчета с функциональными блоками Allure</div>
                                 </div>
-                                <button
-                                    onClick={() => navigate('/tia')}
-                                >
-                                    {/* Link Back Removed */}
-                                </button>
-                                <button
-                                    onClick={() => setShowMappingModal(false)}
-                                    style={{
-                                        background: 'none',
-                                        border: 'none',
-                                        fontSize: '24px',
-                                        color: '#94a3b8',
-                                        cursor: 'pointer',
-                                        padding: '4px',
-                                        marginLeft: '12px',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        transition: 'color 0.2s'
-                                    }}
-                                    onMouseOver={(e) => e.currentTarget.style.color = '#475569'}
-                                    onMouseOut={(e) => e.currentTarget.style.color = '#94a3b8'}
-                                >×</button>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    <button
+                                        onClick={() => setShowMappingModal(false)}
+                                        style={{
+                                            padding: '0 20px',
+                                            height: '40px',
+                                            backgroundColor: '#fff',
+                                            color: '#64748b',
+                                            border: '1px solid #e2e8f0',
+                                            borderRadius: '10px',
+                                            fontWeight: 600,
+                                            fontSize: '13px',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px'
+                                        }}
+                                        onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#f8fafc', e.currentTarget.style.borderColor = '#cbd5e1')}
+                                        onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#fff', e.currentTarget.style.borderColor = '#e2e8f0')}
+                                    >
+                                        <span>←</span> Назад к выбору файлов
+                                    </button>
+
+                                    <button
+                                        onClick={() => setShowMappingModal(false)}
+                                        style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            fontSize: '24px',
+                                            color: '#94a3b8',
+                                            cursor: 'pointer',
+                                            padding: '4px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            transition: 'color 0.2s'
+                                        }}
+                                        onMouseOver={(e) => e.currentTarget.style.color = '#475569'}
+                                        onMouseOut={(e) => e.currentTarget.style.color = '#94a3b8'}
+                                    >×</button>
+                                </div>
                             </div>
 
                             <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
@@ -1874,53 +2190,15 @@ const HeatmapPage = ({ projects }) => {
                                         />
                                     </div>
                                     <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
-                                        {Array.from(new Set(parsedHistoryItems.flatMap(item => item.affected_components)))
-                                            .sort()
-                                            .filter(name => name.toLowerCase().includes(mappingFilter.toLowerCase()))
-                                            .map(compName => {
-                                                const isSelected = selectedComponentForMapping === compName;
-                                                const hasMapping = componentMappings[compName] && componentMappings[compName].length > 0;
-
-                                                // Используем красный цвет для незамапленных, как в TIAPage
-                                                const statusColor = hasMapping ? '#22c55e' : '#dc3545';
-                                                const statusBorder = hasMapping ? '1px solid #22c55e' : '1px solid #dc3545';
-                                                const bgColor = isSelected ? '#eff6ff' : '#fff';
-
-                                                return (
-                                                    <div
-                                                        key={compName}
-                                                        onClick={() => setSelectedComponentForMapping(compName)}
-                                                        style={{
-                                                            padding: '12px',
-                                                            marginBottom: '8px',
-                                                            borderRadius: '8px',
-                                                            backgroundColor: bgColor,
-                                                            border: isSelected ? '1px solid #3b82f6' : '1px solid #e2e8f0',
-                                                            cursor: 'pointer',
-                                                            transition: 'all 0.2s',
-                                                            borderLeft: isSelected ? '4px solid #3b82f6' : '1px solid #e2e8f0',
-                                                            boxShadow: isSelected ? '0 4px 6px -1px rgba(59, 130, 246, 0.1)' : 'none'
-                                                        }}
-                                                    >
-                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-                                                            <div style={{ fontWeight: 600, fontSize: '13px', color: '#334155', wordBreak: 'break-all' }}>
-                                                                {compName}
-                                                            </div>
-                                                            <div style={{
-                                                                width: '8px',
-                                                                height: '8px',
-                                                                borderRadius: '50%',
-                                                                backgroundColor: statusColor,
-                                                                flexShrink: 0,
-                                                                marginLeft: '8px'
-                                                            }} />
-                                                        </div>
-                                                        <div style={{ fontSize: '11px', color: hasMapping ? '#22c55e' : '#dc3545', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                            {hasMapping ? '✓ Связан' : '⚠️ Не связан'}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
+                                        {renderComponentTree(
+                                            buildComponentTree(
+                                                Array.from(new Set(parsedHistoryItems.flatMap(item =>
+                                                    item.affected_components.map(c => typeof c === 'string' ? c : c.name)
+                                                )))
+                                                    .sort()
+                                                    .filter(name => name.toLowerCase().includes(mappingFilter.toLowerCase()))
+                                            )
+                                        )}
                                     </div>
                                 </div>
 
@@ -2001,25 +2279,7 @@ const HeatmapPage = ({ projects }) => {
                                 justifyContent: 'flex-end',
                                 gap: '12px'
                             }}>
-                                <button
-                                    onClick={() => setShowMappingModal(false)}
-                                    style={{
-                                        padding: '0 24px',
-                                        height: '44px',
-                                        backgroundColor: '#fff',
-                                        color: '#64748b',
-                                        border: '1px solid #e2e8f0',
-                                        borderRadius: '10px',
-                                        fontWeight: 600,
-                                        fontSize: '14px',
-                                        cursor: 'pointer',
-                                        transition: 'all 0.2s'
-                                    }}
-                                    onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#f8fafc', e.currentTarget.style.borderColor = '#cbd5e1')}
-                                    onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#fff', e.currentTarget.style.borderColor = '#e2e8f0')}
-                                >
-                                    Назад к выбору файлов
-                                </button>
+
                                 <button
                                     onClick={() => handleSaveBulkHistory(false)}
                                     style={{

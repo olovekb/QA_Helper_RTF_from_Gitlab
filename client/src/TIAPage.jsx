@@ -2810,23 +2810,48 @@ const TIAPage = ({ projects }) => {
                                                         </div>
                                                     )}
 
-                                                    {/* Где используется — скрывать если > 10 Pages */}
-                                                    {pages.length > 0 && pages.length <= 10 && (
+                                                    {/* Где используется — Show More toggle if > 10 Pages */}
+                                                    {pages.length > 0 && (
                                                         <div style={{ marginTop: '12px' }}>
                                                             <div style={{
                                                                 fontSize: '12px',
                                                                 color: '#6c757d',
                                                                 marginBottom: '8px',
-                                                                fontWeight: 600
+                                                                fontWeight: 600,
+                                                                display: 'flex',
+                                                                justifyContent: 'space-between',
+                                                                alignItems: 'center'
                                                             }}>
-                                                                Где используется ({pages.length}):
+                                                                <span>Где используется ({pages.length}):</span>
+                                                                {pages.length > 10 && (
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            setExpandedPageLists(prev => ({
+                                                                                ...prev,
+                                                                                [comp.id]: !prev[comp.id]
+                                                                            }));
+                                                                        }}
+                                                                        style={{
+                                                                            background: 'none',
+                                                                            border: 'none',
+                                                                            color: '#007bff',
+                                                                            fontSize: '11px',
+                                                                            cursor: 'pointer',
+                                                                            padding: 0,
+                                                                            fontWeight: 600
+                                                                        }}
+                                                                    >
+                                                                        {expandedPageLists[comp.id] ? 'Скрыть' : `Показать все (${pages.length})`}
+                                                                    </button>
+                                                                )}
                                                             </div>
                                                             <div style={{
                                                                 display: 'flex',
                                                                 flexWrap: 'wrap',
                                                                 gap: '6px'
                                                             }}>
-                                                                {pages.map((page, idx) => {
+                                                                {(expandedPageLists[comp.id] ? pages : pages.slice(0, 10)).map((page, idx) => {
                                                                     const pageName = page.page_meta?.name || 'Unknown';
                                                                     const pageRoute = page.page_meta?.route;
                                                                     const tooltipText = [
@@ -2869,19 +2894,19 @@ const TIAPage = ({ projects }) => {
                                                                         </div>
                                                                     );
                                                                 })}
+                                                                {!expandedPageLists[comp.id] && pages.length > 10 && (
+                                                                    <div style={{
+                                                                        padding: '4px 10px',
+                                                                        backgroundColor: '#f8f9fa',
+                                                                        borderRadius: '4px',
+                                                                        fontSize: '12px',
+                                                                        color: '#6c757d',
+                                                                        border: '1px dashed #dee2e6'
+                                                                    }}>
+                                                                        + еще {pages.length - 10}
+                                                                    </div>
+                                                                )}
                                                             </div>
-                                                        </div>
-                                                    )}
-                                                    {/* Для > 10 pages — показать только счетчик */}
-                                                    {pages.length > 10 && (
-                                                        <div style={{ marginTop: '12px' }}>
-                                                            <span style={{
-                                                                fontSize: '12px',
-                                                                color: '#6c757d',
-                                                                fontWeight: 600
-                                                            }}>
-                                                                Используется на {pages.length} страницах
-                                                            </span>
                                                         </div>
                                                     )}
 
