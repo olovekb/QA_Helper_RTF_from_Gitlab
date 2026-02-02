@@ -3016,7 +3016,7 @@ const TIAPage = ({ projects }) => {
                                     borderRadius: '6px',
                                     lineHeight: 1.4
                                 }}>
-                                    💡 <b>Подсказка:</b>
+                                    <span style={{ fontWeight: 600, color: '#475569' }}>Подсказка:</span>
                                     <ul style={{ margin: '4px 0 0 0', paddingLeft: '16px' }}>
                                         <li><b>Один клик</b> — выбрать/убрать текущий элемент</li>
                                         <li><b>Двойной клик</b> — выбрать/убрать элемент со всеми вложенными</li>
@@ -3686,6 +3686,7 @@ const TIAPage = ({ projects }) => {
             )}
 
 
+
             {/* Модальное окно подтверждения незамапленных компонентов */}
             {showUnmappedModal && (
                 <div style={{
@@ -3705,52 +3706,40 @@ const TIAPage = ({ projects }) => {
                     <div style={{
                         backgroundColor: '#fff',
                         borderRadius: '16px',
-                        width: '500px',
+                        width: '600px', // Increased width
                         maxWidth: '90vw',
                         boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
                         overflow: 'hidden',
                         animation: 'fadeIn 0.2s ease-out'
                     }}>
                         <div style={{
-                            padding: '20px 24px',
+                            padding: '24px 28px',
                             borderBottom: '1px solid #fee2e2',
-                            backgroundColor: '#fef2f2',
+                            backgroundColor: '#fff', // Cleaner background
                             display: 'flex',
                             alignItems: 'center',
-                            gap: '12px'
+                            gap: '16px'
                         }}>
-                            <div style={{
-                                width: '40px',
-                                height: '40px',
-                                borderRadius: '50%',
-                                backgroundColor: '#fee2e2',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: '20px',
-                                flexShrink: 0
-                            }}>
-                                ⚠️
-                            </div>
+                            {/* Emoji removed, using simple warning styling if needed, or just text */}
                             <div>
-                                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: '#991b1b' }}>
+                                <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: '#111827' }}>
                                     Незамапленные компоненты
                                 </h3>
-                                <div style={{ fontSize: '13px', color: '#b91c1c', marginTop: '2px' }}>
+                                <div style={{ fontSize: '14px', color: '#dc2626', marginTop: '4px', fontWeight: 500 }}>
                                     Требуется подтверждение действия
                                 </div>
                             </div>
                         </div>
 
-                        <div style={{ padding: '24px' }}>
-                            <p style={{ margin: '0 0 16px', fontSize: '14px', lineHeight: '1.5', color: '#374151' }}>
+                        <div style={{ padding: '28px' }}>
+                            <p style={{ margin: '0 0 20px', fontSize: '15px', lineHeight: '1.6', color: '#374151' }}>
                                 Вы не связали следующие компоненты ({unmappedComponentsList.length}) с функциональными блоками Allure.
                                 <br />
                                 <strong>Вы уверены, что хотите создать запуск без привязки этих компонентов?</strong>
                             </p>
 
                             <div style={{
-                                maxHeight: '200px',
+                                maxHeight: '300px', // Increased height
                                 overflowY: 'auto',
                                 border: '1px solid #e5e7eb',
                                 borderRadius: '8px',
@@ -3759,16 +3748,17 @@ const TIAPage = ({ projects }) => {
                                 <ul style={{ margin: 0, padding: '8px 0', listStyle: 'none' }}>
                                     {unmappedComponentsList.map((comp, idx) => (
                                         <li key={idx} style={{
-                                            padding: '6px 16px',
-                                            fontSize: '13px',
+                                            padding: '8px 20px', // Increased padding
+                                            fontSize: '14px',
                                             color: '#4b5563',
                                             borderBottom: idx < unmappedComponentsList.length - 1 ? '1px solid #f3f4f6' : 'none',
                                             display: 'flex',
                                             alignItems: 'center',
-                                            gap: '8px'
+                                            gap: '10px'
                                         }}>
-                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ef4444' }} />
-                                            {comp.serviceName || comp.name || 'Unnamed Component'}
+                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ef4444', flexShrink: 0 }} />
+                                            {/* Show name properly */}
+                                            {comp.name || comp.serviceName || 'Unnamed Component'}
                                         </li>
                                     ))}
                                 </ul>
@@ -3776,7 +3766,7 @@ const TIAPage = ({ projects }) => {
                         </div>
 
                         <div style={{
-                            padding: '16px 24px',
+                            padding: '20px 28px',
                             backgroundColor: '#f9fafb',
                             borderTop: '1px solid #e5e7eb',
                             display: 'flex',
@@ -3786,8 +3776,8 @@ const TIAPage = ({ projects }) => {
                             <button
                                 onClick={() => setShowUnmappedModal(false)}
                                 style={{
-                                    padding: '8px 16px',
-                                    borderRadius: '6px',
+                                    padding: '10px 20px',
+                                    borderRadius: '8px',
                                     border: '1px solid #d1d5db',
                                     backgroundColor: '#fff',
                                     color: '#374151',
@@ -3807,15 +3797,15 @@ const TIAPage = ({ projects }) => {
                                     handleOpenSplitModal(true);
                                 }}
                                 style={{
-                                    padding: '8px 16px',
-                                    borderRadius: '6px',
+                                    padding: '10px 20px',
+                                    borderRadius: '8px',
                                     border: 'none',
                                     backgroundColor: '#dc2626',
                                     color: '#fff',
                                     fontSize: '14px',
-                                    fontWeight: 500,
+                                    fontWeight: 600,
                                     cursor: 'pointer',
-                                    boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+                                    boxShadow: '0 4px 6px rgba(220, 38, 38, 0.2)',
                                     transition: 'all 0.2s'
                                 }}
                                 onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#b91c1c'}
