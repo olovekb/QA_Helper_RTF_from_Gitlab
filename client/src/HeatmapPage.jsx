@@ -164,7 +164,19 @@ const HeatmapPage = ({ projects }) => {
                 params: { projectId, skipCustomFieldIds: '-3' },
             });
             // /api/structure returns { folders: [...] }
-            setFolders(response.data.folders || []);
+            const folderList = response.data.folders || [];
+            setFolders(folderList);
+
+            // Populate folderNamesCache from structure
+            const newNamesCache = {};
+            const flatten = (items) => {
+                items.forEach(item => {
+                    newNamesCache[item.id.toString()] = item.customFieldName ? `${item.customFieldName} - ${item.name}` : item.name;
+                    if (item.children) flatten(item.children);
+                });
+            };
+            flatten(folderList);
+            setFolderNamesCache(prev => ({ ...prev, ...newNamesCache }));
         } catch (err) {
             console.error('Ошибка при загрузке функциональных блоков:', err);
             setFolders([]);
@@ -645,8 +657,13 @@ const HeatmapPage = ({ projects }) => {
                 }}
             >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                    <div style={{ fontWeight: 700, fontSize: '13px', color: '#1e293b', wordBreak: 'break-all', flex: 1 }}>
-                        {compName.split('/').pop()}
+                    <div style={{ fontWeight: 700, fontSize: '13px', color: '#1e293b', wordBreak: 'break-all', flex: 1, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <span>{compName.split('/').pop()}</span>
+                        {compName.includes('/') && (
+                            <span style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 500 }}>
+                                {compName.substring(0, compName.lastIndexOf('/'))}
+                            </span>
+                        )}
                     </div>
                     <div style={{
                         padding: '2px 8px',
@@ -670,8 +687,15 @@ const HeatmapPage = ({ projects }) => {
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <div style={{ fontSize: '10px', color: hasMapping ? '#22c55e' : '#dc3545', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
-                            {hasMapping ? '✓ Связан' : '⚠️ Не связан'}
+                        <div style={{ fontSize: '10px', color: hasMapping ? '#22c55e' : '#dc3545', display: 'flex', flexDirection: 'column', gap: '4px', fontWeight: 600 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                {hasMapping ? '✓ Связан' : '⚠️ Не связан'}
+                            </div>
+                            {hasMapping && (
+                                <div style={{ fontSize: '9px', color: '#64748b', fontWeight: 500, paddingLeft: '14px' }}>
+                                    {(componentMappings[compName] || []).map(id => folderNamesCache[id] || id).join(', ')}
+                                </div>
+                            )}
                         </div>
                         {totalPages > 0 && (
                             <button
@@ -703,7 +727,9 @@ const HeatmapPage = ({ projects }) => {
                             padding: '8px',
                             backgroundColor: '#f8fafc',
                             borderRadius: '6px',
-                            border: '1px solid #e2e8f0'
+                            border: '1px solid #e2e8f0',
+                            maxHeight: '150px',
+                            overflowY: 'auto'
                         }}>
                             {Array.from(new Set(details.flatMap(d => d.pages || []))).sort().map((pageName, pidx) => (
                                 <span
@@ -2372,16 +2398,20 @@ const HeatmapPage = ({ projects }) => {
                                     <ul style={{ margin: 0, padding: '8px 0', listStyle: 'none' }}>
                                         {unmappedList.map((comp, idx) => (
                                             <li key={idx} style={{
-                                                padding: '8px 20px',
+                                                padding: '10px 16px',
+                                                marginBottom: '6px',
                                                 fontSize: '14px',
-                                                color: '#4b5563',
-                                                borderBottom: idx < unmappedList.length - 1 ? '1px solid #f3f4f6' : 'none',
+                                                backgroundColor: '#334155',
+                                                color: '#f8fafc',
+                                                borderRadius: '10px',
                                                 display: 'flex',
                                                 alignItems: 'center',
-                                                gap: '10px'
+                                                gap: '12px',
+                                                border: '1px solid #475569',
+                                                boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
                                             }}>
-                                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ef4444', flexShrink: 0 }} />
-                                                {comp.name}
+                                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#ef4444', flexShrink: 0, boxShadow: '0 0 8px rgba(239, 68, 68, 0.4)' }} />
+                                                <span style={{ fontWeight: 600 }}>{comp.name}</span>
                                             </li>
                                         ))}
                                     </ul>

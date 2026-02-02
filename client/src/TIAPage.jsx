@@ -2303,7 +2303,7 @@ const TIAPage = ({ projects }) => {
                         disabled={isCreateButtonDisabled()}
                         style={styles.submitButton}
                     >
-                        {isLoading ? <Loader style={{ display: 'inline-block', width: '20px', height: '20px', verticalAlign: 'middle' }} /> : 'Создать тест-план'}
+                        {isLoading ? <Loader style={{ display: 'inline-block', width: '20px', height: '20px', verticalAlign: 'middle' }} /> : 'Создать запуски тестирования'}
                     </button>
                 )}
             </div>

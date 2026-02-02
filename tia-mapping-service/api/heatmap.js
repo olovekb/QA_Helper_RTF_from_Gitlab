@@ -441,23 +441,16 @@ export async function getTestCoverageData(req, res) {
         // Если хотим "Test Coverage" pie chart, то сумма должна быть 100%. Значит дефект должен принадлежать ОДНОЙ категории.
         // Для роутов мы делали MIN(page_route). Сделаем так же для страниц, чтобы сумма сходилась.
 
-        const defectToPageSubquery = defectPageQuery
-            .select('cd.id as defect_id',
-                databasePool.raw('MIN(pcd.page_name) as primary_page_name'),
-                databasePool.raw('MIN(pcd.page_route) as primary_page_route') // Берем роут тоже для красоты
-            )
-            .groupBy('cd.id');
-
-        const pagesResults = await databasePool
-            .from(defectToPageSubquery.as('defect_pages'))
+        const pagesResults = await defectPageQuery
             .select(
-                'primary_page_name as page_name',
-                'primary_page_route as page_route',
-                databasePool.raw('COUNT(defect_id) as total_defects')
+                'pcd.page_name as page_name',
+                'pcd.page_route as page_route'
             )
-            .groupBy('primary_page_name', 'primary_page_route')
+            .count('cd.id as total_defects')
+            .groupBy('pcd.page_name', 'pcd.page_route')
             .orderBy('total_defects', 'desc');
 
+        // Считаем общее количество дефектов по страницам
         let totalPagesDefects = 0;
         const pagesMap = new Map();
 
@@ -467,7 +460,7 @@ export async function getTestCoverageData(req, res) {
 
             pagesMap.set(row.page_name, {
                 pageName: row.page_name,
-                pageRoute: row.page_route, // Добавляем роут
+                pageRoute: row.page_route,
                 defectCount: defectCount,
             });
         });
