@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
 import Select from 'react-select';
+import { useNavigate } from 'react-router-dom'; // Added useNavigate
 import config from './config.json';
 import styles from './styles';
 
@@ -14,6 +15,7 @@ const COLORS = [
 ];
 
 const HeatmapPage = ({ projects }) => {
+    const navigate = useNavigate(); // Hook for navigation
     const [projectId, setProjectId] = useState('');
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
@@ -702,6 +704,29 @@ const HeatmapPage = ({ projects }) => {
         });
     }
 
+    // Подготовка данных для Страниц (Pages)
+    const pagesChartData = testCoverageData?.pages?.slice(0, 30).map((item, index) => ({
+        name: item.pageName,
+        value: item.defectCount,
+        percentage: parseFloat(item.percentage),
+        color: COLORS[index % COLORS.length],
+    })) || [];
+
+    const otherPages = testCoverageData?.pages?.slice(30) || [];
+    const otherPagesCount = otherPages.reduce((sum, item) => sum + item.defectCount, 0);
+    const otherPagesPercentage = testCoverageData?.totalPagesDefects > 0
+        ? ((otherPagesCount / testCoverageData.totalPagesDefects) * 100).toFixed(1)
+        : '0.0';
+
+    if (otherPagesCount > 0) {
+        pagesChartData.push({
+            name: 'Прочие',
+            value: otherPagesCount,
+            percentage: parseFloat(otherPagesPercentage),
+            color: '#cccccc',
+        });
+    }
+
     return (
         <div style={{
             padding: '40px',
@@ -1231,17 +1256,28 @@ const HeatmapPage = ({ projects }) => {
                                                             flexShrink: 0,
                                                         }}
                                                     />
-                                                    <span style={{
-                                                        flex: 1,
-                                                        overflow: 'hidden',
-                                                        textOverflow: 'ellipsis',
-                                                        whiteSpace: 'nowrap',
-                                                        color: '#475569',
-                                                        fontWeight: 500,
-                                                        fontSize: '13px'
-                                                    }}>
-                                                        {item.functionalBlockName}
-                                                    </span>
+                                                    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                                                        <span style={{
+                                                            overflow: 'hidden',
+                                                            textOverflow: 'ellipsis',
+                                                            whiteSpace: 'nowrap',
+                                                            color: '#475569',
+                                                            fontWeight: 500,
+                                                            fontSize: '13px'
+                                                        }}>
+                                                            {item.functionalBlockName}
+                                                        </span>
+                                                        {item.functionalBlockCustomFieldName && (
+                                                            <span style={{
+                                                                fontSize: '10px',
+                                                                color: '#94a3b8',
+                                                                textTransform: 'uppercase',
+                                                                fontWeight: 600
+                                                            }}>
+                                                                {item.functionalBlockCustomFieldName}
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                     <span style={{
                                                         fontWeight: 700,
                                                         color: '#1e293b',
@@ -1386,9 +1422,151 @@ const HeatmapPage = ({ projects }) => {
                                 </div>
                             </div>
                         )}
+
+                        {/* Статистика по Страницам */}
+                        {testCoverageData.pages && testCoverageData.pages.length > 0 && (
+                            <div style={{
+                                backgroundColor: '#fff',
+                                padding: '32px',
+                                borderRadius: '24px',
+                                border: '1px solid #e2e8f0',
+                                boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
+                                flex: '1 1 0',
+                                minWidth: '500px',
+                            }}>
+                                <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a', marginBottom: '24px' }}>
+                                    Статистика по Страницам
+                                </h2>
+
+                                <div style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '24px',
+                                    alignItems: 'center'
+                                }}>
+                                    {/* Donut Chart */}
+                                    <div style={{
+                                        width: '100%',
+                                        maxWidth: '350px',
+                                        position: 'relative'
+                                    }}>
+                                        <ResponsiveContainer width="100%" height={300}>
+                                            <PieChart>
+                                                <Pie
+                                                    data={pagesChartData}
+                                                    cx="50%"
+                                                    cy="50%"
+                                                    labelLine={false}
+                                                    outerRadius={110}
+                                                    innerRadius={70}
+                                                    fill="#8884d8"
+                                                    dataKey="value"
+                                                    stroke="none"
+                                                >
+                                                    {pagesChartData.map((entry, index) => (
+                                                        <Cell
+                                                            key={`cell-page-${index}`}
+                                                            fill={entry.color}
+                                                        />
+                                                    ))}
+                                                </Pie>
+                                                <Tooltip content={<CustomTooltip />} />
+                                            </PieChart>
+                                        </ResponsiveContainer>
+                                        <div style={{
+                                            position: 'absolute',
+                                            top: '50%',
+                                            left: '50%',
+                                            transform: 'translate(-50%, -50%)',
+                                            textAlign: 'center',
+                                            pointerEvents: 'none'
+                                        }}>
+                                            <div style={{ fontSize: '28px', fontWeight: 900, color: '#0f172a' }}>
+                                                {testCoverageData.totalPagesDefects}
+                                            </div>
+                                            <div style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
+                                                Дефектов
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Легенда */}
+                                    <div style={{
+                                        width: '100%',
+                                        maxHeight: '300px',
+                                        overflowY: 'auto',
+                                        padding: '4px'
+                                    }}>
+                                        <div style={{
+                                            display: 'grid',
+                                            gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                                            gap: '8px',
+                                        }}>
+                                            {testCoverageData.pages.map((item, index) => {
+                                                const color = index < COLORS.length ? COLORS[index] : '#cccccc';
+                                                return (
+                                                    <div
+                                                        key={item.pageName}
+                                                        style={{
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '10px',
+                                                            padding: '10px 12px',
+                                                            borderRadius: '12px',
+                                                            backgroundColor: '#f8fafc',
+                                                            border: '1px solid #f1f5f9'
+                                                        }}
+                                                    >
+                                                        <div
+                                                            style={{
+                                                                width: '10px',
+                                                                height: '10px',
+                                                                borderRadius: '50%',
+                                                                backgroundColor: color,
+                                                                flexShrink: 0,
+                                                            }}
+                                                        />
+                                                        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                                                            <span style={{
+                                                                overflow: 'hidden',
+                                                                textOverflow: 'ellipsis',
+                                                                whiteSpace: 'nowrap',
+                                                                color: '#475569',
+                                                                fontWeight: 500,
+                                                                fontSize: '13px'
+                                                            }}>
+                                                                {item.pageName}
+                                                            </span>
+                                                            {item.pageRoute && (
+                                                                <span style={{
+                                                                    fontSize: '10px',
+                                                                    color: '#94a3b8',
+                                                                    textTransform: 'uppercase',
+                                                                    fontWeight: 600
+                                                                }}>
+                                                                    {item.pageRoute}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <span style={{
+                                                            fontWeight: 700,
+                                                            color: '#1e293b',
+                                                            fontSize: '12px'
+                                                        }}>
+                                                            {item.percentage}%
+                                                        </span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
+
             {/* Модальное окно массового импорта */}
             {showImportModal && (
                 <div style={{
@@ -1573,399 +1751,432 @@ const HeatmapPage = ({ projects }) => {
                         </div>
                     </div>
                 </div>
-            )}
+            )
+            }
 
             {/* Модальное окно маппинга для импорта */}
-            {showMappingModal && (
-                <div style={{
-                    position: 'fixed',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    backgroundColor: 'rgba(15, 23, 42, 0.4)',
-                    backdropFilter: 'blur(8px)',
-                    display: 'flex',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    zIndex: 2000,
-                    animation: 'fadeIn 0.2s ease-out',
-                }}>
+            {
+                showMappingModal && (
                     <div style={{
-                        backgroundColor: '#fff',
-                        width: '1200px',
-                        maxWidth: '95vw',
-                        height: '90vh',
-                        borderRadius: '24px',
-                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-                        overflow: 'hidden',
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(15, 23, 42, 0.4)',
+                        backdropFilter: 'blur(8px)',
                         display: 'flex',
-                        flexDirection: 'column',
-                        fontFamily: '"Inter", sans-serif'
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        zIndex: 2000,
+                        animation: 'fadeIn 0.2s ease-out',
                     }}>
                         <div style={{
-                            padding: '24px 32px',
-                            borderBottom: '1px solid #e2e8f0',
+                            backgroundColor: '#fff',
+                            width: '1200px',
+                            maxWidth: '95vw',
+                            height: '90vh',
+                            borderRadius: '24px',
+                            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                            overflow: 'hidden',
                             display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            background: '#fcfdfe'
+                            flexDirection: 'column',
+                            fontFamily: '"Inter", sans-serif'
                         }}>
-                            <div>
-                                <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: 0 }}>Маппинг компонентов</h2>
-                                <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>Свяжите компоненты из отчета с функциональными блоками Allure</div>
-                            </div>
-                            <button
-                                onClick={() => setShowMappingModal(false)}
-                                style={{
-                                    background: 'none',
-                                    border: 'none',
-                                    fontSize: '24px',
-                                    color: '#94a3b8',
-                                    cursor: 'pointer',
-                                    padding: '4px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    transition: 'color 0.2s'
-                                }}
-                                onMouseOver={(e) => e.currentTarget.style.color = '#475569'}
-                                onMouseOut={(e) => e.currentTarget.style.color = '#94a3b8'}
-                            >©</button>
-                        </div>
-
-                        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-                            {/* Левая панель: Список компонентов */}
                             <div style={{
-                                width: '350px',
-                                borderRight: '1px solid #e2e8f0',
+                                padding: '24px 32px',
+                                borderBottom: '1px solid #e2e8f0',
                                 display: 'flex',
-                                flexDirection: 'column',
-                                backgroundColor: '#f8fafc'
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                background: '#fcfdfe'
                             }}>
-                                <div style={{ padding: '16px', borderBottom: '1px solid #e2e8f0' }}>
-                                    <input
-                                        type="text"
-                                        placeholder="Поиск компонента..."
-                                        value={mappingFilter}
-                                        onChange={(e) => setMappingFilter(e.target.value)}
-                                        style={{
-                                            width: '100%',
-                                            padding: '10px 12px',
-                                            borderRadius: '8px',
-                                            border: '1px solid #cbd5e1',
-                                            fontSize: '14px',
-                                            outline: 'none',
-                                            backgroundColor: '#fff'
-                                        }}
-                                    />
+                                <div>
+                                    <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: 0 }}>Маппинг компонентов</h2>
+                                    <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>Свяжите компоненты из отчета с функциональными блоками Allure</div>
                                 </div>
-                                <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
-                                    {Array.from(new Set(parsedHistoryItems.flatMap(item => item.affected_components)))
-                                        .sort()
-                                        .filter(name => name.toLowerCase().includes(mappingFilter.toLowerCase()))
-                                        .map(compName => {
-                                            const isSelected = selectedComponentForMapping === compName;
-                                            const hasMapping = componentMappings[compName] && componentMappings[compName].length > 0;
-
-                                            // Используем красный цвет для незамапленных, как в TIAPage
-                                            const statusColor = hasMapping ? '#22c55e' : '#dc3545';
-                                            const statusBorder = hasMapping ? '1px solid #22c55e' : '1px solid #dc3545';
-                                            const bgColor = isSelected ? '#eff6ff' : '#fff';
-
-                                            return (
-                                                <div
-                                                    key={compName}
-                                                    onClick={() => setSelectedComponentForMapping(compName)}
-                                                    style={{
-                                                        padding: '12px',
-                                                        marginBottom: '8px',
-                                                        borderRadius: '8px',
-                                                        backgroundColor: bgColor,
-                                                        border: isSelected ? '1px solid #3b82f6' : '1px solid #e2e8f0',
-                                                        cursor: 'pointer',
-                                                        transition: 'all 0.2s',
-                                                        borderLeft: isSelected ? '4px solid #3b82f6' : '1px solid #e2e8f0',
-                                                        boxShadow: isSelected ? '0 4px 6px -1px rgba(59, 130, 246, 0.1)' : 'none'
-                                                    }}
-                                                >
-                                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-                                                        <div style={{ fontWeight: 600, fontSize: '13px', color: '#334155', wordBreak: 'break-all' }}>
-                                                            {compName}
-                                                        </div>
-                                                        <div style={{
-                                                            width: '8px',
-                                                            height: '8px',
-                                                            borderRadius: '50%',
-                                                            backgroundColor: statusColor,
-                                                            flexShrink: 0,
-                                                            marginLeft: '8px'
-                                                        }} />
-                                                    </div>
-                                                    <div style={{ fontSize: '11px', color: hasMapping ? '#22c55e' : '#dc3545', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                        {hasMapping ? '✓ Связан' : '⚠️ Не связан'}
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                </div>
+                                <button
+                                    onClick={() => navigate('/tia')} // Redirect to TIA
+                                    style={{
+                                        background: 'none',
+                                        border: '1px solid #cbd5e1',
+                                        borderRadius: '8px',
+                                        padding: '6px 12px',
+                                        fontSize: '13px',
+                                        color: '#64748b',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
+                                        transition: 'all 0.2s',
+                                        fontWeight: 500
+                                    }}
+                                    onMouseOver={(e) => {
+                                        e.currentTarget.style.backgroundColor = '#f1f5f9';
+                                        e.currentTarget.style.color = '#334155';
+                                    }}
+                                    onMouseOut={(e) => {
+                                        e.currentTarget.style.backgroundColor = 'transparent';
+                                        e.currentTarget.style.color = '#64748b';
+                                    }}
+                                >
+                                    ← Назад к созданию
+                                </button>
+                                <button
+                                    onClick={() => setShowMappingModal(false)}
+                                    style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        fontSize: '24px',
+                                        color: '#94a3b8',
+                                        cursor: 'pointer',
+                                        padding: '4px',
+                                        marginLeft: '12px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        transition: 'color 0.2s'
+                                    }}
+                                    onMouseOver={(e) => e.currentTarget.style.color = '#475569'}
+                                    onMouseOut={(e) => e.currentTarget.style.color = '#94a3b8'}
+                                >×</button>
                             </div>
 
-                            {/* Правая панель: Дерево маппинга */}
-                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: '#fff' }}>
-                                <div style={{ padding: '16px', borderBottom: '1px solid #e2e8f0', backgroundColor: '#fff' }}>
-                                    <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                        <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: '#1e293b' }}>
-                                            {selectedComponentForMapping ? `Маппинг для: ${selectedComponentForMapping}` : 'Выберите компонент слева'}
-                                        </h3>
-                                        {selectedComponentForMapping && (
-                                            <div style={{ fontSize: '13px', color: '#64748b' }}>
-                                                {componentMappings[selectedComponentForMapping]?.length || 0} привязано
+                            <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+                                {/* Левая панель: Список компонентов */}
+                                <div style={{
+                                    width: '350px',
+                                    borderRight: '1px solid #e2e8f0',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    backgroundColor: '#f8fafc'
+                                }}>
+                                    <div style={{ padding: '16px', borderBottom: '1px solid #e2e8f0' }}>
+                                        <input
+                                            type="text"
+                                            placeholder="Поиск компонента..."
+                                            value={mappingFilter}
+                                            onChange={(e) => setMappingFilter(e.target.value)}
+                                            style={{
+                                                width: '100%',
+                                                padding: '10px 12px',
+                                                borderRadius: '8px',
+                                                border: '1px solid #cbd5e1',
+                                                fontSize: '14px',
+                                                outline: 'none',
+                                                backgroundColor: '#fff'
+                                            }}
+                                        />
+                                    </div>
+                                    <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+                                        {Array.from(new Set(parsedHistoryItems.flatMap(item => item.affected_components)))
+                                            .sort()
+                                            .filter(name => name.toLowerCase().includes(mappingFilter.toLowerCase()))
+                                            .map(compName => {
+                                                const isSelected = selectedComponentForMapping === compName;
+                                                const hasMapping = componentMappings[compName] && componentMappings[compName].length > 0;
+
+                                                // Используем красный цвет для незамапленных, как в TIAPage
+                                                const statusColor = hasMapping ? '#22c55e' : '#dc3545';
+                                                const statusBorder = hasMapping ? '1px solid #22c55e' : '1px solid #dc3545';
+                                                const bgColor = isSelected ? '#eff6ff' : '#fff';
+
+                                                return (
+                                                    <div
+                                                        key={compName}
+                                                        onClick={() => setSelectedComponentForMapping(compName)}
+                                                        style={{
+                                                            padding: '12px',
+                                                            marginBottom: '8px',
+                                                            borderRadius: '8px',
+                                                            backgroundColor: bgColor,
+                                                            border: isSelected ? '1px solid #3b82f6' : '1px solid #e2e8f0',
+                                                            cursor: 'pointer',
+                                                            transition: 'all 0.2s',
+                                                            borderLeft: isSelected ? '4px solid #3b82f6' : '1px solid #e2e8f0',
+                                                            boxShadow: isSelected ? '0 4px 6px -1px rgba(59, 130, 246, 0.1)' : 'none'
+                                                        }}
+                                                    >
+                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                                                            <div style={{ fontWeight: 600, fontSize: '13px', color: '#334155', wordBreak: 'break-all' }}>
+                                                                {compName}
+                                                            </div>
+                                                            <div style={{
+                                                                width: '8px',
+                                                                height: '8px',
+                                                                borderRadius: '50%',
+                                                                backgroundColor: statusColor,
+                                                                flexShrink: 0,
+                                                                marginLeft: '8px'
+                                                            }} />
+                                                        </div>
+                                                        <div style={{ fontSize: '11px', color: hasMapping ? '#22c55e' : '#dc3545', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                            {hasMapping ? '✓ Связан' : '⚠️ Не связан'}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                    </div>
+                                </div>
+
+                                {/* Правая панель: Дерево маппинга */}
+                                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: '#fff' }}>
+                                    <div style={{ padding: '16px', borderBottom: '1px solid #e2e8f0', backgroundColor: '#fff' }}>
+                                        <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: '#1e293b' }}>
+                                                {selectedComponentForMapping ? `Маппинг для: ${selectedComponentForMapping}` : 'Выберите компонент слева'}
+                                            </h3>
+                                            {selectedComponentForMapping && (
+                                                <div style={{ fontSize: '13px', color: '#64748b' }}>
+                                                    {componentMappings[selectedComponentForMapping]?.length || 0} привязано
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div style={{
+                                            marginBottom: '10px',
+                                            fontSize: '12px',
+                                            color: '#64748b',
+                                            backgroundColor: '#f1f5f9',
+                                            padding: '8px 12px',
+                                            borderRadius: '6px',
+                                            lineHeight: 1.4
+                                        }}>
+                                            <span style={{ fontWeight: 600, color: '#475569' }}>Подсказка:</span>
+                                            <ul style={{ margin: '4px 0 0 0', paddingLeft: '16px' }}>
+                                                <li><b>Один клик</b> — выбрать/убрать текущий элемент</li>
+                                                <li><b>Двойной клик</b> — выбрать/убрать элемент со всеми вложенными</li>
+                                            </ul>
+                                        </div>
+                                        <input
+                                            type="text"
+                                            placeholder="Поиск по дереву фич..."
+                                            value={folderSearchTerm}
+                                            onChange={(e) => setFolderSearchTerm(e.target.value)}
+                                            disabled={!selectedComponentForMapping}
+                                            style={{
+                                                width: '100%',
+                                                padding: '10px 12px',
+                                                borderRadius: '8px',
+                                                border: '1px solid #cbd5e1',
+                                                fontSize: '14px',
+                                                outline: 'none',
+                                                backgroundColor: !selectedComponentForMapping ? '#f1f5f9' : '#fff'
+                                            }}
+                                        />
+                                    </div>
+                                    <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+                                        {selectedComponentForMapping ? (
+                                            renderFolderTreeForMapping(
+                                                filterFolders(filterFoldersForProject(folders), folderSearchTerm),
+                                                selectedComponentForMapping
+                                            )
+                                        ) : (
+                                            <div style={{
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                height: '100%',
+                                                color: '#94a3b8'
+                                            }}>
+                                                <div style={{ fontSize: '48px', marginBottom: '16px' }}>👈</div>
+                                                <div style={{ fontSize: '16px' }}>Выберите компонент из списка слева,</div>
+                                                <div style={{ fontSize: '14px' }}>чтобы настроить его связи с функциональными блоками</div>
                                             </div>
                                         )}
                                     </div>
-                                    <div style={{
-                                        marginBottom: '10px',
-                                        fontSize: '12px',
-                                        color: '#64748b',
-                                        backgroundColor: '#f1f5f9',
-                                        padding: '8px 12px',
-                                        borderRadius: '6px',
-                                        lineHeight: 1.4
-                                    }}>
-                                        <span style={{ fontWeight: 600, color: '#475569' }}>Подсказка:</span>
-                                        <ul style={{ margin: '4px 0 0 0', paddingLeft: '16px' }}>
-                                            <li><b>Один клик</b> — выбрать/убрать текущий элемент</li>
-                                            <li><b>Двойной клик</b> — выбрать/убрать элемент со всеми вложенными</li>
-                                        </ul>
-                                    </div>
-                                    <input
-                                        type="text"
-                                        placeholder="Поиск по дереву фич..."
-                                        value={folderSearchTerm}
-                                        onChange={(e) => setFolderSearchTerm(e.target.value)}
-                                        disabled={!selectedComponentForMapping}
-                                        style={{
-                                            width: '100%',
-                                            padding: '10px 12px',
-                                            borderRadius: '8px',
-                                            border: '1px solid #cbd5e1',
-                                            fontSize: '14px',
-                                            outline: 'none',
-                                            backgroundColor: !selectedComponentForMapping ? '#f1f5f9' : '#fff'
-                                        }}
-                                    />
-                                </div>
-                                <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
-                                    {selectedComponentForMapping ? (
-                                        renderFolderTreeForMapping(
-                                            filterFolders(filterFoldersForProject(folders), folderSearchTerm),
-                                            selectedComponentForMapping
-                                        )
-                                    ) : (
-                                        <div style={{
-                                            display: 'flex',
-                                            flexDirection: 'column',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            height: '100%',
-                                            color: '#94a3b8'
-                                        }}>
-                                            <div style={{ fontSize: '48px', marginBottom: '16px' }}>👈</div>
-                                            <div style={{ fontSize: '16px' }}>Выберите компонент из списка слева,</div>
-                                            <div style={{ fontSize: '14px' }}>чтобы настроить его связи с функциональными блоками</div>
-                                        </div>
-                                    )}
                                 </div>
                             </div>
-                        </div>
-
-                        <div style={{
-                            padding: '16px 32px',
-                            backgroundColor: '#fff',
-                            borderTop: '1px solid #e2e8f0',
-                            display: 'flex',
-                            justifyContent: 'flex-end',
-                            gap: '12px'
-                        }}>
-                            <button
-                                onClick={() => setShowMappingModal(false)}
-                                style={{
-                                    padding: '0 24px',
-                                    height: '44px',
-                                    backgroundColor: '#fff',
-                                    color: '#64748b',
-                                    border: '1px solid #e2e8f0',
-                                    borderRadius: '10px',
-                                    fontWeight: 600,
-                                    fontSize: '14px',
-                                    cursor: 'pointer',
-                                    transition: 'all 0.2s'
-                                }}
-                                onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#f8fafc', e.currentTarget.style.borderColor = '#cbd5e1')}
-                                onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#fff', e.currentTarget.style.borderColor = '#e2e8f0')}
-                            >
-                                Назад к выбору файлов
-                            </button>
-                            <button
-                                onClick={() => handleSaveBulkHistory(false)}
-                                style={{
-                                    padding: '0 24px',
-                                    height: '44px',
-                                    backgroundColor: '#10b981',
-                                    color: '#fff',
-                                    border: 'none',
-                                    borderRadius: '10px',
-                                    fontWeight: 600,
-                                    fontSize: '14px',
-                                    cursor: 'pointer',
-                                    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.2)',
-                                    transition: 'all 0.2s',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '8px'
-                                }}
-                                onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#059669', e.currentTarget.style.transform = 'translateY(-1px)')}
-                                onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#10b981', e.currentTarget.style.transform = 'translateY(0)')}
-                            >
-                                <span>Завершить импорт и маппинг</span>
-                                {loading && <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Модальное окно подтверждения незамапленных компонентов */}
-            {showUnmappedConfirmation && (
-                <div style={{
-                    position: 'fixed',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                    backdropFilter: 'blur(4px)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 2100, // Выше чем mapping modal
-                    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-                }}>
-                    <div style={{
-                        backgroundColor: '#fff',
-                        borderRadius: '16px',
-                        width: '600px', // Increased width
-                        maxWidth: '90vw',
-                        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
-                        overflow: 'hidden',
-                        animation: 'fadeIn 0.2s ease-out'
-                    }}>
-                        <div style={{
-                            padding: '24px 28px',
-                            borderBottom: '1px solid #fee2e2',
-                            backgroundColor: '#fff',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '16px'
-                        }}>
-                            {/* Emoji removed */}
-                            <div>
-                                <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: '#111827' }}>
-                                    Незамапленные компоненты
-                                </h3>
-                                <div style={{ fontSize: '14px', color: '#dc2626', marginTop: '4px', fontWeight: 500 }}>
-                                    Требуется подтверждение действия
-                                </div>
-                            </div>
-                        </div>
-
-                        <div style={{ padding: '28px' }}>
-                            <p style={{ margin: '0 0 20px', fontSize: '15px', lineHeight: '1.6', color: '#374151' }}>
-                                Вы не связали следующие компоненты ({unmappedList.length}) с функциональными блоками Allure.
-                                <br />
-                                <strong>Вы уверены, что хотите сохранить историю без привязки этих компонентов?</strong>
-                            </p>
 
                             <div style={{
-                                maxHeight: '300px',
-                                overflowY: 'auto',
-                                border: '1px solid #e5e7eb',
-                                borderRadius: '8px',
-                                backgroundColor: '#f9fafb'
+                                padding: '16px 32px',
+                                backgroundColor: '#fff',
+                                borderTop: '1px solid #e2e8f0',
+                                display: 'flex',
+                                justifyContent: 'flex-end',
+                                gap: '12px'
                             }}>
-                                <ul style={{ margin: 0, padding: '8px 0', listStyle: 'none' }}>
-                                    {unmappedList.map((comp, idx) => (
-                                        <li key={idx} style={{
-                                            padding: '8px 20px',
-                                            fontSize: '14px',
-                                            color: '#4b5563',
-                                            borderBottom: idx < unmappedList.length - 1 ? '1px solid #f3f4f6' : 'none',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '10px'
-                                        }}>
-                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ef4444', flexShrink: 0 }} />
-                                            {comp.name}
-                                        </li>
-                                    ))}
-                                </ul>
+                                <button
+                                    onClick={() => setShowMappingModal(false)}
+                                    style={{
+                                        padding: '0 24px',
+                                        height: '44px',
+                                        backgroundColor: '#fff',
+                                        color: '#64748b',
+                                        border: '1px solid #e2e8f0',
+                                        borderRadius: '10px',
+                                        fontWeight: 600,
+                                        fontSize: '14px',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s'
+                                    }}
+                                    onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#f8fafc', e.currentTarget.style.borderColor = '#cbd5e1')}
+                                    onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#fff', e.currentTarget.style.borderColor = '#e2e8f0')}
+                                >
+                                    Назад к выбору файлов
+                                </button>
+                                <button
+                                    onClick={() => handleSaveBulkHistory(false)}
+                                    style={{
+                                        padding: '0 24px',
+                                        height: '44px',
+                                        backgroundColor: '#10b981',
+                                        color: '#fff',
+                                        border: 'none',
+                                        borderRadius: '10px',
+                                        fontWeight: 600,
+                                        fontSize: '14px',
+                                        cursor: 'pointer',
+                                        boxShadow: '0 4px 12px rgba(16, 185, 129, 0.2)',
+                                        transition: 'all 0.2s',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '8px'
+                                    }}
+                                    onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#059669', e.currentTarget.style.transform = 'translateY(-1px)')}
+                                    onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#10b981', e.currentTarget.style.transform = 'translateY(0)')}
+                                >
+                                    <span>Завершить импорт и маппинг</span>
+                                    {loading && <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />}
+                                </button>
                             </div>
                         </div>
+                    </div>
+                )
+            }
 
+            {/* Модальное окно подтверждения незамапленных компонентов */}
+            {
+                showUnmappedConfirmation && (
+                    <div style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                        backdropFilter: 'blur(4px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 2100, // Выше чем mapping modal
+                        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+                    }}>
                         <div style={{
-                            padding: '20px 28px',
-                            backgroundColor: '#f9fafb',
-                            borderTop: '1px solid #e5e7eb',
-                            display: 'flex',
-                            justifyContent: 'flex-end',
-                            gap: '12px'
+                            backgroundColor: '#fff',
+                            borderRadius: '16px',
+                            width: '600px', // Increased width
+                            maxWidth: '90vw',
+                            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+                            overflow: 'hidden',
+                            animation: 'fadeIn 0.2s ease-out'
                         }}>
-                            <button
-                                onClick={() => setShowUnmappedConfirmation(false)}
-                                style={{
-                                    padding: '10px 20px',
+                            <div style={{
+                                padding: '24px 28px',
+                                borderBottom: '1px solid #fee2e2',
+                                backgroundColor: '#fff',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '16px'
+                            }}>
+                                {/* Emoji removed */}
+                                <div>
+                                    <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: '#111827' }}>
+                                        Незамапленные компоненты
+                                    </h3>
+                                    <div style={{ fontSize: '14px', color: '#dc2626', marginTop: '4px', fontWeight: 500 }}>
+                                        Требуется подтверждение действия
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={{ padding: '28px' }}>
+                                <p style={{ margin: '0 0 20px', fontSize: '15px', lineHeight: '1.6', color: '#374151' }}>
+                                    Вы не связали следующие компоненты ({unmappedList.length}) с функциональными блоками Allure.
+                                    <br />
+                                    <strong>Вы уверены, что хотите сохранить историю без привязки этих компонентов?</strong>
+                                </p>
+
+                                <div style={{
+                                    maxHeight: '300px',
+                                    overflowY: 'auto',
+                                    border: '1px solid #e5e7eb',
                                     borderRadius: '8px',
-                                    border: '1px solid #d1d5db',
-                                    backgroundColor: '#fff',
-                                    color: '#374151',
-                                    fontSize: '14px',
-                                    fontWeight: 500,
-                                    cursor: 'pointer',
-                                    transition: 'all 0.2s'
-                                }}
-                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
-                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#fff'}
-                            >
-                                Отмена
-                            </button>
-                            <button
-                                onClick={() => {
-                                    setShowUnmappedConfirmation(false);
-                                    handleSaveBulkHistory(true);
-                                }}
-                                style={{
-                                    padding: '10px 20px',
-                                    borderRadius: '8px',
-                                    border: 'none',
-                                    backgroundColor: '#dc2626',
-                                    color: '#fff',
-                                    fontSize: '14px',
-                                    fontWeight: 600,
-                                    cursor: 'pointer',
-                                    boxShadow: '0 4px 6px rgba(220, 38, 38, 0.2)',
-                                    transition: 'all 0.2s'
-                                }}
-                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#b91c1c'}
-                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#dc2626'}
-                            >
-                                Продолжить без них
-                            </button>
+                                    backgroundColor: '#f9fafb'
+                                }}>
+                                    <ul style={{ margin: 0, padding: '8px 0', listStyle: 'none' }}>
+                                        {unmappedList.map((comp, idx) => (
+                                            <li key={idx} style={{
+                                                padding: '8px 20px',
+                                                fontSize: '14px',
+                                                color: '#4b5563',
+                                                borderBottom: idx < unmappedList.length - 1 ? '1px solid #f3f4f6' : 'none',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '10px'
+                                            }}>
+                                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ef4444', flexShrink: 0 }} />
+                                                {comp.name}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <div style={{
+                                padding: '20px 28px',
+                                backgroundColor: '#f9fafb',
+                                borderTop: '1px solid #e5e7eb',
+                                display: 'flex',
+                                justifyContent: 'flex-end',
+                                gap: '12px'
+                            }}>
+                                <button
+                                    onClick={() => setShowUnmappedConfirmation(false)}
+                                    style={{
+                                        padding: '10px 20px',
+                                        borderRadius: '8px',
+                                        border: '1px solid #d1d5db',
+                                        backgroundColor: '#fff',
+                                        color: '#374151',
+                                        fontSize: '14px',
+                                        fontWeight: 500,
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s'
+                                    }}
+                                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#fff'}
+                                >
+                                    Отмена
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setShowUnmappedConfirmation(false);
+                                        handleSaveBulkHistory(true);
+                                    }}
+                                    style={{
+                                        padding: '10px 20px',
+                                        borderRadius: '8px',
+                                        border: 'none',
+                                        backgroundColor: '#dc2626',
+                                        color: '#fff',
+                                        fontSize: '14px',
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        boxShadow: '0 4px 6px rgba(220, 38, 38, 0.2)',
+                                        transition: 'all 0.2s'
+                                    }}
+                                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#b91c1c'}
+                                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#dc2626'}
+                                >
+                                    Продолжить без них
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+        </div >
     );
 };
 

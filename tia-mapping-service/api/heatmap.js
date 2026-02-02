@@ -340,13 +340,89 @@ export async function getTestCoverageData(req, res) {
             }))
             .sort((a, b) => b.defectCount - a.defectCount);
 
-        logInfo(`Получено ${functionalBlocksData.length} функциональных блоков и ${routesData.length} роутов для Test Coverage, всего дефектов: ${totalDefects}`);
+
+        // --- СТАТИСТИКА ПО СТРАНИЦАМ (PAGES) ---
+        // Аналогично роутам, но группируем по page_name
+
+        // 1. Строим базовый запрос для дефектов, связанных со страницами
+        let defectPageQuery = databasePool('component_defects as cd')
+            .join('components as c', 'cd.component_id', 'c.id')
+            .join('page_component_dependencies as pcd', 'pcd.component_id', 'c.id')
+            .where({ 'c.project_id': projectId })
+            .whereNotNull('pcd.page_name')
+            .where('pcd.page_name', '!=', '');
+
+        // 2. Применяем те же фильтры
+        if (startDate && endDate) {
+            defectPageQuery = defectPageQuery.whereBetween('cd.change_date', [startDate, endDate]);
+        } else if (startDate) {
+            defectPageQuery = defectPageQuery.where('cd.change_date', '>=', startDate);
+        } else if (endDate) {
+            defectPageQuery = defectPageQuery.where('cd.change_date', '<=', endDate);
+        }
+
+        if (parsedReleaseVersions && parsedReleaseVersions.length > 0) {
+            defectPageQuery = defectPageQuery.whereIn('cd.release_version', parsedReleaseVersions);
+        }
+
+        if (parsedIsBugFix !== undefined) {
+            defectPageQuery = defectPageQuery.where('cd.is_bug_fix', parsedIsBugFix);
+        }
+
+        // 3. Для каждого дефекта берем первую страницу (чтобы не дублировать дефект, если компонент на 2 страницах)
+        // ИЛИ можно считать "вхождений" дефектов (как в функциональных блоках).
+        // В функциональных блоках: "Считает сумму дефектов всех компонентов, связанных с каждым функциональным блоком" - там дублирование разрешено (Logic + UI).
+        // Если хотим "Test Coverage" pie chart, то сумма должна быть 100%. Значит дефект должен принадлежать ОДНОЙ категории.
+        // Для роутов мы делали MIN(page_route). Сделаем так же для страниц, чтобы сумма сходилась.
+
+        const defectToPageSubquery = defectPageQuery
+            .select('cd.id as defect_id',
+                databasePool.raw('MIN(pcd.page_name) as primary_page_name'),
+                databasePool.raw('MIN(pcd.page_route) as primary_page_route') // Берем роут тоже для красоты
+            )
+            .groupBy('cd.id');
+
+        const pagesResults = await databasePool
+            .from(defectToPageSubquery.as('defect_pages'))
+            .select(
+                'primary_page_name as page_name',
+                'primary_page_route as page_route',
+                databasePool.raw('COUNT(defect_id) as total_defects')
+            )
+            .groupBy('primary_page_name', 'primary_page_route')
+            .orderBy('total_defects', 'desc');
+
+        let totalPagesDefects = 0;
+        const pagesMap = new Map();
+
+        pagesResults.forEach(row => {
+            const defectCount = parseInt(row.total_defects, 10);
+            totalPagesDefects += defectCount;
+
+            pagesMap.set(row.page_name, {
+                pageName: row.page_name,
+                pageRoute: row.page_route, // Добавляем роут
+                defectCount: defectCount,
+            });
+        });
+
+        const pagesData = Array.from(pagesMap.values())
+            .map(page => ({
+                ...page,
+                percentage: totalPagesDefects > 0 ? ((page.defectCount / totalPagesDefects) * 100).toFixed(1) : '0.0',
+            }))
+            .sort((a, b) => b.defectCount - a.defectCount);
+
+
+        logInfo(`Получено ${functionalBlocksData.length} функц. блоков, ${routesData.length} роутов и ${pagesData.length} страниц. Всего дефектов: ${totalDefects}`);
 
         res.status(200).json({
             totalDefects,
             functionalBlocks: functionalBlocksData,
             routes: routesData,
+            pages: pagesData, // New data
             totalRoutesDefects,
+            totalPagesDefects, // New metric
             filters: {
                 projectId,
                 startDate: startDate || null,
