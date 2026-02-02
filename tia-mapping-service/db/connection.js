@@ -28,19 +28,7 @@ const dbConnection = knex({
   }
 });
 
-/**
- * Тестовое подключение к базе данных для проверки
- * Выполняет запрос к таблице functional_blocks и выводит результат или ошибку
- */
-(async () => {
-  try {
-    const result = await dbConnection('functional_blocks').select('*').limit(1);
-    console.log('Соединение с базой успешно:', result);
-  } catch (error) {
-    console.error('Ошибка подключения:', error);
-  } finally {
-    await dbConnection.destroy(); // Закрываем подключение после теста
-  }
-})();
+// Примечание: удалён тестовый запрос с dbConnection.destroy(),
+// который уничтожал пул соединений при каждом импорте
 
-export default dbConnection; 
+export default dbConnection;

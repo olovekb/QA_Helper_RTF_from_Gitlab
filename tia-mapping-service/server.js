@@ -14,6 +14,7 @@ import { createTestPlan } from './api/launch.js'; // Импорт функцио
 import config from './config/index.js'; // Импорт конфигурации проекта
 import { logInfo, logError } from './utils/logger.js'; // Импорт логгера для информационных и ошибочных сообщений
 import { logServerError } from './api/errors.js';
+import databasePool from './db/pool.js'; // Общий пул подключений
 
 // Получаем __dirname в ES-модулях
 const __filename = fileURLToPath(import.meta.url);
@@ -121,8 +122,7 @@ app.get('/api/functional-blocks', async (req, res) => {
         return res.status(400).json({ error: 'Необходимо указать projectId.' });
     }
     try {
-        const knex = (await import('./db/connection.js')).default;
-        const blocks = await knex('functional_blocks')
+        const blocks = await databasePool('functional_blocks')
             .where({ project_id: projectId })
             .select('id', 'name', 'allure_id', 'custom_field_name')
             .orderBy('name', 'asc');
@@ -197,8 +197,7 @@ app.get('*', (req, res) => {
 async function runMigrations() {
     try {
         logInfo('Применение миграций базы данных...');
-        const knex = await import('./db/connection.js');
-        const [batchNo, log] = await knex.default.migrate.latest();
+        const [batchNo, log] = await databasePool.migrate.latest();
         logInfo(`Миграции успешно применены. Batch: ${batchNo}, Applied: ${log.length}`);
         if (log.length > 0) {
             logInfo(`Применённые миграции: ${log.join(', ')}`);
@@ -240,8 +239,7 @@ app.post('/api/migrations/run', async (req, res) => {
  */
 app.get('/api/migrations/status', async (req, res) => {
     try {
-        const knex = await import('./db/connection.js');
-        const migrations = await knex.default.migrate.list();
+        const migrations = await databasePool.migrate.list();
         res.json({
             success: true,
             completed: migrations[0], // Уже применённые

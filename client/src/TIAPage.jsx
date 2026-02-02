@@ -52,6 +52,10 @@ const TIAPage = ({ projects }) => {
     const [splitProgress, setSplitProgress] = useState(null); // { current: 1, total: 3, launchName: 'Запуск 1' }
     const [expandedSplitFolders, setExpandedSplitFolders] = useState({}); // Раскрытые папки в Split Modal
 
+    // Состояния для модалки подтверждения незамапленных компонент
+    const [showUnmappedModal, setShowUnmappedModal] = useState(false);
+    const [unmappedComponentsList, setUnmappedComponentsList] = useState([]);
+
 
 
 
@@ -698,7 +702,17 @@ const TIAPage = ({ projects }) => {
     };
 
     // Открытие Split Modal с предзаполненными данными
-    const handleOpenSplitModal = async () => {
+    const handleOpenSplitModal = async (force = false) => {
+        // Валидация незамапленных компонентов
+        if (!force) {
+            const unmapped = components.filter(c => !componentMappings[c.id] || componentMappings[c.id].length === 0);
+            if (unmapped.length > 0) {
+                setUnmappedComponentsList(unmapped);
+                setShowUnmappedModal(true);
+                return;
+            }
+        }
+
         setIsMappingLoading(true);
         setLoadingState(prev => ({ ...prev, launch: true }));
 
@@ -981,18 +995,32 @@ const TIAPage = ({ projects }) => {
     };
 
     // Фильтрация дерева фич по поисковому запросу
+    // Фильтрация дерева фич по поисковому запросу
     const filterFolders = (folders, searchTerm) => {
         if (!searchTerm) return folders;
         const lowerSearch = searchTerm.toLowerCase();
-        return folders.filter(folder => {
+
+        // Используем reduce для построения нового массива с учетом логики "родитель подошел -> берем всех детей"
+        return folders.reduce((acc, folder) => {
             const matches = folder.name.toLowerCase().includes(lowerSearch) ||
                 (folder.customFieldName && folder.customFieldName.toLowerCase().includes(lowerSearch));
-            const filteredChildren = folder.children ? filterFolders(folder.children, searchTerm) : [];
-            return matches || filteredChildren.length > 0;
-        }).map(folder => ({
-            ...folder,
-            children: folder.children ? filterFolders(folder.children, searchTerm) : []
-        }));
+
+            if (matches) {
+                // Если родитель подошел, берем его целиком со всеми детьми (даже если они не подходят)
+                acc.push(folder);
+            } else {
+                // Если родитель не подошел, ищем совпадения внутри детей
+                const filteredChildren = folder.children ? filterFolders(folder.children, searchTerm) : [];
+                if (filteredChildren.length > 0) {
+                    // Если есть, добавляем родителя с отфильтрованными детьми
+                    acc.push({
+                        ...folder,
+                        children: filteredChildren
+                    });
+                }
+            }
+            return acc;
+        }, []);
     };
 
     // Найти фичу по ID в дереве
@@ -1045,29 +1073,44 @@ const TIAPage = ({ projects }) => {
                         }}
                         onClick={(e) => {
                             e.stopPropagation();
-                            if (!componentId) {
-                                // Если компонент не выбран, предлагаем выбрать его
-                                return;
-                            }
-                            if (isSelected) {
-                                // Удалить из маппинга: удаляем сам узел и все его дочерние элементы
-                                const allIdsToRemove = getAllDescendantIds(folder);
-                                const currentMappings = componentMappings[componentId] || [];
-                                const newMappings = currentMappings.filter(id => !allIdsToRemove.includes(id));
+                            if (!componentId) return;
+
+                            // Single click: toggle ONLY current folder.id
+                            // Note: Double click will fire two click events, but we rely on UX that double click "adds" to selection if needed
+                            // However, strictly splitting them is hard without delay. 
+                            // Current decision based on request: "One click selects only story... Double click selects story + everything below"
+
+                            // We use a simple toggler for single click
+                            if (isDirectlySelected) {
+                                // If selected, verify if it was selected manually or implicitly? 
+                                // Actually, we just toggle the ID in the list.
+                                const newMappings = mappings.filter(id => id !== folderId);
                                 setComponentMappings(prev => ({
                                     ...prev,
                                     [componentId]: newMappings
                                 }));
                             } else {
-                                // Добавить в маппинг: добавляем сам узел и все его дочерние элементы
-                                const allIdsToAdd = getAllDescendantIds(folder);
-                                const currentMappings = componentMappings[componentId] || [];
-                                const newMappingsSet = new Set([...currentMappings, ...allIdsToAdd]);
+                                // Add only self
                                 setComponentMappings(prev => ({
                                     ...prev,
-                                    [componentId]: Array.from(newMappingsSet)
+                                    [componentId]: [...mappings, folderId]
                                 }));
                             }
+                        }}
+                        onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            if (!componentId) return;
+
+                            // Double click: select ALL descendants
+                            const allIdsToAdd = getAllDescendantIds(folder);
+                            const currentMappings = componentMappings[componentId] || [];
+                            // Add self + all children
+                            const newMappingsSet = new Set([...currentMappings, folderId, ...allIdsToAdd]);
+
+                            setComponentMappings(prev => ({
+                                ...prev,
+                                [componentId]: Array.from(newMappingsSet)
+                            }));
                         }}
                         onMouseEnter={(e) => {
                             e.currentTarget.style.backgroundColor = isSelected ? '#c3e6cb' : '#e9ecef';
@@ -1077,7 +1120,7 @@ const TIAPage = ({ projects }) => {
                         }}
                     >
                         {hasChildren && (
-                            <span
+                            <div
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     setExpandedFolders(prev => ({
@@ -1091,14 +1134,21 @@ const TIAPage = ({ projects }) => {
                                     fontSize: '12px',
                                     color: '#6c757d',
                                     userSelect: 'none',
-                                    width: '16px',
-                                    display: 'inline-block'
+                                    width: '32px', // Increased click area
+                                    height: '32px', // Increased click area
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    borderRadius: '4px',
+                                    flexShrink: 0
                                 }}
+                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.05)'}
+                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                             >
                                 {isExpanded ? '▼' : '►'}
-                            </span>
+                            </div>
                         )}
-                        {!hasChildren && <span style={{ width: '16px', display: 'inline-block' }} />}
+                        {!hasChildren && <span style={{ width: '32px', display: 'inline-block', flexShrink: 0 }} />}
                         <span style={{
                             fontSize: level === 0 ? '15px' : '14px',
                             fontWeight: level === 0 ? 600 : 400,
@@ -2432,12 +2482,12 @@ const TIAPage = ({ projects }) => {
                                                     onClick={() => setSelectedComponentId(comp.id)}
                                                     style={{
                                                         padding: '16px',
-                                                        backgroundColor: isSelected ? '#e7f3ff' : '#f8f9fa',
+                                                        backgroundColor: isSelected ? '#e7f3ff' : hasMapping ? '#f8f9fa' : '#fff5f5',
                                                         borderRadius: '8px',
-                                                        border: `2px solid ${isSelected ? '#007bff' : '#dee2e6'}`,
+                                                        border: `2px solid ${isSelected ? '#007bff' : hasMapping ? '#dee2e6' : '#dc3545'}`,
                                                         cursor: 'pointer',
                                                         transition: 'all 0.2s',
-                                                        boxShadow: hasMapping ? '0 2px 8px rgba(40, 167, 69, 0.2)' : '0 2px 4px rgba(0, 0, 0, 0.05)'
+                                                        boxShadow: hasMapping ? '0 2px 8px rgba(40, 167, 69, 0.2)' : '0 2px 8px rgba(220, 53, 69, 0.15)'
                                                     }}
                                                 >
                                                     {/* Заголовок компонента */}
@@ -2450,7 +2500,7 @@ const TIAPage = ({ projects }) => {
                                                         <div style={{
                                                             fontSize: '18px',
                                                             fontWeight: 700,
-                                                            color: hasMapping ? '#28a745' : '#2c3e50'
+                                                            color: hasMapping ? '#28a745' : '#dc3545'
                                                         }}>
                                                             {comp.name}
                                                         </div>

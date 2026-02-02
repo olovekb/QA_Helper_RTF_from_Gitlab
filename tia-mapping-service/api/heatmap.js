@@ -276,47 +276,46 @@ export async function getTestCoverageData(req, res) {
             .sort((a, b) => b.defectCount - a.defectCount);
 
         // Теперь получаем данные по роутам
-        // Используем подзапрос для избежания декартова произведения:
-        // Сначала получаем уникальные пары (defect_id, route), затем группируем по route
+        // ВАЖНО: Каждый дефект должен быть посчитан только ОДИН РАЗ глобально,
+        // а не для каждого роута, с которым связан компонент.
+        // Для этого сначала получаем уникальные дефекты и назначаем каждому "основной" роут.
 
-        // Строим подзапрос для уникальных пар defect-route
-        let defectRouteSubquery = databasePool('page_component_dependencies as pcd')
-            .join('components as c', 'pcd.component_id', 'c.id')
-            .join('component_defects as cd', 'cd.component_id', 'c.id')
-            .where({ 'pcd.project_id': projectId })
+        // Сначала получаем все уникальные дефекты и их роуты
+        let defectRouteQuery = databasePool('component_defects as cd')
+            .join('components as c', 'cd.component_id', 'c.id')
+            .join('page_component_dependencies as pcd', 'pcd.component_id', 'c.id')
+            .where({ 'c.project_id': projectId })
             .whereNotNull('pcd.page_route')
-            .where('pcd.page_route', '!=', '')
-            .select(
-                'pcd.page_route',
-                'cd.id as defect_id'
-            );
+            .where('pcd.page_route', '!=', '');
 
-        // Применяем фильтры к дефектам в подзапросе
+        // Применяем фильтры к дефектам
         if (startDate && endDate) {
-            defectRouteSubquery = defectRouteSubquery.whereBetween('cd.change_date', [startDate, endDate]);
+            defectRouteQuery = defectRouteQuery.whereBetween('cd.change_date', [startDate, endDate]);
         } else if (startDate) {
-            defectRouteSubquery = defectRouteSubquery.where('cd.change_date', '>=', startDate);
+            defectRouteQuery = defectRouteQuery.where('cd.change_date', '>=', startDate);
         } else if (endDate) {
-            defectRouteSubquery = defectRouteSubquery.where('cd.change_date', '<=', endDate);
+            defectRouteQuery = defectRouteQuery.where('cd.change_date', '<=', endDate);
         }
 
         if (parsedReleaseVersions && parsedReleaseVersions.length > 0) {
-            defectRouteSubquery = defectRouteSubquery.whereIn('cd.release_version', parsedReleaseVersions);
+            defectRouteQuery = defectRouteQuery.whereIn('cd.release_version', parsedReleaseVersions);
         }
 
         if (parsedIsBugFix !== undefined) {
-            defectRouteSubquery = defectRouteSubquery.where('cd.is_bug_fix', parsedIsBugFix);
+            defectRouteQuery = defectRouteQuery.where('cd.is_bug_fix', parsedIsBugFix);
         }
 
-        // Группируем подзапрос для получения уникальных пар
-        defectRouteSubquery = defectRouteSubquery.distinct();
+        // Получаем для каждого дефекта первый (алфавитно) роут - так каждый дефект будет посчитан только один раз
+        const defectToRouteSubquery = defectRouteQuery
+            .select('cd.id as defect_id', databasePool.raw('MIN(pcd.page_route) as primary_route'))
+            .groupBy('cd.id');
 
-        // Внешний запрос: группируем по роуту и считаем уникальные дефекты
+        // Теперь группируем по роутам и считаем
         const routesResults = await databasePool
-            .from(defectRouteSubquery.as('unique_defect_routes'))
-            .select('page_route')
+            .from(defectToRouteSubquery.as('defect_routes'))
+            .select('primary_route as page_route')
             .count('defect_id as total_defects')
-            .groupBy('page_route')
+            .groupBy('primary_route')
             .orderBy('total_defects', 'desc');
 
         // Считаем общее количество дефектов по роутам

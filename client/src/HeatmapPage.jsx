@@ -40,6 +40,10 @@ const HeatmapPage = ({ projects }) => {
     const [folderNamesCache, setFolderNamesCache] = useState({}); // Кэш названий функц. блоков
     const [parsedHistoryItems, setParsedHistoryItems] = useState([]);
 
+    // Состояния для подтверждения незамапленных
+    const [showUnmappedConfirmation, setShowUnmappedConfirmation] = useState(false);
+    const [unmappedList, setUnmappedList] = useState([]);
+
     // Загрузка доступных версий при изменении проекта или дат
     useEffect(() => {
         if (projectId) {
@@ -254,7 +258,16 @@ const HeatmapPage = ({ projects }) => {
         }
     };
 
-    const handleSaveBulkHistory = async () => {
+    const handleSaveBulkHistory = async (force = false) => {
+        // Валидация незамапленных компонентов
+        if (!force) {
+            const trulyUnmapped = unmappedComponents.filter(name => !componentMappings[name] || componentMappings[name].length === 0);
+            if (trulyUnmapped.length > 0) {
+                setUnmappedList(trulyUnmapped);
+                setShowUnmappedConfirmation(true);
+                return;
+            }
+        }
         setLoading(true);
         try {
             await axios.post(`${config.TIAUrl}/api/heatmap/bulk-import`, {
@@ -625,6 +638,8 @@ const HeatmapPage = ({ projects }) => {
                                 border: '1px solid #e2e8f0',
                                 borderRadius: '14px',
                                 fontSize: '15px',
+                                fontWeight: 500,
+                                color: '#0f172a',
                                 backgroundColor: '#fcfdfe',
                                 height: '52px',
                                 outline: 'none',
@@ -1360,15 +1375,18 @@ const HeatmapPage = ({ projects }) => {
                                                         }}
                                                         placeholder="Выберите блоки для привязки..."
                                                         styles={{
-                                                            control: (base, state) => ({
-                                                                ...base,
-                                                                borderColor: state.isFocused ? '#6366f1' : '#e2e8f0',
-                                                                borderRadius: '10px',
-                                                                fontSize: '13px',
-                                                                minHeight: '40px',
-                                                                backgroundColor: state.isFocused ? '#fff' : '#fcfdfe',
-                                                                boxShadow: state.isFocused ? '0 0 0 3px rgba(99, 102, 241, 0.1)' : 'none',
-                                                            }),
+                                                            control: (base, state) => {
+                                                                const isMapped = componentMappings[compName] && componentMappings[compName].length > 0;
+                                                                return {
+                                                                    ...base,
+                                                                    borderColor: state.isFocused ? '#6366f1' : isMapped ? '#e2e8f0' : '#dc3545',
+                                                                    borderRadius: '10px',
+                                                                    fontSize: '13px',
+                                                                    minHeight: '40px',
+                                                                    backgroundColor: state.isFocused ? '#fff' : isMapped ? '#fcfdfe' : '#fff5f5',
+                                                                    boxShadow: state.isFocused ? '0 0 0 3px rgba(99, 102, 241, 0.1)' : 'none',
+                                                                };
+                                                            },
                                                             multiValue: (base) => ({
                                                                 ...base,
                                                                 backgroundColor: '#eff6ff',
