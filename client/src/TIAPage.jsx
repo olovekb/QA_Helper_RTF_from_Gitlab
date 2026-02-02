@@ -2782,1049 +2782,1043 @@ const TIAPage = ({ projects }) => {
                                                                     border: '1px solid #dee2e6'
                                                                 }}>
                                                                     {/* Методы с JSDoc */}
-                                                                    {comp.nestedComponents?.[0]?.changed_methods?.length > 0 && (
-                                                                        <div style={{ marginBottom: comp.nestedComponents[0].diff_snippet ? '12px' : '0' }}>
-                                                                            <div style={{ fontSize: '12px', fontWeight: 600, color: '#495057', marginBottom: '8px' }}>
-                                                                                Измененные методы:
-                                                                            </div>
-                                                                            <ul style={{
                                                                     {/* Diff snippet */}
-                                                                                {comp.nestedComponents?.[0]?.diff_snippet && (
-                                                                                    <div>
-                                                                                        <div style={{ fontSize: '12px', fontWeight: 600, color: '#495057', marginBottom: '8px' }}>
-                                                                                            Изменения в коде:
-                                                                                        </div>
-                                                                                        <pre style={{
-                                                                                            margin: 0,
-                                                                                            padding: '12px',
-                                                                                            backgroundColor: '#2d2d2d',
-                                                                                            color: '#f8f8f2',
-                                                                                            borderRadius: '4px',
-                                                                                            fontSize: '11px',
-                                                                                            fontFamily: 'monospace',
-                                                                                            overflow: 'auto',
-                                                                                            maxHeight: '300px',
-                                                                                            whiteSpace: 'pre-wrap',
-                                                                                            wordBreak: 'break-word'
-                                                                                        }}>
-                                                                                            {comp.nestedComponents[0].diff_snippet}
-                                                                                        </pre>
-                                                                                    </div>
-                                                                                )}
-                                                                </div>
+                                                                    {comp.nestedComponents?.[0]?.diff_snippet && (
+                                                                        <div>
+                                                                            <div style={{ fontSize: '12px', fontWeight: 600, color: '#495057', marginBottom: '8px' }}>
+                                                                                Изменения в коде:
+                                                                            </div>
+                                                                            <pre style={{
+                                                                                margin: 0,
+                                                                                padding: '12px',
+                                                                                backgroundColor: '#2d2d2d',
+                                                                                color: '#f8f8f2',
+                                                                                borderRadius: '4px',
+                                                                                fontSize: '11px',
+                                                                                fontFamily: 'monospace',
+                                                                                overflow: 'auto',
+                                                                                maxHeight: '300px',
+                                                                                whiteSpace: 'pre-wrap',
+                                                                                wordBreak: 'break-word'
+                                                                            }}>
+                                                                                {comp.nestedComponents[0].diff_snippet}
+                                                                            </pre>
+                                                                        </div>
                                                                     )}
-                                                                </div>
-                                                            )}
-
-                                                            {/* Где используется — скрывать если > 10 Pages */}
-                                                            {pages.length > 0 && pages.length <= 10 && (
-                                                                <div style={{ marginTop: '12px' }}>
-                                                                    <div style={{
-                                                                        fontSize: '12px',
-                                                                        color: '#6c757d',
-                                                                        marginBottom: '8px',
-                                                                        fontWeight: 600
-                                                                    }}>
-                                                                        Где используется ({pages.length}):
-                                                                    </div>
-                                                                    <div style={{
-                                                                        display: 'flex',
-                                                                        flexWrap: 'wrap',
-                                                                        gap: '6px'
-                                                                    }}>
-                                                                        {pages.map((page, idx) => {
-                                                                            const pageName = page.page_meta?.name || 'Unknown';
-                                                                            const pageRoute = page.page_meta?.route;
-                                                                            const tooltipText = [
-                                                                                page.page_meta?.human_title,
-                                                                                pageRoute ? `Route: ${pageRoute}` : null,
-                                                                                page.page_meta?.file_path
-                                                                            ].filter(Boolean).join('\n');
-
-                                                                            return (
-                                                                                <div key={`${comp.id}-page-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                                                                                    <span
-                                                                                        title={tooltipText}
-                                                                                        style={{
-                                                                                            padding: '4px 10px',
-                                                                                            backgroundColor: '#e9ecef',
-                                                                                            borderRadius: '4px',
-                                                                                            fontSize: '12px',
-                                                                                            color: '#111',
-                                                                                            fontWeight: 500,
-                                                                                            cursor: 'help',
-                                                                                            display: 'inline-flex',
-                                                                                            alignItems: 'center',
-                                                                                            gap: '6px'
-                                                                                        }}
-                                                                                    >
-                                                                                        <span>{pageName}</span>
-                                                                                        {pageRoute && (
-                                                                                            <span style={{
-                                                                                                fontSize: '11px',
-                                                                                                color: '#6c757d',
-                                                                                                fontFamily: 'monospace',
-                                                                                                backgroundColor: '#dee2e6',
-                                                                                                padding: '2px 6px',
-                                                                                                borderRadius: '3px'
-                                                                                            }}>
-                                                                                                {pageRoute}
-                                                                                            </span>
-                                                                                        )}
-                                                                                    </span>
-                                                                                </div>
-                                                                            );
-                                                                        })}
-                                                                    </div>
-                                                                </div>
-                                                            )}
-                                                            {/* Для > 10 pages — показать только счетчик */}
-                                                            {pages.length > 10 && (
-                                                                <div style={{ marginTop: '12px' }}>
-                                                                    <span style={{
-                                                                        fontSize: '12px',
-                                                                        color: '#6c757d',
-                                                                        fontWeight: 600
-                                                                    }}>
-                                                                        Используется на {pages.length} страницах
-                                                                    </span>
-                                                                </div>
-                                                            )}
-
-
-                                                            {/* Выбранные маппинги */}
-                                                            {hasMapping && (
-                                                                <div style={{
-                                                                    marginTop: '12px',
-                                                                    paddingTop: '12px',
-                                                                    borderTop: '1px solid #dee2e6'
-                                                                }}>
-                                                                    <div style={{
-                                                                        fontSize: '12px',
-                                                                        color: '#6c757d',
-                                                                        marginBottom: '6px',
-                                                                        fontWeight: 600
-                                                                    }}>
-                                                                        Покрыто:
-                                                                    </div>
-                                                                    <div style={{
-                                                                        display: 'flex',
-                                                                        flexWrap: 'wrap',
-                                                                        gap: '6px'
-                                                                    }}>
-                                                                        {componentMappings[comp.id].map(folderId => {
-                                                                            const folder = findFolderById(folders, parseInt(folderId));
-                                                                            const isAutoMapped = autoMappedBlocks[comp.id]?.includes(folderId);
-                                                                            return folder ? (
-                                                                                <span
-                                                                                    key={folderId}
-                                                                                    title={isAutoMapped ? 'Автоматически добавлен из связанной Page' : ''}
-                                                                                    style={{
-                                                                                        padding: '4px 10px',
-                                                                                        backgroundColor: isAutoMapped ? '#fff3cd' : '#d4edda',
-                                                                                        borderRadius: '4px',
-                                                                                        fontSize: '12px',
-                                                                                        color: isAutoMapped ? '#856404' : '#155724',
-                                                                                        fontWeight: 500,
-                                                                                        border: isAutoMapped ? '1px solid #ffc107' : 'none',
-                                                                                        display: 'inline-flex',
-                                                                                        alignItems: 'center',
-                                                                                        gap: '4px'
-                                                                                    }}
-                                                                                >
-                                                                                    {isAutoMapped && '🔄 '}
-                                                                                    {formatCustomFieldName(folder, 0)}
-                                                                                </span>
-                                                                            ) : null;
-                                                                        })}
-                                                                    </div>
                                                                 </div>
                                                             )}
                                                         </div>
-                                                    );
-                                        })}
+                                                    )}
+
+                                                    {/* Где используется — скрывать если > 10 Pages */}
+                                                    {pages.length > 0 && pages.length <= 10 && (
+                                                        <div style={{ marginTop: '12px' }}>
+                                                            <div style={{
+                                                                fontSize: '12px',
+                                                                color: '#6c757d',
+                                                                marginBottom: '8px',
+                                                                fontWeight: 600
+                                                            }}>
+                                                                Где используется ({pages.length}):
+                                                            </div>
+                                                            <div style={{
+                                                                display: 'flex',
+                                                                flexWrap: 'wrap',
+                                                                gap: '6px'
+                                                            }}>
+                                                                {pages.map((page, idx) => {
+                                                                    const pageName = page.page_meta?.name || 'Unknown';
+                                                                    const pageRoute = page.page_meta?.route;
+                                                                    const tooltipText = [
+                                                                        page.page_meta?.human_title,
+                                                                        pageRoute ? `Route: ${pageRoute}` : null,
+                                                                        page.page_meta?.file_path
+                                                                    ].filter(Boolean).join('\n');
+
+                                                                    return (
+                                                                        <div key={`${comp.id}-page-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                                                            <span
+                                                                                title={tooltipText}
+                                                                                style={{
+                                                                                    padding: '4px 10px',
+                                                                                    backgroundColor: '#e9ecef',
+                                                                                    borderRadius: '4px',
+                                                                                    fontSize: '12px',
+                                                                                    color: '#111',
+                                                                                    fontWeight: 500,
+                                                                                    cursor: 'help',
+                                                                                    display: 'inline-flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '6px'
+                                                                                }}
+                                                                            >
+                                                                                <span>{pageName}</span>
+                                                                                {pageRoute && (
+                                                                                    <span style={{
+                                                                                        fontSize: '11px',
+                                                                                        color: '#6c757d',
+                                                                                        fontFamily: 'monospace',
+                                                                                        backgroundColor: '#dee2e6',
+                                                                                        padding: '2px 6px',
+                                                                                        borderRadius: '3px'
+                                                                                    }}>
+                                                                                        {pageRoute}
+                                                                                    </span>
+                                                                                )}
+                                                                            </span>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {/* Для > 10 pages — показать только счетчик */}
+                                                    {pages.length > 10 && (
+                                                        <div style={{ marginTop: '12px' }}>
+                                                            <span style={{
+                                                                fontSize: '12px',
+                                                                color: '#6c757d',
+                                                                fontWeight: 600
+                                                            }}>
+                                                                Используется на {pages.length} страницах
+                                                            </span>
+                                                        </div>
+                                                    )}
+
+
+                                                    {/* Выбранные маппинги */}
+                                                    {hasMapping && (
+                                                        <div style={{
+                                                            marginTop: '12px',
+                                                            paddingTop: '12px',
+                                                            borderTop: '1px solid #dee2e6'
+                                                        }}>
+                                                            <div style={{
+                                                                fontSize: '12px',
+                                                                color: '#6c757d',
+                                                                marginBottom: '6px',
+                                                                fontWeight: 600
+                                                            }}>
+                                                                Покрыто:
+                                                            </div>
+                                                            <div style={{
+                                                                display: 'flex',
+                                                                flexWrap: 'wrap',
+                                                                gap: '6px'
+                                                            }}>
+                                                                {componentMappings[comp.id].map(folderId => {
+                                                                    const folder = findFolderById(folders, parseInt(folderId));
+                                                                    const isAutoMapped = autoMappedBlocks[comp.id]?.includes(folderId);
+                                                                    return folder ? (
+                                                                        <span
+                                                                            key={folderId}
+                                                                            title={isAutoMapped ? 'Автоматически добавлен из связанной Page' : ''}
+                                                                            style={{
+                                                                                padding: '4px 10px',
+                                                                                backgroundColor: isAutoMapped ? '#fff3cd' : '#d4edda',
+                                                                                borderRadius: '4px',
+                                                                                fontSize: '12px',
+                                                                                color: isAutoMapped ? '#856404' : '#155724',
+                                                                                fontWeight: 500,
+                                                                                border: isAutoMapped ? '1px solid #ffc107' : 'none',
+                                                                                display: 'inline-flex',
+                                                                                alignItems: 'center',
+                                                                                gap: '4px'
+                                                                            }}
+                                                                        >
+                                                                            {isAutoMapped && '🔄 '}
+                                                                            {formatCustomFieldName(folder, 0)}
+                                                                        </span>
+                                                                    ) : null;
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                 </div>
-                                            )
-                                        }
+                                            );
+                                        })}
+                                    </div>
+                                )
+                                }
                             </div>
 
                             {/* Правая колонка: Чем покрыть */}
-                                <div style={{
-                                    width: '50%',
-                                    padding: '20px',
-                                    overflowY: 'auto',
-                                    backgroundColor: '#ffffff',
-                                    display: 'flex',
-                                    flexDirection: 'column'
-                                }}>
-                                    <h3 style={{
-                                        fontSize: '18px',
-                                        fontWeight: 600,
-                                        color: '#2c3e50',
-                                        marginBottom: '16px',
-                                        marginTop: 0
-                                    }}>
-                                        Чем покрыть
-                                    </h3>
-
-
-                                    {/* Поиск по дереву */}
-                                    <div style={{
-                                        marginBottom: '10px',
-                                        fontSize: '12px',
-                                        color: '#64748b',
-                                        backgroundColor: '#f1f5f9',
-                                        padding: '8px 12px',
-                                        borderRadius: '6px',
-                                        lineHeight: 1.4
-                                    }}>
-                                        <span style={{ fontWeight: 600, color: '#475569' }}>Подсказка:</span>
-                                        <ul style={{ margin: '4px 0 0 0', paddingLeft: '16px' }}>
-                                            <li><b>Один клик</b> — выбрать/убрать текущий элемент</li>
-                                            <li><b>Двойной клик</b> — выбрать/убрать элемент со всеми вложенными</li>
-                                        </ul>
-                                    </div>
-                                    <input
-                                        type="text"
-                                        placeholder="Поиск по дереву фич..."
-                                        value={folderSearchTerm}
-                                        onChange={(e) => setFolderSearchTerm(e.target.value)}
-                                        style={{
-                                            width: '100%',
-                                            padding: '10px 12px',
-                                            borderRadius: '6px',
-                                            border: '1px solid #ced4da',
-                                            fontSize: '14px',
-                                            marginBottom: '16px',
-                                            boxSizing: 'border-box'
-                                        }}
-                                    />
-
-                                    {/* Дерево фич */}
-                                    <div style={{
-                                        flex: 1,
-                                        overflowY: 'auto',
-                                        padding: '12px',
-                                        backgroundColor: '#f8f9fa',
-                                        borderRadius: '8px',
-                                        position: 'relative'
-                                    }}>
-                                        {!selectedComponentId && (
-                                            <div style={{
-                                                position: 'absolute',
-                                                top: '12px',
-                                                left: '12px',
-                                                right: '12px',
-                                                padding: '12px',
-                                                backgroundColor: '#fff3cd',
-                                                border: '1px solid #ffc107',
-                                                borderRadius: '6px',
-                                                fontSize: '13px',
-                                                color: '#856404',
-                                                zIndex: 10,
-                                                marginBottom: '12px'
-                                            }}>
-                                                💡 Выберите компонент слева, чтобы связать его с фичами
-                                            </div>
-                                        )}
-                                        {folders && folders.length > 0 ? (
-                                            <div style={{ marginTop: !selectedComponentId ? '60px' : '0' }}>
-                                                {renderFolderTreeForMapping(
-                                                    filterFolders(filterFoldersForProject(folders), folderSearchTerm),
-                                                    selectedComponentId
-                                                )}
-                                            </div>
-                                        ) : (
-                                            <div style={{
-                                                padding: '40px',
-                                                textAlign: 'center',
-                                                color: '#6c757d',
-                                                fontSize: '14px'
-                                            }}>
-                                                {structureLoading ? 'Загрузка структуры...' : 'Нет доступных фич. Загрузите структуру проекта.'}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Footer */}
                             <div style={{
-                                padding: '16px 24px',
-                                borderTop: '2px solid #ced4da',
+                                width: '50%',
+                                padding: '20px',
+                                overflowY: 'auto',
+                                backgroundColor: '#ffffff',
                                 display: 'flex',
-                                justifyContent: 'flex-end',
-                                gap: '16px',
-                                backgroundColor: '#f8f9fa'
+                                flexDirection: 'column'
                             }}>
-                                <button
-                                    onClick={handleMappingCancel}
-                                    style={styles.modalButtonCancel}
-                                    disabled={isPartialSaving || isMappingLoading}
-                                >
-                                    Отмена
-                                </button>
-                                <button
-                                    onClick={handlePartialSave}
-                                    style={styles.modalButtonSave}
-                                    disabled={isPartialSaving || isMappingLoading}
-                                >
-                                    {isPartialSaving
-                                        ? <Loader style={{ width: 20, height: 20 }} />
-                                        : 'Сохранить маппинг'}
-                                </button>
-                                <button
-                                    onClick={() => handleMappingConfirm('launch')}
+                                <h3 style={{
+                                    fontSize: '18px',
+                                    fontWeight: 600,
+                                    color: '#2c3e50',
+                                    marginBottom: '16px',
+                                    marginTop: 0
+                                }}>
+                                    Чем покрыть
+                                </h3>
+
+
+                                {/* Поиск по дереву */}
+                                <div style={{
+                                    marginBottom: '10px',
+                                    fontSize: '12px',
+                                    color: '#64748b',
+                                    backgroundColor: '#f1f5f9',
+                                    padding: '8px 12px',
+                                    borderRadius: '6px',
+                                    lineHeight: 1.4
+                                }}>
+                                    <span style={{ fontWeight: 600, color: '#475569' }}>Подсказка:</span>
+                                    <ul style={{ margin: '4px 0 0 0', paddingLeft: '16px' }}>
+                                        <li><b>Один клик</b> — выбрать/убрать текущий элемент</li>
+                                        <li><b>Двойной клик</b> — выбрать/убрать элемент со всеми вложенными</li>
+                                    </ul>
+                                </div>
+                                <input
+                                    type="text"
+                                    placeholder="Поиск по дереву фич..."
+                                    value={folderSearchTerm}
+                                    onChange={(e) => setFolderSearchTerm(e.target.value)}
                                     style={{
-                                        ...styles.modalButtonConfirm,
-                                        opacity: (loadingState.testplan || loadingState.launch) ? 0.7 : 1,
-                                        cursor: (loadingState.testplan || loadingState.launch) ? 'not-allowed' : 'pointer'
+                                        width: '100%',
+                                        padding: '10px 12px',
+                                        borderRadius: '6px',
+                                        border: '1px solid #ced4da',
+                                        fontSize: '14px',
+                                        marginBottom: '16px',
+                                        boxSizing: 'border-box'
                                     }}
-                                    disabled={isPartialSaving || isMappingLoading || loadingState.launch || loadingState.testplan || isMappingConfirmButtonDisabled}
-                                >
-                                    {loadingState.launch
-                                        ? <Loader style={{ width: 20, height: 20 }} />
-                                        : 'Создать запуск'}
-                                </button>
-                            </div>
-                            {progress && (
-                                <div style={{ marginTop: '15px', width: '100%', textAlign: 'center' }}>
-                                    <div style={{ marginBottom: '5px', fontSize: '14px', color: '#555' }}>
-                                        {progress.message}
-                                    </div>
-                                    {progress.total > 0 && (
-                                        <div style={{ width: '100%', height: '8px', backgroundColor: '#e9ecef', borderRadius: '4px', overflow: 'hidden' }}>
-                                            <div
-                                                style={{
-                                                    width: `${(progress.current / progress.total) * 100}%`,
-                                                    height: '100%',
-                                                    backgroundColor: '#28a745',
-                                                    transition: 'width 0.3s ease'
-                                                }}
-                                            />
-                                        </div>
-                                    )}
-                                    {progress.total > 0 && (
-                                        <div style={{ fontSize: '12px', color: '#777', marginTop: '2px' }}>
-                                            {progress.current} / {progress.total}
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-            )}
+                                />
 
-                    {/* Split Modal — разделение на несколько запусков */}
-                    {showSplitModal && (
-                        <div style={{
-                            position: 'fixed',
-                            top: 0,
-                            left: 0,
-                            right: 0,
-                            bottom: 0,
-                            backgroundColor: 'rgba(0, 0, 0, 0.6)',
-                            backdropFilter: 'blur(8px)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            zIndex: 2000,
-                            fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-                        }}>
-                            <div style={{
-                                backgroundColor: '#fff',
-                                borderRadius: '24px',
-                                width: '95%',
-                                maxWidth: '1400px',
-                                maxHeight: '90vh',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
-                                overflow: 'hidden'
-                            }}>
-                                {/* Header */}
-                                <div style={{
-                                    padding: '20px 28px',
-                                    borderBottom: '1px solid #e2e8f0',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between'
-                                }}>
-                                    <div>
-                                        <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 700, color: '#1e293b' }}>
-                                            Разделение на запуски
-                                        </h2>
-                                        <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#64748b' }}>
-                                            Перетащите блоки из левой панели в нужный запуск
-                                        </p>
-                                    </div>
-                                    <button
-                                        onClick={() => setShowSplitModal(false)}
-                                        style={{
-                                            background: 'none',
-                                            border: 'none',
-                                            fontSize: '24px',
-                                            color: '#94a3b8',
-                                            cursor: 'pointer',
-                                            padding: '8px'
-                                        }}
-                                    >×</button>
-                                </div>
-
-                                {/* Two-column content */}
+                                {/* Дерево фич */}
                                 <div style={{
                                     flex: 1,
-                                    display: 'flex',
-                                    overflow: 'hidden'
+                                    overflowY: 'auto',
+                                    padding: '12px',
+                                    backgroundColor: '#f8f9fa',
+                                    borderRadius: '8px',
+                                    position: 'relative'
                                 }}>
-                                    {/* Left Column — Unassigned Blocks (Tree View) */}
-                                    <div style={{
-                                        width: '450px',
-                                        borderRight: '1px solid #e2e8f0',
-                                        backgroundColor: '#fff',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        flexShrink: 0
-                                    }}>
+                                    {!selectedComponentId && (
                                         <div style={{
-                                            padding: '14px 18px',
-                                            borderBottom: '1px solid #e2e8f0',
-                                            fontWeight: 600,
-                                            fontSize: '14px',
-                                            color: '#1e293b',
-                                            backgroundColor: '#f8fafc'
+                                            position: 'absolute',
+                                            top: '12px',
+                                            left: '12px',
+                                            right: '12px',
+                                            padding: '12px',
+                                            backgroundColor: '#fff3cd',
+                                            border: '1px solid #ffc107',
+                                            borderRadius: '6px',
+                                            fontSize: '13px',
+                                            color: '#856404',
+                                            zIndex: 10,
+                                            marginBottom: '12px'
                                         }}>
-                                            📦 Блоки без назначения ({unassignedFolderIds.length})
+                                            💡 Выберите компонент слева, чтобы связать его с фичами
                                         </div>
-                                        <div style={{
-                                            flex: 1,
-                                            overflowY: 'auto',
-                                            padding: '8px 0'
-                                        }}>
-                                            {unassignedFolderIds.length === 0 ? (
-                                                <div style={{
-                                                    padding: '32px 20px',
-                                                    textAlign: 'center',
-                                                    color: '#64748b',
-                                                    fontSize: '13px'
-                                                }}>
-                                                    ✓ Все блоки распределены по запускам
-                                                </div>
-                                            ) : (
-                                                /* Recursive Tree Rendering */
-                                                (() => {
-                                                    const unassignedSet = new Set(unassignedFolderIds.map(id => id.toString()));
-
-                                                    // Helper to get all children IDs recursively
-                                                    const getAllChildIds = (folder) => {
-                                                        const ids = [folder.id.toString()];
-                                                        (folder.children || []).forEach(child => {
-                                                            ids.push(...getAllChildIds(child));
-                                                        });
-                                                        return ids;
-                                                    };
-
-                                                    // Helper to check if folder or any children are unassigned
-                                                    const hasUnassignedItems = (folder) => {
-                                                        if (unassignedSet.has(folder.id.toString())) return true;
-                                                        return (folder.children || []).some(hasUnassignedItems);
-                                                    };
-
-                                                    // Render tree node
-                                                    const renderTreeNode = (folder, depth = 0) => {
-                                                        if (!hasUnassignedItems(folder)) return null;
-
-                                                        const folderId = folder.id.toString();
-                                                        const isUnassigned = unassignedSet.has(folderId);
-                                                        const hasChildren = folder.children && folder.children.length > 0;
-                                                        const isExpanded = expandedSplitFolders[folderId];
-                                                        const childrenWithUnassigned = (folder.children || []).filter(hasUnassignedItems);
-
-                                                        return (
-                                                            <div key={folderId}>
-                                                                <div style={{
-                                                                    display: 'flex',
-                                                                    alignItems: 'center',
-                                                                    padding: '8px 12px',
-                                                                    paddingLeft: `${12 + depth * 20}px`,
-                                                                    borderBottom: '1px solid #f1f5f9',
-                                                                    backgroundColor: isUnassigned ? '#fff' : '#fafbfc',
-                                                                    cursor: 'pointer'
-                                                                }}>
-                                                                    {/* Expand/Collapse */}
-                                                                    {hasChildren && childrenWithUnassigned.length > 0 ? (
-                                                                        <button
-                                                                            onClick={() => setExpandedSplitFolders(prev => ({
-                                                                                ...prev,
-                                                                                [folderId]: !prev[folderId]
-                                                                            }))}
-                                                                            style={{
-                                                                                background: 'none',
-                                                                                border: 'none',
-                                                                                padding: '2px 6px',
-                                                                                cursor: 'pointer',
-                                                                                fontSize: '12px',
-                                                                                color: '#64748b',
-                                                                                marginRight: '4px'
-                                                                            }}
-                                                                        >
-                                                                            {isExpanded ? '▼' : '▶'}
-                                                                        </button>
-                                                                    ) : (
-                                                                        <span style={{ width: '24px' }} />
-                                                                    )}
-
-                                                                    {/* Folder name */}
-                                                                    <span style={{
-                                                                        flex: 1,
-                                                                        fontSize: '13px',
-                                                                        fontWeight: isUnassigned ? 500 : 400,
-                                                                        color: '#1e293b',
-                                                                        overflow: 'hidden',
-                                                                        textOverflow: 'ellipsis',
-                                                                        whiteSpace: 'nowrap'
-                                                                    }}>
-                                                                        {folder.name}
-                                                                        {folder.testCasesCount > 0 && (
-                                                                            <span style={{
-                                                                                marginLeft: '6px',
-                                                                                fontSize: '11px',
-                                                                                color: '#94a3b8'
-                                                                            }}>
-                                                                                ({folder.testCasesCount})
-                                                                            </span>
-                                                                        )}
-                                                                    </span>
-
-                                                                    {/* Add to Launch dropdown — show for any folder with unassigned items */}
-                                                                    {(isUnassigned || childrenWithUnassigned.length > 0) && (
-                                                                        <select
-                                                                            onClick={(e) => e.stopPropagation()}
-                                                                            onChange={(e) => {
-                                                                                const targetIdx = parseInt(e.target.value, 10);
-                                                                                if (isNaN(targetIdx)) return;
-
-                                                                                // Get all child IDs to add (only unassigned ones)
-                                                                                const idsToAdd = getAllChildIds(folder).filter(id => unassignedSet.has(id));
-
-                                                                                // Add to launch
-                                                                                const updated = [...launchGroups];
-                                                                                idsToAdd.forEach(id => {
-                                                                                    if (!updated[targetIdx].folderIds.includes(id)) {
-                                                                                        updated[targetIdx].folderIds.push(id);
-                                                                                    }
-                                                                                });
-                                                                                setLaunchGroups(updated);
-
-                                                                                // Remove from unassigned
-                                                                                setUnassignedFolderIds(prev => prev.filter(id => !idsToAdd.includes(id.toString())));
-
-                                                                                e.target.value = '';
-                                                                            }}
-                                                                            style={{
-                                                                                padding: '4px 8px',
-                                                                                borderRadius: '6px',
-                                                                                border: '1px solid #e2e8f0',
-                                                                                fontSize: '11px',
-                                                                                cursor: 'pointer',
-                                                                                backgroundColor: '#f8fafc',
-                                                                                color: '#475569'
-                                                                            }}
-                                                                            defaultValue=""
-                                                                        >
-                                                                            <option value="" disabled>➕ В запуск</option>
-                                                                            {launchGroups.map((g, idx) => (
-                                                                                <option key={g.id} value={idx}>
-                                                                                    {idx + 1}. {g.name.substring(0, 18)}
-                                                                                </option>
-                                                                            ))}
-                                                                        </select>
-                                                                    )}
-
-                                                                </div>
-
-                                                                {/* Render children if expanded */}
-                                                                {isExpanded && childrenWithUnassigned.map(child =>
-                                                                    renderTreeNode(child, depth + 1)
-                                                                )}
-                                                            </div>
-                                                        );
-                                                    };
-
-                                                    return folders.map(folder => renderTreeNode(folder, 0));
-                                                })()
+                                    )}
+                                    {folders && folders.length > 0 ? (
+                                        <div style={{ marginTop: !selectedComponentId ? '60px' : '0' }}>
+                                            {renderFolderTreeForMapping(
+                                                filterFolders(filterFoldersForProject(folders), folderSearchTerm),
+                                                selectedComponentId
                                             )}
                                         </div>
-
-                                        {/* Quick actions */}
-                                        {unassignedFolderIds.length > 0 && launchGroups.length > 0 && (
-                                            <div style={{
-                                                padding: '12px 14px',
-                                                borderTop: '1px solid #e2e8f0',
-                                                backgroundColor: '#f8fafc'
-                                            }}>
-                                                <button
-                                                    onClick={() => {
-                                                        const updated = [...launchGroups];
-                                                        updated[0].folderIds = [...new Set([...updated[0].folderIds, ...unassignedFolderIds.map(id => id.toString())])];
-                                                        setLaunchGroups(updated);
-                                                        setUnassignedFolderIds([]);
-                                                    }}
-                                                    style={{
-                                                        width: '100%',
-                                                        padding: '10px',
-                                                        backgroundColor: '#6366f1',
-                                                        color: '#fff',
-                                                        border: 'none',
-                                                        borderRadius: '8px',
-                                                        fontSize: '13px',
-                                                        fontWeight: 500,
-                                                        cursor: 'pointer'
-                                                    }}
-                                                >
-                                                    Добавить все в Запуск 1
-                                                </button>
-                                            </div>
-                                        )}
-                                    </div>
-
-
-                                    {/* Right Column — Launches */}
-                                    <div style={{
-                                        flex: 1,
-                                        overflowY: 'auto',
-                                        padding: '20px'
-                                    }}>
-                                        {launchGroups.map((group, groupIndex) => (
-                                            <div key={group.id} style={{
-                                                backgroundColor: '#f8fafc',
-                                                borderRadius: '16px',
-                                                padding: '18px',
-                                                marginBottom: '16px',
-                                                border: '1px solid #e2e8f0'
-                                            }}>
-                                                <div style={{
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '12px',
-                                                    marginBottom: '14px'
-                                                }}>
-                                                    <span style={{
-                                                        width: '28px',
-                                                        height: '28px',
-                                                        borderRadius: '7px',
-                                                        backgroundColor: '#6366f1',
-                                                        color: '#fff',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        justifyContent: 'center',
-                                                        fontWeight: 600,
-                                                        fontSize: '13px'
-                                                    }}>{groupIndex + 1}</span>
-                                                    <input
-                                                        type="text"
-                                                        value={group.name}
-                                                        onChange={(e) => {
-                                                            const updated = [...launchGroups];
-                                                            updated[groupIndex].name = e.target.value;
-                                                            setLaunchGroups(updated);
-                                                        }}
-                                                        style={{
-                                                            flex: 1,
-                                                            padding: '8px 12px',
-                                                            fontSize: '15px',
-                                                            fontWeight: 500,
-                                                            border: '1px solid #e2e8f0',
-                                                            borderRadius: '8px',
-                                                            outline: 'none'
-                                                        }}
-                                                        placeholder="Название запуска"
-                                                    />
-                                                    {launchGroups.length > 1 && (
-                                                        <button
-                                                            onClick={() => {
-                                                                // Return blocks to unassigned
-                                                                setUnassignedFolderIds(prev => [...prev, ...group.folderIds]);
-                                                                // Remove launch
-                                                                setLaunchGroups(launchGroups.filter((_, i) => i !== groupIndex));
-                                                            }}
-                                                            style={{
-                                                                background: 'none',
-                                                                border: 'none',
-                                                                color: '#ef4444',
-                                                                cursor: 'pointer',
-                                                                fontSize: '18px',
-                                                                padding: '6px'
-                                                            }}
-                                                            title="Удалить запуск"
-                                                        >🗑️</button>
-                                                    )}
-                                                </div>
-
-                                                {/* Jira Link input */}
-                                                <div style={{ marginBottom: '12px' }}>
-                                                    <input
-                                                        type="text"
-                                                        value={group.jiraLink || ''}
-                                                        onChange={(e) => {
-                                                            const updated = [...launchGroups];
-                                                            updated[groupIndex].jiraLink = e.target.value;
-                                                            setLaunchGroups(updated);
-                                                        }}
-                                                        style={{
-                                                            width: '100%',
-                                                            padding: '8px 12px',
-                                                            fontSize: '12px',
-                                                            border: '1px solid #e2e8f0',
-                                                            borderRadius: '6px',
-                                                            outline: 'none',
-                                                            color: '#475569'
-                                                        }}
-                                                        placeholder="🔗 Ссылка на задачу Jira (опционально)"
-                                                    />
-                                                </div>
-
-                                                {/* Assigned blocks as tags */}
-                                                <div style={{
-                                                    display: 'flex',
-                                                    flexWrap: 'wrap',
-                                                    gap: '8px',
-                                                    minHeight: '36px'
-                                                }}>
-                                                    {group.folderIds.length === 0 ? (
-                                                        <span style={{ color: '#94a3b8', fontSize: '13px', fontStyle: 'italic' }}>
-                                                            Нет блоков — добавьте из левой панели
-                                                        </span>
-                                                    ) : (
-                                                        group.folderIds.map(folderId => {
-                                                            const folder = folders.flatMap(function flatten(f) {
-                                                                return [f, ...(f.children || []).flatMap(flatten)];
-                                                            }).find(f => f.id.toString() === folderId.toString());
-                                                            return (
-                                                                <span key={folderId} style={{
-                                                                    backgroundColor: '#6366f1',
-                                                                    color: '#fff',
-                                                                    padding: '5px 10px',
-                                                                    borderRadius: '6px',
-                                                                    fontSize: '12px',
-                                                                    fontWeight: 500,
-                                                                    display: 'inline-flex',
-                                                                    alignItems: 'center',
-                                                                    gap: '6px'
-                                                                }}>
-                                                                    {folder?.name || `ID: ${folderId}`}
-                                                                    <button
-                                                                        onClick={() => {
-                                                                            // Remove from this launch
-                                                                            const updated = [...launchGroups];
-                                                                            updated[groupIndex].folderIds = updated[groupIndex].folderIds.filter(id => id !== folderId);
-                                                                            setLaunchGroups(updated);
-                                                                            // Return to unassigned
-                                                                            setUnassignedFolderIds(prev => [...prev, folderId]);
-                                                                        }}
-                                                                        style={{
-                                                                            background: 'none',
-                                                                            border: 'none',
-                                                                            color: 'rgba(255,255,255,0.8)',
-                                                                            cursor: 'pointer',
-                                                                            fontSize: '14px',
-                                                                            padding: 0,
-                                                                            lineHeight: 1
-                                                                        }}
-                                                                        title="Вернуть в пул"
-                                                                    >×</button>
-                                                                </span>
-                                                            );
-                                                        })
-                                                    )}
-                                                </div>
-
-                                                <div style={{ marginTop: '10px', fontSize: '12px', color: '#64748b' }}>
-                                                    {group.folderIds.length} блоков
-                                                </div>
-                                            </div>
-                                        ))}
-
-                                        {/* Add Launch Button */}
-                                        <button
-                                            onClick={() => {
-                                                const newId = `launch-${Date.now()}`;
-                                                setLaunchGroups([...launchGroups, {
-                                                    id: newId,
-                                                    name: `Запуск ${launchGroups.length + 1}`,
-                                                    folderIds: [],
-                                                    jiraLink: ''
-                                                }]);
-                                            }}
-                                            style={{
-                                                width: '100%',
-                                                padding: '14px',
-                                                border: '2px dashed #cbd5e1',
-                                                borderRadius: '12px',
-                                                backgroundColor: 'transparent',
-                                                color: '#64748b',
-                                                fontSize: '14px',
-                                                fontWeight: 500,
-                                                cursor: 'pointer'
-                                            }}
-                                        >
-                                            ➕ Добавить запуск
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {/* Footer */}
-                                <div style={{
-                                    padding: '16px 28px',
-                                    borderTop: '1px solid #e2e8f0',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    backgroundColor: '#f8fafc'
-                                }}>
-                                    <div style={{ fontSize: '13px', color: '#64748b' }}>
-                                        Назначено: {launchGroups.reduce((sum, g) => sum + g.folderIds.length, 0)} блоков •
-                                        Без назначения: {unassignedFolderIds.length}
-                                    </div>
-                                    <div style={{ display: 'flex', gap: '12px' }}>
-                                        <button
-                                            onClick={() => setShowSplitModal(false)}
-                                            style={{
-                                                padding: '10px 20px',
-                                                borderRadius: '8px',
-                                                border: '1px solid #e2e8f0',
-                                                backgroundColor: '#fff',
-                                                color: '#64748b',
-                                                fontSize: '13px',
-                                                fontWeight: 500,
-                                                cursor: 'pointer'
-                                            }}
-                                        >Отмена</button>
-                                        <button
-                                            onClick={createMultipleLaunches}
-                                            disabled={loadingState.launch || launchGroups.every(g => g.folderIds.length === 0)}
-                                            style={{
-                                                padding: '10px 24px',
-                                                borderRadius: '8px',
-                                                border: 'none',
-                                                background: launchGroups.every(g => g.folderIds.length === 0)
-                                                    ? '#94a3b8'
-                                                    : 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                                                color: '#fff',
-                                                fontSize: '13px',
-                                                fontWeight: 600,
-                                                cursor: launchGroups.every(g => g.folderIds.length === 0) ? 'not-allowed' : 'pointer',
-                                                boxShadow: launchGroups.every(g => g.folderIds.length === 0) ? 'none' : '0 4px 12px rgba(99, 102, 241, 0.3)'
-                                            }}
-                                        >
-                                            {loadingState.launch ? (
-                                                <span>Создание... {splitProgress ? `(${splitProgress.current}/${splitProgress.total})` : ''}</span>
-                                            ) : (
-                                                (() => {
-                                                    const count = launchGroups.filter(g => g.folderIds.length > 0).length;
-                                                    return `Создать ${count} запуск${count === 1 ? '' : count > 1 && count < 5 ? 'а' : 'ов'}`;
-                                                })()
-                                            )}
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {/* Progress bar */}
-                                {splitProgress && (
-                                    <div style={{
-                                        height: '4px',
-                                        backgroundColor: '#e2e8f0'
-                                    }}>
+                                    ) : (
                                         <div style={{
-                                            height: '100%',
-                                            width: `${(splitProgress.current / splitProgress.total) * 100}%`,
-                                            background: 'linear-gradient(90deg, #6366f1, #8b5cf6)',
-                                            transition: 'width 0.3s ease'
-                                        }} />
+                                            padding: '40px',
+                                            textAlign: 'center',
+                                            color: '#6c757d',
+                                            fontSize: '14px'
+                                        }}>
+                                            {structureLoading ? 'Загрузка структуры...' : 'Нет доступных фич. Загрузите структуру проекта.'}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Footer */}
+                        <div style={{
+                            padding: '16px 24px',
+                            borderTop: '2px solid #ced4da',
+                            display: 'flex',
+                            justifyContent: 'flex-end',
+                            gap: '16px',
+                            backgroundColor: '#f8f9fa'
+                        }}>
+                            <button
+                                onClick={handleMappingCancel}
+                                style={styles.modalButtonCancel}
+                                disabled={isPartialSaving || isMappingLoading}
+                            >
+                                Отмена
+                            </button>
+                            <button
+                                onClick={handlePartialSave}
+                                style={styles.modalButtonSave}
+                                disabled={isPartialSaving || isMappingLoading}
+                            >
+                                {isPartialSaving
+                                    ? <Loader style={{ width: 20, height: 20 }} />
+                                    : 'Сохранить маппинг'}
+                            </button>
+                            <button
+                                onClick={() => handleMappingConfirm('launch')}
+                                style={{
+                                    ...styles.modalButtonConfirm,
+                                    opacity: (loadingState.testplan || loadingState.launch) ? 0.7 : 1,
+                                    cursor: (loadingState.testplan || loadingState.launch) ? 'not-allowed' : 'pointer'
+                                }}
+                                disabled={isPartialSaving || isMappingLoading || loadingState.launch || loadingState.testplan || isMappingConfirmButtonDisabled}
+                            >
+                                {loadingState.launch
+                                    ? <Loader style={{ width: 20, height: 20 }} />
+                                    : 'Создать запуск'}
+                            </button>
+                        </div>
+                        {progress && (
+                            <div style={{ marginTop: '15px', width: '100%', textAlign: 'center' }}>
+                                <div style={{ marginBottom: '5px', fontSize: '14px', color: '#555' }}>
+                                    {progress.message}
+                                </div>
+                                {progress.total > 0 && (
+                                    <div style={{ width: '100%', height: '8px', backgroundColor: '#e9ecef', borderRadius: '4px', overflow: 'hidden' }}>
+                                        <div
+                                            style={{
+                                                width: `${(progress.current / progress.total) * 100}%`,
+                                                height: '100%',
+                                                backgroundColor: '#28a745',
+                                                transition: 'width 0.3s ease'
+                                            }}
+                                        />
+                                    </div>
+                                )}
+                                {progress.total > 0 && (
+                                    <div style={{ fontSize: '12px', color: '#777', marginTop: '2px' }}>
+                                        {progress.current} / {progress.total}
                                     </div>
                                 )}
                             </div>
-                        </div>
-                    )}
+                        )}
+                    </div>
+                </div>
+            )}
 
-
-
-                    {/* Модальное окно подтверждения незамапленных компонентов */}
-                    {showUnmappedModal && (
+            {/* Split Modal — разделение на несколько запусков */}
+            {showSplitModal && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                    backdropFilter: 'blur(8px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 2000,
+                    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+                }}>
+                    <div style={{
+                        backgroundColor: '#fff',
+                        borderRadius: '24px',
+                        width: '95%',
+                        maxWidth: '1400px',
+                        maxHeight: '90vh',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+                        overflow: 'hidden'
+                    }}>
+                        {/* Header */}
                         <div style={{
-                            position: 'fixed',
-                            top: 0,
-                            left: 0,
-                            right: 0,
-                            bottom: 0,
-                            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                            backdropFilter: 'blur(4px)',
+                            padding: '20px 28px',
+                            borderBottom: '1px solid #e2e8f0',
                             display: 'flex',
                             alignItems: 'center',
-                            justifyContent: 'center',
-                            zIndex: 2100, // Выше чем mapping modal
-                            fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+                            justifyContent: 'space-between'
                         }}>
+                            <div>
+                                <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 700, color: '#1e293b' }}>
+                                    Разделение на запуски
+                                </h2>
+                                <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#64748b' }}>
+                                    Перетащите блоки из левой панели в нужный запуск
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setShowSplitModal(false)}
+                                style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    fontSize: '24px',
+                                    color: '#94a3b8',
+                                    cursor: 'pointer',
+                                    padding: '8px'
+                                }}
+                            >×</button>
+                        </div>
+
+                        {/* Two-column content */}
+                        <div style={{
+                            flex: 1,
+                            display: 'flex',
+                            overflow: 'hidden'
+                        }}>
+                            {/* Left Column — Unassigned Blocks (Tree View) */}
                             <div style={{
+                                width: '450px',
+                                borderRight: '1px solid #e2e8f0',
                                 backgroundColor: '#fff',
-                                borderRadius: '16px',
-                                width: '600px', // Increased width
-                                maxWidth: '90vw',
-                                boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
-                                overflow: 'hidden',
-                                animation: 'fadeIn 0.2s ease-out'
+                                display: 'flex',
+                                flexDirection: 'column',
+                                flexShrink: 0
                             }}>
                                 <div style={{
-                                    padding: '24px 28px',
-                                    borderBottom: '1px solid #fee2e2',
-                                    backgroundColor: '#fff', // Cleaner background
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '16px'
+                                    padding: '14px 18px',
+                                    borderBottom: '1px solid #e2e8f0',
+                                    fontWeight: 600,
+                                    fontSize: '14px',
+                                    color: '#1e293b',
+                                    backgroundColor: '#f8fafc'
                                 }}>
-                                    {/* Emoji removed, using simple warning styling if needed, or just text */}
-                                    <div>
-                                        <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: '#111827' }}>
-                                            Незамапленные компоненты
-                                        </h3>
-                                        <div style={{ fontSize: '14px', color: '#dc2626', marginTop: '4px', fontWeight: 500 }}>
-                                            Требуется подтверждение действия
+                                    📦 Блоки без назначения ({unassignedFolderIds.length})
+                                </div>
+                                <div style={{
+                                    flex: 1,
+                                    overflowY: 'auto',
+                                    padding: '8px 0'
+                                }}>
+                                    {unassignedFolderIds.length === 0 ? (
+                                        <div style={{
+                                            padding: '32px 20px',
+                                            textAlign: 'center',
+                                            color: '#64748b',
+                                            fontSize: '13px'
+                                        }}>
+                                            ✓ Все блоки распределены по запускам
+                                        </div>
+                                    ) : (
+                                        /* Recursive Tree Rendering */
+                                        (() => {
+                                            const unassignedSet = new Set(unassignedFolderIds.map(id => id.toString()));
+
+                                            // Helper to get all children IDs recursively
+                                            const getAllChildIds = (folder) => {
+                                                const ids = [folder.id.toString()];
+                                                (folder.children || []).forEach(child => {
+                                                    ids.push(...getAllChildIds(child));
+                                                });
+                                                return ids;
+                                            };
+
+                                            // Helper to check if folder or any children are unassigned
+                                            const hasUnassignedItems = (folder) => {
+                                                if (unassignedSet.has(folder.id.toString())) return true;
+                                                return (folder.children || []).some(hasUnassignedItems);
+                                            };
+
+                                            // Render tree node
+                                            const renderTreeNode = (folder, depth = 0) => {
+                                                if (!hasUnassignedItems(folder)) return null;
+
+                                                const folderId = folder.id.toString();
+                                                const isUnassigned = unassignedSet.has(folderId);
+                                                const hasChildren = folder.children && folder.children.length > 0;
+                                                const isExpanded = expandedSplitFolders[folderId];
+                                                const childrenWithUnassigned = (folder.children || []).filter(hasUnassignedItems);
+
+                                                return (
+                                                    <div key={folderId}>
+                                                        <div style={{
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            padding: '8px 12px',
+                                                            paddingLeft: `${12 + depth * 20}px`,
+                                                            borderBottom: '1px solid #f1f5f9',
+                                                            backgroundColor: isUnassigned ? '#fff' : '#fafbfc',
+                                                            cursor: 'pointer'
+                                                        }}>
+                                                            {/* Expand/Collapse */}
+                                                            {hasChildren && childrenWithUnassigned.length > 0 ? (
+                                                                <button
+                                                                    onClick={() => setExpandedSplitFolders(prev => ({
+                                                                        ...prev,
+                                                                        [folderId]: !prev[folderId]
+                                                                    }))}
+                                                                    style={{
+                                                                        background: 'none',
+                                                                        border: 'none',
+                                                                        padding: '2px 6px',
+                                                                        cursor: 'pointer',
+                                                                        fontSize: '12px',
+                                                                        color: '#64748b',
+                                                                        marginRight: '4px'
+                                                                    }}
+                                                                >
+                                                                    {isExpanded ? '▼' : '▶'}
+                                                                </button>
+                                                            ) : (
+                                                                <span style={{ width: '24px' }} />
+                                                            )}
+
+                                                            {/* Folder name */}
+                                                            <span style={{
+                                                                flex: 1,
+                                                                fontSize: '13px',
+                                                                fontWeight: isUnassigned ? 500 : 400,
+                                                                color: '#1e293b',
+                                                                overflow: 'hidden',
+                                                                textOverflow: 'ellipsis',
+                                                                whiteSpace: 'nowrap'
+                                                            }}>
+                                                                {folder.name}
+                                                                {folder.testCasesCount > 0 && (
+                                                                    <span style={{
+                                                                        marginLeft: '6px',
+                                                                        fontSize: '11px',
+                                                                        color: '#94a3b8'
+                                                                    }}>
+                                                                        ({folder.testCasesCount})
+                                                                    </span>
+                                                                )}
+                                                            </span>
+
+                                                            {/* Add to Launch dropdown — show for any folder with unassigned items */}
+                                                            {(isUnassigned || childrenWithUnassigned.length > 0) && (
+                                                                <select
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                    onChange={(e) => {
+                                                                        const targetIdx = parseInt(e.target.value, 10);
+                                                                        if (isNaN(targetIdx)) return;
+
+                                                                        // Get all child IDs to add (only unassigned ones)
+                                                                        const idsToAdd = getAllChildIds(folder).filter(id => unassignedSet.has(id));
+
+                                                                        // Add to launch
+                                                                        const updated = [...launchGroups];
+                                                                        idsToAdd.forEach(id => {
+                                                                            if (!updated[targetIdx].folderIds.includes(id)) {
+                                                                                updated[targetIdx].folderIds.push(id);
+                                                                            }
+                                                                        });
+                                                                        setLaunchGroups(updated);
+
+                                                                        // Remove from unassigned
+                                                                        setUnassignedFolderIds(prev => prev.filter(id => !idsToAdd.includes(id.toString())));
+
+                                                                        e.target.value = '';
+                                                                    }}
+                                                                    style={{
+                                                                        padding: '4px 8px',
+                                                                        borderRadius: '6px',
+                                                                        border: '1px solid #e2e8f0',
+                                                                        fontSize: '11px',
+                                                                        cursor: 'pointer',
+                                                                        backgroundColor: '#f8fafc',
+                                                                        color: '#475569'
+                                                                    }}
+                                                                    defaultValue=""
+                                                                >
+                                                                    <option value="" disabled>➕ В запуск</option>
+                                                                    {launchGroups.map((g, idx) => (
+                                                                        <option key={g.id} value={idx}>
+                                                                            {idx + 1}. {g.name.substring(0, 18)}
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                            )}
+
+                                                        </div>
+
+                                                        {/* Render children if expanded */}
+                                                        {isExpanded && childrenWithUnassigned.map(child =>
+                                                            renderTreeNode(child, depth + 1)
+                                                        )}
+                                                    </div>
+                                                );
+                                            };
+
+                                            return folders.map(folder => renderTreeNode(folder, 0));
+                                        })()
+                                    )}
+                                </div>
+
+                                {/* Quick actions */}
+                                {unassignedFolderIds.length > 0 && launchGroups.length > 0 && (
+                                    <div style={{
+                                        padding: '12px 14px',
+                                        borderTop: '1px solid #e2e8f0',
+                                        backgroundColor: '#f8fafc'
+                                    }}>
+                                        <button
+                                            onClick={() => {
+                                                const updated = [...launchGroups];
+                                                updated[0].folderIds = [...new Set([...updated[0].folderIds, ...unassignedFolderIds.map(id => id.toString())])];
+                                                setLaunchGroups(updated);
+                                                setUnassignedFolderIds([]);
+                                            }}
+                                            style={{
+                                                width: '100%',
+                                                padding: '10px',
+                                                backgroundColor: '#6366f1',
+                                                color: '#fff',
+                                                border: 'none',
+                                                borderRadius: '8px',
+                                                fontSize: '13px',
+                                                fontWeight: 500,
+                                                cursor: 'pointer'
+                                            }}
+                                        >
+                                            Добавить все в Запуск 1
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+
+
+                            {/* Right Column — Launches */}
+                            <div style={{
+                                flex: 1,
+                                overflowY: 'auto',
+                                padding: '20px'
+                            }}>
+                                {launchGroups.map((group, groupIndex) => (
+                                    <div key={group.id} style={{
+                                        backgroundColor: '#f8fafc',
+                                        borderRadius: '16px',
+                                        padding: '18px',
+                                        marginBottom: '16px',
+                                        border: '1px solid #e2e8f0'
+                                    }}>
+                                        <div style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '12px',
+                                            marginBottom: '14px'
+                                        }}>
+                                            <span style={{
+                                                width: '28px',
+                                                height: '28px',
+                                                borderRadius: '7px',
+                                                backgroundColor: '#6366f1',
+                                                color: '#fff',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                fontWeight: 600,
+                                                fontSize: '13px'
+                                            }}>{groupIndex + 1}</span>
+                                            <input
+                                                type="text"
+                                                value={group.name}
+                                                onChange={(e) => {
+                                                    const updated = [...launchGroups];
+                                                    updated[groupIndex].name = e.target.value;
+                                                    setLaunchGroups(updated);
+                                                }}
+                                                style={{
+                                                    flex: 1,
+                                                    padding: '8px 12px',
+                                                    fontSize: '15px',
+                                                    fontWeight: 500,
+                                                    border: '1px solid #e2e8f0',
+                                                    borderRadius: '8px',
+                                                    outline: 'none'
+                                                }}
+                                                placeholder="Название запуска"
+                                            />
+                                            {launchGroups.length > 1 && (
+                                                <button
+                                                    onClick={() => {
+                                                        // Return blocks to unassigned
+                                                        setUnassignedFolderIds(prev => [...prev, ...group.folderIds]);
+                                                        // Remove launch
+                                                        setLaunchGroups(launchGroups.filter((_, i) => i !== groupIndex));
+                                                    }}
+                                                    style={{
+                                                        background: 'none',
+                                                        border: 'none',
+                                                        color: '#ef4444',
+                                                        cursor: 'pointer',
+                                                        fontSize: '18px',
+                                                        padding: '6px'
+                                                    }}
+                                                    title="Удалить запуск"
+                                                >🗑️</button>
+                                            )}
+                                        </div>
+
+                                        {/* Jira Link input */}
+                                        <div style={{ marginBottom: '12px' }}>
+                                            <input
+                                                type="text"
+                                                value={group.jiraLink || ''}
+                                                onChange={(e) => {
+                                                    const updated = [...launchGroups];
+                                                    updated[groupIndex].jiraLink = e.target.value;
+                                                    setLaunchGroups(updated);
+                                                }}
+                                                style={{
+                                                    width: '100%',
+                                                    padding: '8px 12px',
+                                                    fontSize: '12px',
+                                                    border: '1px solid #e2e8f0',
+                                                    borderRadius: '6px',
+                                                    outline: 'none',
+                                                    color: '#475569'
+                                                }}
+                                                placeholder="🔗 Ссылка на задачу Jira (опционально)"
+                                            />
+                                        </div>
+
+                                        {/* Assigned blocks as tags */}
+                                        <div style={{
+                                            display: 'flex',
+                                            flexWrap: 'wrap',
+                                            gap: '8px',
+                                            minHeight: '36px'
+                                        }}>
+                                            {group.folderIds.length === 0 ? (
+                                                <span style={{ color: '#94a3b8', fontSize: '13px', fontStyle: 'italic' }}>
+                                                    Нет блоков — добавьте из левой панели
+                                                </span>
+                                            ) : (
+                                                group.folderIds.map(folderId => {
+                                                    const folder = folders.flatMap(function flatten(f) {
+                                                        return [f, ...(f.children || []).flatMap(flatten)];
+                                                    }).find(f => f.id.toString() === folderId.toString());
+                                                    return (
+                                                        <span key={folderId} style={{
+                                                            backgroundColor: '#6366f1',
+                                                            color: '#fff',
+                                                            padding: '5px 10px',
+                                                            borderRadius: '6px',
+                                                            fontSize: '12px',
+                                                            fontWeight: 500,
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            gap: '6px'
+                                                        }}>
+                                                            {folder?.name || `ID: ${folderId}`}
+                                                            <button
+                                                                onClick={() => {
+                                                                    // Remove from this launch
+                                                                    const updated = [...launchGroups];
+                                                                    updated[groupIndex].folderIds = updated[groupIndex].folderIds.filter(id => id !== folderId);
+                                                                    setLaunchGroups(updated);
+                                                                    // Return to unassigned
+                                                                    setUnassignedFolderIds(prev => [...prev, folderId]);
+                                                                }}
+                                                                style={{
+                                                                    background: 'none',
+                                                                    border: 'none',
+                                                                    color: 'rgba(255,255,255,0.8)',
+                                                                    cursor: 'pointer',
+                                                                    fontSize: '14px',
+                                                                    padding: 0,
+                                                                    lineHeight: 1
+                                                                }}
+                                                                title="Вернуть в пул"
+                                                            >×</button>
+                                                        </span>
+                                                    );
+                                                })
+                                            )}
+                                        </div>
+
+                                        <div style={{ marginTop: '10px', fontSize: '12px', color: '#64748b' }}>
+                                            {group.folderIds.length} блоков
                                         </div>
                                     </div>
-                                </div>
+                                ))}
 
-                                <div style={{ padding: '28px' }}>
-                                    <p style={{ margin: '0 0 20px', fontSize: '15px', lineHeight: '1.6', color: '#374151' }}>
-                                        Вы не связали следующие компоненты ({unmappedComponentsList.length}) с функциональными блоками Allure.
-                                        <br />
-                                        <strong>Вы уверены, что хотите создать запуск без привязки этих компонентов?</strong>
-                                    </p>
+                                {/* Add Launch Button */}
+                                <button
+                                    onClick={() => {
+                                        const newId = `launch-${Date.now()}`;
+                                        setLaunchGroups([...launchGroups, {
+                                            id: newId,
+                                            name: `Запуск ${launchGroups.length + 1}`,
+                                            folderIds: [],
+                                            jiraLink: ''
+                                        }]);
+                                    }}
+                                    style={{
+                                        width: '100%',
+                                        padding: '14px',
+                                        border: '2px dashed #cbd5e1',
+                                        borderRadius: '12px',
+                                        backgroundColor: 'transparent',
+                                        color: '#64748b',
+                                        fontSize: '14px',
+                                        fontWeight: 500,
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    ➕ Добавить запуск
+                                </button>
+                            </div>
+                        </div>
 
-                                    <div style={{
-                                        maxHeight: '300px', // Increased height
-                                        overflowY: 'auto',
-                                        border: '1px solid #e5e7eb',
+                        {/* Footer */}
+                        <div style={{
+                            padding: '16px 28px',
+                            borderTop: '1px solid #e2e8f0',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            backgroundColor: '#f8fafc'
+                        }}>
+                            <div style={{ fontSize: '13px', color: '#64748b' }}>
+                                Назначено: {launchGroups.reduce((sum, g) => sum + g.folderIds.length, 0)} блоков •
+                                Без назначения: {unassignedFolderIds.length}
+                            </div>
+                            <div style={{ display: 'flex', gap: '12px' }}>
+                                <button
+                                    onClick={() => setShowSplitModal(false)}
+                                    style={{
+                                        padding: '10px 20px',
                                         borderRadius: '8px',
-                                        backgroundColor: '#f9fafb'
-                                    }}>
-                                        <ul style={{ margin: 0, padding: '8px 0', listStyle: 'none' }}>
-                                            {unmappedComponentsList.map((comp, idx) => (
-                                                <li key={idx} style={{
-                                                    padding: '8px 20px', // Increased padding
-                                                    fontSize: '14px',
-                                                    color: '#4b5563',
-                                                    borderBottom: idx < unmappedComponentsList.length - 1 ? '1px solid #f3f4f6' : 'none',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '10px'
-                                                }}>
-                                                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ef4444', flexShrink: 0 }} />
-                                                    {/* Show name properly */}
-                                                    {comp.name || comp.serviceName || 'Unnamed Component'}
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                </div>
+                                        border: '1px solid #e2e8f0',
+                                        backgroundColor: '#fff',
+                                        color: '#64748b',
+                                        fontSize: '13px',
+                                        fontWeight: 500,
+                                        cursor: 'pointer'
+                                    }}
+                                >Отмена</button>
+                                <button
+                                    onClick={createMultipleLaunches}
+                                    disabled={loadingState.launch || launchGroups.every(g => g.folderIds.length === 0)}
+                                    style={{
+                                        padding: '10px 24px',
+                                        borderRadius: '8px',
+                                        border: 'none',
+                                        background: launchGroups.every(g => g.folderIds.length === 0)
+                                            ? '#94a3b8'
+                                            : 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                                        color: '#fff',
+                                        fontSize: '13px',
+                                        fontWeight: 600,
+                                        cursor: launchGroups.every(g => g.folderIds.length === 0) ? 'not-allowed' : 'pointer',
+                                        boxShadow: launchGroups.every(g => g.folderIds.length === 0) ? 'none' : '0 4px 12px rgba(99, 102, 241, 0.3)'
+                                    }}
+                                >
+                                    {loadingState.launch ? (
+                                        <span>Создание... {splitProgress ? `(${splitProgress.current}/${splitProgress.total})` : ''}</span>
+                                    ) : (
+                                        (() => {
+                                            const count = launchGroups.filter(g => g.folderIds.length > 0).length;
+                                            return `Создать ${count} запуск${count === 1 ? '' : count > 1 && count < 5 ? 'а' : 'ов'}`;
+                                        })()
+                                    )}
+                                </button>
+                            </div>
+                        </div>
 
+                        {/* Progress bar */}
+                        {splitProgress && (
+                            <div style={{
+                                height: '4px',
+                                backgroundColor: '#e2e8f0'
+                            }}>
                                 <div style={{
-                                    padding: '20px 28px',
-                                    backgroundColor: '#f9fafb',
-                                    borderTop: '1px solid #e5e7eb',
-                                    display: 'flex',
-                                    justifyContent: 'flex-end',
-                                    gap: '12px'
-                                }}>
-                                    <button
-                                        onClick={() => setShowUnmappedModal(false)}
-                                        style={{
-                                            padding: '10px 20px',
-                                            borderRadius: '8px',
-                                            border: '1px solid #d1d5db',
-                                            backgroundColor: '#fff',
-                                            color: '#374151',
-                                            fontSize: '14px',
-                                            fontWeight: 500,
-                                            cursor: 'pointer',
-                                            transition: 'all 0.2s'
-                                        }}
-                                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
-                                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#fff'}
-                                    >
-                                        Отмена
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            setShowUnmappedModal(false);
-                                            handleOpenSplitModal(true);
-                                        }}
-                                        style={{
-                                            padding: '10px 20px',
-                                            borderRadius: '8px',
-                                            border: 'none',
-                                            backgroundColor: '#dc2626',
-                                            color: '#fff',
-                                            fontSize: '14px',
-                                            fontWeight: 600,
-                                            cursor: 'pointer',
-                                            boxShadow: '0 4px 6px rgba(220, 38, 38, 0.2)',
-                                            transition: 'all 0.2s'
-                                        }}
-                                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#b91c1c'}
-                                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#dc2626'}
-                                    >
-                                        Продолжить без них
-                                    </button>
+                                    height: '100%',
+                                    width: `${(splitProgress.current / splitProgress.total) * 100}%`,
+                                    background: 'linear-gradient(90deg, #6366f1, #8b5cf6)',
+                                    transition: 'width 0.3s ease'
+                                }} />
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+
+
+            {/* Модальное окно подтверждения незамапленных компонентов */}
+            {showUnmappedModal && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                    backdropFilter: 'blur(4px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 2100, // Выше чем mapping modal
+                    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+                }}>
+                    <div style={{
+                        backgroundColor: '#fff',
+                        borderRadius: '16px',
+                        width: '600px', // Increased width
+                        maxWidth: '90vw',
+                        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+                        overflow: 'hidden',
+                        animation: 'fadeIn 0.2s ease-out'
+                    }}>
+                        <div style={{
+                            padding: '24px 28px',
+                            borderBottom: '1px solid #fee2e2',
+                            backgroundColor: '#fff', // Cleaner background
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '16px'
+                        }}>
+                            {/* Emoji removed, using simple warning styling if needed, or just text */}
+                            <div>
+                                <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: '#111827' }}>
+                                    Незамапленные компоненты
+                                </h3>
+                                <div style={{ fontSize: '14px', color: '#dc2626', marginTop: '4px', fontWeight: 500 }}>
+                                    Требуется подтверждение действия
                                 </div>
                             </div>
                         </div>
-                    )}
 
+                        <div style={{ padding: '28px' }}>
+                            <p style={{ margin: '0 0 20px', fontSize: '15px', lineHeight: '1.6', color: '#374151' }}>
+                                Вы не связали следующие компоненты ({unmappedComponentsList.length}) с функциональными блоками Allure.
+                                <br />
+                                <strong>Вы уверены, что хотите создать запуск без привязки этих компонентов?</strong>
+                            </p>
+
+                            <div style={{
+                                maxHeight: '300px', // Increased height
+                                overflowY: 'auto',
+                                border: '1px solid #e5e7eb',
+                                borderRadius: '8px',
+                                backgroundColor: '#f9fafb'
+                            }}>
+                                <ul style={{ margin: 0, padding: '8px 0', listStyle: 'none' }}>
+                                    {unmappedComponentsList.map((comp, idx) => (
+                                        <li key={idx} style={{
+                                            padding: '8px 20px', // Increased padding
+                                            fontSize: '14px',
+                                            color: '#4b5563',
+                                            borderBottom: idx < unmappedComponentsList.length - 1 ? '1px solid #f3f4f6' : 'none',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '10px'
+                                        }}>
+                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ef4444', flexShrink: 0 }} />
+                                            {/* Show name properly */}
+                                            {comp.name || comp.serviceName || 'Unnamed Component'}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        </div>
+
+                        <div style={{
+                            padding: '20px 28px',
+                            backgroundColor: '#f9fafb',
+                            borderTop: '1px solid #e5e7eb',
+                            display: 'flex',
+                            justifyContent: 'flex-end',
+                            gap: '12px'
+                        }}>
+                            <button
+                                onClick={() => setShowUnmappedModal(false)}
+                                style={{
+                                    padding: '10px 20px',
+                                    borderRadius: '8px',
+                                    border: '1px solid #d1d5db',
+                                    backgroundColor: '#fff',
+                                    color: '#374151',
+                                    fontSize: '14px',
+                                    fontWeight: 500,
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s'
+                                }}
+                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#fff'}
+                            >
+                                Отмена
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setShowUnmappedModal(false);
+                                    handleOpenSplitModal(true);
+                                }}
+                                style={{
+                                    padding: '10px 20px',
+                                    borderRadius: '8px',
+                                    border: 'none',
+                                    backgroundColor: '#dc2626',
+                                    color: '#fff',
+                                    fontSize: '14px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    boxShadow: '0 4px 6px rgba(220, 38, 38, 0.2)',
+                                    transition: 'all 0.2s'
+                                }}
+                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#b91c1c'}
+                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#dc2626'}
+                            >
+                                Продолжить без них
+                            </button>
+                        </div>
+                    </div>
                 </div>
-            );
+            )}
+
+        </div>
+    );
 };
 
-            // Новые стили для react-select
-            const selectStyles = {
-                control: (provided) => ({
-                ...provided,
-                minHeight: '38px',
-            width: '100%', // Занимает всю доступную ширину
-            minWidth: '300px', // Минимальная ширина
-            borderRadius: '8px',
-            border: `1px solid ${styles.borderLight}`,
-            boxShadow: 'none',
-            '&:hover': {borderColor: styles.primary },
+// Новые стили для react-select
+const selectStyles = {
+    control: (provided) => ({
+        ...provided,
+        minHeight: '38px',
+        width: '100%', // Занимает всю доступную ширину
+        minWidth: '300px', // Минимальная ширина
+        borderRadius: '8px',
+        border: `1px solid ${styles.borderLight}`,
+        boxShadow: 'none',
+        '&:hover': { borderColor: styles.primary },
     }),
     multiValue: (provided) => ({
-                ...provided,
-                backgroundColor: styles.lightGray,
-            borderRadius: '4px',
+        ...provided,
+        backgroundColor: styles.lightGray,
+        borderRadius: '4px',
     }),
     multiValueLabel: (provided) => ({
-                ...provided,
-                color: styles.textDark,
+        ...provided,
+        color: styles.textDark,
     }),
     multiValueRemove: (provided) => ({
-                ...provided,
-                color: styles.textMuted,
-            '&:hover': {backgroundColor: styles.danger, color: 'white' },
+        ...provided,
+        color: styles.textMuted,
+        '&:hover': { backgroundColor: styles.danger, color: 'white' },
     }),
     menu: (provided) => ({
-                ...provided,
-                zIndex: 1001,
-            borderRadius: '8px',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
-            maxHeight: '300px', // Ограничиваем высоту меню
-            overflowY: 'auto',  // Добавляем вертикальный скролл
-            color: styles.textDark
+        ...provided,
+        zIndex: 1001,
+        borderRadius: '8px',
+        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+        maxHeight: '300px', // Ограничиваем высоту меню
+        overflowY: 'auto',  // Добавляем вертикальный скролл
+        color: styles.textDark
     }),
     menuList: (provided) => ({
-                ...provided,
-                maxHeight: '300px', // Ограничиваем высоту списка
-            padding: '8px',     // Добавляем отступы для красоты
-            color: styles.textDark
+        ...provided,
+        maxHeight: '300px', // Ограничиваем высоту списка
+        padding: '8px',     // Добавляем отступы для красоты
+        color: styles.textDark
     })
 };
 
-            export default TIAPage;
+export default TIAPage;
