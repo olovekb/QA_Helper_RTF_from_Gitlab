@@ -1051,10 +1051,31 @@ const TIAPage = ({ projects }) => {
             // Проверяем, выбраны ли все дочерние элементы (рекурсивно)
             const allDescendantsSelected = areAllDescendantsSelected(folder, mappings);
 
-            // Узел считается выбранным, если он выбран напрямую или все его дочерние элементы выбраны
-            const isSelected = isDirectlySelected || (allDescendantsSelected && !isDirectlySelected && folder.children && folder.children.length > 0);
+            // Проверяем, выбран ли ХОТЯ БЫ ОДИН потомок (для частичного выбора)
+            const someDescendantsSelected = folder.children && folder.children.length > 0 &&
+                getAllDescendantIds(folder).some(id => mappings.includes(id) && id !== folderId); // Exclude self check if checking children
+
+            // Состояния выбора
+            const isFullSelected = allDescendantsSelected; // Полностью выбран
+            // Частично выбран: не все выбраны, но есть выбранные потомки ИЛИ сам выбран но не дети
+            const isPartiallySelected = !isFullSelected && (someDescendantsSelected || isDirectlySelected);
+
+            const isSelected = isFullSelected || isDirectlySelected;
             const hasChildren = folder.children && folder.children.length > 0;
             const isExpanded = expandedFolders[folder.id];
+
+            // UI Colors
+            const bgColor = isFullSelected
+                ? '#d4edda' // Green for full
+                : isPartiallySelected
+                    ? '#fff3cd' // Yellow for partial
+                    : 'transparent';
+
+            const borderColor = isFullSelected
+                ? '#28a745'
+                : isPartiallySelected
+                    ? '#ffc107'
+                    : 'transparent';
 
             return (
                 <div key={folder.id} style={{ marginBottom: '8px' }}>
@@ -1063,12 +1084,12 @@ const TIAPage = ({ projects }) => {
                             display: 'flex',
                             alignItems: 'center',
                             padding: '8px 12px',
-                            backgroundColor: isSelected ? '#d4edda' : 'transparent',
+                            backgroundColor: bgColor,
                             borderRadius: '6px',
                             cursor: 'pointer',
                             transition: 'background-color 0.2s',
                             marginLeft: `${level * 20}px`,
-                            border: isSelected ? '2px solid #28a745' : '2px solid transparent',
+                            border: `2px solid ${borderColor}`,
                             ':hover': { backgroundColor: '#e9ecef' }
                         }}
                         onClick={(e) => {
@@ -1076,14 +1097,7 @@ const TIAPage = ({ projects }) => {
                             if (!componentId) return;
 
                             // Single click: toggle ONLY current folder.id
-                            // Note: Double click will fire two click events, but we rely on UX that double click "adds" to selection if needed
-                            // However, strictly splitting them is hard without delay. 
-                            // Current decision based on request: "One click selects only story... Double click selects story + everything below"
-
-                            // We use a simple toggler for single click
                             if (isDirectlySelected) {
-                                // If selected, verify if it was selected manually or implicitly? 
-                                // Actually, we just toggle the ID in the list.
                                 const newMappings = mappings.filter(id => id !== folderId);
                                 setComponentMappings(prev => ({
                                     ...prev,
@@ -1101,22 +1115,36 @@ const TIAPage = ({ projects }) => {
                             e.stopPropagation();
                             if (!componentId) return;
 
-                            // Double click: select ALL descendants
-                            const allIdsToAdd = getAllDescendantIds(folder);
-                            const currentMappings = componentMappings[componentId] || [];
-                            // Add self + all children
-                            const newMappingsSet = new Set([...currentMappings, folderId, ...allIdsToAdd]);
+                            // Double click: toggle ALL descendants
+                            // Logic: If node AND all descendants are selected -> Deselect All. Otherwise -> Select All.
 
-                            setComponentMappings(prev => ({
-                                ...prev,
-                                [componentId]: Array.from(newMappingsSet)
-                            }));
+                            const allDescendantIds = getAllDescendantIds(folder); // Includes folder.id
+                            const currentMappings = componentMappings[componentId] || [];
+
+                            // Check if ALL are currently selected
+                            const areAllSelected = allDescendantIds.every(id => currentMappings.includes(id));
+
+                            if (areAllSelected) {
+                                // Deselect all
+                                const newMappings = currentMappings.filter(id => !allDescendantIds.includes(id));
+                                setComponentMappings(prev => ({
+                                    ...prev,
+                                    [componentId]: newMappings
+                                }));
+                            } else {
+                                // Select all
+                                const newMappingsSet = new Set([...currentMappings, ...allDescendantIds]);
+                                setComponentMappings(prev => ({
+                                    ...prev,
+                                    [componentId]: Array.from(newMappingsSet)
+                                }));
+                            }
                         }}
                         onMouseEnter={(e) => {
-                            e.currentTarget.style.backgroundColor = isSelected ? '#c3e6cb' : '#e9ecef';
+                            e.currentTarget.style.backgroundColor = isFullSelected ? '#c3e6cb' : isPartiallySelected ? '#ffeeba' : '#e9ecef';
                         }}
                         onMouseLeave={(e) => {
-                            e.currentTarget.style.backgroundColor = isSelected ? '#d4edda' : 'transparent';
+                            e.currentTarget.style.backgroundColor = bgColor;
                         }}
                     >
                         {hasChildren && (
@@ -1147,6 +1175,7 @@ const TIAPage = ({ projects }) => {
                             >
                                 {isExpanded ? '▼' : '►'}
                             </div>
+
                         )}
                         {!hasChildren && <span style={{ width: '32px', display: 'inline-block', flexShrink: 0 }} />}
                         <span style={{
@@ -1181,12 +1210,14 @@ const TIAPage = ({ projects }) => {
                             </>
                         )}
                     </div>
-                    {hasChildren && isExpanded && (
-                        <div style={{ marginTop: '4px' }}>
-                            {renderFolderTreeForMapping(folder.children, componentId, level + 1)}
-                        </div>
-                    )}
-                </div>
+                    {
+                        hasChildren && isExpanded && (
+                            <div style={{ marginTop: '4px' }}>
+                                {renderFolderTreeForMapping(folder.children, componentId, level + 1)}
+                            </div>
+                        )
+                    }
+                </div >
             );
         });
     };
@@ -2974,7 +3005,23 @@ const TIAPage = ({ projects }) => {
                                     Чем покрыть
                                 </h3>
 
+
                                 {/* Поиск по дереву */}
+                                <div style={{
+                                    marginBottom: '10px',
+                                    fontSize: '12px',
+                                    color: '#64748b',
+                                    backgroundColor: '#f1f5f9',
+                                    padding: '8px 12px',
+                                    borderRadius: '6px',
+                                    lineHeight: 1.4
+                                }}>
+                                    💡 <b>Подсказка:</b>
+                                    <ul style={{ margin: '4px 0 0 0', paddingLeft: '16px' }}>
+                                        <li><b>Один клик</b> — выбрать/убрать текущий элемент</li>
+                                        <li><b>Двойной клик</b> — выбрать/убрать элемент со всеми вложенными</li>
+                                    </ul>
+                                </div>
                                 <input
                                     type="text"
                                     placeholder="Поиск по дереву фич..."
@@ -3634,6 +3681,149 @@ const TIAPage = ({ projects }) => {
                                 }} />
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+
+
+            {/* Модальное окно подтверждения незамапленных компонентов */}
+            {showUnmappedModal && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                    backdropFilter: 'blur(4px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 2100, // Выше чем mapping modal
+                    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+                }}>
+                    <div style={{
+                        backgroundColor: '#fff',
+                        borderRadius: '16px',
+                        width: '500px',
+                        maxWidth: '90vw',
+                        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+                        overflow: 'hidden',
+                        animation: 'fadeIn 0.2s ease-out'
+                    }}>
+                        <div style={{
+                            padding: '20px 24px',
+                            borderBottom: '1px solid #fee2e2',
+                            backgroundColor: '#fef2f2',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '12px'
+                        }}>
+                            <div style={{
+                                width: '40px',
+                                height: '40px',
+                                borderRadius: '50%',
+                                backgroundColor: '#fee2e2',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '20px',
+                                flexShrink: 0
+                            }}>
+                                ⚠️
+                            </div>
+                            <div>
+                                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: '#991b1b' }}>
+                                    Незамапленные компоненты
+                                </h3>
+                                <div style={{ fontSize: '13px', color: '#b91c1c', marginTop: '2px' }}>
+                                    Требуется подтверждение действия
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style={{ padding: '24px' }}>
+                            <p style={{ margin: '0 0 16px', fontSize: '14px', lineHeight: '1.5', color: '#374151' }}>
+                                Вы не связали следующие компоненты ({unmappedComponentsList.length}) с функциональными блоками Allure.
+                                <br />
+                                <strong>Вы уверены, что хотите создать запуск без привязки этих компонентов?</strong>
+                            </p>
+
+                            <div style={{
+                                maxHeight: '200px',
+                                overflowY: 'auto',
+                                border: '1px solid #e5e7eb',
+                                borderRadius: '8px',
+                                backgroundColor: '#f9fafb'
+                            }}>
+                                <ul style={{ margin: 0, padding: '8px 0', listStyle: 'none' }}>
+                                    {unmappedComponentsList.map((comp, idx) => (
+                                        <li key={idx} style={{
+                                            padding: '6px 16px',
+                                            fontSize: '13px',
+                                            color: '#4b5563',
+                                            borderBottom: idx < unmappedComponentsList.length - 1 ? '1px solid #f3f4f6' : 'none',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px'
+                                        }}>
+                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ef4444' }} />
+                                            {comp.serviceName || comp.name || 'Unnamed Component'}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        </div>
+
+                        <div style={{
+                            padding: '16px 24px',
+                            backgroundColor: '#f9fafb',
+                            borderTop: '1px solid #e5e7eb',
+                            display: 'flex',
+                            justifyContent: 'flex-end',
+                            gap: '12px'
+                        }}>
+                            <button
+                                onClick={() => setShowUnmappedModal(false)}
+                                style={{
+                                    padding: '8px 16px',
+                                    borderRadius: '6px',
+                                    border: '1px solid #d1d5db',
+                                    backgroundColor: '#fff',
+                                    color: '#374151',
+                                    fontSize: '14px',
+                                    fontWeight: 500,
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s'
+                                }}
+                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#fff'}
+                            >
+                                Отмена
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setShowUnmappedModal(false);
+                                    handleOpenSplitModal(true);
+                                }}
+                                style={{
+                                    padding: '8px 16px',
+                                    borderRadius: '6px',
+                                    border: 'none',
+                                    backgroundColor: '#dc2626',
+                                    color: '#fff',
+                                    fontSize: '14px',
+                                    fontWeight: 500,
+                                    cursor: 'pointer',
+                                    boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+                                    transition: 'all 0.2s'
+                                }}
+                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#b91c1c'}
+                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#dc2626'}
+                            >
+                                Продолжить без них
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

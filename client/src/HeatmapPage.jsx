@@ -44,6 +44,12 @@ const HeatmapPage = ({ projects }) => {
     const [showUnmappedConfirmation, setShowUnmappedConfirmation] = useState(false);
     const [unmappedList, setUnmappedList] = useState([]);
 
+    // Состояния для нового UI маппинга (Split View)
+    const [selectedComponentForMapping, setSelectedComponentForMapping] = useState(null);
+    const [mappingFilter, setMappingFilter] = useState('');
+    const [folderSearchTerm, setFolderSearchTerm] = useState('');
+    const [expandedFolders, setExpandedFolders] = useState({});
+
     // Загрузка доступных версий при изменении проекта или дат
     useEffect(() => {
         if (projectId) {
@@ -258,12 +264,298 @@ const HeatmapPage = ({ projects }) => {
         }
     };
 
+    // --- Новая логика маппинга (Split View) ---
+
+    // Рекурсивно собирает все ID узла и его дочерних элементов
+    const getAllDescendantIds = (folder) => {
+        const ids = [folder.id.toString()];
+        if (folder.children && folder.children.length > 0) {
+            folder.children.forEach(child => {
+                ids.push(...getAllDescendantIds(child));
+            });
+        }
+        return ids;
+    };
+
+    // Рекурсивно проверяет, выбраны ли все дочерние элементы узла
+    const areAllDescendantsSelected = (folder, mappings) => {
+        const folderId = folder.id.toString();
+        // Если сам узел выбран, считаем что все дочерние тоже выбраны (так как при выборе родителя выбираются все дети)
+        if (mappings.includes(folderId)) return true;
+
+        // Если нет детей, проверяем только сам узел
+        if (!folder.children || folder.children.length === 0) {
+            return mappings.includes(folderId);
+        }
+
+        // Проверяем, выбраны ли все дочерние элементы
+        return folder.children.every(child => areAllDescendantsSelected(child, mappings));
+    };
+
+    // Фильтрация дерева фич по поисковому запросу
+    const filterFolders = (folders, searchTerm) => {
+        if (!searchTerm) return folders;
+        const lowerSearch = searchTerm.toLowerCase();
+
+        // Используем reduce для построения нового массива с учетом логики "родитель подошел -> берем всех детей"
+        return folders.reduce((acc, folder) => {
+            const matches = folder.name.toLowerCase().includes(lowerSearch) ||
+                (folder.customFieldName && folder.customFieldName.toLowerCase().includes(lowerSearch));
+
+            if (matches) {
+                // Если родитель подошел, берем его целиком со всеми детьми (даже если они не подходят)
+                acc.push(folder);
+            } else {
+                // Если родитель не подошел, ищем совпадения внутри детей
+                const filteredChildren = folder.children ? filterFolders(folder.children, searchTerm) : [];
+                if (filteredChildren.length > 0) {
+                    // Если есть, добавляем родителя с отфильтрованными детьми
+                    acc.push({
+                        ...folder,
+                        children: filteredChildren
+                    });
+                }
+            }
+            return acc;
+        }, []);
+    };
+
+    // Форматирование customFieldName для отображения (для проекта 307 показываем Block/SubBlock вместо Feature)
+    const formatCustomFieldName = (folder, level = 0) => {
+        // Для всех проектов показываем как обычно
+        return `${folder.customFieldName} - ${folder.name}`;
+    };
+
+    // Фильтрация папок для проекта 307 (показываем только Block и SubBlock на корневом уровне, но под ними показываем все)
+    const filterFoldersForProject = (folders) => {
+        if (projectId !== '307') {
+            return folders;
+        }
+
+        const result = [];
+        folders.forEach(folder => {
+            if (folder.customFieldName === 'Block' || folder.customFieldName === 'SubBlock') {
+                // Показываем Block и SubBlock, рекурсивно фильтруем детей (но не фильтруем Feature, Story и т.д.)
+                const filteredChildren = folder.children && folder.children.length > 0
+                    ? filterFoldersForProject(folder.children)
+                    : [];
+                result.push({
+                    ...folder,
+                    children: filteredChildren
+                });
+            } else {
+                // Для всех остальных типов (Feature, Story, Scenario, Code) - показываем их, если они не на корневом уровне
+                // Но эта функция вызывается рекурсивно, так что если мы здесь, значит это уже не корневой уровень
+                // Просто показываем все узлы с их детьми
+                const filteredChildren = folder.children && folder.children.length > 0
+                    ? filterFoldersForProject(folder.children)
+                    : [];
+                result.push({
+                    ...folder,
+                    children: filteredChildren
+                });
+            }
+        });
+        return result;
+    };
+
+    // Рендер дерева фич для маппинга с возможностью выбора
+    const renderFolderTreeForMapping = (folders, componentId, level = 0) => {
+        if (!folders || folders.length === 0) {
+            if (level === 0) {
+                return <div style={{ color: '#6c757d', fontSize: '14px', padding: '20px', textAlign: 'center' }}>Нет доступных фич, измените параметры поиска</div>;
+            }
+            return null;
+        }
+
+        return folders.map((folder) => {
+            // Проверяем, выбран ли узел или все его дочерние элементы
+            const folderId = folder.id.toString();
+            const mappings = componentId ? (componentMappings[componentId] || []) : [];
+            const isDirectlySelected = mappings.includes(folderId);
+
+            // Проверяем, выбраны ли все дочерние элементы (рекурсивно)
+            const allDescendantsSelected = areAllDescendantsSelected(folder, mappings);
+
+            // Проверяем, выбран ли ХОТЯ БЫ ОДИН потомок (для частичного выбора)
+            const someDescendantsSelected = folder.children && folder.children.length > 0 &&
+                getAllDescendantIds(folder).some(id => mappings.includes(id) && id !== folderId); // Exclude self check if checking children
+
+            // Состояния выбора
+            const isFullSelected = allDescendantsSelected; // Полностью выбран
+            // Частично выбран: не все выбраны, но есть выбранные потомки ИЛИ сам выбран но не дети
+            const isPartiallySelected = !isFullSelected && (someDescendantsSelected || isDirectlySelected);
+
+            const isSelected = isFullSelected || isDirectlySelected; // Для совместимости с предыдущим кодом стилей, но мы уточним цвета
+            const hasChildren = folder.children && folder.children.length > 0;
+            const isExpanded = expandedFolders[folder.id];
+
+            // UI Colors
+            const bgColor = isFullSelected
+                ? '#d4edda' // Green for full
+                : isPartiallySelected
+                    ? '#fff3cd' // Yellow for partial
+                    : 'transparent';
+
+            const borderColor = isFullSelected
+                ? '#28a745'
+                : isPartiallySelected
+                    ? '#ffc107'
+                    : 'transparent';
+
+
+            return (
+                <div key={folder.id} style={{ marginBottom: '8px' }}>
+                    <div
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '8px 12px',
+                            backgroundColor: bgColor,
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            transition: 'background-color 0.2s',
+                            marginLeft: `${level * 20}px`,
+                            border: `2px solid ${borderColor}`,
+                            ':hover': { backgroundColor: '#e9ecef' }
+                        }}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (!componentId) return;
+
+                            // Single click: toggle ONLY current folder.id
+                            if (isDirectlySelected) {
+                                const newMappings = mappings.filter(id => id !== folderId);
+                                setComponentMappings(prev => ({
+                                    ...prev,
+                                    [componentId]: newMappings
+                                }));
+                            } else {
+                                // Add only self
+                                setComponentMappings(prev => ({
+                                    ...prev,
+                                    [componentId]: [...mappings, folderId]
+                                }));
+                            }
+                        }}
+                        onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            if (!componentId) return;
+
+                            // Double click: toggle ALL descendants
+                            // Logic: If node AND all descendants are selected -> Deselect All. Otherwise -> Select All.
+
+                            const allDescendantIds = getAllDescendantIds(folder); // Includes folder.id
+                            const currentMappings = componentMappings[componentId] || [];
+
+                            // Check if ALL are currently selected
+                            const areAllSelected = allDescendantIds.every(id => currentMappings.includes(id));
+
+                            if (areAllSelected) {
+                                // Deselect all
+                                const newMappings = currentMappings.filter(id => !allDescendantIds.includes(id));
+                                setComponentMappings(prev => ({
+                                    ...prev,
+                                    [componentId]: newMappings
+                                }));
+                            } else {
+                                // Select all
+                                const newMappingsSet = new Set([...currentMappings, ...allDescendantIds]);
+                                setComponentMappings(prev => ({
+                                    ...prev,
+                                    [componentId]: Array.from(newMappingsSet)
+                                }));
+                            }
+                        }}
+                        onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = isFullSelected ? '#c3e6cb' : isPartiallySelected ? '#ffeeba' : '#e9ecef';
+                        }}
+                        onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = bgColor;
+                        }}
+                    >
+                        {hasChildren && (
+                            <div
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setExpandedFolders(prev => ({
+                                        ...prev,
+                                        [folder.id]: !prev[folder.id]
+                                    }));
+                                }}
+                                style={{
+                                    marginRight: '8px',
+                                    cursor: 'pointer',
+                                    fontSize: '12px',
+                                    color: '#6c757d',
+                                    userSelect: 'none',
+                                    width: '32px', // Increased click area
+                                    height: '32px', // Increased click area
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    borderRadius: '4px',
+                                    flexShrink: 0
+                                }}
+                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.05)'}
+                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                            >
+                                {isExpanded ? '▼' : '►'}
+                            </div>
+                        )}
+                        {!hasChildren && <span style={{ width: '32px', display: 'inline-block', flexShrink: 0 }} />}
+                        <span style={{
+                            fontSize: level === 0 ? '15px' : '14px',
+                            fontWeight: level === 0 ? 600 : 400,
+                            color: '#2c3e50',
+                            flex: 1
+                        }}>
+                            {formatCustomFieldName(folder, level)}
+                        </span>
+                        {isSelected && (
+                            <>
+                                <span style={{
+                                    marginLeft: '8px',
+                                    color: '#28a745',
+                                    fontSize: '16px',
+                                    fontWeight: 'bold'
+                                }}>
+                                    ✓
+                                </span>
+                                {hasChildren && allDescendantsSelected && !isDirectlySelected && (
+                                    <span style={{
+                                        marginLeft: '4px',
+                                        color: '#28a745',
+                                        fontSize: '11px',
+                                        fontStyle: 'italic',
+                                        opacity: 0.8
+                                    }}>
+                                        (все дочерние)
+                                    </span>
+                                )}
+                            </>
+                        )}
+                    </div>
+                    {
+                        hasChildren && isExpanded && (
+                            <div style={{ marginTop: '4px' }}>
+                                {renderFolderTreeForMapping(folder.children, componentId, level + 1)}
+                            </div>
+                        )
+                    }
+                </div >
+            );
+        });
+    };
+
     const handleSaveBulkHistory = async (force = false) => {
         // Валидация незамапленных компонентов
         if (!force) {
-            const trulyUnmapped = unmappedComponents.filter(name => !componentMappings[name] || componentMappings[name].length === 0);
+            const allComponents = Array.from(new Set(parsedHistoryItems.flatMap(item => item.affected_components)));
+            const trulyUnmapped = allComponents.filter(name => !componentMappings[name] || componentMappings[name].length === 0);
+
             if (trulyUnmapped.length > 0) {
-                setUnmappedList(trulyUnmapped);
+                setUnmappedList(trulyUnmapped.map(name => ({ name }))); // unmappedList expects objects with 'name' property for display
                 setShowUnmappedConfirmation(true);
                 return;
             }
@@ -1299,9 +1591,9 @@ const HeatmapPage = ({ projects }) => {
                 }}>
                     <div style={{
                         backgroundColor: '#fff',
-                        width: '1000px',
+                        width: '1200px',
                         maxWidth: '95vw',
-                        maxHeight: '90vh',
+                        height: '90vh',
                         borderRadius: '24px',
                         boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
                         overflow: 'hidden',
@@ -1329,127 +1621,355 @@ const HeatmapPage = ({ projects }) => {
                                     fontSize: '24px',
                                     color: '#94a3b8',
                                     cursor: 'pointer',
-                                    padding: '4px'
+                                    padding: '4px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'color 0.2s'
                                 }}
+                                onMouseOver={(e) => e.currentTarget.style.color = '#475569'}
+                                onMouseOut={(e) => e.currentTarget.style.color = '#94a3b8'}
                             >©</button>
                         </div>
 
-                        <div style={{ padding: '32px', overflowY: 'auto', flex: 1, backgroundColor: '#f8fafc' }}>
+                        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+                            {/* Левая панель: Список компонентов */}
                             <div style={{
-                                backgroundColor: '#fff',
-                                borderRadius: '16px',
-                                border: '1px solid #e2e8f0',
-                                overflow: 'hidden',
-                                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)'
+                                width: '350px',
+                                borderRight: '1px solid #e2e8f0',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                backgroundColor: '#f8fafc'
                             }}>
-                                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                    <thead style={{ backgroundColor: '#fcfdfe' }}>
-                                        <tr>
-                                            <th style={{ padding: '16px 20px', textAlign: 'left', fontSize: '13px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #e2e8f0' }}>Компонент</th>
-                                            <th style={{ padding: '16px 20px', textAlign: 'left', fontSize: '13px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #e2e8f0' }}>Функциональные блоки Allure</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {[...unmappedComponents, ...Object.keys(componentMappings)].sort().map((compName, idx) => (
-                                            <tr key={compName} style={{
-                                                backgroundColor: idx % 2 === 0 ? '#fff' : '#fcfdfe',
-                                                transition: 'background-color 0.2s'
-                                            }}>
-                                                <td style={{ padding: '16px 20px', fontWeight: 600, color: '#1e293b', fontSize: '14px', borderBottom: '1px solid #f1f5f9' }}>
-                                                    {compName}
-                                                </td>
-                                                <td style={{ padding: '12px 20px', borderBottom: '1px solid #f1f5f9' }}>
-                                                    <Select
-                                                        isMulti
-                                                        options={(folders || []).map(f => ({ value: f.id, label: f.name }))}
-                                                        value={(componentMappings[compName] || []).map(id => {
-                                                            const folder = folders.find(f => f.id === id);
-                                                            const cachedName = folderNamesCache[id];
-                                                            return { value: id, label: folder?.name || cachedName || id };
-                                                        })}
-                                                        onChange={(selected) => {
-                                                            setComponentMappings(prev => ({
-                                                                ...prev,
-                                                                [compName]: selected ? selected.map(s => s.value) : []
-                                                            }));
-                                                        }}
-                                                        placeholder="Выберите блоки для привязки..."
-                                                        styles={{
-                                                            control: (base, state) => {
-                                                                const isMapped = componentMappings[compName] && componentMappings[compName].length > 0;
-                                                                return {
-                                                                    ...base,
-                                                                    borderColor: state.isFocused ? '#6366f1' : isMapped ? '#e2e8f0' : '#dc3545',
-                                                                    borderRadius: '10px',
-                                                                    fontSize: '13px',
-                                                                    minHeight: '40px',
-                                                                    backgroundColor: state.isFocused ? '#fff' : isMapped ? '#fcfdfe' : '#fff5f5',
-                                                                    boxShadow: state.isFocused ? '0 0 0 3px rgba(99, 102, 241, 0.1)' : 'none',
-                                                                };
-                                                            },
-                                                            multiValue: (base) => ({
-                                                                ...base,
-                                                                backgroundColor: '#eff6ff',
-                                                                borderRadius: '6px',
-                                                                border: '1px solid #dbeafe'
-                                                            }),
-                                                            multiValueLabel: (base) => ({ ...base, color: '#1e3a8a', fontWeight: 600 }),
-                                                        }}
-                                                    />
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                                <div style={{ padding: '16px', borderBottom: '1px solid #e2e8f0' }}>
+                                    <input
+                                        type="text"
+                                        placeholder="Поиск компонента..."
+                                        value={mappingFilter}
+                                        onChange={(e) => setMappingFilter(e.target.value)}
+                                        style={{
+                                            width: '100%',
+                                            padding: '10px 12px',
+                                            borderRadius: '8px',
+                                            border: '1px solid #cbd5e1',
+                                            fontSize: '14px',
+                                            outline: 'none',
+                                            backgroundColor: '#fff'
+                                        }}
+                                    />
+                                </div>
+                                <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+                                    {Array.from(new Set(parsedHistoryItems.flatMap(item => item.affected_components)))
+                                        .sort()
+                                        .filter(name => name.toLowerCase().includes(mappingFilter.toLowerCase()))
+                                        .map(compName => {
+                                            const isSelected = selectedComponentForMapping === compName;
+                                            const hasMapping = componentMappings[compName] && componentMappings[compName].length > 0;
+
+                                            // Используем красный цвет для незамапленных, как в TIAPage
+                                            const statusColor = hasMapping ? '#22c55e' : '#dc3545';
+                                            const statusBorder = hasMapping ? '1px solid #22c55e' : '1px solid #dc3545';
+                                            const bgColor = isSelected ? '#eff6ff' : '#fff';
+
+                                            return (
+                                                <div
+                                                    key={compName}
+                                                    onClick={() => setSelectedComponentForMapping(compName)}
+                                                    style={{
+                                                        padding: '12px',
+                                                        marginBottom: '8px',
+                                                        borderRadius: '8px',
+                                                        backgroundColor: bgColor,
+                                                        border: isSelected ? '1px solid #3b82f6' : '1px solid #e2e8f0',
+                                                        cursor: 'pointer',
+                                                        transition: 'all 0.2s',
+                                                        borderLeft: isSelected ? '4px solid #3b82f6' : '1px solid #e2e8f0',
+                                                        boxShadow: isSelected ? '0 4px 6px -1px rgba(59, 130, 246, 0.1)' : 'none'
+                                                    }}
+                                                >
+                                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                                                        <div style={{ fontWeight: 600, fontSize: '13px', color: '#334155', wordBreak: 'break-all' }}>
+                                                            {compName}
+                                                        </div>
+                                                        <div style={{
+                                                            width: '8px',
+                                                            height: '8px',
+                                                            borderRadius: '50%',
+                                                            backgroundColor: statusColor,
+                                                            flexShrink: 0,
+                                                            marginLeft: '8px'
+                                                        }} />
+                                                    </div>
+                                                    <div style={{ fontSize: '11px', color: hasMapping ? '#22c55e' : '#dc3545', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                        {hasMapping ? '✓ Связан' : '⚠️ Не связан'}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                </div>
+                            </div>
+
+                            {/* Правая панель: Дерево маппинга */}
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: '#fff' }}>
+                                <div style={{ padding: '16px', borderBottom: '1px solid #e2e8f0', backgroundColor: '#fff' }}>
+                                    <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                        <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: '#1e293b' }}>
+                                            {selectedComponentForMapping ? `Маппинг для: ${selectedComponentForMapping}` : 'Выберите компонент слева'}
+                                        </h3>
+                                        {selectedComponentForMapping && (
+                                            <div style={{ fontSize: '13px', color: '#64748b' }}>
+                                                {componentMappings[selectedComponentForMapping]?.length || 0} привязано
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div style={{
+                                        marginBottom: '10px',
+                                        fontSize: '12px',
+                                        color: '#64748b',
+                                        backgroundColor: '#f1f5f9',
+                                        padding: '8px 12px',
+                                        borderRadius: '6px',
+                                        lineHeight: 1.4
+                                    }}>
+                                        💡 <b>Подсказка:</b>
+                                        <ul style={{ margin: '4px 0 0 0', paddingLeft: '16px' }}>
+                                            <li><b>Один клик</b> — выбрать/убрать текущий элемент</li>
+                                            <li><b>Двойной клик</b> — выбрать/убрать элемент со всеми вложенными</li>
+                                        </ul>
+                                    </div>
+                                    <input
+                                        type="text"
+                                        placeholder="Поиск по дереву фич..."
+                                        value={folderSearchTerm}
+                                        onChange={(e) => setFolderSearchTerm(e.target.value)}
+                                        disabled={!selectedComponentForMapping}
+                                        style={{
+                                            width: '100%',
+                                            padding: '10px 12px',
+                                            borderRadius: '8px',
+                                            border: '1px solid #cbd5e1',
+                                            fontSize: '14px',
+                                            outline: 'none',
+                                            backgroundColor: !selectedComponentForMapping ? '#f1f5f9' : '#fff'
+                                        }}
+                                    />
+                                </div>
+                                <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+                                    {selectedComponentForMapping ? (
+                                        renderFolderTreeForMapping(
+                                            filterFolders(filterFoldersForProject(folders), folderSearchTerm),
+                                            selectedComponentForMapping
+                                        )
+                                    ) : (
+                                        <div style={{
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            height: '100%',
+                                            color: '#94a3b8'
+                                        }}>
+                                            <div style={{ fontSize: '48px', marginBottom: '16px' }}>👈</div>
+                                            <div style={{ fontSize: '16px' }}>Выберите компонент из списка слева,</div>
+                                            <div style={{ fontSize: '14px' }}>чтобы настроить его связи с функциональными блоками</div>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
 
                         <div style={{
-                            padding: '24px 32px',
+                            padding: '16px 32px',
+                            backgroundColor: '#fff',
                             borderTop: '1px solid #e2e8f0',
                             display: 'flex',
                             justifyContent: 'flex-end',
-                            gap: '12px',
-                            background: '#fcfdfe'
+                            gap: '12px'
                         }}>
                             <button
                                 onClick={() => setShowMappingModal(false)}
                                 style={{
                                     padding: '0 24px',
-                                    height: '48px',
+                                    height: '44px',
                                     backgroundColor: '#fff',
                                     color: '#64748b',
                                     border: '1px solid #e2e8f0',
-                                    borderRadius: '12px',
+                                    borderRadius: '10px',
                                     fontWeight: 600,
                                     fontSize: '14px',
                                     cursor: 'pointer',
                                     transition: 'all 0.2s'
                                 }}
+                                onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#f8fafc', e.currentTarget.style.borderColor = '#cbd5e1')}
+                                onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#fff', e.currentTarget.style.borderColor = '#e2e8f0')}
                             >
                                 Назад к выбору файлов
                             </button>
                             <button
-                                onClick={handleSaveBulkHistory}
-                                disabled={loading}
+                                onClick={() => handleSaveBulkHistory(false)}
                                 style={{
-                                    padding: '0 32px',
-                                    height: '48px',
+                                    padding: '0 24px',
+                                    height: '44px',
                                     backgroundColor: '#10b981',
                                     color: '#fff',
                                     border: 'none',
-                                    borderRadius: '12px',
-                                    fontWeight: 700,
+                                    borderRadius: '10px',
+                                    fontWeight: 600,
                                     fontSize: '14px',
                                     cursor: 'pointer',
                                     boxShadow: '0 4px 12px rgba(16, 185, 129, 0.2)',
                                     transition: 'all 0.2s',
-                                    opacity: loading ? 0.6 : 1
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px'
                                 }}
-                                onMouseOver={(e) => !loading && (e.currentTarget.style.backgroundColor = '#059669', e.currentTarget.style.transform = 'translateY(-1px)')}
-                                onMouseOut={(e) => !loading && (e.currentTarget.style.backgroundColor = '#10b981', e.currentTarget.style.transform = 'translateY(0)')}
+                                onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#059669', e.currentTarget.style.transform = 'translateY(-1px)')}
+                                onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#10b981', e.currentTarget.style.transform = 'translateY(0)')}
                             >
-                                {loading ? 'Сохранение...' : 'Завершить импорт и маппинг'}
+                                <span>Завершить импорт и маппинг</span>
+                                {loading && <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Модальное окно подтверждения незамапленных компонентов */}
+            {showUnmappedConfirmation && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                    backdropFilter: 'blur(4px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 2100, // Выше чем mapping modal
+                    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+                }}>
+                    <div style={{
+                        backgroundColor: '#fff',
+                        borderRadius: '16px',
+                        width: '500px',
+                        maxWidth: '90vw',
+                        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+                        overflow: 'hidden',
+                        animation: 'fadeIn 0.2s ease-out'
+                    }}>
+                        <div style={{
+                            padding: '20px 24px',
+                            borderBottom: '1px solid #fee2e2',
+                            backgroundColor: '#fef2f2',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '12px'
+                        }}>
+                            <div style={{
+                                width: '40px',
+                                height: '40px',
+                                borderRadius: '50%',
+                                backgroundColor: '#fee2e2',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '20px',
+                                flexShrink: 0
+                            }}>
+                                ⚠️
+                            </div>
+                            <div>
+                                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: '#991b1b' }}>
+                                    Незамапленные компоненты
+                                </h3>
+                                <div style={{ fontSize: '13px', color: '#b91c1c', marginTop: '2px' }}>
+                                    Требуется подтверждение действия
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style={{ padding: '24px' }}>
+                            <p style={{ margin: '0 0 16px', fontSize: '14px', lineHeight: '1.5', color: '#374151' }}>
+                                Вы не связали следующие компоненты ({unmappedList.length}) с функциональными блоками Allure.
+                                <br />
+                                <strong>Вы уверены, что хотите сохранить историю без привязки этих компонентов?</strong>
+                            </p>
+
+                            <div style={{
+                                maxHeight: '200px',
+                                overflowY: 'auto',
+                                border: '1px solid #e5e7eb',
+                                borderRadius: '8px',
+                                backgroundColor: '#f9fafb'
+                            }}>
+                                <ul style={{ margin: 0, padding: '8px 0', listStyle: 'none' }}>
+                                    {unmappedList.map((comp, idx) => (
+                                        <li key={idx} style={{
+                                            padding: '6px 16px',
+                                            fontSize: '13px',
+                                            color: '#4b5563',
+                                            borderBottom: idx < unmappedList.length - 1 ? '1px solid #f3f4f6' : 'none',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px'
+                                        }}>
+                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ef4444' }} />
+                                            {comp.name}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        </div>
+
+                        <div style={{
+                            padding: '16px 24px',
+                            backgroundColor: '#f9fafb',
+                            borderTop: '1px solid #e5e7eb',
+                            display: 'flex',
+                            justifyContent: 'flex-end',
+                            gap: '12px'
+                        }}>
+                            <button
+                                onClick={() => setShowUnmappedConfirmation(false)}
+                                style={{
+                                    padding: '8px 16px',
+                                    borderRadius: '6px',
+                                    border: '1px solid #d1d5db',
+                                    backgroundColor: '#fff',
+                                    color: '#374151',
+                                    fontSize: '14px',
+                                    fontWeight: 500,
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s'
+                                }}
+                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#fff'}
+                            >
+                                Отмена
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setShowUnmappedConfirmation(false);
+                                    handleSaveBulkHistory(true);
+                                }}
+                                style={{
+                                    padding: '8px 16px',
+                                    borderRadius: '6px',
+                                    border: 'none',
+                                    backgroundColor: '#dc2626',
+                                    color: '#fff',
+                                    fontSize: '14px',
+                                    fontWeight: 500,
+                                    cursor: 'pointer',
+                                    boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+                                    transition: 'all 0.2s'
+                                }}
+                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#b91c1c'}
+                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#dc2626'}
+                            >
+                                Продолжить без них
                             </button>
                         </div>
                     </div>
