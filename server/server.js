@@ -3938,7 +3938,7 @@ const httpsAgent = new https.Agent({ keepAlive: true });
  *   - startAt:    с какой записи начинать (необязательно, дефолт 0)
  */
 app.get('/api/jira/search', async (req, res) => {
-    const { pat, jql, maxResults = 50 } = req.query;
+    const { pat, jql, maxResults = 50, fields = 'summary,timetracking' } = req.query;
     if (!pat || !jql) return res.status(400).json({ error: 'pat и jql обязательны' });
 
     try {
@@ -3948,7 +3948,7 @@ app.get('/api/jira/search', async (req, res) => {
                 params: {
                     jql,
                     maxResults,
-                    fields: 'summary'         //  только summary
+                    fields         //  динамические поля
                 },
                 headers: {
                     Authorization: `Bearer ${pat}`,

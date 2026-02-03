@@ -34,6 +34,9 @@ const HeatmapPage = ({ projects }) => {
     const [importProcessing, setImportProcessing] = useState(false);
     const [importError, setImportError] = useState('');
     const [importLog, setImportLog] = useState([]);
+    const [jiraPat, setJiraPat] = useState(localStorage.getItem('jiraPat') || '');
+    const [issueTimeMap, setIssueTimeMap] = useState({});
+    const [syncingJira, setSyncingJira] = useState(false);
 
     // Для маппинга
     const [showMappingModal, setShowMappingModal] = useState(false);
@@ -73,6 +76,25 @@ const HeatmapPage = ({ projects }) => {
         }
     }, [projectId, startDate, endDate, selectedVersions, isBugFix, activeTab, side]);
 
+    // Синхронизация данных о времени из Jira
+    useEffect(() => {
+        const allKeys = new Set();
+        if (heatmapData?.components) {
+            heatmapData.components.forEach(c => c.issueKeys?.forEach(k => allKeys.add(k)));
+        }
+        if (testCoverageData?.functionalBlocks) {
+            testCoverageData.functionalBlocks.forEach(fb => fb.issueKeys?.forEach(k => allKeys.add(k)));
+        }
+        if (testCoverageData?.pages) {
+            testCoverageData.pages.forEach(p => p.issueKeys?.forEach(k => allKeys.add(k)));
+        }
+
+        const keysToFetch = Array.from(allKeys).filter(k => issueTimeMap[k] === undefined);
+        if (keysToFetch.length > 0 && jiraPat) {
+            fetchJiraTimeTracking(keysToFetch);
+        }
+    }, [heatmapData, testCoverageData, jiraPat]);
+
     // Загрузка структуры Allure при изменении проекта
     useEffect(() => {
         if (projectId) {
@@ -92,6 +114,56 @@ const HeatmapPage = ({ projects }) => {
         } catch (err) {
             console.error('Ошибка загрузки версий:', err);
         }
+    };
+
+    const fetchJiraTimeTracking = async (issueKeys) => {
+        if (!jiraPat || !issueKeys.length) return;
+        setSyncingJira(true);
+
+        try {
+            const chunkSize = 50;
+            const newTimeMap = { ...issueTimeMap };
+
+            for (let i = 0; i < issueKeys.length; i += chunkSize) {
+                const chunk = issueKeys.slice(i, i + chunkSize);
+                const jql = `key IN (${chunk.map(k => `"${k}"`).join(',')})`;
+
+                const response = await axios.get(`${config.serverUrl}/jira/search`, {
+                    params: {
+                        pat: jiraPat,
+                        jql,
+                        fields: 'timetracking',
+                        maxResults: chunk.length
+                    }
+                });
+
+                if (response.data?.issues) {
+                    response.data.issues.forEach(issue => {
+                        newTimeMap[issue.key] = issue.fields?.timetracking?.timeSpentSeconds || 0;
+                    });
+                }
+            }
+            setIssueTimeMap(newTimeMap);
+        } catch (err) {
+            console.error('Ошибка при получении данных о времени из Jira:', err);
+        } finally {
+            setSyncingJira(false);
+        }
+    };
+
+    const formatSeconds = (seconds) => {
+        if (!seconds || seconds <= 0) return '0h';
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        if (hours > 0) {
+            return `${hours}h ${minutes}m`;
+        }
+        return `${minutes}m`;
+    };
+
+    const calculateTimeSpent = (issueKeys) => {
+        if (!issueKeys || !issueKeys.length) return 0;
+        return issueKeys.reduce((acc, key) => acc + (issueTimeMap[key] || 0), 0);
     };
 
     const loadHeatmapData = async () => {
@@ -884,9 +956,16 @@ const HeatmapPage = ({ projects }) => {
                     boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
                 }}>
                     <p style={{ margin: 0, fontWeight: 600, color: '#000' }}>{data.name}</p>
-                    <p style={{ margin: '4px 0 0 0', color: '#000' }}>
-                        Количество: <strong style={{ color: '#000' }}>{data.value}</strong>
-                    </p>
+                    {!data.payload.hideValue && (
+                        <p style={{ margin: '4px 0 0 0', color: '#000' }}>
+                            Количество: <strong style={{ color: '#000' }}>{data.value}</strong>
+                        </p>
+                    )}
+                    {calculateTimeSpent(data.payload.issueKeys) > 0 && (
+                        <p style={{ margin: '4px 0 0 0', color: '#6366f1', fontSize: '13px' }}>
+                            ⏱ Затрачено: <strong style={{ color: '#6366f1' }}>{formatSeconds(calculateTimeSpent(data.payload.issueKeys))}</strong>
+                        </p>
+                    )}
                 </div>
             );
         }
@@ -923,6 +1002,8 @@ const HeatmapPage = ({ projects }) => {
         percentage: parseFloat(item.percentage),
         color: COLORS[index % COLORS.length],
         functionalBlockId: item.functionalBlockId,
+        hideValue: true,
+        issueKeys: item.issueKeys
     })) || [];
 
     const otherFunctionalBlocks = testCoverageData?.functionalBlocks?.slice(30) || [];
@@ -938,29 +1019,7 @@ const HeatmapPage = ({ projects }) => {
             percentage: parseFloat(otherFbPercentage),
             color: '#cccccc',
             functionalBlockId: null,
-        });
-    }
-
-    // Подготовка данных для роутов
-    const routesChartData = testCoverageData?.routes?.slice(0, 30).map((item, index) => ({
-        name: item.route,
-        value: item.defectCount,
-        percentage: parseFloat(item.percentage),
-        color: COLORS[index % COLORS.length],
-    })) || [];
-
-    const otherRoutes = testCoverageData?.routes?.slice(30) || [];
-    const otherRoutesCount = otherRoutes.reduce((sum, item) => sum + item.defectCount, 0);
-    const otherRoutesPercentage = testCoverageData?.totalRoutesDefects > 0
-        ? ((otherRoutesCount / testCoverageData.totalRoutesDefects) * 100).toFixed(1)
-        : '0.0';
-
-    if (otherRoutesCount > 0) {
-        routesChartData.push({
-            name: 'Прочие',
-            value: otherRoutesCount,
-            percentage: parseFloat(otherRoutesPercentage),
-            color: '#cccccc',
+            hideValue: true
         });
     }
 
@@ -970,6 +1029,8 @@ const HeatmapPage = ({ projects }) => {
         value: item.defectCount,
         percentage: parseFloat(item.percentage),
         color: COLORS[index % COLORS.length],
+        hideValue: true,
+        issueKeys: item.issueKeys
     })) || [];
 
     const otherPages = testCoverageData?.pages?.slice(30) || [];
@@ -984,6 +1045,7 @@ const HeatmapPage = ({ projects }) => {
             value: otherPagesCount,
             percentage: parseFloat(otherPagesPercentage),
             color: '#cccccc',
+            hideValue: true
         });
     }
 
@@ -1286,6 +1348,43 @@ const HeatmapPage = ({ projects }) => {
                             <option value="backend">Backend</option>
                         </select>
                     </div>
+
+                    {/* Поле Jira PAT */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                Jira PAT
+                            </span>
+                            {syncingJira && (
+                                <span style={{ fontSize: '10px', color: '#6366f1', fontWeight: 700, animation: 'pulse 1.5s infinite' }}>
+                                    СИНХРОНИЗАЦИЯ...
+                                </span>
+                            )}
+                        </div>
+                        <input
+                            type="password"
+                            value={jiraPat}
+                            placeholder="Введите Jira PAT для загрузки времени"
+                            onChange={(e) => {
+                                setJiraPat(e.target.value);
+                                localStorage.setItem('jiraPat', e.target.value);
+                            }}
+                            style={{
+                                width: '100%',
+                                padding: '0 20px',
+                                border: '1px solid #e2e8f0',
+                                borderRadius: '14px',
+                                fontSize: '14px',
+                                backgroundColor: '#fcfdfe',
+                                color: '#1e293b',
+                                height: '52px',
+                                transition: 'all 0.2s ease',
+                                outline: 'none',
+                            }}
+                            onFocus={(e) => (e.target.style.borderColor = '#6366f1', e.target.style.boxShadow = '0 0 0 4px rgba(99, 102, 241, 0.1)')}
+                            onBlur={(e) => (e.target.style.borderColor = '#e2e8f0', e.target.style.boxShadow = 'none')}
+                        />
+                    </div>
                 </div>
             </div>
 
@@ -1327,9 +1426,14 @@ const HeatmapPage = ({ projects }) => {
                     marginBottom: '40px'
                 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                        <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.01em' }}>
-                            Распределение дефектов по компонентам
-                        </h2>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                            <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.01em' }}>
+                                Импакт-анализ компонентов
+                            </h2>
+                            <p style={{ fontSize: '14px', color: '#64748b', margin: '4px 0 0 0' }}>
+                                Распределение инцидентов и точек влияния по программным элементам
+                            </p>
+                        </div>
 
                         {heatmapData.pageStats && (
                             <div style={{
@@ -1416,7 +1520,7 @@ const HeatmapPage = ({ projects }) => {
                                     {heatmapData.totalDefects.toLocaleString()}
                                 </div>
                                 <div style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginTop: '4px', letterSpacing: '0.05em' }}>
-                                    Дефектов
+                                    Влияний
                                 </div>
                             </div>
                         </div>
@@ -1466,17 +1570,23 @@ const HeatmapPage = ({ projects }) => {
                                                     boxShadow: `0 0 0 3px ${color}20`
                                                 }}
                                             />
-                                            <span style={{
-                                                flex: 1,
-                                                overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                                whiteSpace: 'nowrap',
-                                                color: isSelected ? '#1e3a8a' : '#475569',
-                                                fontWeight: isSelected ? 700 : 500,
-                                                fontSize: '14px'
-                                            }}>
-                                                {item.componentName}
-                                            </span>
+                                            <div style={{ display: 'flex', flex: 1, flexDirection: 'column', minWidth: 0 }}>
+                                                <span style={{
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    whiteSpace: 'nowrap',
+                                                    color: isSelected ? '#1e3a8a' : '#475569',
+                                                    fontWeight: isSelected ? 700 : 500,
+                                                    fontSize: '14px'
+                                                }}>
+                                                    {item.componentName}
+                                                </span>
+                                                {calculateTimeSpent(item.issueKeys) > 0 && (
+                                                    <span style={{ fontSize: '10px', color: '#6366f1', fontWeight: 600 }}>
+                                                        ⏱ {formatSeconds(calculateTimeSpent(item.issueKeys))}
+                                                    </span>
+                                                )}
+                                            </div>
                                             <span style={{
                                                 fontWeight: 800,
                                                 color: isSelected ? '#1e3a8a' : '#1e293b',
@@ -1503,9 +1613,12 @@ const HeatmapPage = ({ projects }) => {
                     boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
                     marginBottom: '40px'
                 }}>
-                    <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', marginBottom: '24px', letterSpacing: '-0.01em' }}>
-                        Статистика по Страницам
+                    <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', marginBottom: '8px', letterSpacing: '-0.01em' }}>
+                        Влияние на страницы (Импакт)
                     </h2>
+                    <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '24px' }}>
+                        Распределение связей между компонентами и страницами приложения
+                    </p>
 
                     <div style={{
                         display: 'flex',
@@ -1549,13 +1662,11 @@ const HeatmapPage = ({ projects }) => {
                                 left: '50%',
                                 transform: 'translate(-50%, -50%)',
                                 textAlign: 'center',
-                                pointerEvents: 'none'
+                                pointerEvents: 'none',
+                                width: '120px'
                             }}>
-                                <div style={{ fontSize: '28px', fontWeight: 900, color: '#0f172a' }}>
-                                    {testCoverageData.totalPagesDefects}
-                                </div>
-                                <div style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
-                                    Дефектов
+                                <div style={{ fontSize: '11px', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', lineHeight: 1.4 }}>
+                                    Плотность<br />маппинга
                                 </div>
                             </div>
                         </div>
@@ -1611,6 +1722,11 @@ const HeatmapPage = ({ projects }) => {
                                                 }}>
                                                     {item.pageName}
                                                 </span>
+                                                {calculateTimeSpent(item.issueKeys) > 0 && (
+                                                    <span style={{ fontSize: '10px', color: '#6366f1', fontWeight: 600 }}>
+                                                        ⏱ {formatSeconds(calculateTimeSpent(item.issueKeys))}
+                                                    </span>
+                                                )}
                                                 {item.pageRoute && (
                                                     <span style={{
                                                         fontSize: '10px',
@@ -1623,13 +1739,6 @@ const HeatmapPage = ({ projects }) => {
                                                     </span>
                                                 )}
                                             </div>
-                                            <span style={{
-                                                fontWeight: 800,
-                                                color: '#1e293b',
-                                                fontSize: '13px'
-                                            }}>
-                                                {item.percentage}%
-                                            </span>
                                         </div>
                                     );
                                 })}
@@ -1642,7 +1751,7 @@ const HeatmapPage = ({ projects }) => {
             {/* Test Coverage визуализация */}
             {!loading && !error && activeTab === 'test' && testCoverageData && (
                 <div>
-                    {/* Функциональные блоки и Роуты рядом */}
+                    {/* Функциональные блоки */}
                     <div style={{
                         display: 'flex',
                         gap: '24px',
@@ -1659,9 +1768,12 @@ const HeatmapPage = ({ projects }) => {
                             flex: '1 1 0',
                             minWidth: '500px',
                         }}>
-                            <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a', marginBottom: '24px' }}>
-                                Функциональные блоки
+                            <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a', marginBottom: '8px' }}>
+                                Влияние на функциональные блоки
                             </h2>
+                            <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '24px' }}>
+                                Распределение влияния инцидентов по функциональным областям
+                            </p>
 
                             <div style={{
                                 display: 'flex',
@@ -1706,11 +1818,8 @@ const HeatmapPage = ({ projects }) => {
                                         textAlign: 'center',
                                         pointerEvents: 'none'
                                     }}>
-                                        <div style={{ fontSize: '28px', fontWeight: 900, color: '#0f172a' }}>
-                                            {testCoverageData.totalDefects}
-                                        </div>
-                                        <div style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
-                                            Дефектов
+                                        <div style={{ fontSize: '11px', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase' }}>
+                                            Плотность маппинга
                                         </div>
                                     </div>
                                 </div>
@@ -1762,6 +1871,11 @@ const HeatmapPage = ({ projects }) => {
                                                         }}>
                                                             {item.functionalBlockName}
                                                         </span>
+                                                        {calculateTimeSpent(item.issueKeys) > 0 && (
+                                                            <span style={{ fontSize: '10px', color: '#6366f1', fontWeight: 600 }}>
+                                                                ⏱ {formatSeconds(calculateTimeSpent(item.issueKeys))}
+                                                            </span>
+                                                        )}
                                                         {item.functionalBlockCustomFieldName && (
                                                             <span style={{
                                                                 fontSize: '10px',
@@ -1773,341 +1887,203 @@ const HeatmapPage = ({ projects }) => {
                                                             </span>
                                                         )}
                                                     </div>
-                                                    <span style={{
-                                                        fontWeight: 700,
-                                                        color: '#1e293b',
-                                                        fontSize: '12px'
-                                                    }}>
-                                                        {item.percentage}%
-                                                    </span>
                                                 </div>
-                                            );
+                                            )
                                         })}
                                     </div>
                                 </div>
                             </div>
                         </div>
-
-                        {/* Роуты */}
-                        {testCoverageData.routes && testCoverageData.routes.length > 0 && (
-                            <div style={{
-                                backgroundColor: '#fff',
-                                padding: '32px',
-                                borderRadius: '24px',
-                                border: '1px solid #e2e8f0',
-                                boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
-                                flex: '1 1 0',
-                                minWidth: '500px',
-                            }}>
-                                <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a', marginBottom: '24px' }}>
-                                    Статистика по Роутам
-                                </h2>
-
-                                <div style={{
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: '24px',
-                                    alignItems: 'center'
-                                }}>
-                                    {/* Donut Chart */}
-                                    <div style={{
-                                        width: '100%',
-                                        maxWidth: '350px',
-                                        position: 'relative'
-                                    }}>
-                                        <ResponsiveContainer width="100%" height={300}>
-                                            <PieChart>
-                                                <Pie
-                                                    data={routesChartData}
-                                                    cx="50%"
-                                                    cy="50%"
-                                                    labelLine={false}
-                                                    outerRadius={110}
-                                                    innerRadius={70}
-                                                    fill="#8884d8"
-                                                    dataKey="value"
-                                                    stroke="none"
-                                                >
-                                                    {routesChartData.map((entry, index) => (
-                                                        <Cell
-                                                            key={`cell-route-${index}`}
-                                                            fill={entry.color}
-                                                        />
-                                                    ))}
-                                                </Pie>
-                                                <Tooltip content={<CustomTooltip />} />
-                                            </PieChart>
-                                        </ResponsiveContainer>
-                                        <div style={{
-                                            position: 'absolute',
-                                            top: '50%',
-                                            left: '50%',
-                                            transform: 'translate(-50%, -50%)',
-                                            textAlign: 'center',
-                                            pointerEvents: 'none'
-                                        }}>
-                                            <div style={{ fontSize: '28px', fontWeight: 900, color: '#0f172a' }}>
-                                                {testCoverageData.totalRoutesDefects}
-                                            </div>
-                                            <div style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
-                                                Дефектов
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Легенда */}
-                                    <div style={{
-                                        width: '100%',
-                                        maxHeight: '300px',
-                                        overflowY: 'auto',
-                                        padding: '4px'
-                                    }}>
-                                        <div style={{
-                                            display: 'grid',
-                                            gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-                                            gap: '8px',
-                                        }}>
-                                            {testCoverageData.routes.map((item, index) => {
-                                                const color = index < COLORS.length ? COLORS[index] : '#cccccc';
-                                                return (
-                                                    <div
-                                                        key={item.route}
-                                                        style={{
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            gap: '10px',
-                                                            padding: '10px 12px',
-                                                            borderRadius: '12px',
-                                                            backgroundColor: '#f8fafc',
-                                                            border: '1px solid #f1f5f9'
-                                                        }}
-                                                    >
-                                                        <div
-                                                            style={{
-                                                                width: '10px',
-                                                                height: '10px',
-                                                                borderRadius: '50%',
-                                                                backgroundColor: color,
-                                                                flexShrink: 0,
-                                                            }}
-                                                        />
-                                                        <span style={{
-                                                            flex: 1,
-                                                            overflow: 'hidden',
-                                                            textOverflow: 'ellipsis',
-                                                            whiteSpace: 'nowrap',
-                                                            color: '#475569',
-                                                            fontWeight: 500,
-                                                            fontSize: '13px'
-                                                        }}>
-                                                            {item.route}
-                                                        </span>
-                                                        <span style={{
-                                                            fontWeight: 700,
-                                                            color: '#1e293b',
-                                                            fontSize: '12px'
-                                                        }}>
-                                                            {item.percentage}%
-                                                        </span>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-
                     </div>
                 </div>
             )}
 
             {/* Модальное окно массового импорта */}
-            {showImportModal && (
-                <div style={{
-                    position: 'fixed',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    backgroundColor: 'rgba(15, 23, 42, 0.4)',
-                    backdropFilter: 'blur(8px)',
-                    display: 'flex',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    zIndex: 2000,
-                    animation: 'fadeIn 0.2s ease-out',
-                }}>
+            {
+                showImportModal && (
                     <div style={{
-                        backgroundColor: '#fff',
-                        width: '600px',
-                        borderRadius: '24px',
-                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-                        overflow: 'hidden',
-                        fontFamily: '"Inter", sans-serif'
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(15, 23, 42, 0.4)',
+                        backdropFilter: 'blur(8px)',
+                        display: 'flex',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        zIndex: 2000,
+                        animation: 'fadeIn 0.2s ease-out',
                     }}>
                         <div style={{
-                            padding: '24px 32px',
-                            borderBottom: '1px solid #e2e8f0',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            background: '#fcfdfe'
+                            backgroundColor: '#fff',
+                            width: '600px',
+                            borderRadius: '24px',
+                            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                            overflow: 'hidden',
+                            fontFamily: '"Inter", sans-serif'
                         }}>
-                            <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: 0 }}>Загрузка истории TIA</h2>
-                            <button
-                                onClick={() => setShowImportModal(false)}
-                                style={{
-                                    background: 'none',
-                                    border: 'none',
-                                    fontSize: '24px',
-                                    color: '#94a3b8',
-                                    cursor: 'pointer',
-                                    padding: '4px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    transition: 'color 0.2s'
-                                }}
-                                onMouseOver={(e) => e.currentTarget.style.color = '#475569'}
-                                onMouseOut={(e) => e.currentTarget.style.color = '#94a3b8'}
-                            >©</button>
-                        </div>
-
-                        <div style={{ padding: '32px' }}>
-                            <p style={{ marginBottom: '24px', color: '#64748b', fontSize: '14px', lineHeight: '1.6' }}>
-                                Выберите файлы отчетов в формате JSON для массового импорта истории дефектов и привязки их к текущему проекту.
-                            </p>
-
                             <div style={{
-                                position: 'relative',
-                                marginBottom: '24px',
-                                border: '2px dashed #e2e8f0',
-                                borderRadius: '16px',
-                                padding: '40px 20px',
-                                textAlign: 'center',
-                                transition: 'all 0.2s ease',
-                                backgroundColor: '#f8fafc',
-                                cursor: 'pointer'
-                            }}
-                                onMouseOver={(e) => (e.currentTarget.style.borderColor = '#6366f1', e.currentTarget.style.backgroundColor = '#f1f5f9')}
-                                onMouseOut={(e) => (e.currentTarget.style.borderColor = '#e2e8f0', e.currentTarget.style.backgroundColor = '#f8fafc')}
-                            >
-                                <input
-                                    type="file"
-                                    multiple
-                                    accept=".json"
-                                    onChange={(e) => setImportFiles(Array.from(e.target.files))}
-                                    style={{
-                                        position: 'absolute',
-                                        top: 0,
-                                        left: 0,
-                                        width: '100%',
-                                        height: '100%',
-                                        opacity: 0,
-                                        cursor: 'pointer'
-                                    }}
-                                />
-                                <div style={{ fontSize: '32px', marginBottom: '12px' }}>📁</div>
-                                <div style={{ fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
-                                    {importFiles.length > 0 ? `Выбрано файлов: ${importFiles.length}` : 'Нажмите для выбора JSON файлов'}
-                                </div>
-                                <div style={{ fontSize: '12px', color: '#94a3b8' }}>Перетащите файлы сюда или кликните для обзора</div>
-                            </div>
-
-                            {importProcessing && (
-                                <div style={{
-                                    padding: '20px',
-                                    backgroundColor: '#0f172a',
-                                    borderRadius: '12px',
-                                    maxHeight: '180px',
-                                    overflowY: 'auto',
-                                    marginBottom: '24px',
-                                    fontSize: '13px',
-                                    fontFamily: '"SF Mono", "Fira Code", monospace',
-                                    color: '#38bdf8',
-                                    boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)'
-                                }}>
-                                    {importLog.map((log, i) => (
-                                        <div key={i} style={{ marginBottom: '4px', opacity: i === importLog.length - 1 ? 1 : 0.7 }}>
-                                            <span style={{ color: '#64748b' }}>[{new Date().toLocaleTimeString()}]</span> {log}
-                                        </div>
-                                    ))}
-                                    <div id="import-log-end" />
-                                </div>
-                            )}
-
-                            {importError && (
-                                <div style={{
-                                    padding: '16px',
-                                    backgroundColor: '#fef2f2',
-                                    border: '1px solid #fee2e2',
-                                    borderRadius: '12px',
-                                    color: '#dc2626',
-                                    fontSize: '14px',
-                                    marginBottom: '24px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '12px'
-                                }}>
-                                    <span>⚠️</span> {importError}
-                                </div>
-                            )}
-
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                                padding: '24px 32px',
+                                borderBottom: '1px solid #e2e8f0',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                background: '#fcfdfe'
+                            }}>
+                                <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: 0 }}>Загрузка истории TIA</h2>
                                 <button
                                     onClick={() => setShowImportModal(false)}
                                     style={{
-                                        padding: '0 24px',
-                                        height: '48px',
-                                        backgroundColor: '#fff',
-                                        color: '#64748b',
-                                        border: '1px solid #e2e8f0',
-                                        borderRadius: '12px',
-                                        fontWeight: 600,
-                                        fontSize: '14px',
-                                        cursor: 'pointer',
-                                        transition: 'all 0.2s'
-                                    }}
-                                    onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#f8fafc', e.currentTarget.style.borderColor = '#cbd5e1')}
-                                    onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#fff', e.currentTarget.style.borderColor = '#e2e8f0')}
-                                    disabled={importProcessing}
-                                >
-                                    Отмена
-                                </button>
-                                <button
-                                    onClick={handleProcessFiles}
-                                    disabled={importFiles.length === 0 || importProcessing}
-                                    style={{
-                                        padding: '0 24px',
-                                        height: '48px',
-                                        backgroundColor: '#6366f1',
-                                        color: '#fff',
+                                        background: 'none',
                                         border: 'none',
-                                        borderRadius: '12px',
-                                        fontWeight: 700,
-                                        fontSize: '14px',
+                                        fontSize: '24px',
+                                        color: '#94a3b8',
                                         cursor: 'pointer',
-                                        boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)',
-                                        transition: 'all 0.2s',
-                                        opacity: (importFiles.length === 0 || importProcessing) ? 0.6 : 1
+                                        padding: '4px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        transition: 'color 0.2s'
                                     }}
-                                    onMouseOver={(e) => (importFiles.length > 0 && !importProcessing) && (e.currentTarget.style.backgroundColor = '#4f46e5', e.currentTarget.style.transform = 'translateY(-1px)')}
-                                    onMouseOut={(e) => (importFiles.length > 0 && !importProcessing) && (e.currentTarget.style.backgroundColor = '#6366f1', e.currentTarget.style.transform = 'translateY(0)')}
+                                    onMouseOver={(e) => e.currentTarget.style.color = '#475569'}
+                                    onMouseOut={(e) => e.currentTarget.style.color = '#94a3b8'}
+                                >©</button>
+                            </div>
+
+                            <div style={{ padding: '32px' }}>
+                                <p style={{ marginBottom: '24px', color: '#64748b', fontSize: '14px', lineHeight: '1.6' }}>
+                                    Выберите файлы отчетов в формате JSON для массового импорта истории дефектов и привязки их к текущему проекту.
+                                </p>
+
+                                <div style={{
+                                    position: 'relative',
+                                    marginBottom: '24px',
+                                    border: '2px dashed #e2e8f0',
+                                    borderRadius: '16px',
+                                    padding: '40px 20px',
+                                    textAlign: 'center',
+                                    transition: 'all 0.2s ease',
+                                    backgroundColor: '#f8fafc',
+                                    cursor: 'pointer'
+                                }}
+                                    onMouseOver={(e) => (e.currentTarget.style.borderColor = '#6366f1', e.currentTarget.style.backgroundColor = '#f1f5f9')}
+                                    onMouseOut={(e) => (e.currentTarget.style.borderColor = '#e2e8f0', e.currentTarget.style.backgroundColor = '#f8fafc')}
                                 >
-                                    {importProcessing ? (
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />
-                                            Обработка...
-                                        </span>
-                                    ) : 'Начать импорт'}
-                                </button>
+                                    <input
+                                        type="file"
+                                        multiple
+                                        accept=".json"
+                                        onChange={(e) => setImportFiles(Array.from(e.target.files))}
+                                        style={{
+                                            position: 'absolute',
+                                            top: 0,
+                                            left: 0,
+                                            width: '100%',
+                                            height: '100%',
+                                            opacity: 0,
+                                            cursor: 'pointer'
+                                        }}
+                                    />
+                                    <div style={{ fontSize: '32px', marginBottom: '12px' }}>📁</div>
+                                    <div style={{ fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                                        {importFiles.length > 0 ? `Выбрано файлов: ${importFiles.length}` : 'Нажмите для выбора JSON файлов'}
+                                    </div>
+                                    <div style={{ fontSize: '12px', color: '#94a3b8' }}>Перетащите файлы сюда или кликните для обзора</div>
+                                </div>
+
+                                {importProcessing && (
+                                    <div style={{
+                                        padding: '20px',
+                                        backgroundColor: '#0f172a',
+                                        borderRadius: '12px',
+                                        maxHeight: '180px',
+                                        overflowY: 'auto',
+                                        marginBottom: '24px',
+                                        fontSize: '13px',
+                                        fontFamily: '"SF Mono", "Fira Code", monospace',
+                                        color: '#38bdf8',
+                                        boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)'
+                                    }}>
+                                        {importLog.map((log, i) => (
+                                            <div key={i} style={{ marginBottom: '4px', opacity: i === importLog.length - 1 ? 1 : 0.7 }}>
+                                                <span style={{ color: '#64748b' }}>[{new Date().toLocaleTimeString()}]</span> {log}
+                                            </div>
+                                        ))}
+                                        <div id="import-log-end" />
+                                    </div>
+                                )}
+
+                                {importError && (
+                                    <div style={{
+                                        padding: '16px',
+                                        backgroundColor: '#fef2f2',
+                                        border: '1px solid #fee2e2',
+                                        borderRadius: '12px',
+                                        color: '#dc2626',
+                                        fontSize: '14px',
+                                        marginBottom: '24px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '12px'
+                                    }}>
+                                        <span>⚠️</span> {importError}
+                                    </div>
+                                )}
+
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                                    <button
+                                        onClick={() => setShowImportModal(false)}
+                                        style={{
+                                            padding: '0 24px',
+                                            height: '48px',
+                                            backgroundColor: '#fff',
+                                            color: '#64748b',
+                                            border: '1px solid #e2e8f0',
+                                            borderRadius: '12px',
+                                            fontWeight: 600,
+                                            fontSize: '14px',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s'
+                                        }}
+                                        onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#f8fafc', e.currentTarget.style.borderColor = '#cbd5e1')}
+                                        onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#fff', e.currentTarget.style.borderColor = '#e2e8f0')}
+                                        disabled={importProcessing}
+                                    >
+                                        Отмена
+                                    </button>
+                                    <button
+                                        onClick={handleProcessFiles}
+                                        disabled={importFiles.length === 0 || importProcessing}
+                                        style={{
+                                            padding: '0 24px',
+                                            height: '48px',
+                                            backgroundColor: '#6366f1',
+                                            color: '#fff',
+                                            border: 'none',
+                                            borderRadius: '12px',
+                                            fontWeight: 700,
+                                            fontSize: '14px',
+                                            cursor: 'pointer',
+                                            boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)',
+                                            transition: 'all 0.2s',
+                                            opacity: (importFiles.length === 0 || importProcessing) ? 0.6 : 1
+                                        }}
+                                        onMouseOver={(e) => (importFiles.length > 0 && !importProcessing) && (e.currentTarget.style.backgroundColor = '#4f46e5', e.currentTarget.style.transform = 'translateY(-1px)')}
+                                        onMouseOut={(e) => (importFiles.length > 0 && !importProcessing) && (e.currentTarget.style.backgroundColor = '#6366f1', e.currentTarget.style.transform = 'translateY(0)')}
+                                    >
+                                        {importProcessing ? (
+                                            <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />
+                                                Обработка...
+                                            </span>
+                                        ) : 'Начать импорт'}
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            )
+                )
             }
 
             {/* Модальное окно маппинга для импорта */}
@@ -2478,7 +2454,7 @@ const HeatmapPage = ({ projects }) => {
                     </div>
                 )
             }
-        </div >
+        </div>
     );
 };
 

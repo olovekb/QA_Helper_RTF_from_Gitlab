@@ -57,7 +57,8 @@ export async function getHeatmapData(req, res) {
             .where({ 'components.project_id': projectId })
             .select(
                 'components.component_name',
-                databasePool.raw('COUNT(component_defects.id) as defect_count')
+                databasePool.raw('COUNT(component_defects.id) as defect_count'),
+                databasePool.raw('ARRAY_AGG(DISTINCT component_defects.issue_key) FILTER (WHERE component_defects.issue_key IS NOT NULL) as issue_keys')
             )
             .groupBy('components.component_name');
 
@@ -150,15 +151,19 @@ export async function getHeatmapData(req, res) {
             const componentName = row.component_name;
             const count = parseInt(row.defect_count, 10);
             totalDefects += count;
-            componentMap.set(componentName, count);
+            componentMap.set(componentName, {
+                count,
+                issueKeys: row.issue_keys || []
+            });
         });
 
         // Преобразуем в массив для ответа
         const heatmapData = Array.from(componentMap.entries())
-            .map(([componentName, count]) => ({
+            .map(([componentName, data]) => ({
                 componentName,
-                count,
-                percentage: totalDefects > 0 ? ((count / totalDefects) * 100).toFixed(1) : '0.0',
+                count: data.count,
+                issueKeys: data.issueKeys,
+                percentage: totalDefects > 0 ? ((data.count / totalDefects) * 100).toFixed(1) : '0.0',
             }))
             .sort((a, b) => b.count - a.count); // Сортируем по убыванию количества
 
@@ -298,7 +303,8 @@ export async function getTestCoverageData(req, res) {
                 'fb.allure_id as functional_block_allure_id',
                 'fb.name as functional_block_name',
                 'fb.custom_field_name as functional_block_custom_field_name',
-                databasePool.raw('COUNT(DISTINCT cd.id) as total_defects')
+                databasePool.raw('COUNT(DISTINCT cd.id) as total_defects'),
+                databasePool.raw('ARRAY_AGG(DISTINCT cd.issue_key) FILTER (WHERE cd.issue_key IS NOT NULL) as issue_keys')
             )
             .groupBy('fb.id', 'fb.allure_id', 'fb.name', 'fb.custom_field_name')
             .having(databasePool.raw('COUNT(DISTINCT cd.id)'), '>', 0)
@@ -322,6 +328,7 @@ export async function getTestCoverageData(req, res) {
                 functionalBlockName: row.functional_block_name,
                 functionalBlockCustomFieldName: row.functional_block_custom_field_name,
                 defectCount: defectCount,
+                issueKeys: row.issue_keys || []
             });
         });
 
@@ -444,7 +451,8 @@ export async function getTestCoverageData(req, res) {
         const pagesResults = await defectPageQuery
             .select(
                 'pcd.page_name as page_name',
-                'pcd.page_route as page_route'
+                'pcd.page_route as page_route',
+                databasePool.raw('ARRAY_AGG(DISTINCT cd.issue_key) FILTER (WHERE cd.issue_key IS NOT NULL) as issue_keys')
             )
             .count('cd.id as total_defects')
             .groupBy('pcd.page_name', 'pcd.page_route')
@@ -462,6 +470,7 @@ export async function getTestCoverageData(req, res) {
                 pageName: row.page_name,
                 pageRoute: row.page_route,
                 defectCount: defectCount,
+                issueKeys: row.issue_keys || []
             });
         });
 
