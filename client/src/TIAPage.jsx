@@ -2953,6 +2953,40 @@ const TIAPage = ({ projects }) => {
                                                                         >
                                                                             {isAutoMapped && '🔄 '}
                                                                             {formatCustomFieldName(folder, 0)}
+                                                                            <button
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    // Удаляем из маппингов
+                                                                                    const updatedMappings = { ...componentMappings };
+                                                                                    updatedMappings[comp.id] = (updatedMappings[comp.id] || []).filter(id => id.toString() !== folderId.toString());
+                                                                                    setComponentMappings(updatedMappings);
+
+                                                                                    // Также убираем из списка авто-маппингов, чтобы он не подкрашивался если будет добавлен снова
+                                                                                    if (autoMappedBlocks[comp.id]?.includes(folderId)) {
+                                                                                        const updatedAuto = { ...autoMappedBlocks };
+                                                                                        updatedAuto[comp.id] = updatedAuto[comp.id].filter(id => id.toString() !== folderId.toString());
+                                                                                        setAutoMappedBlocks(updatedAuto);
+                                                                                    }
+                                                                                }}
+                                                                                style={{
+                                                                                    border: 'none',
+                                                                                    background: 'none',
+                                                                                    color: 'inherit',
+                                                                                    cursor: 'pointer',
+                                                                                    padding: '0 2px',
+                                                                                    marginLeft: '4px',
+                                                                                    fontSize: '14px',
+                                                                                    fontWeight: 'bold',
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    opacity: 0.6
+                                                                                }}
+                                                                                onMouseOver={(e) => e.currentTarget.style.opacity = 1}
+                                                                                onMouseOut={(e) => e.currentTarget.style.opacity = 0.6}
+                                                                                title="Удалить маппинг"
+                                                                            >
+                                                                                ×
+                                                                            </button>
                                                                         </span>
                                                                     ) : null;
                                                                 })}
@@ -3676,8 +3710,8 @@ const TIAPage = ({ projects }) => {
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                    backdropFilter: 'blur(4px)',
+                    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                    backdropFilter: 'blur(8px)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -3685,61 +3719,69 @@ const TIAPage = ({ projects }) => {
                     fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
                 }}>
                     <div style={{
-                        backgroundColor: '#fff',
-                        borderRadius: '16px',
-                        width: '600px', // Increased width
+                        backgroundColor: '#dc2626', // Красный фон модалки
+                        borderRadius: '24px',
+                        width: '650px',
                         maxWidth: '90vw',
-                        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
                         overflow: 'hidden',
-                        animation: 'fadeIn 0.2s ease-out'
+                        color: '#fff' // Белый шрифт для всей модалки
                     }}>
                         <div style={{
-                            padding: '24px 28px',
-                            borderBottom: '1px solid #fee2e2',
-                            backgroundColor: '#fff', // Cleaner background
+                            padding: '32px 32px 20px',
                             display: 'flex',
                             alignItems: 'center',
-                            gap: '16px'
+                            gap: '20px'
                         }}>
-                            {/* Emoji removed, using simple warning styling if needed, or just text */}
+                            <div style={{
+                                width: '56px',
+                                height: '56px',
+                                backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                                borderRadius: '16px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '28px'
+                            }}>⚠️</div>
                             <div>
-                                <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: '#111827' }}>
+                                <h3 style={{ margin: 0, fontSize: '24px', fontWeight: 800, color: '#fff' }}>
                                     Незамапленные компоненты
                                 </h3>
-                                <div style={{ fontSize: '14px', color: '#dc2626', marginTop: '4px', fontWeight: 500 }}>
-                                    Требуется подтверждение действия
+                                <div style={{ fontSize: '15px', color: 'rgba(255, 255, 255, 0.9)', marginTop: '4px', fontWeight: 500 }}>
+                                    Обнаружено {unmappedComponentsList.length} пропущенных связей
                                 </div>
                             </div>
                         </div>
 
-                        <div style={{ padding: '28px' }}>
-                            <p style={{ margin: '0 0 20px', fontSize: '15px', lineHeight: '1.6', color: '#374151' }}>
-                                Вы не связали следующие компоненты ({unmappedComponentsList.length}) с функциональными блоками Allure.
+                        <div style={{ padding: '0 32px 32px' }}>
+                            <p style={{ margin: '0 0 24px', fontSize: '16px', lineHeight: '1.6', color: '#fff', opacity: 0.95 }}>
+                                Вы не связали некоторые компоненты с функциональными блоками Allure.
+                                Это может привести к неполному покрытию тестами в созданном запуске.
                                 <br />
-                                <strong>Вы уверены, что хотите создать запуск без привязки этих компонентов?</strong>
+                                <strong style={{ fontSize: '17px' }}>Вы уверены, что хотите продолжить?</strong>
                             </p>
 
                             <div style={{
-                                maxHeight: '300px', // Increased height
+                                maxHeight: '280px',
                                 overflowY: 'auto',
-                                border: '1px solid #e5e7eb',
-                                borderRadius: '8px',
-                                backgroundColor: '#f9fafb'
+                                border: '1px solid rgba(255, 255, 255, 0.2)',
+                                borderRadius: '16px',
+                                backgroundColor: 'rgba(0, 0, 0, 0.1)',
+                                padding: '8px 0'
                             }}>
-                                <ul style={{ margin: 0, padding: '8px 0', listStyle: 'none' }}>
+                                <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
                                     {unmappedComponentsList.map((comp, idx) => (
                                         <li key={idx} style={{
-                                            padding: '8px 20px', // Increased padding
+                                            padding: '10px 24px',
                                             fontSize: '14px',
-                                            color: '#4b5563',
-                                            borderBottom: idx < unmappedComponentsList.length - 1 ? '1px solid #f3f4f6' : 'none',
+                                            color: '#fff',
+                                            borderBottom: idx < unmappedComponentsList.length - 1 ? '1px solid rgba(255, 255, 255, 0.1)' : 'none',
                                             display: 'flex',
                                             alignItems: 'center',
-                                            gap: '10px'
+                                            gap: '12px'
                                         }}>
-                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ef4444', flexShrink: 0 }} />
-                                            {/* Show name properly */}
-                                            {comp.name || comp.serviceName || 'Unnamed Component'}
+                                            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#fff', opacity: 0.6, flexShrink: 0 }} />
+                                            <span style={{ fontWeight: 500 }}>{comp.name || comp.serviceName || 'Unnamed Component'}</span>
                                         </li>
                                     ))}
                                 </ul>
@@ -3747,30 +3789,29 @@ const TIAPage = ({ projects }) => {
                         </div>
 
                         <div style={{
-                            padding: '20px 28px',
-                            backgroundColor: '#f9fafb',
-                            borderTop: '1px solid #e5e7eb',
+                            padding: '24px 32px',
+                            backgroundColor: 'rgba(0, 0, 0, 0.15)',
                             display: 'flex',
                             justifyContent: 'flex-end',
-                            gap: '12px'
+                            gap: '16px'
                         }}>
                             <button
                                 onClick={() => setShowUnmappedModal(false)}
                                 style={{
-                                    padding: '10px 20px',
-                                    borderRadius: '8px',
-                                    border: '1px solid #d1d5db',
-                                    backgroundColor: '#fff',
-                                    color: '#374151',
-                                    fontSize: '14px',
-                                    fontWeight: 500,
+                                    padding: '12px 24px',
+                                    borderRadius: '12px',
+                                    border: '1px solid rgba(255, 255, 255, 0.3)',
+                                    backgroundColor: 'transparent',
+                                    color: '#fff',
+                                    fontSize: '15px',
+                                    fontWeight: 600,
                                     cursor: 'pointer',
                                     transition: 'all 0.2s'
                                 }}
-                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
-                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#fff'}
+                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.1)'}
+                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                             >
-                                Отмена
+                                Вернуться к маппингу
                             </button>
                             <button
                                 onClick={() => {
@@ -3778,19 +3819,25 @@ const TIAPage = ({ projects }) => {
                                     handleOpenSplitModal(true);
                                 }}
                                 style={{
-                                    padding: '10px 20px',
-                                    borderRadius: '8px',
+                                    padding: '12px 28px',
+                                    borderRadius: '12px',
                                     border: 'none',
-                                    backgroundColor: '#dc2626',
-                                    color: '#fff',
-                                    fontSize: '14px',
-                                    fontWeight: 600,
+                                    backgroundColor: '#fff',
+                                    color: '#dc2626',
+                                    fontSize: '15px',
+                                    fontWeight: 700,
                                     cursor: 'pointer',
-                                    boxShadow: '0 4px 6px rgba(220, 38, 38, 0.2)',
+                                    boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.2)',
                                     transition: 'all 0.2s'
                                 }}
-                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#b91c1c'}
-                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#dc2626'}
+                                onMouseOver={(e) => {
+                                    e.currentTarget.style.backgroundColor = '#fef2f2';
+                                    e.currentTarget.style.transform = 'translateY(-1px)';
+                                }}
+                                onMouseOut={(e) => {
+                                    e.currentTarget.style.backgroundColor = '#fff';
+                                    e.currentTarget.style.transform = 'translateY(0)';
+                                }}
                             >
                                 Продолжить без них
                             </button>

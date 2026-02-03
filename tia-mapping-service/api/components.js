@@ -50,29 +50,21 @@ const componentValidationSchema = Joi.object({
  * @returns {Promise<Object>} - Объект компонента с id
  */
 async function findOrCreateComponent(projectId, componentType, componentName) {
-    // Ищем существующий компонент
-    let component = await databasePool('components')
-        .where({
+    // Используем onConflict для атомарного поиска/создания
+    // Это предотвращает ошибки дубликатов при параллельных запросах
+    const [component] = await databasePool('components')
+        .insert({
             project_id: projectId,
             component_type: componentType,
             component_name: componentName,
+            created_at: databasePool.fn.now(),
+            updated_at: databasePool.fn.now(),
         })
-        .first();
-
-    // Если не найден, создаём новый
-    if (!component) {
-        const [newComponent] = await databasePool('components')
-            .insert({
-                project_id: projectId,
-                component_type: componentType,
-                component_name: componentName,
-                created_at: databasePool.fn.now(),
-                updated_at: databasePool.fn.now(),
-            })
-            .returning('*');
-        component = newComponent;
-        logInfo(`Создан новый компонент: ${componentName} (${componentType}) для проекта ${projectId}`);
-    }
+        .onConflict(['project_id', 'component_type', 'component_name'])
+        .merge({
+            updated_at: databasePool.fn.now() // Просто обновляем время, чтобы получить ID
+        })
+        .returning('*');
 
     return component;
 }
@@ -99,20 +91,20 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
     // Удаление предварительных записей НЕ требуется, т.к. onConflict().merge() обновит существующие
     const uniqueDeps = new Map();
     for (const dep of normalizedDeps) {
-        // Ключ теперь включает pageRoute для поддержки нового уникального индекса
-        const key = `${projectId}_${dep.pageName}_${dep.pageRoute || ''}_${dep.componentName}`;
+        // Ключ теперь включает pageRoute и componentType для полной уникальности
+        const key = `${projectId}_${dep.pageName}_${dep.pageRoute || ''}_${dep.componentName}_${dep.componentType || ''}`;
         if (!uniqueDeps.has(key)) {
             uniqueDeps.set(key, dep);
         }
     }
 
-    // Используем normalizedDeps для дальнейшей обработки
+    // Используем уникальные зависимости
     const finalDeps = Array.from(uniqueDeps.values());
 
     // Создаём новые связи (убираем дубликаты)
     const uniqueDepsMap = new Map();
     for (const dep of finalDeps) {
-        const key = `${projectId}_${dep.pageName}_${dep.pageRoute || ''}_${dep.componentName}`;
+        const key = `${projectId}_${dep.pageName}_${dep.pageRoute || ''}_${dep.componentName}_${dep.componentType || ''}`;
         if (!uniqueDepsMap.has(key)) {
             // Определяем реальный тип компонента для создания в таблице components
             // Если есть realComponentType (frontend/backend), используем его
@@ -167,8 +159,6 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
             const batch = newDependencies.slice(i, i + BATCH_SIZE);
             const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
 
-            await databasePool('page_component_dependencies')
-                .insert(batch)
             await databasePool('page_component_dependencies')
                 .insert(batch)
                 .onConflict(['project_id', 'component_id', 'page_name', 'page_route'])
