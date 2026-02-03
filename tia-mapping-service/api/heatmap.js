@@ -634,9 +634,12 @@ export async function bulkImportHistory(req, res) {
                                     );
 
                                     if (!exists) {
+                                        const compType = componentTypeMap.get(compName) || 'frontend';
                                         pageDepInserts.push({
                                             project_id: projectId,
                                             component_id: compId,
+                                            component_name: compName,
+                                            component_type: compType,
                                             page_name: pageName,
                                             page_route: pageRoute
                                         });
