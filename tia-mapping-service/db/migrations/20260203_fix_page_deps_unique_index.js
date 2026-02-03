@@ -57,19 +57,19 @@ export async function up(knex) {
         // Порядок важен: сначала удаляем то, что вызовет конфликт при UPDATE
 
         // A. component_functional_blocks (unique: component_id, functional_block_id)
-        await knex.raw(\`
+        await knex.raw(`
             DELETE FROM component_functional_blocks 
             WHERE component_id = ? 
             AND functional_block_id IN (
                 SELECT functional_block_id FROM component_functional_blocks WHERE component_id = ?
             )
-        \`, [old_id, new_id]);
+        `, [old_id, new_id]);
         await knex('component_functional_blocks').where({ component_id: old_id }).update({ component_id: new_id });
 
         // B. component_defects (unique v3: component_id, change_date, issue_key, mr_iid, release_version)
         // Используем COALESCE для обработки NULL значений в PARTITION/JOIN если бы делали через SQL, 
         // но здесь проще удалить точное совпадение всех полей.
-        await knex.raw(\`
+        await knex.raw(`
             DELETE FROM component_defects cd_old
             WHERE component_id = ?
             AND EXISTS (
@@ -80,11 +80,11 @@ export async function up(knex) {
                 AND (cd_new.mr_iid IS NOT DISTINCT FROM cd_old.mr_iid)
                 AND (cd_new.release_version IS NOT DISTINCT FROM cd_old.release_version)
             )
-        \`, [old_id, new_id]);
+        `, [old_id, new_id]);
         await knex('component_defects').where({ component_id: old_id }).update({ component_id: new_id });
 
         // C. page_component_dependencies (unique v2: project_id, component_id, page_name, page_route)
-        await knex.raw(\`
+        await knex.raw(`
             DELETE FROM page_component_dependencies pcd_old
             WHERE component_id = ?
             AND EXISTS (
@@ -94,7 +94,7 @@ export async function up(knex) {
                 AND (pcd_new.page_name IS NOT DISTINCT FROM pcd_old.page_name)
                 AND (pcd_new.page_route IS NOT DISTINCT FROM pcd_old.page_route)
             )
-        \`, [old_id, new_id]);
+        `, [old_id, new_id]);
         await knex('page_component_dependencies').where({ component_id: old_id }).update({ component_id: new_id });
 
         // D. component_mappings (обычно нет жесткого уникального индекса по ID, просто обновляем)
