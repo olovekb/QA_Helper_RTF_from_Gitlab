@@ -52,9 +52,10 @@ export async function getProjectStructure(projectId, skipCriteria = { customFiel
             logInfo(`Ответ от /api/tree для projectId ${projectId}:`, JSON.stringify(treeData)); // Логирование ответа для отладки
 
             // Извлекаем treeId из ответа
-            // Для проекта 307 ищем "Global Structure", для остальных - "Structure"
+            // Для проектов NoCode (1 и 307) ищем "Global Structure", для остальных - "Structure"
+            const nocodeProjectIds = ['1', '307'];
             let structureTree = null;
-            if (projectId === '307') {
+            if (nocodeProjectIds.includes(String(projectId))) {
                 structureTree = treeData.content?.find(item => item.name === "Global Structure");
                 if (!structureTree) {
                     structureTree = treeData.content?.find(item => item.name === "Structure");
@@ -62,7 +63,7 @@ export async function getProjectStructure(projectId, skipCriteria = { customFiel
             } else {
                 structureTree = treeData.content?.find(item => item.name === "Structure");
             }
-            
+
             if (structureTree && structureTree.id) {
                 treeId = structureTree.id;
                 logInfo(`Найден treeId ${treeId} для проекта ${projectId} с name: "${structureTree.name}"`); // Логирование успеха
@@ -149,19 +150,21 @@ export async function getProjectStructure(projectId, skipCriteria = { customFiel
         }
 
         // Логируем типы корневых узлов и customFields для проекта 307
-        if (projectId === '307') {
+        // Логируем типы корневых узлов и customFields для NoCode проектов
+        const nocodeProjectIds = ['1', '307'];
+        if (nocodeProjectIds.includes(String(projectId))) {
             const customFieldsMap = new Map();
             customFields.forEach(field => {
                 customFieldsMap.set(field.id, field.name);
             });
-            logInfo(`[projectId=307] Доступные customFields (${customFields.length}):`);
+            logInfo(`[projectId=${projectId}] Доступные customFields (${customFields.length}):`);
             customFields.forEach(field => {
-                logInfo(`[projectId=307] customField: id=${field.id}, name="${field.name}"`);
+                logInfo(`[projectId=${projectId}] customField: id=${field.id}, name="${field.name}"`);
             });
-            logInfo(`[projectId=307] Корневые узлы (${initialData.children.content.length}):`);
+            logInfo(`[projectId=${projectId}] Корневые узлы (${initialData.children.content.length}):`);
             initialData.children.content.forEach((node, idx) => {
                 const customFieldName = customFieldsMap.get(node.customFieldId);
-                logInfo(`[projectId=307] Корневой узел ${idx}: id=${node.id}, name="${node.name}", customFieldId=${node.customFieldId}, customFieldName="${customFieldName}", type=${node.type}`);
+                logInfo(`[projectId=${projectId}] Корневой узел ${idx}: id=${node.id}, name="${node.name}", customFieldId=${node.customFieldId}, customFieldName="${customFieldName}", type=${node.type}`);
             });
         }
 
@@ -397,9 +400,10 @@ async function getNestedFoldersParallel(projectId, parentNodeId, treeId, customF
 
                     const nodeCustomFieldName = customFieldsMap.get(node.customFieldId);
                     logInfo(`Обрабатываем узел projectId=${projectId}, id=${node.id}, name=${node.name}, customFieldId=${node.customFieldId}, customFieldName=${nodeCustomFieldName}, parentNodeId=${parentNodeId}`);
-                    
-                    // Для проекта 307: специальная обработка
-                    if (projectId === '307') {
+
+                    // Для NoCode проектов (1 и 307): специальная обработка
+                    const nocodeProjectIds = ['1', '307'];
+                    if (nocodeProjectIds.includes(String(projectId))) {
                         // Показываем Block и SubBlock, а также все узлы, которые находятся под ними
                         if (nodeCustomFieldName === 'Block' || nodeCustomFieldName === 'SubBlock') {
                             logInfo(`Найден Block/SubBlock для проекта 307: ${nodeCustomFieldName} - ${node.name}`);
@@ -416,7 +420,7 @@ async function getNestedFoldersParallel(projectId, parentNodeId, treeId, customF
                             logInfo(`Возвращаем Block/SubBlock для проекта 307: ${nodeCustomFieldName} - ${node.name}, children count: ${result.children.length}`);
                             return result;
                         }
-                        
+
                         // Для Feature, Story, Scenario, Code и других типов - показываем их, если они находятся под Block или SubBlock
                         // Но если они на корневом уровне (parentNodeId === null), пропускаем их
                         if (parentNodeId === null) {
@@ -452,7 +456,7 @@ async function getNestedFoldersParallel(projectId, parentNodeId, treeId, customF
                         count: node.children?.content?.length || 0,
                         children: children.filter(child => child !== null),
                     };
-                    
+
                     return folder;
                 } catch (error) {
                     const errorMessage = error instanceof Error ? error.message : (typeof error === 'string' ? error : JSON.stringify(error) || 'Неизвестная ошибка');

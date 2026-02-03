@@ -20,7 +20,7 @@ const HeatmapPage = ({ projects }) => {
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
     const [selectedVersions, setSelectedVersions] = useState([]);
-    const [side, setSide] = useState('all'); // 'all', 'frontend', 'backend'
+    const [side, setSide] = useState('frontend'); // 'frontend' or 'backend' (removed 'all')
     const [availableVersions, setAvailableVersions] = useState([]);
     const [isBugFix, setIsBugFix] = useState(null); // null - все, true - только баги, false - общий
     const [heatmapData, setHeatmapData] = useState(null);
@@ -214,6 +214,7 @@ const HeatmapPage = ({ projects }) => {
                     web_url: json.web_url,
                     release_version: json.project_version || json.release_version,
                     affected_components: [],
+                    pages: json.pages || [], // Required for Page Statistics
                     component_details: {} // New: Store rich metadata
                 };
 
@@ -231,13 +232,9 @@ const HeatmapPage = ({ projects }) => {
 
                 componentsToProcess.forEach(compName => {
                     // Определяем тип компонента
-                    let type = 'component';
+                    let type = 'frontend'; // По умолчанию фронтенд
                     if (json.Controllers && json.Controllers[compName]) {
                         type = 'backend';
-                    } else if (json.pages && json.pages.some(p => p.page_meta?.name === compName || (p.depends_on_components || []).includes(compName))) {
-                        type = 'frontend';
-                    } else if (json.frontendComponent && json.frontendComponent[compName]) {
-                        type = 'frontend';
                     }
 
                     item.affected_components.push({ name: compName, type });
@@ -378,33 +375,44 @@ const HeatmapPage = ({ projects }) => {
         return folder.name;
     };
 
-    // Фильтрация папок для проекта 307 (показываем только Block и SubBlock на корневом уровне, но под ними показываем все)
-    const filterFoldersForProject = (folders) => {
-        if (projectId !== '307') {
+    // Фильтрация папок для NoCode проектов (ID 1 и 307)
+    const filterFoldersForProject = (folders, isRoot = true) => {
+        const nocodeProjectIds = ['1', '307'];
+        if (!nocodeProjectIds.includes(String(projectId))) {
             return folders;
         }
 
         const result = [];
         folders.forEach(folder => {
-            if (folder.customFieldName === 'Block' || folder.customFieldName === 'SubBlock') {
-                // Показываем Block и SubBlock, рекурсивно фильтруем детей (но не фильтруем Feature, Story и т.д.)
-                const filteredChildren = folder.children && folder.children.length > 0
-                    ? filterFoldersForProject(folder.children)
-                    : [];
-                result.push({
-                    ...folder,
-                    children: filteredChildren
-                });
+            const isBlockOrSubBlock = folder.customFieldName === 'Block' || folder.customFieldName === 'SubBlock';
+
+            if (isRoot) {
+                // На уровне корня показываем ТОЛЬКО Block и SubBlock
+                if (isBlockOrSubBlock) {
+                    const children = folder.children && folder.children.length > 0
+                        ? filterFoldersForProject(folder.children, false) // Дальше не фильтруем корень
+                        : [];
+                    result.push({
+                        ...folder,
+                        children: children
+                    });
+                } else {
+                    // Если это не Block/SubBlock на корне, заходим в его детей (вдруг блоки там?)
+                    // Но по логике Allure - блоки обычно в корне. 
+                    // Если пропустим узел, но заберем его детей - это "подъем" структуры.
+                    if (folder.children && folder.children.length > 0) {
+                        const children = filterFoldersForProject(folder.children, true); // Все еще ищем корень
+                        result.push(...children);
+                    }
+                }
             } else {
-                // Для всех остальных типов (Feature, Story, Scenario, Code) - показываем их, если они не на корневом уровне
-                // Но эта функция вызывается рекурсивно, так что если мы здесь, значит это уже не корневой уровень
-                // Просто показываем все узлы с их детьми
-                const filteredChildren = folder.children && folder.children.length > 0
-                    ? filterFoldersForProject(folder.children)
+                // Если мы уже ВНУТРИ блока - показываем всё без фильтрации типа
+                const children = folder.children && folder.children.length > 0
+                    ? filterFoldersForProject(folder.children, false)
                     : [];
                 result.push({
                     ...folder,
-                    children: filteredChildren
+                    children: children
                 });
             }
         });
@@ -1274,7 +1282,6 @@ const HeatmapPage = ({ projects }) => {
                             onFocus={(e) => (e.target.style.borderColor = '#6366f1', e.target.style.boxShadow = '0 0 0 4px rgba(99, 102, 241, 0.1)')}
                             onBlur={(e) => (e.target.style.borderColor = '#e2e8f0', e.target.style.boxShadow = 'none')}
                         >
-                            <option value="all">Все стороны</option>
                             <option value="frontend">Frontend</option>
                             <option value="backend">Backend</option>
                         </select>

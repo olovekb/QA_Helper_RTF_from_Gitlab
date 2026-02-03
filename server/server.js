@@ -149,41 +149,41 @@ async function makeDirectOpenRouterCall(messages, apiKey, opts) {
 }
 
 import {
-getAllureDefectById,
-getSharedStepsList,
-getStepsForDefect,
-analyzeBugWithAI,
-getAllureDefects,
-linkIssueToAllureDefect,
-getAllTestCases,
-getTestCaseOverview,
-getTestCaseExpectedResult,
-getTestCaseLayer,
-getCaseIssue,
-getCaseTags,
-getTestCasePrecondition,
-getTestCaseStatus,
-getTestCaseSteps,
-getTestCaseCustomFields,
-createTestCaseAllure,
-setTestCaseCustomFieldValues,
-updateTestCase,
-deleteTestCase,
-addStepToTestCase,
-addExpectedResultToStep,
-linkIssueToTestCase,
-setTestCaseLayer,
-suggestTestLayers,
-getProjectCustomFieldSchema,
-fetchWithAuth,
-suggestTags,
-createTag,
-addParameterToTestCase,
-createTestCaseExamples,
-generatePairwiseExamples,
-createSharedStep,
-addStepToSharedStep,
-getSharedStepDetails
+    getAllureDefectById,
+    getSharedStepsList,
+    getStepsForDefect,
+    analyzeBugWithAI,
+    getAllureDefects,
+    linkIssueToAllureDefect,
+    getAllTestCases,
+    getTestCaseOverview,
+    getTestCaseExpectedResult,
+    getTestCaseLayer,
+    getCaseIssue,
+    getCaseTags,
+    getTestCasePrecondition,
+    getTestCaseStatus,
+    getTestCaseSteps,
+    getTestCaseCustomFields,
+    createTestCaseAllure,
+    setTestCaseCustomFieldValues,
+    updateTestCase,
+    deleteTestCase,
+    addStepToTestCase,
+    addExpectedResultToStep,
+    linkIssueToTestCase,
+    setTestCaseLayer,
+    suggestTestLayers,
+    getProjectCustomFieldSchema,
+    fetchWithAuth,
+    suggestTags,
+    createTag,
+    addParameterToTestCase,
+    createTestCaseExamples,
+    generatePairwiseExamples,
+    createSharedStep,
+    addStepToSharedStep,
+    getSharedStepDetails
 } from './http-service.mjs';
 import { spinningLoader } from './spinning-loader.mjs';
 import pLimit from 'p-limit';
@@ -212,30 +212,30 @@ import { validateAndFixTestCases, validateE2ECoverage } from './post-processors/
 import { aggregateToParametrized } from './post-processors/aggregate-to-parametrized.js';
 import { validateUntilClean } from './agents/post-generation-validator.mjs';
 import {
-savePerfectExamples,
-getPerfectExamples,
-getAllPerfectExamplesByLayer,
-getPerfectExamplesStats,
-deletePerfectExample
+    savePerfectExamples,
+    getPerfectExamples,
+    getAllPerfectExamplesByLayer,
+    getPerfectExamplesStats,
+    deletePerfectExample
 } from './perfect-examples.mjs';
 import {
-getConversationContext,
-createConversationContext,
-addMessageToContext,
-addErrorToContext,
-clearErrors,
-saveStateSnapshot,
-rollbackToSnapshot,
-getStateSnapshots,
-deleteConversationContext
+    getConversationContext,
+    createConversationContext,
+    addMessageToContext,
+    addErrorToContext,
+    clearErrors,
+    saveStateSnapshot,
+    rollbackToSnapshot,
+    getStateSnapshots,
+    deleteConversationContext
 } from './conversation-context.mjs';
 import {
-buildSystemPrompt,
-addPerfectExamplesAsFewShot
+    buildSystemPrompt,
+    addPerfectExamplesAsFewShot
 } from './prompt-composer.mjs';
 import {
-runTestCaseLLMWithContext,
-validateFixedCases
+    runTestCaseLLMWithContext,
+    validateFixedCases
 } from './llm-with-context.mjs';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -2445,7 +2445,8 @@ app.post('/api/export', async (req, res) => {
 
     try {
         // Если проект - "Nocode 2.0", то делаем экспорт по новой структуре
-        if (projectId === '307') {
+        const nocodeProjectIds = ['1', '307'];
+        if (nocodeProjectIds.includes(String(projectId))) {
             console.log('Экспортируем по новой структуре для НОУКОДА')
             await exportStructureAllureNocode(allureData, projectId);
         } else {
@@ -7305,8 +7306,9 @@ app.post('/api/create-test-cases', async (req, res) => {
             if (c.scenario) expectedCustomFields['Scenario'] = c.scenario;
             if (c.code || c.codeNode) expectedCustomFields['Code'] = c.code || c.codeNode;
 
-            // Для nocode проекта (307) добавляем Block и SubBlock
-            if (projectId === '307') {
+            // Для nocode проектов (1 и 307) добавляем Block и SubBlock
+            const nocodeProjectIds = ['1', '307'];
+            if (nocodeProjectIds.includes(String(projectId))) {
                 // Ищем Block и SubBlock в кастомных полях
                 if (Array.isArray(c.customFields)) {
                     for (const { name, value } of c.customFields) {
