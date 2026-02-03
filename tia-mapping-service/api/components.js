@@ -168,11 +168,12 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
 
             await databasePool('page_component_dependencies')
                 .insert(batch)
-                .onConflict(['project_id', 'page_name', 'component_name'])
+            await databasePool('page_component_dependencies')
+                .insert(batch)
+                .onConflict(['project_id', 'component_id', 'page_name', 'page_route'])
                 .merge({
-                    page_route: databasePool.raw('EXCLUDED.page_route'),
                     component_type: databasePool.raw('EXCLUDED.component_type'),
-                    component_id: databasePool.raw('EXCLUDED.component_id'),
+                    component_name: databasePool.raw('EXCLUDED.component_name'),
                     updated_at: databasePool.fn.now(),
                 });
 
