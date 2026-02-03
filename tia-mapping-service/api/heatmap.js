@@ -523,10 +523,10 @@ export async function bulkImportHistory(req, res) {
                     item.affected_components.forEach(comp => {
                         if (typeof comp === 'string') {
                             allComponentNames.add(comp);
-                            if (!componentTypeMap.has(comp)) componentTypeMap.set(comp, 'component');
+                            if (!componentTypeMap.has(comp)) componentTypeMap.set(comp, 'frontend');
                         } else if (comp && typeof comp === 'object') {
                             allComponentNames.add(comp.name);
-                            componentTypeMap.set(comp.name, comp.type || 'component');
+                            componentTypeMap.set(comp.name, comp.type || 'frontend');
                         }
                     });
                 }
@@ -534,7 +534,7 @@ export async function bulkImportHistory(req, res) {
 
             // 2. Гарантируем, что все компоненты созданы в таблице components
             for (const name of allComponentNames) {
-                const type = componentTypeMap.get(name) || 'component';
+                const type = componentTypeMap.get(name) || 'frontend';
                 await trx('components')
                     .insert({
                         project_id: projectId,
@@ -635,6 +635,7 @@ export async function bulkImportHistory(req, res) {
 
                                     if (!exists) {
                                         pageDepInserts.push({
+                                            project_id: projectId,
                                             component_id: compId,
                                             page_name: pageName,
                                             page_route: pageRoute
@@ -656,15 +657,11 @@ export async function bulkImportHistory(req, res) {
                 for (let i = 0; i < pageDepInserts.length; i += pdChunkSize) {
                     const chunk = pageDepInserts.slice(i, i + pdChunkSize);
 
-                    // Используем onConflict. Предположим, что есть уникальный ключ по component_id и page_name
-                    // Если нет, просто insert (или distinct select перед вставкой, но это сложно в транзакции без блокировок)
-                    // Лучше использовать .onConflict().ignore() если знаем констрейнт.
-                    // Из миграции 20241229_add_page_component_types_and_dependencies.js:
-                    // table.unique(['component_id', 'page_name', 'page_route']);
-
+                    // Используем onConflict. Теперь используем idx_page_deps_unique_v2
+                    // которое включает: project_id, component_id, page_name, page_route
                     await trx('page_component_dependencies')
                         .insert(chunk)
-                        .onConflict(['component_id', 'page_name', 'page_route'])
+                        .onConflict(['project_id', 'component_id', 'page_name', 'page_route'])
                         .ignore();
                 }
             }
