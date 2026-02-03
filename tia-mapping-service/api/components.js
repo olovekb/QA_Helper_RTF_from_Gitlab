@@ -99,7 +99,8 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
     // Удаление предварительных записей НЕ требуется, т.к. onConflict().merge() обновит существующие
     const uniqueDeps = new Map();
     for (const dep of normalizedDeps) {
-        const key = `${projectId}_${dep.pageName}_${dep.componentName}`;
+        // Ключ теперь включает pageRoute для поддержки нового уникального индекса
+        const key = `${projectId}_${dep.pageName}_${dep.pageRoute || ''}_${dep.componentName}`;
         if (!uniqueDeps.has(key)) {
             uniqueDeps.set(key, dep);
         }
@@ -111,7 +112,7 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
     // Создаём новые связи (убираем дубликаты)
     const uniqueDepsMap = new Map();
     for (const dep of finalDeps) {
-        const key = `${projectId}_${dep.pageName}_${dep.componentName}`;
+        const key = `${projectId}_${dep.pageName}_${dep.pageRoute || ''}_${dep.componentName}`;
         if (!uniqueDepsMap.has(key)) {
             // Определяем реальный тип компонента для создания в таблице components
             // Если есть realComponentType (frontend/backend), используем его

@@ -107,7 +107,7 @@ export async function getHeatmapData(req, res) {
         const totalPagesResult = await databasePool('page_component_dependencies as pcd')
             .join('components as c', 'pcd.component_id', 'c.id')
             .where({ 'c.project_id': projectId })
-            .distinct('pcd.page_name');
+            .distinct('pcd.page_name', 'pcd.page_route');
 
         const totalProjectPagesCount = totalPagesResult.length;
 
@@ -116,7 +116,7 @@ export async function getHeatmapData(req, res) {
             .join('components as c', 'cd.component_id', 'c.id')
             .join('page_component_dependencies as pcd', 'pcd.component_id', 'c.id')
             .where({ 'c.project_id': projectId })
-            .distinct('pcd.page_name');
+            .distinct('pcd.page_name', 'pcd.page_route');
 
         // Apply same filters as for component defects
         if (startDate && endDate) {
@@ -466,7 +466,8 @@ export async function getTestCoverageData(req, res) {
             const defectCount = parseInt(row.total_defects, 10);
             totalPagesDefects += defectCount;
 
-            pagesMap.set(row.page_name, {
+            const key = `${row.page_name}_${row.page_route || ''}`;
+            pagesMap.set(key, {
                 pageName: row.page_name,
                 pageRoute: row.page_route,
                 defectCount: defectCount,
