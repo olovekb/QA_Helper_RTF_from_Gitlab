@@ -1,37 +1,36 @@
 ab-vsrv-autotest-tc:443 {
     tls internal
-    
+
     # Статика клиента (React приложение)
     handle_path /allure* {
         reverse_proxy allure-test-inspector:3000 {
             timeout 1200s
         }
     }
-    
+
     # Основной API сервер
-    handle /api/api* {
+    handle_path /api* {
         reverse_proxy allure-test-inspector:5000 {
             timeout 1200s
         }
     }
-    
+
     # TIA Mapping Service API
     handle /tia-api* {
         reverse_proxy tia-mapping-service:5001 {
             timeout 1200s
         }
     }
-    
+
     # BDD Server API
     handle /bdd-api* {
         reverse_proxy bdd-server:5002 {
             timeout 1200s
         }
     }
-    
+
     # Fallback на клиент для всех остальных запросов
     handle {
         reverse_proxy allure-test-inspector:3000
     }
 }
-
