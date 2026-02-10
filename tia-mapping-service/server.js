@@ -14,6 +14,7 @@ import { createTestPlan } from './api/launch.js'; // Импорт функцио
 import config from './config/index.js'; // Импорт конфигурации проекта
 import { logInfo, logError } from './utils/logger.js'; // Импорт логгера для информационных и ошибочных сообщений
 import { logServerError } from './api/errors.js';
+import { createStubTestCase } from './api/testcase.js'; // Импорт функционала для создания стаб-тестов
 import databasePool from './db/pool.js'; // Общий пул подключений
 
 // Получаем __dirname в ES-модулях
@@ -180,6 +181,12 @@ app.delete('/api/components/:componentId', deleteComponentMapping);
  * @param {Object} componentMappings - Маппинги компонентов
  */
 app.post('/api/launch', createTestPlan);
+
+/**
+ * Создание стаб-теста в пустой группе
+ * @route POST /api/stub
+ */
+app.post('/api/stub', createStubTestCase);
 
 // /api/testplan removed - functionality replaced by launch splitting modal
 

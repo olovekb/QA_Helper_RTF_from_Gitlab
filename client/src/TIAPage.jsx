@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
+import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 import Select from 'react-select'; // Импортируем react-select для мультиселекта
 import { useNavigate } from 'react-router-dom'; // Для навигации назад
@@ -34,7 +36,6 @@ const TIAPage = ({ projects }) => {
     const [expandedMethods, setExpandedMethods] = useState({}); // Раскрытие списка методов для компонентов
     const [expandedTechnicalDetails, setExpandedTechnicalDetails] = useState({}); // Раскрытие технических деталей (методы + diff)
     const [expandedScenarios, setExpandedScenarios] = useState({}); // Раскрытие сценариев для компонентов
-
     // State for expanded UI trace page lists (key: compId-index)
     const [expandedPageLists, setExpandedPageLists] = useState({});
 
@@ -44,6 +45,7 @@ const TIAPage = ({ projects }) => {
     const [autoMappedBlocks, setAutoMappedBlocks] = useState({}); // Автоматически добавленные блоки { componentId: Set<folderId> }
     const [showMappingModal, setShowMappingModal] = useState(false); // Управление модальным окном
     const [isMappingLoading, setIsMappingLoading] = useState(false); // Лоудер для маппинга
+    const [selectedComponentType, setSelectedComponentType] = useState('frontend'); // 'frontend' or 'backend' - для табов
 
     // Состояния для Split Modal (разделение на несколько запусков)
     const [showSplitModal, setShowSplitModal] = useState(false);
@@ -57,6 +59,12 @@ const TIAPage = ({ projects }) => {
     // Состояния для модалки подтверждения незамапленных компонент
     const [showUnmappedModal, setShowUnmappedModal] = useState(false);
     const [unmappedComponentsList, setUnmappedComponentsList] = useState([]);
+    const [activeUnmappedTab, setActiveUnmappedTab] = useState('frontend'); // 'frontend' or 'backend'
+
+    // Состояния для модалки пустых групп
+    const [showEmptyGroupsModal, setShowEmptyGroupsModal] = useState(false);
+    const [emptyGroupsData, setEmptyGroupsData] = useState([]);
+    const [isCreatingStubs, setIsCreatingStubs] = useState(false);
 
 
 
@@ -243,8 +251,54 @@ const TIAPage = ({ projects }) => {
                 });
             });
 
+            // НОВОЕ: Обработка бэкенд компонентов из TIA отчета
+            if (tiaReport.backend_components && Array.isArray(tiaReport.backend_components)) {
+                tiaReport.backend_components.forEach((backendComp) => {
+                    const key = `${backendComp.service_name || 'unknown'}::${backendComp.controller_name || backendComp.name}`;
+                    componentsMap.set(key, {
+                        id: key,
+                        name: backendComp.controller_name || backendComp.name,
+                        serviceName: backendComp.service_name || '',
+                        type: 'backend',
+                        endpoints: backendComp.endpoints || [],
+                        riskLevel: backendComp.risk_level || '',
+                        summaryText: backendComp.summary || '',
+                        qaAdvice: backendComp.qa_advice || [],
+                        nestedComponents: [],
+                        envs: backendComp.envs || [],
+                        jsdoc: backendComp.description || null,
+                    });
+                });
+            }
+
+            // ВАЖНО: Также проверяем старый формат бэкенда (backendJSON)
+            // Это нужно для случая: новый фронтенд + старый бэкенд
+            if (backendJSON?.Controllers && Array.isArray(backendJSON.Controllers)) {
+                backendJSON.Controllers.forEach((controller, index) => {
+                    const key = `${controller.ServiceName || 'unknown'}::${controller.ControllerName}-${index}`;
+                    // Добавляем только если такого компонента еще нет
+                    if (!componentsMap.has(key)) {
+                        componentsMap.set(key, {
+                            id: key,
+                            name: controller.ControllerName,
+                            serviceName: controller.ServiceName,
+                            type: 'backend',
+                            endpoints: controller.Endpoints || [],
+                            riskLevel: '',
+                            summaryText: '',
+                            qaAdvice: [],
+                            nestedComponents: [],
+                            envs: [],
+                            jsdoc: null,
+                        });
+                    }
+                });
+            }
+
             const result = Array.from(componentsMap.values());
             console.log('Extracted components from TIA report (new format):', result);
+            console.log('Frontend components:', result.filter(c => c.type === 'frontend').length);
+            console.log('Backend components:', result.filter(c => c.type === 'backend').length);
             return result;
         }
 
@@ -534,6 +588,44 @@ const TIAPage = ({ projects }) => {
         return findInFolders(folders);
     };
 
+    const handleCreateStubs = async () => {
+        setIsCreatingStubs(true);
+        try {
+            // Extract issue key from jiraLink if possible
+            const jiraIssueKeyMatch = jiraLink.match(/\/browse\/([A-Z]+-\d+)$/);
+            const issueKey = jiraIssueKeyMatch ? jiraIssueKeyMatch[1] : (jiraLink.includes('/') ? jiraLink.split('/').pop() : jiraLink);
+
+            // Для каждой пустой группы создаем стаб-тест
+            const promises = emptyGroupsData.map(group =>
+                axios.post(`${config.TIAUrl}/api/stub`, {
+                    projectId,
+                    parentId: group.id,
+                    name: group.name || `Group ${group.id}`, // Use exact group name as requested
+                    issueKey: issueKey || null
+                })
+            );
+
+            await Promise.all(promises);
+            setShowEmptyGroupsModal(false);
+            setEmptyGroupsData([]);
+
+            // Автоматически пробуем создать запуск снова
+            if (launchGroups.length > 0 && launchGroups[0].folderIds.length > 0) {
+                // Если мы в режиме Split и есть группы для запуска
+                createMultipleLaunches();
+            } else {
+                // Обычный режим
+                handleCreateTestPlan();
+            }
+
+        } catch (err) {
+            logError('Stub creation error', err.message);
+            setError('Не удалось создать заглушки: ' + (err.response?.data?.error || err.message));
+        } finally {
+            setIsCreatingStubs(false);
+        }
+    };
+
     const findFolderPath = (nodes, targetId, currentPath = []) => {
         for (const node of nodes) {
             const nodeId = node.id;
@@ -582,6 +674,11 @@ const TIAPage = ({ projects }) => {
                 // Специфические ошибки с кодами
                 if (errorData.code === 'NO_TEST_CASES') {
                     setError(errorData.error);
+                } else if (errorData.code === 'EMPTY_GROUPS') {
+                    // Показываем модалку для пустых групп
+                    setEmptyGroupsData(errorData.emptyGroups || []);
+                    setShowEmptyGroupsModal(true);
+                    // Не показываем ошибку в тосте, так как открываем модалку
                 } else if (errorData.code === 'JOBS_MAPPING_ERROR') {
                     setError(`${errorData.error}${errorData.details ? ` (${errorData.details})` : ''}`);
                 } else if (errorData.code === 'ALLURE_API_ERROR') {
@@ -596,15 +693,16 @@ const TIAPage = ({ projects }) => {
 
                 logError('Test plan creation error', errorData.details || err.message);
             } else {
-                setError('Произошла ошибка при создании запуска. Проверьте данные и повторите попытку.');
+                setError(`Произошла ошибка при создании запуска: ${err.message}`);
                 logError('Test plan creation error', err.message);
             }
-            setLoadingState(prev => ({ ...prev, launch: false }));
-            setIsLoading(false);
         } finally {
             setLoadingState(prev => ({ ...prev, launch: false }));
+            setIsLoading(false);
         }
     };
+
+
 
     // Создание нескольких запусков последовательно (Split-режим)
     const createMultipleLaunches = async () => {
@@ -615,6 +713,7 @@ const TIAPage = ({ projects }) => {
 
         const createdLaunches = [];
         const failedLaunches = [];
+        const allEmptyGroups = []; // Accumulate empty groups from all launches
 
         try {
             for (let i = 0; i < launchGroups.length; i++) {
@@ -651,12 +750,31 @@ const TIAPage = ({ projects }) => {
                         id,
                         link: `${config.url}/launch/${id}`
                     });
+
+                    // ✅ Success: remove this group from the state to prevent duplicates on retry
+                    setLaunchGroups(prev => prev.filter(g => g.id !== group.id));
                 } catch (err) {
-                    const errorMsg = err.response?.data?.error || err.message;
+                    const errorData = err.response?.data;
+                    const errorMsg = errorData?.details || errorData?.error || err.message;
+
                     failedLaunches.push({
                         name: group.name,
                         error: errorMsg
                     });
+
+                    // Check for EMPTY_GROUPS error
+                    if (errorData?.code === 'EMPTY_GROUPS') {
+                        if (errorData.emptyGroups && Array.isArray(errorData.emptyGroups) && errorData.emptyGroups.length > 0) {
+                            allEmptyGroups.push(...errorData.emptyGroups);
+                        } else if (group.folderIds) {
+                            // Fallback: если бэкенд не вернул список, используем все блоки этого запуска
+                            allEmptyGroups.push(...group.folderIds.map(id => {
+                                const folder = findFolderById(folders, parseInt(id));
+                                return { id, name: folder ? folder.name : `Блок ${id}` };
+                            }));
+                        }
+                    }
+
                     logError(`Failed to create launch "${group.name}"`, errorMsg);
                 }
             }
@@ -683,13 +801,81 @@ const TIAPage = ({ projects }) => {
                 setShowSplitModal(false);
             }
 
+            // Show Empty Groups Modal if any were found
+            if (allEmptyGroups.length > 0) {
+                // Remove duplicates based on ID
+                const uniqueEmptyGroups = Array.from(new Map(allEmptyGroups.map(item => [item.id, item])).values());
+                setEmptyGroupsData(uniqueEmptyGroups);
+                setShowEmptyGroupsModal(true);
+            }
+
         } catch (err) {
             setError(`Ошибка при создании запусков: ${err.message}`);
             logError('Multiple launches creation error', err.message);
         } finally {
             setLoadingState(prev => ({ ...prev, launch: false }));
+            setIsLoading(false);
             setSplitProgress(null);
         }
+    };
+
+    const onDragEnd = (result) => {
+        const { source, destination, draggableId } = result;
+        if (!destination) return;
+        if (source.droppableId === destination.droppableId && source.index === destination.index) return;
+
+        // Parse actual folderId from prefixed draggableId (e.g., 'pool::123' or 'group::launch-1::123')
+        const folderId = draggableId.split('::').pop();
+        const node = findFolderById(folders, folderId);
+
+        // Identify source pool items to only move what's actually in the source
+        const sourceIds = source.droppableId === 'unassigned-pool'
+            ? unassignedFolderIds
+            : launchGroups.find(g => `launch-${g.id}` === source.droppableId)?.folderIds || [];
+
+        // Recursively find ALL descendants, then filter for those that are actually in the source column
+        const potentialIds = node ? getAllDescendantIds(node) : [folderId];
+        const idsToMove = potentialIds.filter(id =>
+            sourceIds.some(sid => sid.toString() === id.toString())
+        );
+
+        if (idsToMove.length === 0) return;
+
+        // Update states - consistently use strings
+        let newUnassigned = unassignedFolderIds.map(id => id.toString());
+        let newLaunchGroups = launchGroups.map(g => ({
+            ...g,
+            folderIds: (g.folderIds || []).map(id => id.toString())
+        }));
+
+        // 1. Remove from all possible sources
+        newUnassigned = newUnassigned.filter(id => !idsToMove.includes(id));
+        newLaunchGroups = newLaunchGroups.map(g => ({
+            ...g,
+            folderIds: g.folderIds.filter(id => !idsToMove.includes(id))
+        }));
+
+        // 2. Add to destination
+        if (destination.droppableId === 'unassigned-pool') {
+            newUnassigned = [...new Set([...newUnassigned, ...idsToMove])];
+        } else {
+            const destGroupId = destination.droppableId.replace('launch-', '');
+            const groupIndex = newLaunchGroups.findIndex(g => g.id.toString() === destGroupId);
+            if (groupIndex !== -1) {
+                newLaunchGroups[groupIndex].folderIds = [...new Set([...newLaunchGroups[groupIndex].folderIds, ...idsToMove])];
+            }
+        }
+
+        setUnassignedFolderIds(newUnassigned);
+        setLaunchGroups(newLaunchGroups);
+    };
+
+
+    const handleSplitModalCancel = () => {
+        setShowSplitModal(false);
+        setIsLoading(false);
+        setLoadingState(prev => ({ ...prev, launch: false }));
+        setSplitProgress(null);
     };
 
     // Собрать все уникальные folderIds из componentMappings
@@ -710,6 +896,12 @@ const TIAPage = ({ projects }) => {
             const unmapped = components.filter(c => !componentMappings[c.id] || componentMappings[c.id].length === 0);
             if (unmapped.length > 0) {
                 setUnmappedComponentsList(unmapped);
+                // По умолчанию открываем первый доступный тип
+                const hasFrontend = unmapped.some(c => c.type === 'frontend');
+                const hasBackend = unmapped.some(c => c.type === 'backend');
+                if (hasFrontend) setActiveUnmappedTab('frontend');
+                else if (hasBackend) setActiveUnmappedTab('backend');
+
                 setShowUnmappedModal(true);
                 return;
             }
@@ -1027,8 +1219,10 @@ const TIAPage = ({ projects }) => {
 
     // Найти фичу по ID в дереве
     const findFolderById = (folders, id) => {
+        if (!id || !folders) return null;
+        const idStr = id.toString();
         for (const folder of folders) {
-            if (folder.id === id) return folder;
+            if (folder.id.toString() === idStr) return folder;
             if (folder.children) {
                 const found = findFolderById(folder.children, id);
                 if (found) return found;
@@ -1058,7 +1252,7 @@ const TIAPage = ({ projects }) => {
                 getAllDescendantIds(folder).some(id => mappings.includes(id) && id !== folderId); // Exclude self check if checking children
 
             // Состояния выбора
-            const isFullSelected = allDescendantsSelected; // Полностью выбран
+            const isFullSelected = isDirectlySelected; // Полностью выбран только если сам явно выбран
             // Частично выбран: не все выбраны, но есть выбранные потомки ИЛИ сам выбран но не дети
             const isPartiallySelected = !isFullSelected && (someDescendantsSelected || isDirectlySelected);
 
@@ -1080,36 +1274,36 @@ const TIAPage = ({ projects }) => {
                     : 'transparent';
 
             return (
-                <div key={folder.id} style={{ marginBottom: '8px' }}>
+                <div key={folder.id} style={{ marginBottom: '4px' }}>
                     <div
                         style={{
                             display: 'flex',
                             alignItems: 'center',
                             padding: '8px 12px',
-                            backgroundColor: bgColor,
-                            borderRadius: '6px',
+                            backgroundColor: isDirectlySelected ? '#f5f3ff' : isPartiallySelected ? '#f8fafc' : '#fff',
+                            borderRadius: '10px',
                             cursor: 'pointer',
-                            transition: 'background-color 0.2s',
-                            marginLeft: `${level * 20}px`,
-                            border: `2px solid ${borderColor}`,
-                            ':hover': { backgroundColor: '#e9ecef' }
+                            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                            marginLeft: `${level * 12}px`,
+                            border: `1px solid ${isDirectlySelected ? '#818cf8' : isPartiallySelected ? '#e2e8f0' : '#f1f5f9'}`,
+                            boxShadow: isDirectlySelected ? '0 4px 12px rgba(99, 102, 241, 0.1)' : 'none',
                         }}
                         onClick={(e) => {
                             e.stopPropagation();
                             if (!componentId) return;
 
-                            // Single click: toggle ONLY current folder.id
-                            if (isDirectlySelected) {
-                                const newMappings = mappings.filter(id => id !== folderId);
+                            const folderIdStr = folder.id.toString();
+                            const currentMappings = componentMappings[componentId] || [];
+
+                            if (currentMappings.includes(folderIdStr)) {
                                 setComponentMappings(prev => ({
                                     ...prev,
-                                    [componentId]: newMappings
+                                    [componentId]: currentMappings.filter(id => id !== folderIdStr)
                                 }));
                             } else {
-                                // Add only self
                                 setComponentMappings(prev => ({
                                     ...prev,
-                                    [componentId]: [...mappings, folderId]
+                                    [componentId]: [...currentMappings, folderIdStr]
                                 }));
                             }
                         }}
@@ -1117,40 +1311,49 @@ const TIAPage = ({ projects }) => {
                             e.stopPropagation();
                             if (!componentId) return;
 
-                            // Double click: toggle ALL descendants
-                            // Logic: If node AND all descendants are selected -> Deselect All. Otherwise -> Select All.
-
-                            const allDescendantIds = getAllDescendantIds(folder); // Includes folder.id
+                            const allDescendantIds = getAllDescendantIds(folder);
                             const currentMappings = componentMappings[componentId] || [];
-
-                            // Check if ALL are currently selected
                             const areAllSelected = allDescendantIds.every(id => currentMappings.includes(id));
 
                             if (areAllSelected) {
-                                // Deselect all
                                 const newMappings = currentMappings.filter(id => !allDescendantIds.includes(id));
-                                setComponentMappings(prev => ({
-                                    ...prev,
-                                    [componentId]: newMappings
-                                }));
+                                setComponentMappings(prev => ({ ...prev, [componentId]: newMappings }));
                             } else {
-                                // Select all
                                 const newMappingsSet = new Set([...currentMappings, ...allDescendantIds]);
-                                setComponentMappings(prev => ({
-                                    ...prev,
-                                    [componentId]: Array.from(newMappingsSet)
-                                }));
+                                setComponentMappings(prev => ({ ...prev, [componentId]: Array.from(newMappingsSet) }));
                             }
                         }}
                         onMouseEnter={(e) => {
-                            e.currentTarget.style.backgroundColor = isFullSelected ? '#c3e6cb' : isPartiallySelected ? '#ffeeba' : '#e9ecef';
+                            e.currentTarget.style.backgroundColor = isDirectlySelected ? '#eff6ff' : '#f8fafc';
                         }}
                         onMouseLeave={(e) => {
-                            e.currentTarget.style.backgroundColor = bgColor;
+                            e.currentTarget.style.backgroundColor = isDirectlySelected ? '#f5f3ff' : isPartiallySelected ? '#f8fafc' : '#fff';
                         }}
                     >
+                        {/* Кастомный чекбокс */}
+                        <div style={{
+                            width: '20px',
+                            height: '20px',
+                            borderRadius: '6px',
+                            border: `2px solid ${isDirectlySelected ? '#6366f1' : '#cbd5e1'}`,
+                            backgroundColor: isDirectlySelected ? '#6366f1' : isPartiallySelected ? '#eef2ff' : '#fff',
+                            marginRight: '12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            transition: 'all 0.2s ease',
+                            flexShrink: 0
+                        }}>
+                            {isDirectlySelected && (
+                                <span style={{ color: '#fff', fontSize: '12px', fontWeight: 'bold' }}>✓</span>
+                            )}
+                            {!isDirectlySelected && isPartiallySelected && (
+                                <div style={{ width: '8px', height: '2px', backgroundColor: '#6366f1', borderRadius: '1px' }} />
+                            )}
+                        </div>
+
                         {hasChildren && (
-                            <div
+                            <span
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     setExpandedFolders(prev => ({
@@ -1159,32 +1362,33 @@ const TIAPage = ({ projects }) => {
                                     }));
                                 }}
                                 style={{
-                                    marginRight: '8px',
-                                    cursor: 'pointer',
                                     fontSize: '12px',
-                                    color: '#6c757d',
-                                    userSelect: 'none',
-                                    width: '32px', // Increased click area
-                                    height: '32px', // Increased click area
+                                    color: '#94a3b8',
+                                    width: '28px',
+                                    height: '28px',
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'center',
-                                    borderRadius: '4px',
-                                    flexShrink: 0
+                                    transition: 'all 0.2s ease',
+                                    transform: expandedFolders[folder.id] ? 'rotate(90deg)' : 'rotate(0deg)',
+                                    marginRight: '6px',
+                                    cursor: 'pointer',
+                                    borderRadius: '6px'
                                 }}
                                 onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.05)'}
                                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                             >
-                                {isExpanded ? '▼' : '►'}
-                            </div>
-
+                                ▶
+                            </span>
                         )}
-                        {!hasChildren && <span style={{ width: '32px', display: 'inline-block', flexShrink: 0 }} />}
+                        {!hasChildren && <span style={{ width: '34px' }} />}
                         <span style={{
-                            fontSize: level === 0 ? '15px' : '14px',
-                            fontWeight: level === 0 ? 600 : 400,
-                            color: '#2c3e50',
-                            flex: 1
+                            fontSize: '14px',
+                            fontWeight: hasChildren ? 600 : 400,
+                            color: '#334155',
+                            flex: 1,
+                            userSelect: 'none',
+                            lineHeight: '1.2'
                         }}>
                             {formatCustomFieldName(folder, level)}
                         </span>
@@ -1247,24 +1451,60 @@ const TIAPage = ({ projects }) => {
             <div
                 key={folder.id}
                 style={{
-                    marginLeft: `${level * 20}px`,
-                    marginBottom: '12px',
-                    transition: 'all 0.3s ease',
-                    ...(level === 0 ? styles.featureLevel : styles.storyLevel),
+                    marginLeft: `${level * 12}px`,
+                    marginBottom: '8px',
+                    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                    padding: '10px 14px',
+                    borderRadius: '12px',
+                    backgroundColor: level === 0 ? '#f8fafc' : '#fff',
+                    border: '1px solid #f1f5f9',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
                     cursor: 'pointer',
+                    boxShadow: level === 0 ? '0 2px 4px rgba(0,0,0,0.02)' : 'none'
                 }}
                 onClick={(e) => handleFolderToggle(folder.id, e)}
+                onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#f1f5f9';
+                    e.currentTarget.style.borderColor = '#e2e8f0';
+                }}
+                onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = level === 0 ? '#f8fafc' : '#fff';
+                    e.currentTarget.style.borderColor = '#f1f5f9';
+                }}
             >
                 {folder.children && folder.children.length > 0 && (
-                    <span style={styles.toggleIcon}>
-                        {expandedFolders[folder.id] ? '▼' : '►'}
+                    <span style={{
+                        fontSize: '10px',
+                        color: '#94a3b8',
+                        width: '16px',
+                        display: 'flex',
+                        justifyContent: 'center',
+                        transition: 'transform 0.2s ease',
+                        transform: expandedFolders[folder.id] ? 'rotate(90deg)' : 'rotate(0deg)'
+                    }}>
+                        ▶
                     </span>
                 )}
-                <span style={{ ...styles.folderName, fontWeight: level === 0 ? 600 : 400 }}>
+                {!folder.children || folder.children.length === 0 && <span style={{ width: '16px' }} />}
+                <span style={{
+                    fontSize: '14px',
+                    fontWeight: level === 0 ? 700 : 500,
+                    color: '#0f172a',
+                    flex: 1
+                }}>
                     {formatCustomFieldName(folder, level)}
                 </span>
                 {expandedFolders[folder.id] && folder.children && folder.children.length > 0 && (
-                    <div style={{ ...styles.nestedFolders, maxHeight: expandedFolders[folder.id] ? '1000px' : '0' }}>
+                    <div style={{
+                        width: '100%',
+                        flexBasis: '100%',
+                        marginTop: '8px',
+                        borderLeft: '1px dashed #e2e8f0',
+                        marginLeft: '8px',
+                        paddingLeft: '12px'
+                    }}>
                         {renderFolderTree(folder.children, level + 1)}
                     </div>
                 )}
@@ -1307,7 +1547,10 @@ const TIAPage = ({ projects }) => {
 
     // Форматирование customFieldName для отображения (для проекта 307 показываем Block/SubBlock вместо Feature)
     const formatCustomFieldName = (folder, level = 0) => {
-        // Для всех проектов показываем как обычно
+        if (folder.node_type === 'TEST_CASE') {
+            const layerPrefix = folder.layer ? `[${folder.layer}] ` : '';
+            return `${layerPrefix}${folder.name}`;
+        }
         return `${folder.customFieldName} - ${folder.name}`;
     };
 
@@ -1325,7 +1568,18 @@ const TIAPage = ({ projects }) => {
         return options;
     };
 
-    const isCreateButtonDisabled = () => mode !== 'mapping' || !projectId || (!(frontendJSON || backendJSON || (tiaReport && isNewTiaFormat(tiaReport))) || isLoading);
+    const getCreateButtonDisabledReason = () => {
+        if (mode !== 'mapping') return 'Переключитесь в режим маппинга';
+        if (!projectId) return 'Выберите проект из списка';
+        if (structureLoading) return 'Дождитесь загрузки структуры проекта';
+        if (!(frontendJSON || backendJSON || (tiaReport && isNewTiaFormat(tiaReport)))) {
+            return 'Загрузите JSON-выгрузку фронтенда или бэкенда';
+        }
+        if (isLoading) return 'Запрос выполняется...';
+        return '';
+    };
+
+    const isCreateButtonDisabled = () => !!getCreateButtonDisabledReason();
 
     // Обновленная логика: РАЗРЕШАЕМ создание, даже если не все компоненты смаплены.
     // Мы просто передадим те, что есть. Пустые маппинги будут проигнорированы.
@@ -1402,8 +1656,11 @@ const TIAPage = ({ projects }) => {
         const globalRisks = summary?.global_risks || [];
 
         return (
-            <div style={{ marginTop: 24 }}>
-                <h2 style={styles.subHeader}>TIA Light: сводка изменений</h2>
+            <div style={{ marginTop: 32, display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ width: '4px', height: '24px', backgroundColor: '#6366f1', borderRadius: '2px' }} />
+                    <h2 style={{ ...styles.title }}>Сводка изменений</h2>
+                </div>
 
                 {/* Глобальные риски - красный алерт блок */}
                 {globalRisks.length > 0 && (
@@ -1421,11 +1678,6 @@ const TIAPage = ({ projects }) => {
                             gap: '12px',
                             marginBottom: '16px'
                         }}>
-                            <span style={{
-                                fontSize: '24px',
-                                fontWeight: 'bold',
-                                color: '#dc3545'
-                            }}>⚠️</span>
                             <h3 style={{
                                 margin: 0,
                                 fontSize: '20px',
@@ -1652,7 +1904,7 @@ const TIAPage = ({ projects }) => {
                                     borderRadius: '6px',
                                     border: '1px solid #fecaca'
                                 }}>
-                                    ⚠️ Страницы с высоким риском (HIGH) - требуют особого внимания
+                                    Страницы с высоким риском (HIGH) - требуют особого внимания
                                 </div>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                                     {pages
@@ -1734,7 +1986,7 @@ const TIAPage = ({ projects }) => {
                                                                 fontWeight: 600
                                                             }}
                                                         >
-                                                            {isPageExpanded ? '▼ Скрыть' : '▶ Подробнее'}
+                                                            {isPageExpanded ? 'Скрыть' : 'Подробнее'}
                                                         </button>
                                                     </div>
 
@@ -1895,7 +2147,7 @@ const TIAPage = ({ projects }) => {
                                                         fontWeight: 600
                                                     }}
                                                 >
-                                                    {isPageExpanded ? '▼ Скрыть' : '▶ Подробнее'}
+                                                    {isPageExpanded ? 'Скрыть' : 'Подробнее'}
                                                 </button>
                                             </div>
 
@@ -2117,25 +2369,103 @@ const TIAPage = ({ projects }) => {
                                                     fontWeight: 600
                                                 }}
                                             >
-                                                {isExpanded ? '▼ Скрыть детали' : '▶ Показать детали'}
+                                                {isExpanded ? 'Скрыть детали' : 'Показать детали'}
                                             </button>
                                         </div>
 
                                         {isExpanded && (
-                                            <div style={{ marginTop: 20, paddingTop: 20, borderTop: `2px solid ${styles.borderLight}` }}>
+                                            <div style={{ marginTop: 20, paddingTop: 10, borderTop: `2px solid ${styles.borderLight}` }}>
                                                 {detail.changed_methods?.length > 0 && (
                                                     <div style={{ marginBottom: 20 }}>
-                                                        <div style={{ fontWeight: 600, color: '#111', marginBottom: 12, fontSize: 15 }}>
-                                                            Изменённые методы:
+                                                        {/* Заголовок с кнопкой */}
+                                                        <div
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setExpandedMethods(prev => ({ ...prev, [compKey]: !prev[compKey] }));
+                                                            }}
+                                                            style={{
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                marginBottom: 16,
+                                                                cursor: 'pointer',
+                                                                userSelect: 'none',
+                                                                gap: '12px'
+                                                            }}
+                                                        >
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    setExpandedMethods(prev => ({ ...prev, [compKey]: !prev[compKey] }));
+                                                                }}
+                                                                style={{
+                                                                    padding: '0 14px',
+                                                                    backgroundColor: expandedMethods[compKey] ? '#475569' : '#f1f5f9',
+                                                                    color: expandedMethods[compKey] ? '#fff' : '#475569',
+                                                                    border: `1px solid ${expandedMethods[compKey] ? '#475569' : '#e2e8f0'}`,
+                                                                    borderRadius: '8px',
+                                                                    fontSize: '13px',
+                                                                    fontWeight: 700,
+                                                                    lineHeight: 1,
+                                                                    cursor: 'pointer',
+                                                                    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    height: '32px',
+                                                                    boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                                                                }}
+                                                                onMouseEnter={(e) => {
+                                                                    if (!expandedMethods[compKey]) e.currentTarget.style.backgroundColor = '#e2e8f0';
+                                                                }}
+                                                                onMouseLeave={(e) => {
+                                                                    if (!expandedMethods[compKey]) e.currentTarget.style.backgroundColor = '#f1f5f9';
+                                                                }}
+                                                            >
+                                                                {expandedMethods[compKey] ? 'Свернуть' : 'Раскрыть'}
+                                                            </button>
+
+                                                            <span style={{
+                                                                fontWeight: 700,
+                                                                color: '#334155',
+                                                                fontSize: '15px',
+                                                                display: 'flex',
+                                                                alignItems: 'center'
+                                                            }}>
+                                                                Изменённые методы ({detail.changed_methods.length})
+                                                            </span>
                                                         </div>
-                                                        <ul style={{ margin: 0, paddingLeft: 20 }}>
-                                                            {detail.changed_methods.map((m, mi) => (
-                                                                <li key={`${compKey}-method-${mi}`} style={{ fontSize: 14, color: '#111', marginBottom: 8 }}>
-                                                                    <code style={{ backgroundColor: '#f1f3f5', padding: '4px 10px', borderRadius: 4, fontSize: 13, fontWeight: 500 }}>{m}</code>
-                                                                </li>
-                                                            ))}
-                                                        </ul>
+
+                                                        {/* Раскрывающийся список */}
+                                                        {expandedMethods[compKey] && (
+                                                            <div style={{
+                                                                display: 'flex',
+                                                                flexWrap: 'wrap',
+                                                                gap: '8px',
+                                                                padding: '12px',
+                                                                backgroundColor: '#f8fafc',
+                                                                borderRadius: '12px',
+                                                                border: '1px solid #e2e8f0'
+                                                            }}>
+                                                                {detail.changed_methods.map((m, mi) => (
+                                                                    <div key={`${compKey}-method-${mi}`}>
+                                                                        <code style={{
+                                                                            backgroundColor: '#1e293b',
+                                                                            padding: '6px 12px',
+                                                                            borderRadius: '6px',
+                                                                            fontSize: '12px',
+                                                                            fontWeight: 500,
+                                                                            color: '#fff',
+                                                                            display: 'inline-block',
+                                                                            fontFamily: 'monospace',
+                                                                            boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                                                                        }}>
+                                                                            {m}
+                                                                        </code>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
                                                     </div>
+
                                                 )}
                                                 {detail.diff_snippet && (
                                                     <div>
@@ -2177,7 +2507,7 @@ const TIAPage = ({ projects }) => {
             <GlobalBackgroundProgress />
 
             <div style={styles.headerSection}>
-                <h1 style={styles.title}>Test Impact Analysis (TIA)</h1>
+                <h1 style={styles.title}>Test Impact Analysis</h1>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                     <button style={styles.backButton} onClick={() => navigate('/')}>
                         Назад
@@ -2198,152 +2528,311 @@ const TIAPage = ({ projects }) => {
 
 
             <div style={styles.form}>
-                <div style={{ ...styles.formGroup, display: 'flex', gap: 12, alignItems: 'center', color: '#111' }}>
-                    <label style={styles.label}>Режим:</label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#111' }}>
-                        <input
-                            type="radio"
-                            name="tia-mode"
-                            value="mapping"
-                            checked={mode === 'mapping'}
-                            onChange={() => setMode('mapping')}
-                            style={{ margin: 0 }}
-                        />
-                        Маппинг
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#111' }}>
-                        <input
-                            type="radio"
-                            name="tia-mode"
-                            value="light"
-                            checked={mode === 'light'}
-                            onChange={() => setMode('light')}
-                            style={{ margin: 0 }}
-                        />
-                        Лайт-режим
-                    </label>
+                <div style={{ ...styles.formGroup, gap: '16px' }}>
+                    <label style={styles.label}>Режим работы</label>
+                    <div style={{
+                        display: 'flex',
+                        backgroundColor: '#f1f5f9',
+                        padding: '6px',
+                        borderRadius: '16px',
+                        width: 'fit-content',
+                        gap: '4px',
+                        boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.05)'
+                    }}>
+                        <button
+                            onClick={() => setMode('mapping')}
+                            style={{
+                                padding: '10px 24px',
+                                borderRadius: '12px',
+                                border: 'none',
+                                cursor: 'pointer',
+                                fontSize: '14px',
+                                fontWeight: 700,
+                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                                backgroundColor: mode === 'mapping' ? '#fff' : 'transparent',
+                                color: mode === 'mapping' ? '#6366f1' : '#64748b',
+                                boxShadow: mode === 'mapping' ? '0 4px 12px rgba(0,0,0,0.05)' : 'none',
+                            }}
+                        >
+                            Маппинг
+                        </button>
+                        <button
+                            onClick={() => setMode('light')}
+                            style={{
+                                padding: '10px 24px',
+                                borderRadius: '12px',
+                                border: 'none',
+                                cursor: 'pointer',
+                                fontSize: '14px',
+                                fontWeight: 700,
+                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                                backgroundColor: mode === 'light' ? '#fff' : 'transparent',
+                                color: mode === 'light' ? '#6366f1' : '#64748b',
+                                boxShadow: mode === 'light' ? '0 4px 12px rgba(0,0,0,0.05)' : 'none',
+                            }}
+                        >
+                            Лайт-режим
+                        </button>
+                    </div>
                 </div>
                 <div style={styles.formGroup}>
-                    <label style={styles.label}>Выберите проект:</label>
-                    <select
-                        value={projectId}
-                        onChange={handleProjectChange}
-                        style={styles.select}
-                        disabled={isLoading || structureLoading}
-                    >
-                        <option value="">-- Выберите проект --</option>
-                        {projects.map((proj) => (
-                            <option key={proj.id} value={proj.id}>
-                                {proj.name}
-                            </option>
-                        ))}
-                    </select>
+                    <label style={styles.label}>Выберите проект</label>
+                    <div style={{ position: 'relative' }}>
+                        <select
+                            value={projectId}
+                            onChange={handleProjectChange}
+                            style={styles.select}
+                            disabled={isLoading || structureLoading}
+                        >
+                            <option value="">Выберите проект</option>
+                            {projects.map((proj) => (
+                                <option key={proj.id} value={proj.id}>
+                                    {proj.name}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
                 </div>
 
                 <div style={styles.formGroup}>
-                    <label style={styles.label}>Загрузить JSON фронтенда или TIA (опционально):</label>
-                    <div style={styles.uploadContainer}>
-                        <input
-                            type="file"
-                            accept=".json"
-                            onChange={handleFrontendJSONUpload}
-                            style={styles.fileInput}
-                            disabled={isLoading || structureLoading}
-                        />
-                        {frontendJSON && <span style={styles.fileName}>Файл: {frontendJSON.name || 'frontend.json'}</span>}
-                        {tiaReport && <span style={styles.fileName}>Файл: {tiaFileName || 'tia.json'}</span>}
+                    <label style={styles.label}>Загрузить JSON фронтенда (опционально):</label>
+                    <div style={{
+                        ...styles.uploadContainer,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                    }}>
+                        <div style={{ width: '130px', overflow: 'hidden', flexShrink: 0 }}>
+                            <input
+                                type="file"
+                                accept=".json"
+                                onChange={handleFrontendJSONUpload}
+                                style={{ ...styles.fileInput, width: '200%', color: 'transparent' }}
+                                disabled={isLoading}
+                            />
+                        </div>
+
+                        {(frontendJSON || tiaReport) && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginLeft: 'auto' }}>
+                                <span style={{
+                                    ...styles.fileName,
+                                    margin: 0,
+                                    whiteSpace: 'nowrap',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    height: '32px',
+                                    paddingTop: '0',
+                                    paddingBottom: '0'
+                                }}>
+                                    {frontendJSON ? (frontendJSON.name || 'frontend.json') : (tiaFileName || 'tia.json')}
+                                </span>
+                                <button
+                                    onClick={() => {
+                                        setFrontendJSON(null);
+                                        setTiaReport(null);
+                                        setTiaFileName('');
+                                    }}
+                                    style={{
+                                        width: '32px',
+                                        height: '32px',
+                                        borderRadius: '8px',
+                                        border: 'none',
+                                        backgroundColor: '#fee2e2',
+                                        color: '#dc2626',
+                                        fontSize: '10px',
+                                        fontWeight: 800,
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        flexShrink: 0,
+                                        marginTop: '-1px'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.backgroundColor = '#fecaca';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.backgroundColor = '#fee2e2';
+                                    }}
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </div>
 
                 <div style={styles.formGroup}>
                     <label style={styles.label}>Загрузить JSON бэкенда (опционально):</label>
-                    <div style={styles.uploadContainer}>
-                        <input
-                            type="file"
-                            accept=".json"
-                            onChange={handleBackendJSONUpload}
-                            style={styles.fileInput}
-                            disabled={isLoading || structureLoading}
-                        />
-                        {backendJSON && <span style={styles.fileName}>Файл: {backendJSON.name || 'backend.json'}</span>}
+                    <div style={{
+                        ...styles.uploadContainer,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                    }}>
+                        <div style={{ width: '130px', overflow: 'hidden', flexShrink: 0 }}>
+                            <input
+                                type="file"
+                                accept=".json"
+                                onChange={handleBackendJSONUpload}
+                                style={{ ...styles.fileInput, width: '200%', color: 'transparent' }}
+                                disabled={isLoading}
+                            />
+                        </div>
+
+                        {backendJSON && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginLeft: 'auto' }}>
+                                <span style={{
+                                    ...styles.fileName,
+                                    margin: 0,
+                                    whiteSpace: 'nowrap',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    height: '32px',
+                                    paddingTop: '0',
+                                    paddingBottom: '0'
+                                }}>
+                                    {backendJSON.name || 'backend.json'}
+                                </span>
+                                <button
+                                    onClick={() => setBackendJSON(null)}
+                                    style={{
+                                        width: '32px',
+                                        height: '32px',
+                                        borderRadius: '8px',
+                                        border: 'none',
+                                        backgroundColor: '#fee2e2',
+                                        color: '#dc2626',
+                                        fontSize: '10px',
+                                        fontWeight: 800,
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        flexShrink: 0,
+                                        marginTop: '-1px'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.backgroundColor = '#fecaca';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.backgroundColor = '#fee2e2';
+                                    }}
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </div>
-
-                {/* Jira link moved to Split Modal - each launch has its own Jira link */}
-
-                {mode === 'mapping' && (
-                    structureLoading ? (
-                        <div style={styles.loader}><Loader /></div>
-                    ) : folders.length > 0 && (
-                        <div style={styles.mappingSection}>
-                            <h2 style={styles.subHeader}>Структура папок</h2>
-                            {renderFolderTree(filterFoldersForProject(folders))}
-                        </div>
-                    )
-                )}
-                {renderLightSummary()}
             </div>
 
             <div style={styles.footer}>
                 {error && <div style={styles.error}>{error}</div>}
                 {successMessage && (
-                    <div>
-                        {successMessage}
+                    <div style={styles.success}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                            <span>✅</span>
+                            {successMessage}
+                        </div>
                         {allureLink && (
-                            <a href={allureLink} target="_blank" rel="noopener noreferrer" style={styles.successLink}>
+                            <a href={allureLink} target="_blank" rel="noopener noreferrer" style={{ ...styles.successLink, color: '#fff', backgroundColor: '#10b981', padding: '6px 12px', borderRadius: '8px', marginTop: '10px', display: 'inline-block', fontWeight: 600 }}>
                                 Перейти к запуску в Allure
                             </a>
                         )}
                     </div>
                 )}
-                {isLoading && !structureLoading && <div style={styles.loader}><Loader /></div>}
+                {(isLoading || structureLoading) && (
+                    <div style={{
+                        ...styles.loader,
+                        flexDirection: 'column',
+                        gap: '12px'
+                    }}>
+                        <Loader />
+                        <div style={{ fontSize: '14px', color: '#64748b', fontWeight: 500 }}>
+                            {structureLoading ? 'Загрузка структуры проекта...' : 'Анализ изменений...'}
+                        </div>
+                    </div>
+                )}
                 {mode === 'mapping' && (
                     <button
                         onClick={handleCreateTestPlan}
                         disabled={isCreateButtonDisabled()}
-                        style={styles.submitButton}
+                        title={getCreateButtonDisabledReason()}
+                        style={{
+                            ...styles.submitButton,
+                            opacity: isCreateButtonDisabled() ? 0.6 : 1,
+                            transform: isCreateButtonDisabled() ? 'none' : 'scale(1)',
+                            cursor: isCreateButtonDisabled() ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.3s ease',
+                            background: isCreateButtonDisabled()
+                                ? 'linear-gradient(135deg, #94a3b8 0%, #64748b 100%)'
+                                : styles.submitButton.background
+                        }}
+                        onMouseEnter={(e) => {
+                            if (!isCreateButtonDisabled()) {
+                                e.currentTarget.style.transform = 'translateY(-2px) scale(1.02)';
+                                e.currentTarget.style.boxShadow = '0 15px 30px -5px rgba(16, 185, 129, 0.5)';
+                            }
+                        }}
+                        onMouseLeave={(e) => {
+                            if (!isCreateButtonDisabled()) {
+                                e.currentTarget.style.transform = 'translateY(0) scale(1)';
+                                e.currentTarget.style.boxShadow = '0 10px 25px -5px rgba(16, 185, 129, 0.4)';
+                            }
+                        }}
                     >
-                        {isLoading ? <Loader style={{ display: 'inline-block', width: '20px', height: '20px', verticalAlign: 'middle' }} /> : 'Создать запуски тестирования'}
+                        {isLoading ? (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                                <Loader style={{ width: '20px', height: '20px' }} />
+                                <span>Обработка...</span>
+                            </div>
+                        ) : 'Создать запуски тестирования'}
                     </button>
                 )}
             </div>
             {showMappingModal && (
                 <div
                     style={{
-                        ...styles.modalOverlay,
                         position: 'fixed',
                         top: 0, left: 0, right: 0, bottom: 0,
-                        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                        display: 'flex', justifyContent: 'center', alignItems: 'center',
-                        zIndex: 1000
+                        backgroundColor: 'rgba(15, 23, 42, 0.75)',
+                        backdropFilter: 'blur(10px)',
+                        display: 'flex',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        zIndex: 10000,
                     }}
                 >
                     <div
                         style={{
-                            ...styles.modal,
                             backgroundColor: '#ffffff',
                             padding: '0',
-                            borderRadius: '12px',
+                            borderRadius: '24px',
                             width: '95vw',
-                            maxWidth: '1400px',
+                            maxWidth: '1750px',
                             height: '90vh',
-                            maxHeight: '90vh',
+                            maxHeight: 'calc(100vh - 40px)',
                             display: 'flex',
                             flexDirection: 'column',
-                            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.15)'
+                            boxShadow: '0 25px 70px -10px rgba(0, 0, 0, 0.4)',
+                            border: '1px solid #334155',
+                            overflow: 'hidden',
+                            position: 'relative',
                         }}
                     >
                         {/* Заголовок */}
                         <div style={{
-                            padding: '20px 24px',
-                            borderBottom: '2px solid #ced4da',
-                            backgroundColor: '#f8f9fa'
+                            padding: '18px 28px',
+                            borderBottom: '1px solid #e2e8f0',
+                            backgroundColor: '#f1f5f9',
+                            flexShrink: 0,
+                            zIndex: 10
                         }}>
                             <h2 style={{
-                                fontSize: '24px',
-                                margin: 0,
-                                color: '#2c3e50',
-                                fontWeight: 700
+                                ...styles.title
                             }}>
                                 Сопоставление компонентов
                             </h2>
@@ -2375,17 +2864,17 @@ const TIAPage = ({ projects }) => {
                             )}
                         </div>
 
-                        {/* Основной контент - две колонки */}
                         <div style={{
                             display: 'flex',
-                            flex: 1,
+                            flex: '1 1 0%',
+                            minHeight: 0,
                             overflow: 'hidden'
                         }}>
                             {/* Левая колонка: Что затронуто */}
                             <div style={{
                                 width: '50%',
-                                borderRight: '2px solid #ced4da',
-                                padding: '20px',
+                                borderRight: '1px solid #e2e8f0',
+                                padding: '16px',
                                 overflowY: 'auto',
                                 backgroundColor: '#ffffff'
                             }}>
@@ -2460,7 +2949,7 @@ const TIAPage = ({ projects }) => {
                                             borderRadius: '6px'
                                         }}>
                                             <span>
-                                                <strong style={{ color: '#111' }}>Компонентов:</strong> {components.length}
+                                                <strong style={{ color: '#111' }}>Фронтенд компонентов:</strong> {components.length}
                                             </span>
                                             {tiaReport.summary.test_coverage_percent !== undefined && (
                                                 <>
@@ -2489,553 +2978,738 @@ const TIAPage = ({ projects }) => {
                                         </div>
                                     )}
                                 </div>
-                                {components.length === 0 ? (
-                                    <div style={{
-                                        padding: '16px',
-                                        backgroundColor: '#ffebee',
-                                        borderRadius: '8px',
-                                        color: '#721c24',
-                                        textAlign: 'center'
-                                    }}>
-                                        Компоненты не найдены. Проверьте загруженные JSON-файлы.
-                                    </div>
-                                ) : (
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                                        {components.map(comp => {
-                                            const pages = getPagesUsingComponent(comp.name);
-                                            const changeSummary = getComponentChangeSummary(comp);
-                                            const riskColor = comp.riskLevel === 'HIGH' ? '#dc3545' :
-                                                comp.riskLevel === 'MEDIUM' ? '#ffc107' : '#28a745';
-                                            const isSelected = selectedComponentId === comp.id;
-                                            const hasMapping = componentMappings[comp.id]?.length > 0;
 
-                                            return (
-                                                <div
-                                                    key={comp.id}
-                                                    onClick={() => setSelectedComponentId(comp.id)}
-                                                    style={{
-                                                        padding: '16px',
-                                                        backgroundColor: isSelected ? '#e7f3ff' : hasMapping ? '#f8f9fa' : '#fff5f5',
-                                                        borderRadius: '8px',
-                                                        border: `2px solid ${isSelected ? '#007bff' : hasMapping ? '#dee2e6' : '#dc3545'}`,
-                                                        cursor: 'pointer',
-                                                        transition: 'all 0.2s',
-                                                        boxShadow: hasMapping ? '0 2px 8px rgba(40, 167, 69, 0.2)' : '0 2px 8px rgba(220, 53, 69, 0.15)'
-                                                    }}
-                                                >
-                                                    {/* Заголовок компонента */}
-                                                    <div style={{
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        justifyContent: 'space-between',
-                                                        marginBottom: '12px'
-                                                    }}>
-                                                        <div style={{
-                                                            fontSize: '18px',
-                                                            fontWeight: 700,
-                                                            color: hasMapping ? '#28a745' : '#dc3545'
-                                                        }}>
-                                                            {comp.name}
-                                                        </div>
-                                                        {comp.riskLevel && (
-                                                            <span style={{
-                                                                padding: '4px 12px',
-                                                                borderRadius: '4px',
-                                                                backgroundColor: riskColor,
-                                                                color: '#fff',
-                                                                fontSize: '12px',
-                                                                fontWeight: 600
-                                                            }}>
-                                                                {comp.riskLevel}
-                                                            </span>
-                                                        )}
-                                                    </div>
+                                {/* Табы для переключения между фронтендом и бэкендом - ВСЕГДА ВИДНЫ */}
+                                <div style={{
+                                    display: 'flex',
+                                    gap: '8px',
+                                    marginBottom: '16px',
+                                    borderBottom: '2px solid #e2e8f0',
+                                    paddingBottom: '0'
+                                }}>
+                                    <button
+                                        onClick={() => setSelectedComponentType('frontend')}
+                                        style={{
+                                            padding: '10px 20px',
+                                            fontSize: '14px',
+                                            fontWeight: 600,
+                                            color: selectedComponentType === 'frontend' ? '#3b82f6' : '#64748b',
+                                            backgroundColor: 'transparent',
+                                            border: 'none',
+                                            borderBottom: selectedComponentType === 'frontend' ? '3px solid #3b82f6' : '3px solid transparent',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s',
+                                            marginBottom: '-2px'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            if (selectedComponentType !== 'frontend') {
+                                                e.currentTarget.style.color = '#3b82f6';
+                                            }
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            if (selectedComponentType !== 'frontend') {
+                                                e.currentTarget.style.color = '#64748b';
+                                            }
+                                        }}
+                                    >
+                                        Фронтенд ({components.filter(c => c.type === 'frontend').length})
+                                    </button>
+                                    <button
+                                        onClick={() => setSelectedComponentType('backend')}
+                                        style={{
+                                            padding: '10px 20px',
+                                            fontSize: '14px',
+                                            fontWeight: 600,
+                                            color: selectedComponentType === 'backend' ? '#3b82f6' : '#64748b',
+                                            backgroundColor: 'transparent',
+                                            border: 'none',
+                                            borderBottom: selectedComponentType === 'backend' ? '3px solid #3b82f6' : '3px solid transparent',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s',
+                                            marginBottom: '-2px'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            if (selectedComponentType !== 'backend') {
+                                                e.currentTarget.style.color = '#3b82f6';
+                                            }
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            if (selectedComponentType !== 'backend') {
+                                                e.currentTarget.style.color = '#64748b';
+                                            }
+                                        }}
+                                    >
+                                        Бэкенд ({components.filter(c => c.type === 'backend').length})
+                                    </button>
+                                </div>
 
-                                                    {/* Env, JSDoc и File Path */}
-                                                    <div style={{
-                                                        display: 'flex',
-                                                        flexDirection: 'column',
-                                                        gap: '8px',
-                                                        marginBottom: '12px'
-                                                    }}>
+                                {/* Фильтрация компонентов по выбранному типу */}
+                                {(() => {
+                                    const filteredComponents = components.filter(comp => comp.type === selectedComponentType);
+
+                                    if (filteredComponents.length === 0) {
+                                        return (
+                                            <div style={{
+                                                padding: '16px',
+                                                backgroundColor: '#f8fafc',
+                                                borderRadius: '8px',
+                                                color: '#64748b',
+                                                textAlign: 'center'
+                                            }}>
+                                                {selectedComponentType === 'frontend'
+                                                    ? 'Фронтенд компоненты не найдены'
+                                                    : 'Бэкенд компоненты не найдены'}
+                                            </div>
+                                        );
+                                    }
+
+                                    return (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                            {filteredComponents.map(comp => {
+                                                const pages = getPagesUsingComponent(comp.name);
+                                                const changeSummary = getComponentChangeSummary(comp);
+                                                const riskColor = comp.riskLevel === 'HIGH' ? '#dc3545' :
+                                                    comp.riskLevel === 'MEDIUM' ? '#ffc107' : '#28a745';
+                                                const isSelected = selectedComponentId === comp.id;
+                                                const hasMapping = componentMappings[comp.id]?.length > 0;
+
+                                                return (
+                                                    <div
+                                                        key={comp.id}
+                                                        onClick={() => setSelectedComponentId(comp.id)}
+                                                        style={{
+                                                            padding: '12px 14px',
+                                                            backgroundColor: isSelected ? '#eff6ff' : hasMapping ? '#f8fafc' : '#fff8f8',
+                                                            borderRadius: '12px',
+                                                            border: `1px solid ${isSelected ? '#3b82f6' : hasMapping ? '#e2e8f0' : '#fca5a5'}`,
+                                                            cursor: 'pointer',
+                                                            transition: 'all 0.2s',
+                                                            boxShadow: isSelected ? '0 4px 12px rgba(59, 130, 246, 0.15)' : 'none'
+                                                        }}
+                                                    >
+                                                        {/* Заголовок компонента */}
                                                         <div style={{
                                                             display: 'flex',
-                                                            flexWrap: 'wrap',
-                                                            gap: '8px',
-                                                            alignItems: 'center'
+                                                            alignItems: 'center',
+                                                            justifyContent: 'space-between',
+                                                            marginBottom: '12px'
                                                         }}>
-                                                            {comp.envs && comp.envs.length > 0 && (
-                                                                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                                                                    {comp.envs.map((env, eidx) => (
-                                                                        <span
-                                                                            key={`${comp.id}-env-${eidx}`}
-                                                                            style={{
-                                                                                padding: '3px 8px',
-                                                                                backgroundColor: '#6c757d',
-                                                                                color: '#fff',
-                                                                                borderRadius: '3px',
-                                                                                fontSize: '11px',
-                                                                                fontWeight: 500
-                                                                            }}
-                                                                        >
-                                                                            {env}
-                                                                        </span>
-                                                                    ))}
-                                                                </div>
-                                                            )}
-                                                            {comp.jsdoc && (
-                                                                <div style={{
-                                                                    fontSize: '12px',
-                                                                    color: '#495057',
-                                                                    fontStyle: 'italic',
-                                                                    padding: '4px 8px',
-                                                                    backgroundColor: '#f8f9fa',
-                                                                    borderRadius: '4px',
-                                                                    border: '1px solid #dee2e6'
-                                                                }}>
-                                                                    📝 {comp.jsdoc}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                        {comp.serviceName && (
-                                                            <div style={{
-                                                                fontSize: '11px',
-                                                                color: '#6c757d',
-                                                                fontFamily: 'monospace',
-                                                                padding: '4px 8px',
-                                                                backgroundColor: '#f8f9fa',
-                                                                borderRadius: '4px',
-                                                                border: '1px solid #dee2e6',
-                                                                wordBreak: 'break-all'
-                                                            }}>
-                                                                📁 {comp.serviceName}
-                                                            </div>
-                                                        )}
-                                                    </div>
-
-                                                    {/* UI Trace блок */}
-                                                    {renderUITrace(comp)}
-
-                                                    {/* Суть изменений */}
-                                                    <div style={{
-                                                        fontSize: '14px',
-                                                        color: '#495057',
-                                                        marginBottom: '12px',
-                                                        lineHeight: 1.5
-                                                    }}>
-                                                        {changeSummary}
-                                                    </div>
-
-                                                    {/* Сценарии тестирования (QA Advice) */}
-                                                    {comp.qaAdvice && comp.qaAdvice.length > 0 && (
-                                                        <div style={{ marginBottom: '12px' }}>
-                                                            <button
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    setExpandedScenarios(prev => ({
-                                                                        ...prev,
-                                                                        [comp.id]: !prev[comp.id]
-                                                                    }));
-                                                                }}
+                                                            <div
+                                                                title={comp.name}
                                                                 style={{
-                                                                    padding: '6px 12px',
-                                                                    backgroundColor: '#28a745',
-                                                                    color: '#fff',
-                                                                    border: 'none',
-                                                                    borderRadius: '4px',
-                                                                    cursor: 'pointer',
-                                                                    fontSize: '12px',
-                                                                    fontWeight: 600,
-                                                                    display: 'flex',
-                                                                    alignItems: 'center',
-                                                                    gap: '6px',
-                                                                    width: '100%',
-                                                                    justifyContent: 'space-between'
+                                                                    fontSize: '18px',
+                                                                    fontWeight: 700,
+                                                                    color: hasMapping ? '#28a745' : '#dc3545',
+                                                                    overflow: 'hidden',
+                                                                    textOverflow: 'ellipsis',
+                                                                    whiteSpace: 'nowrap'
                                                                 }}
                                                             >
-                                                                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                                    {expandedScenarios[comp.id] ? '▼' : '▶'}
-                                                                    Сценарии тестирования
-                                                                    <span style={{
-                                                                        fontSize: '11px',
-                                                                        backgroundColor: 'rgba(255, 255, 255, 0.3)',
-                                                                        padding: '2px 6px',
-                                                                        borderRadius: '10px',
-                                                                        marginLeft: '4px'
-                                                                    }}>
-                                                                        {comp.qaAdvice.reduce((sum, advice) => sum + (advice.scenarios?.length || 0), 0)}
-                                                                    </span>
+                                                                {comp.name}
+                                                            </div>
+                                                            {comp.riskLevel && (
+                                                                <span style={{
+                                                                    padding: '4px 12px',
+                                                                    borderRadius: '4px',
+                                                                    backgroundColor: riskColor,
+                                                                    color: '#fff',
+                                                                    fontSize: '12px',
+                                                                    fontWeight: 600
+                                                                }}>
+                                                                    {comp.riskLevel}
                                                                 </span>
-                                                            </button>
-                                                            {expandedScenarios[comp.id] && (
-                                                                <div style={{
-                                                                    marginTop: '8px',
-                                                                    padding: '12px',
-                                                                    backgroundColor: '#f0f9ff',
-                                                                    borderRadius: '6px',
-                                                                    border: '1px solid #b3d9ff'
-                                                                }}>
-                                                                    {comp.qaAdvice.map((advice, aidx) => {
-                                                                        const priorityColor = advice.priority === 'HIGH' ? '#dc3545' :
-                                                                            advice.priority === 'MEDIUM' ? '#ffc107' : '#28a745';
-                                                                        return (
-                                                                            <div key={`${comp.id}-advice-${aidx}`} style={{
-                                                                                marginBottom: aidx < comp.qaAdvice.length - 1 ? '16px' : '0',
-                                                                                paddingBottom: aidx < comp.qaAdvice.length - 1 ? '16px' : '0',
-                                                                                borderBottom: aidx < comp.qaAdvice.length - 1 ? '1px solid #b3d9ff' : 'none'
-                                                                            }}>
-                                                                                <div style={{
-                                                                                    display: 'flex',
-                                                                                    alignItems: 'center',
-                                                                                    gap: '8px',
-                                                                                    marginBottom: '8px',
-                                                                                    flexWrap: 'wrap'
-                                                                                }}>
-                                                                                    <span style={{
-                                                                                        padding: '3px 8px',
-                                                                                        backgroundColor: priorityColor,
-                                                                                        color: '#fff',
-                                                                                        borderRadius: '3px',
-                                                                                        fontSize: '11px',
-                                                                                        fontWeight: 600
-                                                                                    }}>
-                                                                                        {advice.priority}
-                                                                                    </span>
-                                                                                    <span style={{
-                                                                                        fontSize: '12px',
-                                                                                        fontWeight: 600,
-                                                                                        color: '#111'
-                                                                                    }}>
-                                                                                        {advice.area}
-                                                                                    </span>
-                                                                                    {advice.scenarios && (
-                                                                                        <span style={{
-                                                                                            fontSize: '11px',
-                                                                                            color: '#6c757d'
-                                                                                        }}>
-                                                                                            ({advice.scenarios.length} сценариев)
-                                                                                        </span>
-                                                                                    )}
-                                                                                </div>
-                                                                                {advice.scenarios && advice.scenarios.length > 0 && (
-                                                                                    <ol style={{
-                                                                                        margin: 0,
-                                                                                        paddingLeft: '20px',
-                                                                                        listStyle: 'decimal',
-                                                                                        color: '#111'
-                                                                                    }}>
-                                                                                        {advice.scenarios.map((scenario, sidx) => (
-                                                                                            <li key={`${comp.id}-scenario-${aidx}-${sidx}`} style={{
-                                                                                                fontSize: '13px',
-                                                                                                color: '#111',
-                                                                                                marginBottom: '6px',
-                                                                                                lineHeight: 1.5,
-                                                                                                paddingLeft: '4px'
-                                                                                            }}>
-                                                                                                {scenario}
-                                                                                            </li>
-                                                                                        ))}
-                                                                                    </ol>
-                                                                                )}
-                                                                            </div>
-                                                                        );
-                                                                    })}
-                                                                </div>
                                                             )}
                                                         </div>
-                                                    )}
 
-                                                    {/* Технические детали (скрыты под спойлер) */}
-                                                    {(comp.nestedComponents?.[0]?.changed_methods?.length > 0 || comp.nestedComponents?.[0]?.diff_snippet) && (
-                                                        <div style={{ marginBottom: '12px' }}>
-                                                            <button
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    setExpandedTechnicalDetails(prev => ({
-                                                                        ...prev,
-                                                                        [comp.id]: !prev[comp.id]
-                                                                    }));
-                                                                }}
-                                                                style={{
-                                                                    padding: '6px 12px',
-                                                                    backgroundColor: '#6c757d',
-                                                                    color: '#fff',
-                                                                    border: 'none',
-                                                                    borderRadius: '4px',
-                                                                    cursor: 'pointer',
-                                                                    fontSize: '12px',
-                                                                    fontWeight: 600,
-                                                                    display: 'flex',
-                                                                    alignItems: 'center',
-                                                                    gap: '6px'
-                                                                }}
-                                                            >
-                                                                {expandedTechnicalDetails[comp.id] ? '▼' : '▶'}
-                                                                Показать код
-                                                            </button>
-                                                            {expandedTechnicalDetails[comp.id] && (
-                                                                <div style={{
-                                                                    marginTop: '8px',
-                                                                    padding: '12px',
-                                                                    backgroundColor: '#f8f9fa',
-                                                                    borderRadius: '6px',
-                                                                    border: '1px solid #dee2e6'
-                                                                }}>
-                                                                    {/* Методы с JSDoc */}
-                                                                    {/* Diff snippet */}
-                                                                    {comp.nestedComponents?.[0]?.diff_snippet && (
-                                                                        <div>
-                                                                            <div style={{ fontSize: '12px', fontWeight: 600, color: '#495057', marginBottom: '8px' }}>
-                                                                                Изменения в коде:
-                                                                            </div>
-                                                                            <pre style={{
-                                                                                margin: 0,
-                                                                                padding: '12px',
-                                                                                backgroundColor: '#2d2d2d',
-                                                                                color: '#f8f8f2',
-                                                                                borderRadius: '4px',
-                                                                                fontSize: '11px',
-                                                                                fontFamily: 'monospace',
-                                                                                overflow: 'auto',
-                                                                                maxHeight: '300px',
-                                                                                whiteSpace: 'pre-wrap',
-                                                                                wordBreak: 'break-word'
-                                                                            }}>
-                                                                                {comp.nestedComponents[0].diff_snippet}
-                                                                            </pre>
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    )}
-
-                                                    {/* Где используется — Show More toggle if > 10 Pages */}
-                                                    {pages.length > 0 && (
-                                                        <div style={{ marginTop: '12px' }}>
-                                                            <div style={{
-                                                                fontSize: '12px',
-                                                                color: '#6c757d',
-                                                                marginBottom: '8px',
-                                                                fontWeight: 600,
-                                                                display: 'flex',
-                                                                justifyContent: 'space-between',
-                                                                alignItems: 'center'
-                                                            }}>
-                                                                <span>Где используется ({pages.length}):</span>
-                                                                {pages.length > 10 && (
-                                                                    <button
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            setExpandedPageLists(prev => ({
-                                                                                ...prev,
-                                                                                [comp.id]: !prev[comp.id]
-                                                                            }));
-                                                                        }}
-                                                                        style={{
-                                                                            background: 'none',
-                                                                            border: 'none',
-                                                                            color: '#007bff',
-                                                                            fontSize: '11px',
-                                                                            cursor: 'pointer',
-                                                                            padding: 0,
-                                                                            fontWeight: 600
-                                                                        }}
-                                                                    >
-                                                                        {expandedPageLists[comp.id] ? 'Скрыть' : `Показать все (${pages.length})`}
-                                                                    </button>
-                                                                )}
-                                                            </div>
+                                                        {/* Env, JSDoc и File Path */}
+                                                        <div style={{
+                                                            display: 'flex',
+                                                            flexDirection: 'column',
+                                                            gap: '8px',
+                                                            marginBottom: '12px'
+                                                        }}>
                                                             <div style={{
                                                                 display: 'flex',
                                                                 flexWrap: 'wrap',
-                                                                gap: '6px'
+                                                                gap: '8px',
+                                                                alignItems: 'center'
                                                             }}>
-                                                                {(expandedPageLists[comp.id] ? pages : pages.slice(0, 10)).map((page, idx) => {
-                                                                    const pageName = page.page_meta?.name || 'Unknown';
-                                                                    const pageRoute = page.page_meta?.route;
-                                                                    const tooltipText = [
-                                                                        page.page_meta?.human_title,
-                                                                        pageRoute ? `Route: ${pageRoute}` : null,
-                                                                        page.page_meta?.file_path
-                                                                    ].filter(Boolean).join('\n');
-
-                                                                    return (
-                                                                        <div key={`${comp.id}-page-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                                                {comp.envs && comp.envs.length > 0 && (
+                                                                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                                                        {comp.envs.map((env, eidx) => (
                                                                             <span
-                                                                                title={tooltipText}
+                                                                                key={`${comp.id}-env-${eidx}`}
                                                                                 style={{
-                                                                                    padding: '4px 10px',
-                                                                                    backgroundColor: '#e9ecef',
-                                                                                    borderRadius: '4px',
-                                                                                    fontSize: '12px',
-                                                                                    color: '#111',
-                                                                                    fontWeight: 500,
-                                                                                    cursor: 'help',
-                                                                                    display: 'inline-flex',
-                                                                                    alignItems: 'center',
-                                                                                    gap: '6px'
+                                                                                    padding: '3px 8px',
+                                                                                    backgroundColor: '#6c757d',
+                                                                                    color: '#fff',
+                                                                                    borderRadius: '3px',
+                                                                                    fontSize: '11px',
+                                                                                    fontWeight: 500
                                                                                 }}
                                                                             >
-                                                                                <span>{pageName}</span>
-                                                                                {pageRoute && (
-                                                                                    <span style={{
-                                                                                        fontSize: '11px',
-                                                                                        color: '#6c757d',
-                                                                                        fontFamily: 'monospace',
-                                                                                        backgroundColor: '#dee2e6',
-                                                                                        padding: '2px 6px',
-                                                                                        borderRadius: '3px'
-                                                                                    }}>
-                                                                                        {pageRoute}
-                                                                                    </span>
-                                                                                )}
+                                                                                {env}
                                                                             </span>
-                                                                        </div>
-                                                                    );
-                                                                })}
-                                                                {!expandedPageLists[comp.id] && pages.length > 10 && (
+                                                                        ))}
+                                                                    </div>
+                                                                )}
+                                                                {comp.jsdoc && (
                                                                     <div style={{
-                                                                        padding: '4px 10px',
+                                                                        fontSize: '12px',
+                                                                        color: '#495057',
+                                                                        fontStyle: 'italic',
+                                                                        padding: '4px 8px',
                                                                         backgroundColor: '#f8f9fa',
                                                                         borderRadius: '4px',
-                                                                        fontSize: '12px',
-                                                                        color: '#6c757d',
-                                                                        border: '1px dashed #dee2e6'
+                                                                        border: '1px solid #dee2e6'
                                                                     }}>
-                                                                        + еще {pages.length - 10}
+                                                                        📝 {comp.jsdoc}
                                                                     </div>
                                                                 )}
                                                             </div>
-                                                        </div>
-                                                    )}
 
-
-                                                    {/* Выбранные маппинги */}
-                                                    {hasMapping && (
-                                                        <div style={{
-                                                            marginTop: '12px',
-                                                            paddingTop: '12px',
-                                                            borderTop: '1px solid #dee2e6'
-                                                        }}>
-                                                            <div style={{
-                                                                fontSize: '12px',
-                                                                color: '#6c757d',
-                                                                marginBottom: '6px',
-                                                                fontWeight: 600
-                                                            }}>
-                                                                Покрыто:
-                                                            </div>
-                                                            <div style={{
-                                                                display: 'flex',
-                                                                flexWrap: 'wrap',
-                                                                gap: '6px'
-                                                            }}>
-                                                                {componentMappings[comp.id].map(folderId => {
-                                                                    const folder = findFolderById(folders, parseInt(folderId));
-                                                                    const isAutoMapped = autoMappedBlocks[comp.id]?.includes(folderId);
-                                                                    return folder ? (
-                                                                        <span
-                                                                            key={folderId}
-                                                                            title={isAutoMapped ? 'Автоматически добавлен из связанной Page' : ''}
+                                                            {/* НОВОЕ: Бэкенд-специфичная информация */}
+                                                            {comp.type === 'backend' && (
+                                                                <>
+                                                                    {comp.serviceName && (
+                                                                        <div
+                                                                            title={comp.serviceName}
                                                                             style={{
-                                                                                padding: '4px 10px',
-                                                                                backgroundColor: isAutoMapped ? '#fff3cd' : '#d4edda',
-                                                                                borderRadius: '4px',
+                                                                                padding: '8px 12px',
+                                                                                backgroundColor: '#f1f5f9',
+                                                                                borderRadius: '6px',
                                                                                 fontSize: '12px',
-                                                                                color: isAutoMapped ? '#856404' : '#155724',
+                                                                                color: '#475569',
                                                                                 fontWeight: 500,
-                                                                                border: isAutoMapped ? '1px solid #ffc107' : 'none',
-                                                                                display: 'inline-flex',
-                                                                                alignItems: 'center',
-                                                                                gap: '4px'
+                                                                                marginBottom: '8px',
+                                                                                overflow: 'hidden',
+                                                                                textOverflow: 'ellipsis',
+                                                                                whiteSpace: 'nowrap'
                                                                             }}
                                                                         >
-                                                                            {isAutoMapped && '🔄 '}
-                                                                            {formatCustomFieldName(folder, 0)}
-                                                                            <button
-                                                                                onClick={(e) => {
-                                                                                    e.stopPropagation();
-                                                                                    // Удаляем из маппингов
-                                                                                    const updatedMappings = { ...componentMappings };
-                                                                                    updatedMappings[comp.id] = (updatedMappings[comp.id] || []).filter(id => id.toString() !== folderId.toString());
-                                                                                    setComponentMappings(updatedMappings);
-
-                                                                                    // Также убираем из списка авто-маппингов, чтобы он не подкрашивался если будет добавлен снова
-                                                                                    if (autoMappedBlocks[comp.id]?.includes(folderId)) {
-                                                                                        const updatedAuto = { ...autoMappedBlocks };
-                                                                                        updatedAuto[comp.id] = updatedAuto[comp.id].filter(id => id.toString() !== folderId.toString());
-                                                                                        setAutoMappedBlocks(updatedAuto);
-                                                                                    }
-                                                                                }}
-                                                                                style={{
-                                                                                    border: 'none',
-                                                                                    background: 'none',
-                                                                                    color: 'inherit',
-                                                                                    cursor: 'pointer',
-                                                                                    padding: '0 2px',
-                                                                                    marginLeft: '4px',
-                                                                                    fontSize: '14px',
-                                                                                    fontWeight: 'bold',
+                                                                            <strong>Сервис:</strong> {comp.serviceName}
+                                                                        </div>
+                                                                    )}
+                                                                    {comp.endpoints && comp.endpoints.length > 0 && (
+                                                                        <div style={{
+                                                                            padding: '10px',
+                                                                            backgroundColor: '#fef3c7',
+                                                                            borderRadius: '8px',
+                                                                            border: '1px solid #fbbf24'
+                                                                        }}>
+                                                                            <div style={{
+                                                                                fontSize: '11px',
+                                                                                fontWeight: 600,
+                                                                                color: '#92400e',
+                                                                                marginBottom: '8px'
+                                                                            }}>
+                                                                                Endpoints ({comp.endpoints.length}):
+                                                                            </div>
+                                                                            {comp.endpoints.map((endpoint, eidx) => (
+                                                                                <div key={`endpoint-${comp.id}-${eidx}`} style={{
+                                                                                    padding: '6px 8px',
+                                                                                    backgroundColor: '#fff',
+                                                                                    borderRadius: '4px',
+                                                                                    marginBottom: eidx < comp.endpoints.length - 1 ? '4px' : '0',
+                                                                                    fontSize: '11px',
+                                                                                    fontFamily: 'monospace',
                                                                                     display: 'flex',
                                                                                     alignItems: 'center',
-                                                                                    opacity: 0.6
-                                                                                }}
-                                                                                onMouseOver={(e) => e.currentTarget.style.opacity = 1}
-                                                                                onMouseOut={(e) => e.currentTarget.style.opacity = 0.6}
-                                                                                title="Удалить маппинг"
-                                                                            >
-                                                                                ×
-                                                                            </button>
-                                                                        </span>
-                                                                    ) : null;
-                                                                })}
-                                                            </div>
+                                                                                    gap: '8px'
+                                                                                }}>
+                                                                                    <span style={{
+                                                                                        fontWeight: 700,
+                                                                                        padding: '2px 6px',
+                                                                                        borderRadius: '3px',
+                                                                                        fontSize: '10px',
+                                                                                        color: '#fff',
+                                                                                        backgroundColor:
+                                                                                            (endpoint.HttpMethod || endpoint.method) === 'GET' ? '#10b981' :
+                                                                                                (endpoint.HttpMethod || endpoint.method) === 'POST' ? '#3b82f6' :
+                                                                                                    (endpoint.HttpMethod || endpoint.method) === 'PUT' ? '#f59e0b' :
+                                                                                                        (endpoint.HttpMethod || endpoint.method) === 'DELETE' ? '#ef4444' :
+                                                                                                            (endpoint.HttpMethod || endpoint.method) === 'PATCH' ? '#8b5cf6' : '#6b7280'
+                                                                                    }}>
+                                                                                        {endpoint.HttpMethod || endpoint.method || 'N/A'}
+                                                                                    </span>
+                                                                                    <span style={{ color: '#1e293b', flex: 1 }}>
+                                                                                        {endpoint.RoutePath || endpoint.path || endpoint.url || 'N/A'}
+                                                                                    </span>
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    )}
+                                                                </>
+                                                            )}
+
+                                                            {/* Фронтенд-специфичная информация (serviceName как file path) */}
+                                                            {comp.type === 'frontend' && comp.serviceName && (
+                                                                <div style={{
+                                                                    fontSize: '11px',
+                                                                    color: '#6c757d',
+                                                                    fontFamily: 'monospace',
+                                                                    padding: '4px 8px',
+                                                                    backgroundColor: '#f8f9fa',
+                                                                    borderRadius: '4px',
+                                                                    border: '1px solid #dee2e6',
+                                                                    wordBreak: 'break-all'
+                                                                }}>
+                                                                    {comp.serviceName}
+                                                                </div>
+                                                            )}
                                                         </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                )
-                                }
+
+                                                        {/* UI Trace блок */}
+                                                        {renderUITrace(comp)}
+
+                                                        {/* Суть изменений */}
+                                                        <div style={{
+                                                            fontSize: '14px',
+                                                            color: '#495057',
+                                                            marginBottom: '12px',
+                                                            lineHeight: 1.5
+                                                        }}>
+                                                            {changeSummary}
+                                                        </div>
+
+                                                        {/* Сценарии тестирования (QA Advice) */}
+                                                        {comp.qaAdvice && comp.qaAdvice.length > 0 && (
+                                                            <div style={{ marginBottom: '12px' }}>
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setExpandedScenarios(prev => ({
+                                                                            ...prev,
+                                                                            [comp.id]: !prev[comp.id]
+                                                                        }));
+                                                                    }}
+                                                                    style={{
+                                                                        padding: '10px 16px',
+                                                                        backgroundColor: expandedScenarios[comp.id] ? '#10b981' : '#f0fdf4',
+                                                                        color: expandedScenarios[comp.id] ? '#fff' : '#059669',
+                                                                        border: `1px solid ${expandedScenarios[comp.id] ? '#10b981' : '#bcf0da'}`,
+                                                                        borderRadius: '12px',
+                                                                        cursor: 'pointer',
+                                                                        fontSize: '13px',
+                                                                        fontWeight: 700,
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        justifyContent: 'space-between',
+                                                                        width: '100%',
+                                                                        transition: 'all 0.2s ease',
+                                                                        boxShadow: expandedScenarios[comp.id] ? '0 4px 12px rgba(16, 185, 129, 0.2)' : 'none'
+                                                                    }}
+                                                                >
+                                                                    <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                        <span style={{
+                                                                            transition: 'transform 0.2s ease',
+                                                                            transform: expandedScenarios[comp.id] ? 'rotate(180deg)' : 'rotate(0deg)',
+                                                                            display: 'inline-block'
+                                                                        }}>▼</span>
+                                                                        Сценарии тестирования
+                                                                        <span style={{
+                                                                            fontSize: '11px',
+                                                                            backgroundColor: expandedScenarios[comp.id] ? 'rgba(255, 255, 255, 0.3)' : 'rgba(16, 185, 129, 0.1)',
+                                                                            padding: '2px 8px',
+                                                                            borderRadius: '20px',
+                                                                            marginLeft: '4px'
+                                                                        }}>
+                                                                            {comp.qaAdvice.reduce((sum, advice) => sum + (advice.scenarios?.length || 0), 0)}
+                                                                        </span>
+                                                                    </span>
+                                                                </button>
+                                                                {expandedScenarios[comp.id] && (
+                                                                    <div style={{
+                                                                        marginTop: '12px',
+                                                                        padding: '16px',
+                                                                        backgroundColor: '#f8fafc',
+                                                                        borderRadius: '16px',
+                                                                        border: '1px solid #e2e8f0'
+                                                                    }}>
+                                                                        {comp.qaAdvice.map((advice, aidx) => {
+                                                                            const priorityColor = advice.priority === 'HIGH' ? '#dc3545' :
+                                                                                advice.priority === 'MEDIUM' ? '#ffc107' : '#28a745';
+                                                                            return (
+                                                                                <div key={`${comp.id}-advice-${aidx}`} style={{
+                                                                                    marginBottom: aidx < comp.qaAdvice.length - 1 ? '16px' : '0',
+                                                                                    paddingBottom: aidx < comp.qaAdvice.length - 1 ? '16px' : '0',
+                                                                                    borderBottom: aidx < comp.qaAdvice.length - 1 ? '1px solid #b3d9ff' : 'none'
+                                                                                }}>
+                                                                                    <div style={{
+                                                                                        display: 'flex',
+                                                                                        alignItems: 'center',
+                                                                                        gap: '8px',
+                                                                                        marginBottom: '8px',
+                                                                                        flexWrap: 'wrap'
+                                                                                    }}>
+                                                                                        <span style={{
+                                                                                            padding: '3px 8px',
+                                                                                            backgroundColor: priorityColor,
+                                                                                            color: '#fff',
+                                                                                            borderRadius: '3px',
+                                                                                            fontSize: '11px',
+                                                                                            fontWeight: 600
+                                                                                        }}>
+                                                                                            {advice.priority}
+                                                                                        </span>
+                                                                                        <span style={{
+                                                                                            fontSize: '12px',
+                                                                                            fontWeight: 600,
+                                                                                            color: '#111'
+                                                                                        }}>
+                                                                                            {advice.area}
+                                                                                        </span>
+                                                                                        {advice.scenarios && (
+                                                                                            <span style={{
+                                                                                                fontSize: '11px',
+                                                                                                color: '#6c757d'
+                                                                                            }}>
+                                                                                                ({advice.scenarios.length} сценариев)
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                    {advice.scenarios && advice.scenarios.length > 0 && (
+                                                                                        <ol style={{
+                                                                                            margin: '8px 0 0 0',
+                                                                                            paddingLeft: '0',
+                                                                                            listStyle: 'none',
+                                                                                            display: 'flex',
+                                                                                            flexDirection: 'column',
+                                                                                            gap: '8px'
+                                                                                        }}>
+                                                                                            {advice.scenarios.map((scenario, sidx) => (
+                                                                                                <li key={`${comp.id}-scenario-${aidx}-${sidx}`} style={{
+                                                                                                    fontSize: '13px',
+                                                                                                    color: '#334155',
+                                                                                                    lineHeight: 1.5,
+                                                                                                    padding: '10px 14px',
+                                                                                                    backgroundColor: '#ffffff',
+                                                                                                    borderRadius: '10px',
+                                                                                                    border: '1px solid #e2e8f0',
+                                                                                                    display: 'flex',
+                                                                                                    gap: '12px',
+                                                                                                    boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                                                                                                }}>
+                                                                                                    <span style={{ fontWeight: 800, color: '#94a3b8', minWidth: '18px' }}>{sidx + 1}.</span>
+                                                                                                    <span>{scenario}</span>
+                                                                                                </li>
+                                                                                            ))}
+                                                                                        </ol>
+                                                                                    )}
+                                                                                </div>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+
+                                                        {/* Технические детали (скрыты под спойлер) */}
+                                                        {(comp.nestedComponents?.[0]?.changed_methods?.length > 0 || comp.nestedComponents?.[0]?.diff_snippet) && (
+                                                            <div style={{ marginBottom: '12px' }}>
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setExpandedTechnicalDetails(prev => ({
+                                                                            ...prev,
+                                                                            [comp.id]: !prev[comp.id]
+                                                                        }));
+                                                                    }}
+                                                                    style={{
+                                                                        padding: '6px 12px',
+                                                                        backgroundColor: '#6c757d',
+                                                                        color: '#fff',
+                                                                        border: 'none',
+                                                                        borderRadius: '4px',
+                                                                        cursor: 'pointer',
+                                                                        fontSize: '12px',
+                                                                        fontWeight: 600,
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '6px'
+                                                                    }}
+                                                                >
+                                                                    {expandedTechnicalDetails[comp.id] ? '▼' : '▶'}
+                                                                    Показать код
+                                                                </button>
+                                                                {expandedTechnicalDetails[comp.id] && (
+                                                                    <div style={{
+                                                                        marginTop: '8px',
+                                                                        padding: '12px',
+                                                                        backgroundColor: '#f8f9fa',
+                                                                        borderRadius: '6px',
+                                                                        border: '1px solid #dee2e6'
+                                                                    }}>
+                                                                        {/* Методы с JSDoc */}
+                                                                        {/* Diff snippet */}
+                                                                        {comp.nestedComponents?.[0]?.diff_snippet && (
+                                                                            <div>
+                                                                                <div style={{ fontSize: '12px', fontWeight: 600, color: '#495057', marginBottom: '8px' }}>
+                                                                                    Изменения в коде:
+                                                                                </div>
+                                                                                <pre style={{
+                                                                                    margin: 0,
+                                                                                    padding: '12px',
+                                                                                    backgroundColor: '#2d2d2d',
+                                                                                    color: '#f8f8f2',
+                                                                                    borderRadius: '4px',
+                                                                                    fontSize: '11px',
+                                                                                    fontFamily: 'monospace',
+                                                                                    overflow: 'auto',
+                                                                                    maxHeight: '300px',
+                                                                                    whiteSpace: 'pre-wrap',
+                                                                                    wordBreak: 'break-word'
+                                                                                }}>
+                                                                                    {comp.nestedComponents[0].diff_snippet}
+                                                                                </pre>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+
+                                                        {/* Где используется — Show More toggle if > 10 Pages */}
+                                                        {pages.length > 0 && (
+                                                            <div style={{ marginTop: '12px' }}>
+                                                                <div style={{
+                                                                    fontSize: '12px',
+                                                                    color: '#6c757d',
+                                                                    marginBottom: '8px',
+                                                                    fontWeight: 600,
+                                                                    display: 'flex',
+                                                                    justifyContent: 'space-between',
+                                                                    alignItems: 'center'
+                                                                }}>
+                                                                    <span>Где используется ({pages.length}):</span>
+                                                                    {pages.length > 10 && (
+                                                                        <button
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                setExpandedPageLists(prev => ({
+                                                                                    ...prev,
+                                                                                    [comp.id]: !prev[comp.id]
+                                                                                }));
+                                                                            }}
+                                                                            style={{
+                                                                                background: 'none',
+                                                                                border: 'none',
+                                                                                color: '#007bff',
+                                                                                fontSize: '11px',
+                                                                                cursor: 'pointer',
+                                                                                padding: 0,
+                                                                                fontWeight: 600
+                                                                            }}
+                                                                        >
+                                                                            {expandedPageLists[comp.id] ? 'Скрыть' : `Показать все (${pages.length})`}
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                                <div style={{
+                                                                    display: 'flex',
+                                                                    flexWrap: 'wrap',
+                                                                    gap: '6px'
+                                                                }}>
+                                                                    {(expandedPageLists[comp.id] ? pages : pages.slice(0, 10)).map((page, idx) => {
+                                                                        const pageName = page.page_meta?.name || 'Unknown';
+                                                                        const pageRoute = page.page_meta?.route;
+                                                                        const tooltipText = [
+                                                                            page.page_meta?.human_title,
+                                                                            pageRoute ? `Route: ${pageRoute}` : null,
+                                                                            page.page_meta?.file_path
+                                                                        ].filter(Boolean).join('\n');
+
+                                                                        return (
+                                                                            <div key={`${comp.id}-page-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                                                                <span
+                                                                                    title={tooltipText}
+                                                                                    style={{
+                                                                                        padding: '4px 10px',
+                                                                                        backgroundColor: '#e9ecef',
+                                                                                        borderRadius: '4px',
+                                                                                        fontSize: '12px',
+                                                                                        color: '#111',
+                                                                                        fontWeight: 500,
+                                                                                        cursor: 'help',
+                                                                                        display: 'inline-flex',
+                                                                                        alignItems: 'center',
+                                                                                        gap: '6px'
+                                                                                    }}
+                                                                                >
+                                                                                    <span>{pageName}</span>
+                                                                                    {pageRoute && (
+                                                                                        <span style={{
+                                                                                            fontSize: '11px',
+                                                                                            color: '#6c757d',
+                                                                                            fontFamily: 'monospace',
+                                                                                            backgroundColor: '#dee2e6',
+                                                                                            padding: '2px 6px',
+                                                                                            borderRadius: '3px'
+                                                                                        }}>
+                                                                                            {pageRoute}
+                                                                                        </span>
+                                                                                    )}
+                                                                                </span>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                    {!expandedPageLists[comp.id] && pages.length > 10 && (
+                                                                        <div style={{
+                                                                            padding: '4px 10px',
+                                                                            backgroundColor: '#f8f9fa',
+                                                                            borderRadius: '4px',
+                                                                            fontSize: '12px',
+                                                                            color: '#6c757d',
+                                                                            border: '1px dashed #dee2e6'
+                                                                        }}>
+                                                                            + еще {pages.length - 10}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        )}
+
+
+                                                        {/* Выбранные маппинги */}
+                                                        {hasMapping && (
+                                                            <div style={{
+                                                                marginTop: '12px',
+                                                                paddingTop: '12px',
+                                                                borderTop: '1px solid #dee2e6'
+                                                            }}>
+                                                                <div style={{
+                                                                    fontSize: '12px',
+                                                                    color: '#6c757d',
+                                                                    marginBottom: '6px',
+                                                                    fontWeight: 600
+                                                                }}>
+                                                                    Покрыто:
+                                                                </div>
+                                                                <div style={{
+                                                                    display: 'flex',
+                                                                    flexWrap: 'wrap',
+                                                                    gap: '6px'
+                                                                }}>
+                                                                    {componentMappings[comp.id].map(folderId => {
+                                                                        const folder = findFolderById(folders, parseInt(folderId));
+                                                                        const isAutoMapped = autoMappedBlocks[comp.id]?.includes(folderId);
+                                                                        return folder ? (
+                                                                            <span
+                                                                                key={folderId}
+                                                                                title={isAutoMapped ? 'Автоматически добавлен из связанной Page' : ''}
+                                                                                style={{
+                                                                                    padding: '4px 10px',
+                                                                                    backgroundColor: isAutoMapped ? '#fff3cd' : '#d4edda',
+                                                                                    borderRadius: '4px',
+                                                                                    fontSize: '12px',
+                                                                                    color: isAutoMapped ? '#856404' : '#155724',
+                                                                                    fontWeight: 500,
+                                                                                    border: isAutoMapped ? '1px solid #ffc107' : 'none',
+                                                                                    display: 'inline-flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '4px'
+                                                                                }}
+                                                                            >
+                                                                                {isAutoMapped && '🔄 '}
+                                                                                {formatCustomFieldName(folder, 0)}
+                                                                                <button
+                                                                                    onClick={(e) => {
+                                                                                        e.stopPropagation();
+                                                                                        // Удаляем из маппингов
+                                                                                        const updatedMappings = { ...componentMappings };
+                                                                                        updatedMappings[comp.id] = (updatedMappings[comp.id] || []).filter(id => id.toString() !== folderId.toString());
+                                                                                        setComponentMappings(updatedMappings);
+
+                                                                                        // Также убираем из списка авто-маппингов, чтобы он не подкрашивался если будет добавлен снова
+                                                                                        if (autoMappedBlocks[comp.id]?.includes(folderId)) {
+                                                                                            const updatedAuto = { ...autoMappedBlocks };
+                                                                                            updatedAuto[comp.id] = updatedAuto[comp.id].filter(id => id.toString() !== folderId.toString());
+                                                                                            setAutoMappedBlocks(updatedAuto);
+                                                                                        }
+                                                                                    }}
+                                                                                    style={{
+                                                                                        border: 'none',
+                                                                                        background: 'none',
+                                                                                        color: 'inherit',
+                                                                                        cursor: 'pointer',
+                                                                                        padding: '0 2px',
+                                                                                        marginLeft: '4px',
+                                                                                        fontSize: '14px',
+                                                                                        fontWeight: 'bold',
+                                                                                        display: 'flex',
+                                                                                        alignItems: 'center',
+                                                                                        opacity: 0.6
+                                                                                    }}
+                                                                                    onMouseOver={(e) => e.currentTarget.style.opacity = 1}
+                                                                                    onMouseOut={(e) => e.currentTarget.style.opacity = 0.6}
+                                                                                    title="Удалить маппинг"
+                                                                                >
+                                                                                    ×
+                                                                                </button>
+                                                                            </span>
+                                                                        ) : null;
+                                                                    })}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    );
+                                })()}
                             </div>
 
                             {/* Правая колонка: Чем покрыть */}
                             <div style={{
                                 width: '50%',
-                                padding: '20px',
+                                padding: '16px',
                                 overflowY: 'auto',
                                 backgroundColor: '#ffffff',
                                 display: 'flex',
                                 flexDirection: 'column'
                             }}>
-                                <h3 style={{
-                                    fontSize: '18px',
-                                    fontWeight: 600,
-                                    color: '#2c3e50',
-                                    marginBottom: '16px',
-                                    marginTop: 0
-                                }}>
-                                    Чем покрыть
-                                </h3>
-
-
-                                {/* Поиск по дереву */}
+                                { /* Заголовок и иконка-подсказка */}
                                 <div style={{
-                                    marginBottom: '10px',
-                                    fontSize: '12px',
-                                    color: '#64748b',
-                                    backgroundColor: '#f1f5f9',
-                                    padding: '8px 12px',
-                                    borderRadius: '6px',
-                                    lineHeight: 1.4
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    marginBottom: '16px'
                                 }}>
-                                    <span style={{ fontWeight: 600, color: '#475569' }}>Подсказка:</span>
-                                    <ul style={{ margin: '4px 0 0 0', paddingLeft: '16px' }}>
-                                        <li><b>Один клик</b> — выбрать/убрать текущий элемент</li>
-                                        <li><b>Двойной клик</b> — выбрать/убрать элемент со всеми вложенными</li>
-                                    </ul>
+                                    <h3 style={{
+                                        fontSize: '18px',
+                                        fontWeight: 600,
+                                        color: '#2c3e50',
+                                        margin: 0
+                                    }}>
+                                        Чем покрыть
+                                    </h3>
+                                    <div
+                                        title="Подсказка по маппингу:&#10;• Один клик — выбрать/убрать текущий элемент&#10;• Двойной клик — выбрать/убрать элемент со всеми вложенными"
+                                        style={{
+                                            cursor: 'help',
+                                            fontSize: '18px',
+                                            backgroundColor: '#f8fafc',
+                                            width: '28px',
+                                            height: '28px',
+                                            borderRadius: '50%',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            border: '1px solid #e2e8f0',
+                                            transition: 'all 0.2s'
+                                        }}
+                                        onMouseOver={(e) => {
+                                            e.currentTarget.style.backgroundColor = '#f1f5f9';
+                                            e.currentTarget.style.transform = 'scale(1.1)';
+                                        }}
+                                        onMouseOut={(e) => {
+                                            e.currentTarget.style.backgroundColor = '#f8fafc';
+                                            e.currentTarget.style.transform = 'scale(1)';
+                                        }}
+                                    >
+                                        💡
+                                    </div>
                                 </div>
                                 <input
                                     type="text"
@@ -3044,11 +3718,11 @@ const TIAPage = ({ projects }) => {
                                     onChange={(e) => setFolderSearchTerm(e.target.value)}
                                     style={{
                                         width: '100%',
-                                        padding: '10px 12px',
-                                        borderRadius: '6px',
-                                        border: '1px solid #ced4da',
+                                        padding: '8px 12px',
+                                        borderRadius: '8px',
+                                        border: '1px solid #e2e8f0',
                                         fontSize: '14px',
-                                        marginBottom: '16px',
+                                        marginBottom: '12px',
                                         boxSizing: 'border-box'
                                     }}
                                 />
@@ -3077,7 +3751,7 @@ const TIAPage = ({ projects }) => {
                                             zIndex: 10,
                                             marginBottom: '12px'
                                         }}>
-                                            💡 Выберите компонент слева, чтобы связать его с фичами
+                                            Выберите компонент слева, чтобы связать его с фичами
                                         </div>
                                     )}
                                     {folders && folders.length > 0 ? (
@@ -3103,12 +3777,14 @@ const TIAPage = ({ projects }) => {
 
                         {/* Footer */}
                         <div style={{
-                            padding: '16px 24px',
-                            borderTop: '2px solid #ced4da',
+                            padding: '18px 28px',
+                            borderTop: '1px solid #e2e8f0',
                             display: 'flex',
                             justifyContent: 'flex-end',
-                            gap: '16px',
-                            backgroundColor: '#f8f9fa'
+                            gap: '12px',
+                            backgroundColor: '#f1f5f9',
+                            flexShrink: 0,
+                            zIndex: 10
                         }}>
                             <button
                                 onClick={handleMappingCancel}
@@ -3123,7 +3799,7 @@ const TIAPage = ({ projects }) => {
                                 disabled={isPartialSaving || isMappingLoading}
                             >
                                 {isPartialSaving
-                                    ? <Loader style={{ width: 20, height: 20 }} />
+                                    ? <Loader style={{ width: '100%', height: 20 }} />
                                     : 'Сохранить маппинг'}
                             </button>
                             <button
@@ -3136,7 +3812,7 @@ const TIAPage = ({ projects }) => {
                                 disabled={isPartialSaving || isMappingLoading || loadingState.launch || loadingState.testplan || isMappingConfirmButtonDisabled}
                             >
                                 {loadingState.launch
-                                    ? <Loader style={{ width: 20, height: 20 }} />
+                                    ? <Loader style={{ width: '100%', height: 20 }} />
                                     : 'Создать запуск'}
                             </button>
                         </div>
@@ -3170,683 +3846,929 @@ const TIAPage = ({ projects }) => {
 
             {/* Split Modal — разделение на несколько запусков */}
             {showSplitModal && (
-                <div style={{
-                    position: 'fixed',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-                    backdropFilter: 'blur(8px)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 2000,
-                    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-                }}>
+                <DragDropContext onDragEnd={onDragEnd}>
                     <div style={{
-                        backgroundColor: '#fff',
-                        borderRadius: '24px',
-                        width: '95%',
-                        maxWidth: '1400px',
-                        maxHeight: '90vh',
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                        backdropFilter: 'blur(8px)',
                         display: 'flex',
-                        flexDirection: 'column',
-                        boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
-                        overflow: 'hidden'
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 2000,
+                        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
                     }}>
-                        {/* Header */}
                         <div style={{
-                            padding: '20px 28px',
-                            borderBottom: '1px solid #e2e8f0',
+                            backgroundColor: '#fff',
+                            borderRadius: '24px',
+                            width: '95%',
+                            maxWidth: '1800px',
+                            maxHeight: '95vh',
                             display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between'
-                        }}>
-                            <div>
-                                <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 700, color: '#1e293b' }}>
-                                    Разделение на запуски
-                                </h2>
-                                <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#64748b' }}>
-                                    Перетащите блоки из левой панели в нужный запуск
-                                </p>
-                            </div>
-                            <button
-                                onClick={() => setShowSplitModal(false)}
-                                style={{
-                                    background: 'none',
-                                    border: 'none',
-                                    fontSize: '24px',
-                                    color: '#94a3b8',
-                                    cursor: 'pointer',
-                                    padding: '8px'
-                                }}
-                            >×</button>
-                        </div>
-
-                        {/* Two-column content */}
-                        <div style={{
-                            flex: 1,
-                            display: 'flex',
+                            flexDirection: 'column',
+                            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
                             overflow: 'hidden'
                         }}>
-                            {/* Left Column — Unassigned Blocks (Tree View) */}
+                            {/* Header */}
                             <div style={{
-                                width: '450px',
-                                borderRight: '1px solid #e2e8f0',
-                                backgroundColor: '#fff',
+                                padding: '20px 28px',
+                                borderBottom: '1px solid #e2e8f0',
                                 display: 'flex',
-                                flexDirection: 'column',
-                                flexShrink: 0
+                                alignItems: 'center',
+                                justifyContent: 'space-between'
                             }}>
-                                <div style={{
-                                    padding: '14px 18px',
-                                    borderBottom: '1px solid #e2e8f0',
-                                    fontWeight: 600,
-                                    fontSize: '14px',
-                                    color: '#1e293b',
-                                    backgroundColor: '#f8fafc'
-                                }}>
-                                    📦 Блоки без назначения ({unassignedFolderIds.length})
+                                <div>
+                                    <h2 style={styles.subHeader}>
+                                        Разделение на запуски
+                                    </h2>
+                                    <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#64748b' }}>
+                                        Перетащите блоки из левой панели в нужный запуск
+                                    </p>
                                 </div>
-                                <div style={{
-                                    flex: 1,
-                                    overflowY: 'auto',
-                                    padding: '8px 0'
-                                }}>
-                                    {unassignedFolderIds.length === 0 ? (
-                                        <div style={{
-                                            padding: '32px 20px',
-                                            textAlign: 'center',
-                                            color: '#64748b',
-                                            fontSize: '13px'
-                                        }}>
-                                            ✓ Все блоки распределены по запускам
-                                        </div>
-                                    ) : (
-                                        /* Recursive Tree Rendering */
-                                        (() => {
-                                            const unassignedSet = new Set(unassignedFolderIds.map(id => id.toString()));
-
-                                            // Helper to get all children IDs recursively
-                                            const getAllChildIds = (folder) => {
-                                                const ids = [folder.id.toString()];
-                                                (folder.children || []).forEach(child => {
-                                                    ids.push(...getAllChildIds(child));
-                                                });
-                                                return ids;
-                                            };
-
-                                            // Helper to check if folder or any children are unassigned
-                                            const hasUnassignedItems = (folder) => {
-                                                if (unassignedSet.has(folder.id.toString())) return true;
-                                                return (folder.children || []).some(hasUnassignedItems);
-                                            };
-
-                                            // Render tree node
-                                            const renderTreeNode = (folder, depth = 0) => {
-                                                if (!hasUnassignedItems(folder)) return null;
-
-                                                const folderId = folder.id.toString();
-                                                const isUnassigned = unassignedSet.has(folderId);
-                                                const hasChildren = folder.children && folder.children.length > 0;
-                                                const isExpanded = expandedSplitFolders[folderId];
-                                                const childrenWithUnassigned = (folder.children || []).filter(hasUnassignedItems);
-
-                                                return (
-                                                    <div key={folderId}>
-                                                        <div style={{
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            padding: '8px 12px',
-                                                            paddingLeft: `${12 + depth * 20}px`,
-                                                            borderBottom: '1px solid #f1f5f9',
-                                                            backgroundColor: isUnassigned ? '#fff' : '#fafbfc',
-                                                            cursor: 'pointer'
-                                                        }}>
-                                                            {/* Expand/Collapse */}
-                                                            {hasChildren && childrenWithUnassigned.length > 0 ? (
-                                                                <button
-                                                                    onClick={() => setExpandedSplitFolders(prev => ({
-                                                                        ...prev,
-                                                                        [folderId]: !prev[folderId]
-                                                                    }))}
-                                                                    style={{
-                                                                        background: 'none',
-                                                                        border: 'none',
-                                                                        padding: '2px 6px',
-                                                                        cursor: 'pointer',
-                                                                        fontSize: '12px',
-                                                                        color: '#64748b',
-                                                                        marginRight: '4px'
-                                                                    }}
-                                                                >
-                                                                    {isExpanded ? '▼' : '▶'}
-                                                                </button>
-                                                            ) : (
-                                                                <span style={{ width: '24px' }} />
-                                                            )}
-
-                                                            {/* Folder name */}
-                                                            <span style={{
-                                                                flex: 1,
-                                                                fontSize: '13px',
-                                                                fontWeight: isUnassigned ? 500 : 400,
-                                                                color: '#1e293b',
-                                                                overflow: 'hidden',
-                                                                textOverflow: 'ellipsis',
-                                                                whiteSpace: 'nowrap'
-                                                            }}>
-                                                                {folder.name}
-                                                                {folder.testCasesCount > 0 && (
-                                                                    <span style={{
-                                                                        marginLeft: '6px',
-                                                                        fontSize: '11px',
-                                                                        color: '#94a3b8'
-                                                                    }}>
-                                                                        ({folder.testCasesCount})
-                                                                    </span>
-                                                                )}
-                                                            </span>
-
-                                                            {/* Add to Launch dropdown — show for any folder with unassigned items */}
-                                                            {(isUnassigned || childrenWithUnassigned.length > 0) && (
-                                                                <select
-                                                                    onClick={(e) => e.stopPropagation()}
-                                                                    onChange={(e) => {
-                                                                        const targetIdx = parseInt(e.target.value, 10);
-                                                                        if (isNaN(targetIdx)) return;
-
-                                                                        // Get all child IDs to add (only unassigned ones)
-                                                                        const idsToAdd = getAllChildIds(folder).filter(id => unassignedSet.has(id));
-
-                                                                        // Add to launch
-                                                                        const updated = [...launchGroups];
-                                                                        idsToAdd.forEach(id => {
-                                                                            if (!updated[targetIdx].folderIds.includes(id)) {
-                                                                                updated[targetIdx].folderIds.push(id);
-                                                                            }
-                                                                        });
-                                                                        setLaunchGroups(updated);
-
-                                                                        // Remove from unassigned
-                                                                        setUnassignedFolderIds(prev => prev.filter(id => !idsToAdd.includes(id.toString())));
-
-                                                                        e.target.value = '';
-                                                                    }}
-                                                                    style={{
-                                                                        padding: '4px 8px',
-                                                                        borderRadius: '6px',
-                                                                        border: '1px solid #e2e8f0',
-                                                                        fontSize: '11px',
-                                                                        cursor: 'pointer',
-                                                                        backgroundColor: '#f8fafc',
-                                                                        color: '#475569'
-                                                                    }}
-                                                                    defaultValue=""
-                                                                >
-                                                                    <option value="" disabled>➕ В запуск</option>
-                                                                    {launchGroups.map((g, idx) => (
-                                                                        <option key={g.id} value={idx}>
-                                                                            {idx + 1}. {g.name.substring(0, 18)}
-                                                                        </option>
-                                                                    ))}
-                                                                </select>
-                                                            )}
-
-                                                        </div>
-
-                                                        {/* Render children if expanded */}
-                                                        {isExpanded && childrenWithUnassigned.map(child =>
-                                                            renderTreeNode(child, depth + 1)
-                                                        )}
-                                                    </div>
-                                                );
-                                            };
-
-                                            return folders.map(folder => renderTreeNode(folder, 0));
-                                        })()
-                                    )}
-                                </div>
-
-                                {/* Quick actions */}
-                                {unassignedFolderIds.length > 0 && launchGroups.length > 0 && (
-                                    <div style={{
-                                        padding: '12px 14px',
-                                        borderTop: '1px solid #e2e8f0',
-                                        backgroundColor: '#f8fafc'
-                                    }}>
-                                        <button
-                                            onClick={() => {
-                                                const updated = [...launchGroups];
-                                                updated[0].folderIds = [...new Set([...updated[0].folderIds, ...unassignedFolderIds.map(id => id.toString())])];
-                                                setLaunchGroups(updated);
-                                                setUnassignedFolderIds([]);
-                                            }}
-                                            style={{
-                                                width: '100%',
-                                                padding: '10px',
-                                                backgroundColor: '#6366f1',
-                                                color: '#fff',
-                                                border: 'none',
-                                                borderRadius: '8px',
-                                                fontSize: '13px',
-                                                fontWeight: 500,
-                                                cursor: 'pointer'
-                                            }}
-                                        >
-                                            Добавить все в Запуск 1
-                                        </button>
-                                    </div>
-                                )}
+                                <button
+                                    onClick={handleSplitModalCancel}
+                                    style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        fontSize: '24px',
+                                        color: '#94a3b8',
+                                        cursor: 'pointer',
+                                        padding: '8px'
+                                    }}
+                                >×</button>
                             </div>
 
-
-                            {/* Right Column — Launches */}
+                            {/* Two-column content */}
                             <div style={{
                                 flex: 1,
-                                overflowY: 'auto',
-                                padding: '20px'
+                                display: 'flex',
+                                overflow: 'hidden'
                             }}>
-                                {launchGroups.map((group, groupIndex) => (
-                                    <div key={group.id} style={{
-                                        backgroundColor: '#f8fafc',
-                                        borderRadius: '16px',
-                                        padding: '18px',
-                                        marginBottom: '16px',
-                                        border: '1px solid #e2e8f0'
+                                {/* Left Column — Unassigned Blocks (Tree View) */}
+                                <div style={{
+                                    width: '450px',
+                                    borderRight: '1px solid #e2e8f0',
+                                    backgroundColor: '#fff',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    flexShrink: 0
+                                }}>
+                                    <div style={{
+                                        padding: '14px 18px',
+                                        borderBottom: '1px solid #e2e8f0',
+                                        fontWeight: 600,
+                                        fontSize: '14px',
+                                        color: '#1e293b',
+                                        backgroundColor: '#f8fafc'
                                     }}>
-                                        <div style={{
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '12px',
-                                            marginBottom: '14px'
-                                        }}>
-                                            <span style={{
-                                                width: '28px',
-                                                height: '28px',
-                                                borderRadius: '7px',
-                                                backgroundColor: '#6366f1',
-                                                color: '#fff',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center',
-                                                fontWeight: 600,
-                                                fontSize: '13px'
-                                            }}>{groupIndex + 1}</span>
-                                            <input
-                                                type="text"
-                                                value={group.name}
-                                                onChange={(e) => {
-                                                    const updated = [...launchGroups];
-                                                    updated[groupIndex].name = e.target.value;
-                                                    setLaunchGroups(updated);
-                                                }}
+                                        Блоки без назначения ({unassignedFolderIds.length})
+                                    </div>
+
+                                    <Droppable droppableId="unassigned-pool">
+                                        {(provided, snapshot) => (
+                                            <div
+                                                ref={provided.innerRef}
+                                                {...provided.droppableProps}
                                                 style={{
                                                     flex: 1,
-                                                    padding: '8px 12px',
-                                                    fontSize: '15px',
-                                                    fontWeight: 500,
-                                                    border: '1px solid #e2e8f0',
-                                                    borderRadius: '8px',
-                                                    outline: 'none'
+                                                    overflowY: 'auto',
+                                                    padding: '8px 0',
+                                                    backgroundColor: snapshot.isDraggingOver ? '#f0f9ff' : 'transparent',
+                                                    transition: 'background-color 0.2s ease'
                                                 }}
-                                                placeholder="Название запуска"
-                                            />
-                                            {launchGroups.length > 1 && (
-                                                <button
-                                                    onClick={() => {
-                                                        // Return blocks to unassigned
-                                                        setUnassignedFolderIds(prev => [...prev, ...group.folderIds]);
-                                                        // Remove launch
-                                                        setLaunchGroups(launchGroups.filter((_, i) => i !== groupIndex));
-                                                    }}
-                                                    style={{
-                                                        background: 'none',
-                                                        border: 'none',
-                                                        color: '#ef4444',
-                                                        cursor: 'pointer',
-                                                        fontSize: '18px',
-                                                        padding: '6px'
-                                                    }}
-                                                    title="Удалить запуск"
-                                                >🗑️</button>
-                                            )}
-                                        </div>
+                                            >
+                                                {unassignedFolderIds.length === 0 ? (
+                                                    <div style={{
+                                                        padding: '32px 20px',
+                                                        textAlign: 'center',
+                                                        color: '#64748b',
+                                                        fontSize: '13px'
+                                                    }}>
+                                                        Все блоки распределены по запускам
+                                                    </div>
+                                                ) : (
+                                                    /* Flattened Tree Rendering to avoid nested Draggables */
+                                                    (() => {
+                                                        const unassignedSet = new Set(unassignedFolderIds.map(id => id.toString()));
 
-                                        {/* Jira Link input */}
-                                        <div style={{ marginBottom: '12px' }}>
-                                            <input
-                                                type="text"
-                                                value={group.jiraLink || ''}
-                                                onChange={(e) => {
+                                                        // Helper to check if folder or any children are unassigned
+                                                        const hasUnassignedItems = (folder) => {
+                                                            if (unassignedSet.has(folder.id.toString())) return true;
+                                                            return (folder.children || []).some(hasUnassignedItems);
+                                                        };
+
+                                                        // Flatten the visible part of the tree
+                                                        const flattened = [];
+                                                        const flatten = (nodes, depth = 0) => {
+                                                            nodes.forEach(node => {
+                                                                if (!hasUnassignedItems(node)) return;
+                                                                const nodeId = node.id.toString();
+                                                                flattened.push({ ...node, depth });
+                                                                if (expandedSplitFolders[nodeId] && node.children) {
+                                                                    flatten(node.children, depth + 1);
+                                                                }
+                                                            });
+                                                        };
+                                                        flatten(folders);
+
+                                                        return (
+                                                            <>
+                                                                {flattened.map((node, index) => {
+                                                                    const folderId = node.id.toString();
+                                                                    const isUnassigned = unassignedSet.has(folderId);
+                                                                    const hasChildren = node.children && node.children.length > 0;
+                                                                    const isExpanded = expandedSplitFolders[folderId];
+
+                                                                    return (
+                                                                        <Draggable key={`pool::${folderId}`} draggableId={`pool::${folderId}`} index={index}>
+                                                                            {(provided, snapshot) => (
+                                                                                <div
+                                                                                    ref={provided.innerRef}
+                                                                                    {...provided.draggableProps}
+                                                                                    style={{
+                                                                                        ...provided.draggableProps.style,
+                                                                                        marginBottom: '2px'
+                                                                                    }}
+                                                                                >
+                                                                                    <div style={{
+                                                                                        display: 'flex',
+                                                                                        alignItems: 'center',
+                                                                                        padding: '8px 12px',
+                                                                                        paddingLeft: `${12 + node.depth * 20}px`,
+                                                                                        borderBottom: '1px solid #f1f5f9',
+                                                                                        backgroundColor: snapshot.isDragging ? '#e0f2fe' : (isUnassigned ? '#fff' : '#fafbfc'),
+                                                                                        cursor: 'default'
+                                                                                    }}>
+                                                                                        {/* Drag Handle */}
+                                                                                        <div {...provided.dragHandleProps} style={{ marginRight: '8px', color: '#64748b', cursor: 'grab' }}>
+                                                                                            ⠿
+                                                                                        </div>
+
+                                                                                        {/* Expand/Collapse */}
+                                                                                        {hasChildren ? (
+                                                                                            <button
+                                                                                                onClick={() => setExpandedSplitFolders(prev => ({
+                                                                                                    ...prev,
+                                                                                                    [folderId]: !prev[folderId]
+                                                                                                }))}
+                                                                                                style={{
+                                                                                                    background: 'none',
+                                                                                                    border: 'none',
+                                                                                                    padding: '2px 6px',
+                                                                                                    cursor: 'pointer',
+                                                                                                    fontSize: '12px',
+                                                                                                    color: '#64748b',
+                                                                                                    marginRight: '4px'
+                                                                                                }}
+                                                                                            >
+                                                                                                {isExpanded ? '▼' : '▶'}
+                                                                                            </button>
+                                                                                        ) : (
+                                                                                            <span style={{ width: '24px' }} />
+                                                                                        )}
+
+                                                                                        {/* Folder name */}
+                                                                                        <span style={{
+                                                                                            flex: 1,
+                                                                                            fontSize: node.node_type === 'TEST_CASE' ? '12px' : '13px',
+                                                                                            fontWeight: isUnassigned ? (node.node_type === 'TEST_CASE' ? 400 : 500) : 400,
+                                                                                            fontStyle: node.node_type === 'TEST_CASE' ? 'italic' : 'normal',
+                                                                                            color: node.node_type === 'TEST_CASE' ? '#475569' : '#0f172a',
+                                                                                            overflow: 'hidden',
+                                                                                            textOverflow: 'ellipsis',
+                                                                                            whiteSpace: 'nowrap'
+                                                                                        }}>
+                                                                                            {formatCustomFieldName(node)}
+                                                                                            {node.testCasesCount > 0 && (
+                                                                                                <span style={{
+                                                                                                    marginLeft: '6px',
+                                                                                                    fontSize: '11px',
+                                                                                                    color: '#64748b'
+                                                                                                }}>
+                                                                                                    ({node.testCasesCount})
+                                                                                                </span>
+                                                                                            )}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                </div>
+                                                                            )}
+                                                                        </Draggable>
+                                                                    );
+                                                                })}
+                                                                {provided.placeholder}
+                                                            </>
+                                                        );
+                                                    })()
+                                                )}
+                                            </div>
+                                        )}
+                                    </Droppable>
+
+                                    {/* Quick actions moved here to stay visible */}
+                                    {unassignedFolderIds.length > 0 && launchGroups.length > 0 && (
+                                        <div style={{
+                                            padding: '12px 14px',
+                                            borderTop: '1px solid #e2e8f0',
+                                            backgroundColor: '#f8fafc'
+                                        }}>
+                                            <button
+                                                onClick={() => {
                                                     const updated = [...launchGroups];
-                                                    updated[groupIndex].jiraLink = e.target.value;
+                                                    updated[0].folderIds = [...new Set([...updated[0].folderIds, ...unassignedFolderIds.map(id => id.toString())])];
                                                     setLaunchGroups(updated);
+                                                    setUnassignedFolderIds([]);
                                                 }}
                                                 style={{
                                                     width: '100%',
-                                                    padding: '8px 12px',
-                                                    fontSize: '12px',
-                                                    border: '1px solid #e2e8f0',
-                                                    borderRadius: '6px',
-                                                    outline: 'none',
-                                                    color: '#475569'
+                                                    padding: '10px',
+                                                    backgroundColor: '#6366f1',
+                                                    color: '#fff',
+                                                    border: 'none',
+                                                    borderRadius: '8px',
+                                                    fontSize: '13px',
+                                                    fontWeight: 500,
+                                                    cursor: 'pointer'
                                                 }}
-                                                placeholder="🔗 Ссылка на задачу Jira (опционально)"
-                                            />
+                                            >
+                                                Добавить все в Запуск 1
+                                            </button>
                                         </div>
+                                    )}
+                                </div>
 
-                                        {/* Assigned blocks as tags */}
-                                        <div style={{
-                                            display: 'flex',
-                                            flexWrap: 'wrap',
-                                            gap: '8px',
-                                            minHeight: '36px'
-                                        }}>
-                                            {group.folderIds.length === 0 ? (
-                                                <span style={{ color: '#94a3b8', fontSize: '13px', fontStyle: 'italic' }}>
-                                                    Нет блоков — добавьте из левой панели
-                                                </span>
-                                            ) : (
-                                                group.folderIds.map(folderId => {
-                                                    const folder = folders.flatMap(function flatten(f) {
-                                                        return [f, ...(f.children || []).flatMap(flatten)];
-                                                    }).find(f => f.id.toString() === folderId.toString());
-                                                    return (
-                                                        <span key={folderId} style={{
-                                                            backgroundColor: '#6366f1',
-                                                            color: '#fff',
-                                                            padding: '5px 10px',
-                                                            borderRadius: '6px',
-                                                            fontSize: '12px',
-                                                            fontWeight: 500,
-                                                            display: 'inline-flex',
-                                                            alignItems: 'center',
-                                                            gap: '6px'
-                                                        }}>
-                                                            {folder?.name || `ID: ${folderId}`}
-                                                            <button
-                                                                onClick={() => {
-                                                                    // Remove from this launch
+
+                                {/* Right Column — Launches */}
+                                <div style={{
+                                    flex: 1,
+                                    overflowY: 'auto',
+                                    padding: '20px'
+                                }}>
+                                    {launchGroups.map((group, groupIndex) => (
+                                        <Droppable key={group.id} droppableId={`launch-${group.id}`}>
+                                            {(provided, snapshot) => (
+                                                <div
+                                                    ref={provided.innerRef}
+                                                    {...provided.droppableProps}
+                                                    style={{
+                                                        backgroundColor: snapshot.isDraggingOver ? '#f1f5f9' : '#f8fafc',
+                                                        borderRadius: '16px',
+                                                        padding: '18px',
+                                                        marginBottom: '16px',
+                                                        border: snapshot.isDraggingOver ? '2px dashed #6366f1' : '1px solid #e2e8f0',
+                                                        transition: 'all 0.2s ease'
+                                                    }}
+                                                >
+                                                    <div style={{
+                                                        display: 'flex',
+                                                        flexDirection: 'column',
+                                                        gap: '10px',
+                                                        marginBottom: '16px'
+                                                    }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                            <span style={{
+                                                                width: '28px',
+                                                                height: '28px',
+                                                                borderRadius: '7px',
+                                                                backgroundColor: '#6366f1',
+                                                                color: '#fff',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                fontWeight: 600,
+                                                                fontSize: '13px'
+                                                            }}>{groupIndex + 1}</span>
+                                                            <input
+                                                                type="text"
+                                                                value={group.name}
+                                                                onChange={(e) => {
                                                                     const updated = [...launchGroups];
-                                                                    updated[groupIndex].folderIds = updated[groupIndex].folderIds.filter(id => id !== folderId);
+                                                                    updated[groupIndex].name = e.target.value;
                                                                     setLaunchGroups(updated);
-                                                                    // Return to unassigned
-                                                                    setUnassignedFolderIds(prev => [...prev, folderId]);
                                                                 }}
                                                                 style={{
-                                                                    background: 'none',
-                                                                    border: 'none',
-                                                                    color: 'rgba(255,255,255,0.8)',
-                                                                    cursor: 'pointer',
-                                                                    fontSize: '14px',
-                                                                    padding: 0,
-                                                                    lineHeight: 1
+                                                                    flex: 1,
+                                                                    padding: '8px 12px',
+                                                                    fontSize: '15px',
+                                                                    fontWeight: 500,
+                                                                    border: '1px solid #e2e8f0',
+                                                                    borderRadius: '8px',
+                                                                    outline: 'none'
                                                                 }}
-                                                                title="Вернуть в пул"
-                                                            >×</button>
-                                                        </span>
-                                                    );
-                                                })
+                                                                placeholder="Название запуска"
+                                                            />
+                                                            {launchGroups.length > 1 && (
+                                                                <button
+                                                                    onClick={() => {
+                                                                        // Return blocks to unassigned
+                                                                        setUnassignedFolderIds(prev => [...prev, ...group.folderIds]);
+                                                                        // Remove launch
+                                                                        setLaunchGroups(launchGroups.filter((_, i) => i !== groupIndex));
+                                                                    }}
+                                                                    style={{
+                                                                        background: 'none',
+                                                                        border: 'none',
+                                                                        color: '#ef4444',
+                                                                        cursor: 'pointer',
+                                                                        padding: '8px'
+                                                                    }}
+                                                                >✕</button>
+                                                            )}
+                                                        </div>
+                                                        <input
+                                                            type="text"
+                                                            value={group.jiraLink || ''}
+                                                            onChange={(e) => {
+                                                                const updated = [...launchGroups];
+                                                                updated[groupIndex].jiraLink = e.target.value;
+                                                                setLaunchGroups(updated);
+                                                            }}
+                                                            style={{
+                                                                padding: '10px 14px',
+                                                                fontSize: '13px',
+                                                                border: '1px solid #cbd5e1',
+                                                                borderRadius: '10px',
+                                                                outline: 'none',
+                                                                backgroundColor: '#fff',
+                                                                color: '#0f172a',
+                                                                boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)',
+                                                                width: '100%',
+                                                                boxSizing: 'border-box'
+                                                            }}
+                                                            placeholder="Ссылка на задачу Jira"
+                                                        />
+                                                    </div>
+
+                                                    <div style={{
+                                                        minHeight: '40px',
+                                                        backgroundColor: '#fff',
+                                                        borderRadius: '12px',
+                                                        border: '1px solid #e2e8f0',
+                                                        overflow: 'hidden'
+                                                    }}>
+                                                        {(() => {
+                                                            const groupFolderIds = new Set(group.folderIds || []);
+
+                                                            // Helper to check if folder or any children are in this group
+                                                            const hasGroupItems = (folder) => {
+                                                                if (groupFolderIds.has(folder.id.toString())) return true;
+                                                                return (folder.children || []).some(hasGroupItems);
+                                                            };
+
+                                                            // Flatten the visible part of the group tree
+                                                            const groupFlattened = [];
+                                                            const flattenGroup = (nodes, depth = 0) => {
+                                                                nodes.forEach(node => {
+                                                                    if (!hasGroupItems(node)) return;
+                                                                    const nodeId = node.id.toString();
+                                                                    groupFlattened.push({ ...node, depth });
+                                                                    if (expandedSplitFolders[nodeId] && node.children) {
+                                                                        flattenGroup(node.children, depth + 1);
+                                                                    }
+                                                                });
+                                                            };
+                                                            flattenGroup(folders);
+
+                                                            if (groupFlattened.length === 0) {
+                                                                return (
+                                                                    <div style={{
+                                                                        padding: '20px',
+                                                                        textAlign: 'center',
+                                                                        color: '#94a3b8',
+                                                                        fontSize: '13px',
+                                                                        fontStyle: 'italic'
+                                                                    }}>
+                                                                        Перетащите сюда блоки для этого запуска
+                                                                    </div>
+                                                                );
+                                                            }
+
+                                                            return groupFlattened.map((node, idx) => {
+                                                                const folderId = node.id.toString();
+                                                                const isDirectlyInGroup = groupFolderIds.has(folderId);
+                                                                const hasChildren = node.children && node.children.length > 0;
+                                                                const isExpanded = expandedSplitFolders[folderId];
+                                                                const nodeType = node.node_type || 'FOLDER';
+
+                                                                return (
+                                                                    <Draggable key={`group::${group.id}::${folderId}`} draggableId={`group::${group.id}::${folderId}`} index={idx}>
+                                                                        {(provided, snapshot) => (
+                                                                            <div
+                                                                                ref={provided.innerRef}
+                                                                                {...provided.draggableProps}
+                                                                                style={{
+                                                                                    ...provided.draggableProps.style,
+                                                                                    borderBottom: idx === groupFlattened.length - 1 ? 'none' : '1px solid #f1f5f9'
+                                                                                }}
+                                                                            >
+                                                                                <div style={{
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    padding: '10px 14px',
+                                                                                    paddingLeft: `${14 + node.depth * 20}px`,
+                                                                                    backgroundColor: snapshot.isDragging ? '#f0f9ff' : '#fff',
+                                                                                    transition: 'background-color 0.2s ease'
+                                                                                }}>
+                                                                                    <div {...provided.dragHandleProps} style={{ marginRight: '10px', color: '#94a3b8', cursor: 'grab' }}>
+                                                                                        ⠿
+                                                                                    </div>
+
+                                                                                    {hasChildren ? (
+                                                                                        <button
+                                                                                            onClick={(e) => {
+                                                                                                e.stopPropagation();
+                                                                                                setExpandedSplitFolders(prev => ({
+                                                                                                    ...prev,
+                                                                                                    [folderId]: !prev[folderId]
+                                                                                                }));
+                                                                                            }}
+                                                                                            style={{
+                                                                                                background: 'none',
+                                                                                                border: 'none',
+                                                                                                padding: '2px 6px',
+                                                                                                cursor: 'pointer',
+                                                                                                fontSize: '12px',
+                                                                                                color: '#64748b',
+                                                                                                marginRight: '4px'
+                                                                                            }}
+                                                                                        >
+                                                                                            {isExpanded ? '▼' : '▶'}
+                                                                                        </button>
+                                                                                    ) : (
+                                                                                        <span style={{ width: '24px' }} />
+                                                                                    )}
+
+                                                                                    <span style={{
+                                                                                        flex: 1,
+                                                                                        fontSize: nodeType === 'TEST_CASE' ? '12px' : '13px',
+                                                                                        fontWeight: nodeType === 'TEST_CASE' ? 400 : 500,
+                                                                                        color: isDirectlyInGroup ? '#0f172a' : '#64748b',
+                                                                                        fontStyle: nodeType === 'TEST_CASE' ? 'italic' : 'normal',
+                                                                                        overflow: 'hidden',
+                                                                                        textOverflow: 'ellipsis',
+                                                                                        whiteSpace: 'nowrap'
+                                                                                    }}>
+                                                                                        {formatCustomFieldName(node)}
+                                                                                    </span>
+
+                                                                                    {isDirectlyInGroup && (
+                                                                                        <button
+                                                                                            onClick={() => {
+                                                                                                const updated = [...launchGroups];
+                                                                                                const groupIdx = updated.findIndex(g => g.id === group.id);
+                                                                                                if (groupIdx !== -1) {
+                                                                                                    const idsToRemove = getAllDescendantIds(node);
+                                                                                                    updated[groupIdx].folderIds = updated[groupIdx].folderIds.filter(id => !idsToRemove.includes(id));
+                                                                                                    setLaunchGroups(updated);
+                                                                                                    setUnassignedFolderIds(prev => [...new Set([...prev, ...idsToRemove])]);
+                                                                                                }
+                                                                                            }}
+                                                                                            style={{
+                                                                                                background: 'none',
+                                                                                                border: 'none',
+                                                                                                color: '#94a3b8',
+                                                                                                cursor: 'pointer',
+                                                                                                padding: '4px 8px',
+                                                                                                borderRadius: '4px',
+                                                                                                fontSize: '14px'
+                                                                                            }}
+                                                                                            onMouseEnter={(e) => e.currentTarget.style.color = '#ef4444'}
+                                                                                            onMouseLeave={(e) => e.currentTarget.style.color = '#94a3b8'}
+                                                                                        >✕</button>
+                                                                                    )}
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
+                                                                    </Draggable>
+                                                                );
+                                                            });
+                                                        })()}
+                                                        {provided.placeholder}
+                                                    </div>
+                                                </div>
                                             )}
-                                        </div>
+                                        </Droppable>
+                                    ))}
 
-                                        <div style={{ marginTop: '10px', fontSize: '12px', color: '#64748b' }}>
-                                            {group.folderIds.length} блоков
-                                        </div>
-                                    </div>
-                                ))}
-
-                                {/* Add Launch Button */}
-                                <button
-                                    onClick={() => {
-                                        const newId = `launch-${Date.now()}`;
-                                        setLaunchGroups([...launchGroups, {
-                                            id: newId,
-                                            name: `Запуск ${launchGroups.length + 1}`,
-                                            folderIds: [],
-                                            jiraLink: ''
-                                        }]);
-                                    }}
-                                    style={{
-                                        width: '100%',
-                                        padding: '14px',
-                                        border: '2px dashed #cbd5e1',
-                                        borderRadius: '12px',
-                                        backgroundColor: 'transparent',
-                                        color: '#64748b',
-                                        fontSize: '14px',
-                                        fontWeight: 500,
-                                        cursor: 'pointer'
-                                    }}
-                                >
-                                    ➕ Добавить запуск
-                                </button>
+                                    <button
+                                        onClick={() => setLaunchGroups([...launchGroups, { id: Date.now(), name: `Запуск ${launchGroups.length + 1}`, folderIds: [] }])}
+                                        style={{
+                                            width: '100%',
+                                            padding: '16px',
+                                            border: '2px dashed #cbd5e1',
+                                            borderRadius: '16px',
+                                            backgroundColor: 'transparent',
+                                            color: '#64748b',
+                                            fontSize: '14px',
+                                            fontWeight: 500,
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s ease'
+                                        }}
+                                    >
+                                        Добавить запуск
+                                    </button>
+                                </div>
                             </div>
-                        </div>
 
-                        {/* Footer */}
-                        <div style={{
-                            padding: '16px 28px',
-                            borderTop: '1px solid #e2e8f0',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            backgroundColor: '#f8fafc'
-                        }}>
-                            <div style={{ fontSize: '13px', color: '#64748b' }}>
-                                Назначено: {launchGroups.reduce((sum, g) => sum + g.folderIds.length, 0)} блоков •
-                                Без назначения: {unassignedFolderIds.length}
-                            </div>
-                            <div style={{ display: 'flex', gap: '12px' }}>
-                                <button
-                                    onClick={() => setShowSplitModal(false)}
-                                    style={{
-                                        padding: '10px 20px',
-                                        borderRadius: '8px',
-                                        border: '1px solid #e2e8f0',
-                                        backgroundColor: '#fff',
-                                        color: '#64748b',
-                                        fontSize: '13px',
-                                        fontWeight: 500,
-                                        cursor: 'pointer'
-                                    }}
-                                >Отмена</button>
-                                <button
-                                    onClick={createMultipleLaunches}
-                                    disabled={loadingState.launch || launchGroups.every(g => g.folderIds.length === 0)}
-                                    style={{
-                                        padding: '10px 24px',
-                                        borderRadius: '8px',
-                                        border: 'none',
-                                        background: launchGroups.every(g => g.folderIds.length === 0)
-                                            ? '#94a3b8'
-                                            : 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                                        color: '#fff',
-                                        fontSize: '13px',
-                                        fontWeight: 600,
-                                        cursor: launchGroups.every(g => g.folderIds.length === 0) ? 'not-allowed' : 'pointer',
-                                        boxShadow: launchGroups.every(g => g.folderIds.length === 0) ? 'none' : '0 4px 12px rgba(99, 102, 241, 0.3)'
-                                    }}
-                                >
-                                    {loadingState.launch ? (
-                                        <span>Создание... {splitProgress ? `(${splitProgress.current}/${splitProgress.total})` : ''}</span>
-                                    ) : (
-                                        (() => {
-                                            const count = launchGroups.filter(g => g.folderIds.length > 0).length;
-                                            return `Создать ${count} запуск${count === 1 ? '' : count > 1 && count < 5 ? 'а' : 'ов'}`;
-                                        })()
-                                    )}
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Progress bar */}
-                        {splitProgress && (
+                            {/* Footer */}
                             <div style={{
-                                height: '4px',
-                                backgroundColor: '#e2e8f0'
-                            }}>
-                                <div style={{
-                                    height: '100%',
-                                    width: `${(splitProgress.current / splitProgress.total) * 100}%`,
-                                    background: 'linear-gradient(90deg, #6366f1, #8b5cf6)',
-                                    transition: 'width 0.3s ease'
-                                }} />
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-
-
-            {/* Модальное окно подтверждения незамапленных компонентов */}
-            {showUnmappedModal && (
-                <div style={{
-                    position: 'fixed',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-                    backdropFilter: 'blur(8px)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 2100, // Выше чем mapping modal
-                    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-                }}>
-                    <div style={{
-                        backgroundColor: '#dc2626', // Красный фон модалки
-                        borderRadius: '24px',
-                        width: '650px',
-                        maxWidth: '90vw',
-                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
-                        overflow: 'hidden',
-                        color: '#fff' // Белый шрифт для всей модалки
-                    }}>
-                        <div style={{
-                            padding: '32px 32px 20px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '20px'
-                        }}>
-                            <div style={{
-                                width: '56px',
-                                height: '56px',
-                                backgroundColor: 'rgba(255, 255, 255, 0.2)',
-                                borderRadius: '16px',
+                                padding: '16px 28px',
+                                borderTop: '1px solid #e2e8f0',
                                 display: 'flex',
                                 alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: '28px'
-                            }}>⚠️</div>
-                            <div>
-                                <h3 style={{ margin: 0, fontSize: '24px', fontWeight: 800, color: '#fff' }}>
-                                    Незамапленные компоненты
-                                </h3>
-                                <div style={{ fontSize: '15px', color: 'rgba(255, 255, 255, 0.9)', marginTop: '4px', fontWeight: 500 }}>
-                                    Обнаружено {unmappedComponentsList.length} пропущенных связей
+                                justifyContent: 'space-between',
+                                backgroundColor: '#f8fafc'
+                            }}>
+                                <div style={{ fontSize: '13px', color: '#64748b' }}>
+                                    Назначено: {launchGroups.reduce((sum, g) => sum + g.folderIds.length, 0)} блоков •
+                                    Без назначения: {unassignedFolderIds.length}
+                                </div>
+                                <div style={{ display: 'flex', gap: '12px' }}>
+                                    <button
+                                        onClick={handleSplitModalCancel}
+                                        style={{
+                                            padding: '10px 20px',
+                                            borderRadius: '8px',
+                                            border: '1px solid #e2e8f0',
+                                            backgroundColor: '#fff',
+                                            color: '#64748b',
+                                            fontSize: '13px',
+                                            fontWeight: 500,
+                                            cursor: 'pointer'
+                                        }}
+                                    >Отмена</button>
+                                    <button
+                                        onClick={createMultipleLaunches}
+                                        disabled={loadingState.launch || launchGroups.every(g => g.folderIds.length === 0)}
+                                        style={{
+                                            padding: '10px 24px',
+                                            borderRadius: '8px',
+                                            border: 'none',
+                                            background: launchGroups.every(g => g.folderIds.length === 0)
+                                                ? '#94a3b8'
+                                                : 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                                            color: '#fff',
+                                            fontSize: '13px',
+                                            fontWeight: 600,
+                                            cursor: launchGroups.every(g => g.folderIds.length === 0) ? 'not-allowed' : 'pointer',
+                                            boxShadow: launchGroups.every(g => g.folderIds.length === 0) ? 'none' : '0 4px 12px rgba(99, 102, 241, 0.3)'
+                                        }}
+                                    >
+                                        {loadingState.launch ? (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
+                                                <Loader style={{ width: 16, height: 16 }} />
+                                                <span>Создание... {splitProgress ? `(${splitProgress.current}/${splitProgress.total})` : ''}</span>
+                                            </div>
+                                        ) : (
+                                            (() => {
+                                                const count = launchGroups.filter(g => g.folderIds.length > 0).length;
+                                                return `Создать ${count} запуск${count === 1 ? '' : count > 1 && count < 5 ? 'а' : 'ов'}`;
+                                            })()
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Progress bar */}
+                            {splitProgress && (
+                                <div style={{
+                                    height: '4px',
+                                    backgroundColor: '#e2e8f0'
+                                }}>
+                                    <div style={{
+                                        height: '100%',
+                                        width: `${(splitProgress.current / splitProgress.total) * 100}%`,
+                                        background: 'linear-gradient(90deg, #6366f1, #8b5cf6)',
+                                        transition: 'width 0.3s ease'
+                                    }} />
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </DragDropContext>
+            )}
+
+            {/* Модальное окно подтверждения незамапленных компонентов */}
+            {
+                showUnmappedModal && (() => {
+                    const hasFrontend = unmappedComponentsList.some(c => c.type === 'frontend');
+                    const hasBackend = unmappedComponentsList.some(c => c.type === 'backend');
+                    const filteredList = unmappedComponentsList.filter(c => c.type === activeUnmappedTab);
+
+                    return (
+                        <div style={{
+                            position: 'fixed',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                            backdropFilter: 'blur(8px)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            zIndex: 11000,
+                            fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+                        }}>
+                            <div style={{
+                                backgroundColor: '#dc2626', // Красный фон модалки
+                                borderRadius: '24px',
+                                width: '650px',
+                                maxWidth: '90vw',
+                                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+                                overflow: 'hidden',
+                                color: '#fff' // Белый шрифт для всей модалки
+                            }}>
+                                <div style={{
+                                    padding: '32px 32px 20px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '20px'
+                                }}>
+                                    <div style={{ flex: 1 }}>
+                                        <h3 style={{ margin: 0, fontSize: '24px', fontWeight: 800, color: '#fff' }}>
+                                            Незамапленные компоненты
+                                        </h3>
+                                        <div style={{ fontSize: '15px', color: 'rgba(255, 255, 255, 0.9)', marginTop: '4px', fontWeight: 500 }}>
+                                            Обнаружено {unmappedComponentsList.length} пропущенных связей
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Tabs */}
+                                {(hasFrontend && hasBackend) && (
+                                    <div style={{
+                                        display: 'flex',
+                                        padding: '0 32px',
+                                        gap: '8px',
+                                        marginBottom: '16px'
+                                    }}>
+                                        {hasFrontend && (
+                                            <button
+                                                onClick={() => setActiveUnmappedTab('frontend')}
+                                                style={{
+                                                    padding: '8px 16px',
+                                                    borderRadius: '8px',
+                                                    border: 'none',
+                                                    backgroundColor: activeUnmappedTab === 'frontend' ? 'rgba(0, 0, 0, 0.2)' : 'transparent',
+                                                    color: '#fff',
+                                                    fontSize: '13px',
+                                                    fontWeight: activeUnmappedTab === 'frontend' ? 700 : 500,
+                                                    cursor: 'pointer',
+                                                    transition: 'all 0.2s',
+                                                    opacity: activeUnmappedTab === 'frontend' ? 1 : 0.7
+                                                }}
+                                            >
+                                                Фронтенд ({unmappedComponentsList.filter(c => c.type === 'frontend').length})
+                                            </button>
+                                        )}
+                                        {hasBackend && (
+                                            <button
+                                                onClick={() => setActiveUnmappedTab('backend')}
+                                                style={{
+                                                    padding: '8px 16px',
+                                                    borderRadius: '8px',
+                                                    border: 'none',
+                                                    backgroundColor: activeUnmappedTab === 'backend' ? 'rgba(0, 0, 0, 0.2)' : 'transparent',
+                                                    color: '#fff',
+                                                    fontSize: '13px',
+                                                    fontWeight: activeUnmappedTab === 'backend' ? 700 : 500,
+                                                    cursor: 'pointer',
+                                                    transition: 'all 0.2s',
+                                                    opacity: activeUnmappedTab === 'backend' ? 1 : 0.7
+                                                }}
+                                            >
+                                                Бэкенд ({unmappedComponentsList.filter(c => c.type === 'backend').length})
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+
+                                <div style={{ padding: '0 32px 32px' }}>
+                                    <p style={{ margin: '0 0 24px', fontSize: '16px', lineHeight: '1.4', color: '#fff', opacity: 0.95 }}>
+                                        Вы не связали некоторые компоненты с функциональными блоками Allure.
+                                        Это может привести к неполному покрытию тестами в созданном запуске.
+                                        <br />
+                                        <strong style={{ fontSize: '17px' }}>Вы уверены, что хотите продолжить?</strong>
+                                    </p>
+
+                                    <div style={{
+                                        maxHeight: '280px',
+                                        overflowY: 'auto',
+                                        border: '1px solid rgba(255, 255, 255, 0.2)',
+                                        borderRadius: '16px',
+                                        backgroundColor: 'rgba(0, 0, 0, 0.1)',
+                                        padding: '8px 0'
+                                    }}>
+                                        <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+                                            {filteredList.length > 0 ? filteredList.map((comp, idx) => (
+                                                <li key={idx} style={{
+                                                    padding: '10px 24px',
+                                                    fontSize: '14px',
+                                                    color: '#fff',
+                                                    borderBottom: idx < filteredList.length - 1 ? '1px solid rgba(255, 255, 255, 0.1)' : 'none',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '12px'
+                                                }}>
+                                                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#fff', opacity: 0.6, flexShrink: 0 }} />
+                                                    <span style={{ fontWeight: 500 }}>{comp.name || comp.serviceName || 'Unnamed Component'}</span>
+                                                </li>
+                                            )) : (
+                                                <li style={{ padding: '24px', textAlign: 'center', opacity: 0.6, fontSize: '14px' }}>
+                                                    Все компоненты этого типа сопоставлены
+                                                </li>
+                                            )}
+                                        </ul>
+                                    </div>
+                                </div>
+
+                                <div style={{
+                                    padding: '24px 32px',
+                                    backgroundColor: 'rgba(0, 0, 0, 0.15)',
+                                    display: 'flex',
+                                    justifyContent: 'flex-end',
+                                    gap: '16px'
+                                }}>
+                                    <button
+                                        onClick={() => setShowUnmappedModal(false)}
+                                        style={{
+                                            padding: '12px 24px',
+                                            borderRadius: '12px',
+                                            border: '1px solid rgba(255, 255, 255, 0.3)',
+                                            backgroundColor: 'transparent',
+                                            color: '#fff',
+                                            fontSize: '15px',
+                                            fontWeight: 600,
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s'
+                                        }}
+                                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.1)'}
+                                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                                    >
+                                        Вернуться к маппингу
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setShowUnmappedModal(false);
+                                            handleOpenSplitModal(true);
+                                        }}
+                                        style={{
+                                            padding: '12px 28px',
+                                            borderRadius: '12px',
+                                            border: 'none',
+                                            backgroundColor: '#fff',
+                                            color: '#dc2626',
+                                            fontSize: '15px',
+                                            fontWeight: 700,
+                                            cursor: 'pointer',
+                                            boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.2)',
+                                            transition: 'all 0.2s'
+                                        }}
+                                        onMouseOver={(e) => {
+                                            e.currentTarget.style.backgroundColor = '#fef2f2';
+                                            e.currentTarget.style.transform = 'translateY(-1px)';
+                                        }}
+                                        onMouseOut={(e) => {
+                                            e.currentTarget.style.backgroundColor = '#fff';
+                                            e.currentTarget.style.transform = 'translateY(0)';
+                                        }}
+                                    >
+                                        Продолжить без них
+                                    </button>
                                 </div>
                             </div>
                         </div>
+                    );
+                })()
 
-                        <div style={{ padding: '0 32px 32px' }}>
-                            <p style={{ margin: '0 0 24px', fontSize: '16px', lineHeight: '1.6', color: '#fff', opacity: 0.95 }}>
-                                Вы не связали некоторые компоненты с функциональными блоками Allure.
-                                Это может привести к неполному покрытию тестами в созданном запуске.
-                                <br />
-                                <strong style={{ fontSize: '17px' }}>Вы уверены, что хотите продолжить?</strong>
-                            </p>
+            }
 
-                            <div style={{
-                                maxHeight: '280px',
-                                overflowY: 'auto',
-                                border: '1px solid rgba(255, 255, 255, 0.2)',
-                                borderRadius: '16px',
-                                backgroundColor: 'rgba(0, 0, 0, 0.1)',
-                                padding: '8px 0'
-                            }}>
-                                <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
-                                    {unmappedComponentsList.map((comp, idx) => (
-                                        <li key={idx} style={{
-                                            padding: '10px 24px',
+            {/* Модальное окно для пустых групп */}
+            {
+                showEmptyGroupsModal && (
+                    <div style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                        backdropFilter: 'blur(8px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 12000,
+                        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+                    }}>
+                        <div style={{
+                            backgroundColor: '#fff',
+                            borderRadius: '24px',
+                            width: '600px',
+                            maxWidth: '90vw',
+                            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+                            overflow: 'hidden'
+                        }}>
+                            <div style={{ padding: '32px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
+                                    <div style={{
+                                        width: '48px',
+                                        height: '48px',
+                                        backgroundColor: '#fee2e2',
+                                        color: '#ef4444',
+                                        borderRadius: '12px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        fontSize: '24px',
+                                        fontWeight: 'bold'
+                                    }}>!</div>
+                                    <div>
+                                        <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 700, color: '#1e293b' }}>
+                                            Обнаружены пустые группы
+                                        </h3>
+                                        <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: '14px' }}>
+                                            Allure не нашел тест-кейсов в следующих папках:
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div style={{
+                                    backgroundColor: '#1e293b',
+                                    borderRadius: '12px',
+                                    padding: '16px',
+                                    maxHeight: '200px',
+                                    overflowY: 'auto',
+                                    marginBottom: '24px',
+                                    border: '1px solid #334155'
+                                }}>
+                                    <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+                                        {emptyGroupsData.map((group) => (
+                                            <li key={group.id} style={{
+                                                padding: '8px 0',
+                                                borderBottom: '1px solid #334155',
+                                                fontSize: '14px',
+                                                color: '#fff',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '8px'
+                                            }}>
+                                                <span style={{ color: '#ef4444', fontWeight: 'bold' }}>•</span>
+                                                {group.name || `ID: ${group.id}`}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+
+                                <p style={{ fontSize: '14px', color: '#475569', lineHeight: '1.5' }}>
+                                    Вы можете создать автоматические заглушки (Stub Test Cases) в этих группах, чтобы Allure смог запустить их.
+                                </p>
+
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '32px' }}>
+                                    <button
+                                        onClick={() => setShowEmptyGroupsModal(false)}
+                                        style={{
+                                            padding: '12px 24px',
+                                            borderRadius: '12px',
+                                            border: '1px solid #cbd5e1',
+                                            backgroundColor: '#fff',
+                                            color: '#64748b',
                                             fontSize: '14px',
+                                            fontWeight: 600,
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        Отмена
+                                    </button>
+                                    <button
+                                        onClick={handleCreateStubs}
+                                        disabled={isCreatingStubs}
+                                        style={{
+                                            padding: '12px 24px',
+                                            borderRadius: '12px',
+                                            border: 'none',
+                                            backgroundColor: '#ef4444',
                                             color: '#fff',
-                                            borderBottom: idx < unmappedComponentsList.length - 1 ? '1px solid rgba(255, 255, 255, 0.1)' : 'none',
+                                            fontSize: '14px',
+                                            fontWeight: 600,
+                                            cursor: isCreatingStubs ? 'not-allowed' : 'pointer',
+                                            opacity: isCreatingStubs ? 0.7 : 1,
                                             display: 'flex',
                                             alignItems: 'center',
-                                            gap: '12px'
-                                        }}>
-                                            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#fff', opacity: 0.6, flexShrink: 0 }} />
-                                            <span style={{ fontWeight: 500 }}>{comp.name || comp.serviceName || 'Unnamed Component'}</span>
-                                        </li>
-                                    ))}
-                                </ul>
+                                            gap: '8px'
+                                        }}
+                                    >
+                                        {isCreatingStubs ? 'Создание...' : 'Создать заглушки и закрыть'}
+                                    </button>
+                                </div>
                             </div>
                         </div>
-
-                        <div style={{
-                            padding: '24px 32px',
-                            backgroundColor: 'rgba(0, 0, 0, 0.15)',
-                            display: 'flex',
-                            justifyContent: 'flex-end',
-                            gap: '16px'
-                        }}>
-                            <button
-                                onClick={() => setShowUnmappedModal(false)}
-                                style={{
-                                    padding: '12px 24px',
-                                    borderRadius: '12px',
-                                    border: '1px solid rgba(255, 255, 255, 0.3)',
-                                    backgroundColor: 'transparent',
-                                    color: '#fff',
-                                    fontSize: '15px',
-                                    fontWeight: 600,
-                                    cursor: 'pointer',
-                                    transition: 'all 0.2s'
-                                }}
-                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.1)'}
-                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                            >
-                                Вернуться к маппингу
-                            </button>
-                            <button
-                                onClick={() => {
-                                    setShowUnmappedModal(false);
-                                    handleOpenSplitModal(true);
-                                }}
-                                style={{
-                                    padding: '12px 28px',
-                                    borderRadius: '12px',
-                                    border: 'none',
-                                    backgroundColor: '#fff',
-                                    color: '#dc2626',
-                                    fontSize: '15px',
-                                    fontWeight: 700,
-                                    cursor: 'pointer',
-                                    boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.2)',
-                                    transition: 'all 0.2s'
-                                }}
-                                onMouseOver={(e) => {
-                                    e.currentTarget.style.backgroundColor = '#fef2f2';
-                                    e.currentTarget.style.transform = 'translateY(-1px)';
-                                }}
-                                onMouseOut={(e) => {
-                                    e.currentTarget.style.backgroundColor = '#fff';
-                                    e.currentTarget.style.transform = 'translateY(0)';
-                                }}
-                            >
-                                Продолжить без них
-                            </button>
-                        </div>
                     </div>
-                </div>
-            )}
-
-        </div>
+                )
+            }
+        </div >
     );
 };
 

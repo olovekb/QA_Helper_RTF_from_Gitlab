@@ -2,8 +2,8 @@
 import React from 'react';
 import styles from './styles';
 
-const Loader = () => (
-    <div style={styles.loaderSpinner}>
+const Loader = ({ style }) => (
+    <div style={{ ...styles.loaderSpinner, ...style }}>
         <div style={styles.spinner}></div>
     </div>
 );

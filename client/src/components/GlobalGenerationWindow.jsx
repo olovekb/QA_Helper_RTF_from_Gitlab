@@ -46,7 +46,7 @@ if (typeof document !== 'undefined') {
   document.head.appendChild(styleSheet);
 }
 
-const GlobalGenerationWindow = ({ 
+const GlobalGenerationWindow = ({
   projects,
   buildRequirementsPayload,
   prepareRequirements,
@@ -104,7 +104,7 @@ const GlobalGenerationWindow = ({
   onRegenerateBDD
 }) => {
   const location = useLocation();
-  
+
   // Локальное состояние для модальных окон
 
   // Состояние для тестовой модели
@@ -142,7 +142,7 @@ const GlobalGenerationWindow = ({
     console.log('GlobalGenerationWindow: получена структура тестовой модели для генерации тест-кейсов:', modelStructure);
     console.log('GlobalGenerationWindow: количество features в структуре:', modelStructure?.length);
     console.log('GlobalGenerationWindow: includeBackendTests:', includeBackendTests);
-    
+
     if (window.Notification && Notification.permission === 'default') {
       await Notification.requestPermission();
     }
@@ -155,7 +155,7 @@ const GlobalGenerationWindow = ({
         ...buildRequirementsPayload({ includeRequirements: true }),
         ...(allureProject?.id ? { projectId: allureProject.id } : {})  // ✅ Добавляем projectId для shared steps
       };
-      
+
       console.log('GlobalGenerationWindow: отправляем payload с modelStructure:', payload);
       console.log('GlobalGenerationWindow: includeBackendTests в payload:', payload.includeBackendTests);
 
@@ -164,14 +164,14 @@ const GlobalGenerationWindow = ({
         payload,
         { headers: { 'Content-Type': 'application/json' } }
       );
-      
+
       // Очищаем предыдущие результаты при новой генерации
       if (typeof clearReviewState === 'function') {
         clearReviewState();
       }
       setGeneratedCases([]);
       localStorage.removeItem('generatedTestCases');
-      
+
       setGenerationTaskId(data.taskId);
       setGenerationProgress(0);
       setGenerationStatus('processing');
@@ -195,13 +195,13 @@ const GlobalGenerationWindow = ({
   // Функция для подсчета тест-кейсов из сохраненного состояния или из generatedCases
   const getTestCasesCount = () => {
     if (!allureProject?.id) return generatedCases?.length || 0;
-    
+
     // Пытаемся получить сохраненное состояние из localStorage
     try {
       // Ищем все ключи, начинающиеся с testCasesReview_${projectId}_
       const projectId = allureProject.id;
       const prefix = `testCasesReview_${projectId}_`;
-      
+
       // Проходим по всем ключам localStorage
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
@@ -238,11 +238,11 @@ const GlobalGenerationWindow = ({
                   });
                 }
               };
-              
+
               Object.values(savedState.treeData).forEach(feature => {
                 countCases(feature);
               });
-              
+
               if (count > 0) {
                 return count;
               }
@@ -253,7 +253,7 @@ const GlobalGenerationWindow = ({
     } catch (err) {
       console.warn('GlobalGenerationWindow: Ошибка при подсчете из localStorage:', err);
     }
-    
+
     // Если не нашли в localStorage, возвращаем количество из generatedCases
     return generatedCases?.length || 0;
   };
@@ -294,139 +294,139 @@ const GlobalGenerationWindow = ({
   return (
     <>
       {/* Кнопка для открытия окна генерации */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-          <button 
-            onClick={handleOpenModelModal}
-            className="btn btn-secondary" 
-            disabled={hasActiveGeneration}
-            style={{ 
-              backgroundColor: hasAnyGeneration ? '#238636' : '',
-              borderColor: hasAnyGeneration ? '#2ea043' : '',
-              color: hasAnyGeneration ? 'white' : '',
-              cursor: hasActiveGeneration ? 'not-allowed' : 'pointer',
-              opacity: hasActiveGeneration ? 0.6 : 1
-            }}
-          >
-            {hasActiveGeneration 
-              ? '🔄 Генерация...' 
-              : hasCompletedGeneration
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <button
+          onClick={handleOpenModelModal}
+          className="btn btn-secondary"
+          disabled={hasActiveGeneration}
+          style={{
+            backgroundColor: hasAnyGeneration ? '#238636' : '',
+            borderColor: hasAnyGeneration ? '#2ea043' : '',
+            color: hasAnyGeneration ? 'white' : '',
+            cursor: hasActiveGeneration ? 'not-allowed' : 'pointer',
+            opacity: hasActiveGeneration ? 0.6 : 1
+          }}
+        >
+          {hasActiveGeneration
+            ? '🔄 Генерация...'
+            : hasCompletedGeneration
               ? '✅ Окно генерации тест кейсов и тестовой модели'
               : '🧱 Окно генерации тест кейсов и тестовой модели'
-            }
+          }
+        </button>
+
+        {/* Кнопка очистки тестовой модели */}
+        {modelGenerationStatus === 'completed' && generatedModel && (
+          <button
+            onClick={onClearTestModel}
+            className="btn btn-secondary"
+            style={{
+              backgroundColor: '#da3633',
+              borderColor: '#f85149',
+              color: 'white'
+            }}
+            title="Удалить сгенерированную тестовую модель"
+          >
+            🗑️ Очистить модель
           </button>
-          
-          {/* Кнопка очистки тестовой модели */}
-          {modelGenerationStatus === 'completed' && generatedModel && (
-            <button 
-              onClick={onClearTestModel}
-              className="btn btn-secondary"
-              style={{ 
-                backgroundColor: '#da3633',
-                borderColor: '#f85149',
-                color: 'white'
-              }}
-              title="Удалить сгенерированную тестовую модель"
-            >
-              🗑️ Очистить модель
-            </button>
-          )}
-          
-          {/* Кнопка генерации BDD тестов - независимо от тестовой модели */}
-          {handleGenerateBDD && (
-            <button 
-              onClick={() => {
-                // Если есть готовые результаты - открываем превью, иначе запускаем генерацию
-                if (bddStatus === 'completed' && bddResult) {
-                  console.log('BDD: Открываем превью существующих результатов');
-                  setBddReviewModalOpen(true);
-                } else {
-                  console.log('BDD: Запуск генерации BDD тестов');
-                  handleGenerateBDD();
-                }
-              }}
-              className="btn btn-secondary"
-              disabled={hasActiveGeneration && bddStatus !== 'completed'}
-              style={{ 
-                backgroundColor: bddStatus === 'completed' ? '#238636' : bddStatus === 'processing' ? '#58a6ff' : '#a371f7',
-                borderColor: bddStatus === 'completed' ? '#2ea043' : bddStatus === 'processing' ? '#58a6ff' : '#a371f7',
-                color: 'white',
-                cursor: (hasActiveGeneration && bddStatus !== 'completed') ? 'not-allowed' : 'pointer',
-                opacity: (hasActiveGeneration && bddStatus !== 'completed') ? 0.6 : 1,
-                fontWeight: 500,
-                minWidth: '180px'
-              }}
-              title={bddStatus === 'completed' ? 'Открыть превью BDD тестов' : 'Создать BDD тесты (Gherkin) с дедупликацией шагов из требований'}
-            >
-              {bddStatus === 'processing' 
-                ? `🔄 BDD генерация... ${bddProgress || 0}%`
-                : bddStatus === 'completed'
+        )}
+
+        {/* Кнопка генерации BDD тестов - независимо от тестовой модели */}
+        {handleGenerateBDD && (
+          <button
+            onClick={() => {
+              // Если есть готовые результаты - открываем превью, иначе запускаем генерацию
+              if (bddStatus === 'completed' && bddResult) {
+                console.log('BDD: Открываем превью существующих результатов');
+                setBddReviewModalOpen(true);
+              } else {
+                console.log('BDD: Запуск генерации BDD тестов');
+                handleGenerateBDD();
+              }
+            }}
+            className="btn btn-secondary"
+            disabled={hasActiveGeneration && bddStatus !== 'completed'}
+            style={{
+              backgroundColor: bddStatus === 'completed' ? '#238636' : bddStatus === 'processing' ? '#58a6ff' : '#a371f7',
+              borderColor: bddStatus === 'completed' ? '#2ea043' : bddStatus === 'processing' ? '#58a6ff' : '#a371f7',
+              color: 'white',
+              cursor: (hasActiveGeneration && bddStatus !== 'completed') ? 'not-allowed' : 'pointer',
+              opacity: (hasActiveGeneration && bddStatus !== 'completed') ? 0.6 : 1,
+              fontWeight: 500,
+              minWidth: '180px'
+            }}
+            title={bddStatus === 'completed' ? 'Открыть превью BDD тестов' : 'Создать BDD тесты (Gherkin) с дедупликацией шагов из требований'}
+          >
+            {bddStatus === 'processing'
+              ? `🔄 BDD генерация... ${bddProgress || 0}%`
+              : bddStatus === 'completed'
                 ? '✅ BDD тесты созданы'
                 : '📝 Создать BDD тесты'
-              }
-            </button>
-          )}
-        </div>
-        
-        {/* Прогресс-бар для BDD генерации */}
-        {bddStatus === 'processing' && (
-          <div style={{ 
-            marginBottom: 16,
-            padding: 16, 
-            backgroundColor: 'rgba(13, 17, 23, 0.95)', 
-            border: '1px solid #30363d',
-            borderRadius: 8,
-            boxShadow: '0 4px 16px rgba(0,0,0,0.2)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{
-                  width: 12,
-                  height: 12,
-                  backgroundColor: '#58a6ff',
-                  borderRadius: '50%',
-                  animation: 'pulse 1.5s infinite'
-                }} />
-                <h4 style={{ margin: 0, color: '#c9d1d9', fontSize: 14, fontWeight: 600 }}>Генерация BDD тестов</h4>
-              </div>
-              <span style={{ fontSize: 14, fontWeight: 'bold', color: '#58a6ff' }}>{bddProgress}%</span>
-            </div>
-            <div style={{ 
-              width: '100%', 
-              height: 8, 
-              backgroundColor: '#21262d', 
-              borderRadius: 4,
-              overflow: 'hidden'
-            }}>
-              <div style={{ 
-                width: `${bddProgress}%`, 
-                height: '100%', 
-                backgroundColor: '#58a6ff',
-                transition: 'width 0.3s ease'
-              }} />
-            </div>
-          </div>
+            }
+          </button>
         )}
+      </div>
+
+      {/* Прогресс-бар для BDD генерации */}
+      {bddStatus === 'processing' && (
+        <div style={{
+          marginBottom: 16,
+          padding: 16,
+          backgroundColor: 'rgba(13, 17, 23, 0.95)',
+          border: '1px solid #30363d',
+          borderRadius: 8,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.2)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{
+                width: 12,
+                height: 12,
+                backgroundColor: '#58a6ff',
+                borderRadius: '50%',
+                animation: 'pulse 1.5s infinite'
+              }} />
+              <h4 style={{ margin: 0, color: '#c9d1d9', fontSize: 14, fontWeight: 600 }}>Генерация BDD тестов</h4>
+            </div>
+            <span style={{ fontSize: 14, fontWeight: 'bold', color: '#58a6ff' }}>{bddProgress}%</span>
+          </div>
+          <div style={{
+            width: '100%',
+            height: 8,
+            backgroundColor: '#21262d',
+            borderRadius: 4,
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              width: `${bddProgress}%`,
+              height: '100%',
+              backgroundColor: '#58a6ff',
+              transition: 'width 0.3s ease'
+            }} />
+          </div>
+        </div>
+      )}
 
       {/* Прогресс-бар для генерации тест-кейсов */}
       {(generationStatus === 'processing' && !isGenerationMinimized) && (
-        <div style={{ 
-          ...(location.pathname === '/solution' 
-            ? { 
-                position: 'fixed',
-                bottom: '20px',
-                left: '50%',
-                transform: 'translateX(-50%)',
-                width: 'calc(100% - 40px)',
-                maxWidth: 600,
-                zIndex: 1000,
-                marginBottom: 0
-              } 
-            : { 
-                marginBottom: 16
-              }
+        <div style={{
+          ...(location.pathname === '/solution'
+            ? {
+              position: 'fixed',
+              bottom: '20px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              width: 'calc(100% - 40px)',
+              maxWidth: 600,
+              zIndex: 1000,
+              marginBottom: 0
+            }
+            : {
+              marginBottom: 16
+            }
           ),
-          padding: 20, 
-          backgroundColor: 'rgba(13, 17, 23, 0.95)', 
+          padding: 20,
+          backgroundColor: 'rgba(13, 17, 23, 0.95)',
           border: '1px solid #30363d',
           borderRadius: 12,
           boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
@@ -445,7 +445,7 @@ const GlobalGenerationWindow = ({
               <h4 style={{ margin: 0, color: '#c9d1d9', fontSize: 16, fontWeight: 600 }}>Генерация тест-кейсов</h4>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <button 
+              <button
                 onClick={() => setIsGenerationMinimized(true)}
                 style={{
                   background: 'none',
@@ -471,30 +471,30 @@ const GlobalGenerationWindow = ({
               <span style={{ fontSize: 14, fontWeight: 'bold', color: '#58a6ff' }}>{generationProgress}%</span>
             </div>
           </div>
-          
-          <div style={{ 
-            fontSize: 14, 
-            color: '#8b949e', 
+
+          <div style={{
+            fontSize: 14,
+            color: '#8b949e',
             lineHeight: 1.5,
             marginBottom: 16
           }}>
-            Генерация выполняется в фоновом режиме. Вы можете продолжить работу. 
+            Генерация выполняется в фоновом режиме. Вы можете продолжить работу.
             Результат будет сохранен автоматически.
           </div>
-          
+
           <div style={{ marginBottom: 16 }}>
-            <div style={{ 
-              width: '100%', 
-              height: 8, 
-              backgroundColor: '#21262d', 
-              borderRadius: 4, 
+            <div style={{
+              width: '100%',
+              height: 8,
+              backgroundColor: '#21262d',
+              borderRadius: 4,
               overflow: 'hidden',
               position: 'relative'
             }}>
-              <div style={{ 
-                width: `${generationProgress}%`, 
-                height: '100%', 
-                backgroundColor: '#58a6ff', 
+              <div style={{
+                width: `${generationProgress}%`,
+                height: '100%',
+                backgroundColor: '#58a6ff',
                 transition: 'width 0.5s ease',
                 borderRadius: 4,
                 position: 'relative'
@@ -544,20 +544,20 @@ const GlobalGenerationWindow = ({
             </div>
             <span style={{ fontSize: 12, fontWeight: 'bold', color: '#58a6ff' }}>{generationProgress}%</span>
           </div>
-          
+
           <div style={{ marginBottom: 12 }}>
-            <div style={{ 
-              width: '100%', 
-              height: 6, 
-              backgroundColor: '#21262d', 
-              borderRadius: 3, 
+            <div style={{
+              width: '100%',
+              height: 6,
+              backgroundColor: '#21262d',
+              borderRadius: 3,
               overflow: 'hidden',
               position: 'relative'
             }}>
-              <div style={{ 
-                width: `${generationProgress}%`, 
-                height: '100%', 
-                backgroundColor: '#58a6ff', 
+              <div style={{
+                width: `${generationProgress}%`,
+                height: '100%',
+                backgroundColor: '#58a6ff',
                 transition: 'width 0.5s ease',
                 borderRadius: 3,
                 position: 'relative'
@@ -574,18 +574,18 @@ const GlobalGenerationWindow = ({
               </div>
             </div>
           </div>
-          
-          <div style={{ 
-            fontSize: 12, 
+
+          <div style={{
+            fontSize: 12,
             color: '#8b949e',
             marginBottom: 12,
             lineHeight: 1.4
           }}>
             Выполняется в фоновом режиме
           </div>
-          
+
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button 
+            <button
               onClick={() => setIsGenerationMinimized(false)}
               style={{
                 background: 'none',
@@ -615,16 +615,16 @@ const GlobalGenerationWindow = ({
       {/* Кнопки для работы с готовыми тест-кейсами */}
       {hasCompletedGeneration && (generatedCases.length > 0 || testCasesCount > 0) && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 16, marginLeft: 8 }}>
-          <button 
+          <button
             onClick={handleOpenReviewModal}
             className="btn btn-primary"
           >
             📋 Просмотреть тест-кейсы ({testCasesCount})
           </button>
-          <button 
+          <button
             onClick={onClearTestCases}
             className="btn btn-secondary"
-            style={{ 
+            style={{
               backgroundColor: '#da3633',
               borderColor: '#f85149',
               color: 'white'

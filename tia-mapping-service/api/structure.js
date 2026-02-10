@@ -231,6 +231,8 @@ async function saveFunctionalBlocks(projectId, nodes, parentId, customFields) {
                 custom_field_name: customFieldsMap.get(node.customFieldId) || 'Неизвестное поле',
                 parent_id: parentId,
                 count: node.children?.content?.length || 0,
+                node_type: node.type || 'GROUP',
+                layer: node.layer || null,
                 created_at: databasePool.fn.now(),
                 updated_at: databasePool.fn.now(),
             };
@@ -263,6 +265,8 @@ async function saveFunctionalBlocks(projectId, nodes, parentId, customFields) {
                         custom_field_name: block.custom_field_name,
                         count: block.count,
                         parent_id: block.parent_id,
+                        node_type: block.node_type,
+                        layer: block.layer,
                         updated_at: block.updated_at,
                     })
             )
@@ -296,6 +300,7 @@ async function fetchAndSaveNestedBlocks(projectId, parentNodeId, treeId, customF
         parentNodeId: parentNodeId,
         page: '0',
         size: '100',
+        sort: 'nodeSortOrder,asc',
         sort: 'nodeSortOrder,asc',
         deleted: 'false',
     });
@@ -389,8 +394,8 @@ async function getNestedFoldersParallel(projectId, parentNodeId, treeId, customF
         const data = await structureResponse.json();
         logInfo(`Ответ для parentNodeId ${parentNodeId}, page ${page}: children.content.length = ${data.children?.content?.length || 0}`, JSON.stringify(data));
 
-        const groupNodes = data.children?.content?.filter(node => node.type === 'GROUP') || [];
-        const folderPromises = groupNodes.map(node =>
+        const interestingNodes = data.children?.content?.filter(node => node.type === 'GROUP') || [];
+        const folderPromises = interestingNodes.map(node =>
             limit(async () => {
                 try {
                     if (shouldSkipNode(node, skipCriteria)) {
@@ -399,7 +404,16 @@ async function getNestedFoldersParallel(projectId, parentNodeId, treeId, customF
                     }
 
                     const nodeCustomFieldName = customFieldsMap.get(node.customFieldId);
-                    logInfo(`Обрабатываем узел projectId=${projectId}, id=${node.id}, name=${node.name}, customFieldId=${node.customFieldId}, customFieldName=${nodeCustomFieldName}, parentNodeId=${parentNodeId}`);
+
+                    // Если это TEST_CASE, извлекаем Layer
+                    let layer = null;
+                    if (node.type === 'TEST_CASE') {
+                        // Allure в дереве обычно отдает labels
+                        const layerLabel = (node.labels || []).find(l => l.name === 'layer');
+                        layer = layerLabel ? layerLabel.value : null;
+                    }
+
+                    logInfo(`Обрабатываем узел [${node.type}] projectId=${projectId}, id=${node.id}, name=${node.name}, layer=${layer}`);
 
                     // Для NoCode проектов (1 и 307): специальная обработка
                     const nocodeProjectIds = ['1', '307'];
@@ -415,45 +429,51 @@ async function getNestedFoldersParallel(projectId, parentNodeId, treeId, customF
                                 customFieldId: node.customFieldId || null,
                                 customFieldName: nodeCustomFieldName,
                                 count: node.children?.content?.length || 0,
+                                node_type: node.type,
+                                layer: layer,
                                 children: children.filter(child => child !== null),
                             };
                             logInfo(`Возвращаем Block/SubBlock для проекта 307: ${nodeCustomFieldName} - ${node.name}, children count: ${result.children.length}`);
                             return result;
                         }
 
-                        // Для Feature, Story, Scenario, Code и других типов - показываем их, если они находятся под Block или SubBlock
-                        // Но если они на корневом уровне (parentNodeId === null), пропускаем их
+                        // Для остальных типов - не показываем их на корневом уровне
                         if (parentNodeId === null) {
                             // На корневом уровне пропускаем все, кроме Block и SubBlock
                             logInfo(`Пропускаем корневой узел ${nodeCustomFieldName} для проекта 307, обрабатываем детей: ${node.name}`);
                             const children = await getNestedFoldersParallel(projectId, node.id.toString(), treeId, customFields, skipCriteria);
                             const filteredChildren = children.filter(child => child !== null);
-                            logInfo(`Для корневого узла ${nodeCustomFieldName} - ${node.name} найдено детей после фильтрации: ${filteredChildren.length}`);
-                            // Возвращаем массив детей (поднимаем их на уровень выше)
                             return filteredChildren;
                         } else {
-                            // Если это не корневой уровень, показываем все узлы (Feature, Story, Scenario, Code и т.д.)
-                            logInfo(`Показываем узел ${nodeCustomFieldName} для проекта 307 (не корневой уровень): ${node.name}`);
-                            const children = await getNestedFoldersParallel(projectId, node.id.toString(), treeId, customFields, skipCriteria);
+                            // Если это не корневой уровень, показываем все узлы
+                            const children = node.type === 'GROUP'
+                                ? await getNestedFoldersParallel(projectId, node.id.toString(), treeId, customFields, skipCriteria)
+                                : [];
                             return {
                                 id: node.id,
                                 name: node.name,
                                 customFieldId: node.customFieldId || null,
                                 customFieldName: nodeCustomFieldName,
                                 count: node.children?.content?.length || 0,
+                                node_type: node.type,
+                                layer: layer,
                                 children: children.filter(child => child !== null),
                             };
                         }
                     }
 
                     // Обычная обработка для всех остальных проектов
-                    const children = await getNestedFoldersParallel(projectId, node.id.toString(), treeId, customFields, skipCriteria);
+                    const children = node.type === 'GROUP'
+                        ? await getNestedFoldersParallel(projectId, node.id.toString(), treeId, customFields, skipCriteria)
+                        : [];
                     const folder = {
                         id: node.id,
                         name: node.name,
                         customFieldId: node.customFieldId || null,
-                        customFieldName: nodeCustomFieldName || 'Неизвестное поле',
+                        customFieldName: nodeCustomFieldName || (node.type === 'TEST_CASE' ? 'Test Case' : 'Неизвестное поле'),
                         count: node.children?.content?.length || 0,
+                        node_type: node.type,
+                        layer: layer,
                         children: children.filter(child => child !== null),
                     };
 
@@ -461,7 +481,6 @@ async function getNestedFoldersParallel(projectId, parentNodeId, treeId, customF
                 } catch (error) {
                     const errorMessage = error instanceof Error ? error.message : (typeof error === 'string' ? error : JSON.stringify(error) || 'Неизвестная ошибка');
                     logError(`Ошибка при обработке узла ${node.id} (${node.name}):`, errorMessage);
-                    // Возвращаем null вместо проброса ошибки, чтобы не прерывать обработку других узлов
                     return null;
                 }
             })

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, Label } from 'recharts';
 import Select from 'react-select';
 import { useNavigate } from 'react-router-dom'; // Added useNavigate
 import config from './config.json';
@@ -37,6 +37,7 @@ const HeatmapPage = ({ projects }) => {
     const [jiraPat, setJiraPat] = useState(localStorage.getItem('jiraPat') || '');
     const [issueTimeMap, setIssueTimeMap] = useState({});
     const [syncingJira, setSyncingJira] = useState(false);
+    const [activeMetric, setActiveMetric] = useState('incidents'); // 'touches', 'incidents', 'time'
 
     // Для маппинга
     const [showMappingModal, setShowMappingModal] = useState(false);
@@ -69,7 +70,9 @@ const HeatmapPage = ({ projects }) => {
     useEffect(() => {
         if (projectId) {
             if (activeTab === 'code') {
+                // Fetch both because Code Tab now includes Page Impact from testCoverageData
                 loadHeatmapData();
+                loadTestCoverageData();
             } else {
                 loadTestCoverageData();
             }
@@ -223,6 +226,33 @@ const HeatmapPage = ({ projects }) => {
     const handleVersionChange = (selectedOptions) => {
         setSelectedVersions(selectedOptions ? selectedOptions.map(opt => opt.value) : []);
     };
+
+    // Глобальные агрегаты на основе загруженных данных и Jira-времени
+    const stats = React.useMemo(() => {
+        const currentData = activeTab === 'code' ? heatmapData : testCoverageData;
+        if (!currentData) return { totalTouches: 0, totalIncidents: 0, totalTime: 0 };
+
+        // Касания (общая сумма изменений)
+        const totalTouches = currentData.totalDefects || 0;
+
+        // Инциденты (уникальные баги во всем представлении)
+        // Для Heatmap это uniqueTotalIssuesCount, для Test Coverage берем из ответа сервера
+        const totalIncidents = activeTab === 'code'
+            ? currentData.uniqueTotalIssuesCount || 0
+            : (currentData.functionalBlocks?.reduce((acc, fb) => acc + (fb.uniqueIncidentCount || 0), 0) || 0);
+
+        // Время (сумма Jira-времени для всех уникальных ключей в текущем виде)
+        const allKeys = new Set();
+        if (activeTab === 'code' && currentData.components) {
+            currentData.components.forEach(c => c.issueKeys?.forEach(k => allKeys.add(k)));
+        } else if (activeTab === 'test' && currentData.functionalBlocks) {
+            currentData.functionalBlocks.forEach(fb => fb.issueKeys?.forEach(k => allKeys.add(k)));
+        }
+
+        const totalTime = Array.from(allKeys).reduce((acc, key) => acc + (issueTimeMap[key] || 0), 0);
+
+        return { totalTouches, totalIncidents, totalTime };
+    }, [heatmapData, testCoverageData, activeTab, issueTimeMap]);
 
     const versionOptions = availableVersions.map(v => ({ value: v, label: v }));
 
@@ -946,115 +976,135 @@ const HeatmapPage = ({ projects }) => {
 
     const CustomTooltip = ({ active, payload }) => {
         if (active && payload && payload.length) {
-            const data = payload[0];
+            const data = payload[0].payload;
             return (
                 <div style={{
                     backgroundColor: '#fff',
-                    padding: '10px',
-                    border: '1px solid #ccc',
-                    borderRadius: '4px',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                    padding: '12px',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '12px',
+                    boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)',
                 }}>
-                    <p style={{ margin: 0, fontWeight: 600, color: '#000' }}>{data.name}</p>
-                    {!data.payload.hideValue && (
-                        <p style={{ margin: '4px 0 0 0', color: '#000' }}>
-                            Количество: <strong style={{ color: '#000' }}>{data.value}</strong>
+                    <p style={{ margin: '0 0 8px 0', fontWeight: 700, color: '#0f172a', fontSize: '14px' }}>{data.name}</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <p style={{ margin: 0, fontSize: '12px', color: '#64748b' }}>
+                            Инциденты: <strong style={{ color: '#0f172a' }}>{data.uniqueIncidentCount || 0}</strong>
                         </p>
-                    )}
-                    {calculateTimeSpent(data.payload.issueKeys) > 0 && (
-                        <p style={{ margin: '4px 0 0 0', color: '#6366f1', fontSize: '13px' }}>
-                            ⏱ Затрачено: <strong style={{ color: '#6366f1' }}>{formatSeconds(calculateTimeSpent(data.payload.issueKeys))}</strong>
+                        <p style={{ margin: 0, fontSize: '12px', color: '#64748b' }}>
+                            Касания: <strong style={{ color: '#0f172a' }}>{data.defectCount || data.value}</strong>
                         </p>
-                    )}
+                        {calculateTimeSpent(data.issueKeys) > 0 && (
+                            <p style={{ margin: 0, fontSize: '12px', color: '#6366f1' }}>
+                                ⏱ Время: <strong>{formatSeconds(calculateTimeSpent(data.issueKeys))}</strong>
+                            </p>
+                        )}
+                        <p style={{ margin: '4px 0 0 0', fontSize: '12px', fontWeight: 700, color: '#3b82f6' }}>
+                            Доля: {data.percentage}%
+                        </p>
+                    </div>
                 </div>
             );
         }
         return null;
     };
 
-    const renderCustomLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }) => {
-        if (percent < 0.02) return null; // Не показываем подписи для маленьких сегментов
+    const MetricToggle = () => (
+        <div style={{
+            display: 'flex',
+            backgroundColor: '#f1f5f9',
+            padding: '4px',
+            borderRadius: '12px',
+            border: '1px solid #e2e8f0',
+            width: 'fit-content'
+        }}>
+            {[
+                { id: 'incidents', label: 'Инциденты' },
+                { id: 'touches', label: 'Касания' },
+                { id: 'time', label: 'Время' }
+            ].map(m => (
+                <button
+                    key={m.id}
+                    onClick={() => setActiveMetric(m.id)}
+                    style={{
+                        padding: '8px 16px',
+                        border: 'none',
+                        borderRadius: '8px',
+                        backgroundColor: activeMetric === m.id ? '#fff' : 'transparent',
+                        color: activeMetric === m.id ? '#0f172a' : '#64748b',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        boxShadow: activeMetric === m.id ? '0 2px 4px rgba(0,0,0,0.05)' : 'none',
+                    }}
+                >
+                    {m.label}
+                </button>
+            ))}
+        </div>
+    );
 
-        const RADIAN = Math.PI / 180;
-        const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
-        const x = cx + radius * Math.cos(-midAngle * RADIAN);
-        const y = cy + radius * Math.sin(-midAngle * RADIAN);
-
-        return (
-            <text
-                x={x}
-                y={y}
-                fill="white"
-                textAnchor={x > cx ? 'start' : 'end'}
-                dominantBaseline="central"
-                fontSize={12}
-                fontWeight={600}
-            >
-                {`${(percent * 100).toFixed(0)}%`}
-            </text>
-        );
+    const getMetricValue = (item) => {
+        if (activeMetric === 'touches') return item.count || item.defectCount || 0;
+        if (activeMetric === 'incidents') return item.uniqueIncidentCount || 0;
+        if (activeMetric === 'time') return calculateTimeSpent(item.issueKeys);
+        return 0;
     };
 
-    // Подготовка данных для Test Coverage (функциональные блоки)
-    const testCoverageChartData = testCoverageData?.functionalBlocks?.slice(0, 30).map((item, index) => ({
-        name: item.functionalBlockName,
-        value: item.defectCount,
-        percentage: parseFloat(item.percentage),
-        color: COLORS[index % COLORS.length],
-        functionalBlockId: item.functionalBlockId,
-        hideValue: true,
-        issueKeys: item.issueKeys
-    })) || [];
+    const calculatePriorityScore = (fb) => {
+        const incidents = fb.uniqueIncidentCount || 0;
+        const timeSpent = calculateTimeSpent(fb.issueKeys) / 3600; // hours
 
-    const otherFunctionalBlocks = testCoverageData?.functionalBlocks?.slice(30) || [];
-    const otherFbCount = otherFunctionalBlocks.reduce((sum, item) => sum + item.defectCount, 0);
-    const otherFbPercentage = testCoverageData?.totalDefects > 0
-        ? ((otherFbCount / testCoverageData.totalDefects) * 100).toFixed(1)
-        : '0.0';
+        // Веса: 60% инциденты, 40% время. Ранг до 100.
+        // Для приоритизации: 1 инцидент ~ 2 часа времени.
+        const score = (incidents * 15) + (timeSpent * 7);
+        return Math.min(score, 100);
+    };
 
-    if (otherFbCount > 0) {
-        testCoverageChartData.push({
-            name: 'Прочие',
-            value: otherFbCount,
-            percentage: parseFloat(otherFbPercentage),
-            color: '#cccccc',
-            functionalBlockId: null,
-            hideValue: true
-        });
-    }
+    // Подготовка данных для Pareto (Топ-15 + Прочие)
+    const prepareParetoData = (items, totalValue) => {
+        if (!items) return [];
+        const sorted = [...items].sort((a, b) => getMetricValue(b) - getMetricValue(a));
+        const top = sorted.slice(0, 15);
+        const others = sorted.slice(15);
 
-    // Подготовка данных для Страниц (Pages)
-    const pagesChartData = testCoverageData?.pages?.slice(0, 30).map((item, index) => ({
-        name: item.pageName,
-        value: item.defectCount,
-        percentage: parseFloat(item.percentage),
-        color: COLORS[index % COLORS.length],
-        hideValue: true,
-        issueKeys: item.issueKeys
-    })) || [];
+        const result = top.map((item, index) => ({
+            name: item.componentName || item.pageName || item.functionalBlockName,
+            value: getMetricValue(item),
+            defectCount: item.count || item.defectCount,
+            uniqueIncidentCount: item.uniqueIncidentCount,
+            percentage: totalValue > 0 ? ((getMetricValue(item) / totalValue) * 100).toFixed(1) : 0,
+            issueKeys: item.issueKeys,
+            url: item.url,
+            color: COLORS[index % COLORS.length]
+        }));
 
-    const otherPages = testCoverageData?.pages?.slice(30) || [];
-    const otherPagesCount = otherPages.reduce((sum, item) => sum + item.defectCount, 0);
-    const otherPagesPercentage = testCoverageData?.totalPagesDefects > 0
-        ? ((otherPagesCount / testCoverageData.totalPagesDefects) * 100).toFixed(1)
-        : '0.0';
+        if (others.length > 0) {
+            const othersValue = others.reduce((sum, i) => sum + getMetricValue(i), 0);
+            const othersDefects = others.reduce((sum, i) => sum + (i.count || i.defectCount || 0), 0);
+            result.push({
+                name: 'Прочие',
+                value: othersValue,
+                defectCount: othersDefects,
+                percentage: totalValue > 0 ? ((othersValue / totalValue) * 100).toFixed(1) : 0,
+                color: '#94a3b8'
+            });
+        }
+        return result;
+    };
 
-    if (otherPagesCount > 0) {
-        pagesChartData.push({
-            name: 'Прочие',
-            value: otherPagesCount,
-            percentage: parseFloat(otherPagesPercentage),
-            color: '#cccccc',
-            hideValue: true
-        });
-    }
+    const getTotalMetricValue = (items) => items?.reduce((sum, i) => sum + getMetricValue(i), 0) || 0;
+
+    const codeChartData = prepareParetoData(heatmapData?.components, getTotalMetricValue(heatmapData?.components));
+    const pagesChartData = prepareParetoData(testCoverageData?.pages, getTotalMetricValue(testCoverageData?.pages));
+    const fbChartData = prepareParetoData(testCoverageData?.functionalBlocks, getTotalMetricValue(testCoverageData?.functionalBlocks));
 
     return (
         <div style={{
             padding: '40px',
             maxWidth: '1440px',
             margin: '0 auto',
-            fontFamily: '"Inter", -apple-system, sans-serif',
+            fontFamily: '"Inter", "Outfit", "Roboto", sans-serif',
             color: '#1e293b',
             backgroundColor: '#f8fafc',
             minHeight: '100vh'
@@ -1065,14 +1115,8 @@ const HeatmapPage = ({ projects }) => {
                 alignItems: 'center',
                 marginBottom: '40px'
             }}>
-                <h1 style={{
-                    fontSize: '36px',
-                    fontWeight: 800,
-                    color: '#0f172a',
-                    margin: 0,
-                    letterSpacing: '-0.02em'
-                }}>
-                    3.2. Тепловая карта дефектов
+                <h1 style={styles.title}>
+                    Тепловая карта дефектов
                 </h1>
                 <div style={{ display: 'flex', gap: '12px' }}>
                     <button
@@ -1096,7 +1140,7 @@ const HeatmapPage = ({ projects }) => {
                         onMouseOver={(e) => (e.currentTarget.style.borderColor = '#cbd5e1', e.currentTarget.style.color = '#334155')}
                         onMouseOut={(e) => (e.currentTarget.style.borderColor = '#e2e8f0', e.currentTarget.style.color = '#64748b')}
                     >
-                        <span>←</span> Назад
+                        Назад
                     </button>
                     <button
                         onClick={() => setShowImportModal(true)}
@@ -1121,7 +1165,7 @@ const HeatmapPage = ({ projects }) => {
                         onMouseOver={(e) => !projectId ? null : (e.currentTarget.style.backgroundColor = '#4f46e5', e.currentTarget.style.transform = 'translateY(-2px)')}
                         onMouseOut={(e) => !projectId ? null : (e.currentTarget.style.backgroundColor = '#6366f1', e.currentTarget.style.transform = 'translateY(0)')}
                     >
-                        <span style={{ fontSize: '20px' }}>⚡</span> Импорт истории TIA
+                        Импорт истории TIA
                     </button>
                 </div>
             </div>
@@ -1185,13 +1229,13 @@ const HeatmapPage = ({ projects }) => {
             }}>
                 <div style={{
                     display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
                     gap: '24px',
                     alignItems: 'end'
                 }}>
                     {/* Поле Проекта */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                             Целевой проект
                         </span>
                         <select
@@ -1212,7 +1256,7 @@ const HeatmapPage = ({ projects }) => {
                             onFocus={(e) => (e.target.style.borderColor = '#6366f1', e.target.style.boxShadow = '0 0 0 4px rgba(99, 102, 241, 0.1)')}
                             onBlur={(e) => (e.target.style.borderColor = '#e2e8f0', e.target.style.boxShadow = 'none')}
                         >
-                            <option value="">Выберите проект для анализа</option>
+                            <option value="">Проект</option>
                             {projects?.map(project => (
                                 <option key={project.id} value={project.id}>
                                     {project.name}
@@ -1223,7 +1267,7 @@ const HeatmapPage = ({ projects }) => {
 
                     {/* Поле Периода */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                             Период данных
                         </span>
                         <div style={{
@@ -1253,7 +1297,7 @@ const HeatmapPage = ({ projects }) => {
 
                     {/* Поле Релизов */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                             Версии продукта
                         </span>
                         <Select
@@ -1289,7 +1333,7 @@ const HeatmapPage = ({ projects }) => {
 
                     {/* Поле Типа */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                             Категория изменений
                         </span>
                         <select
@@ -1314,7 +1358,7 @@ const HeatmapPage = ({ projects }) => {
                             onFocus={(e) => (e.target.style.borderColor = '#6366f1', e.target.style.boxShadow = '0 0 0 4px rgba(99, 102, 241, 0.1)')}
                             onBlur={(e) => (e.target.style.borderColor = '#e2e8f0', e.target.style.boxShadow = 'none')}
                         >
-                            <option value="all">Все (BugFix + New Feature)</option>
+                            <option value="all">Все</option>
                             <option value="bugs">Только исправления багов</option>
                             <option value="general">Только новые функции</option>
                         </select>
@@ -1322,7 +1366,7 @@ const HeatmapPage = ({ projects }) => {
 
                     {/* Поле Стороны (Front/Back) */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                             Сторона системы
                         </span>
                         <select
@@ -1352,7 +1396,7 @@ const HeatmapPage = ({ projects }) => {
                     {/* Поле Jira PAT */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            <span style={{ fontSize: '14px', fontWeight: 600, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                                 Jira PAT
                             </span>
                             {syncingJira && (
@@ -1416,6 +1460,44 @@ const HeatmapPage = ({ projects }) => {
                 </div>
             )}
 
+            {!loading && !error && (activeTab === 'code' ? heatmapData : testCoverageData) && (
+                <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+                    gap: '20px',
+                    marginBottom: '40px'
+                }}>
+                    {[
+                        { label: 'Касания', value: stats.totalTouches, sub: 'Объем изменений - количество изменений в коде', color: '#6366f1', description: 'Сколько раз трогали данную компоненту в коде' },
+                        { label: 'Инциденты', value: stats.totalIncidents, sub: 'Уникальные баги - количество задач "Ошибка кода"', color: '#f43f5e', description: 'Крит. зоны для QA. Где чаще ломается — там нужнее автотесты.' },
+                        { label: 'Время', value: formatSeconds(stats.totalTime), sub: 'Стоимость правок - время потраченное на тип задачи "Ошибка кода"', color: '#8b5cf6', description: 'Оценка выгоды от автоматизации регрессии этих блоков.' }
+                    ].map((stat, i) => (
+                        <div key={i} style={{
+                            backgroundColor: '#fff',
+                            borderRadius: '16px',
+                            padding: '20px',
+                            border: '1px solid #e2e8f0',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+                            borderLeft: `4px solid ${stat.color}`
+                        }}>
+                            <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>{stat.label}</div>
+                            <div style={{ fontSize: '28px', fontWeight: 800, color: stat.color, marginBottom: '4px' }}>{stat.value}</div>
+                            <div style={{ fontSize: '12px', color: '#475569', fontWeight: 500, marginBottom: '12px' }}>{stat.sub}</div>
+                            <div style={{
+                                fontSize: '11px',
+                                color: '#64748b',
+                                lineHeight: '1.4',
+                                padding: '10px',
+                                backgroundColor: '#f8fafc',
+                                borderRadius: '8px'
+                            }}>
+                                <strong>Для автотестов:</strong> {stat.description}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
             {!loading && !error && activeTab === 'code' && heatmapData && (
                 <div style={{
                     backgroundColor: '#fff',
@@ -1427,663 +1509,502 @@ const HeatmapPage = ({ projects }) => {
                 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                         <div style={{ display: 'flex', flexDirection: 'column' }}>
-                            <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.01em' }}>
+                            <h2 style={styles.subHeader}>
                                 Импакт-анализ компонентов
                             </h2>
                             <p style={{ fontSize: '14px', color: '#64748b', margin: '4px 0 0 0' }}>
-                                Распределение инцидентов и точек влияния по программным элементам
+                                Распределение влияния по программным элементам
                             </p>
                         </div>
+                        <MetricToggle />
+                    </div>
 
-                        {heatmapData.pageStats && (
-                            <div style={{
-                                padding: '12px 24px',
-                                backgroundColor: '#f8fafc',
-                                borderRadius: '16px',
-                                border: '1px solid #e2e8f0',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '20px'
-                            }}>
-                                <div style={{ textAlign: 'right' }}>
-                                    <div style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                        Page Coverage
-                                    </div>
-                                    <div style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a' }}>
-                                        {heatmapData.pageStats.affectedPages} <span style={{ color: '#94a3b8', fontSize: '14px', fontWeight: 500 }}>/ {heatmapData.pageStats.totalProjectPages}</span>
-                                    </div>
-                                </div>
-                                <div style={{
-                                    width: '1px',
-                                    height: '30px',
-                                    backgroundColor: '#e2e8f0'
-                                }} />
-                                <div style={{
-                                    fontSize: '24px',
-                                    fontWeight: 900,
-                                    color: parseFloat(heatmapData.pageStats.coveragePercent) > 50 ? '#dc2626' : '#6366f1'
-                                }}>
-                                    {heatmapData.pageStats.coveragePercent}%
-                                </div>
-                            </div>
-                        )}
+
+                    <div style={{ height: '400px', width: '100%', marginBottom: '32px' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                                data={codeChartData}
+                                layout="vertical"
+                                margin={{ top: 5, right: 30, left: 10, bottom: 5 }}
+                            >
+                                <XAxis type="number" hide />
+                                <YAxis
+                                    type="category"
+                                    dataKey="name"
+                                    width={150}
+                                    fontSize={11}
+                                    tick={{ fill: '#475569', fontWeight: 600 }}
+                                    tickFormatter={(value) => value.length > 20 ? value.substring(0, 18) + '...' : value}
+                                />
+                                <Tooltip content={<CustomTooltip />} cursor={{ fill: '#f1f5f9' }} />
+                                <Bar
+                                    dataKey="value"
+                                    radius={[0, 4, 4, 0]}
+                                    onClick={(data) => setSelectedComponent(data.name)}
+                                >
+                                    {codeChartData.map((entry, index) => (
+                                        <Cell
+                                            key={`cell-${index}`}
+                                            fill={entry.color}
+                                            style={{ cursor: 'pointer', filter: selectedComponent === entry.name ? 'brightness(0.9) contrast(1.2)' : 'none' }}
+                                        />
+                                    ))}
+                                </Bar>
+                            </BarChart>
+                        </ResponsiveContainer>
                     </div>
 
                     <div style={{
-                        display: 'flex',
-                        gap: '40px',
-                        flexWrap: 'wrap',
-                        alignItems: 'center'
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                        gap: '12px'
                     }}>
-                        {/* Donut Chart */}
-                        <div style={{
-                            flex: '0 0 400px',
-                            width: '400px',
-                            maxWidth: '100%',
-                            position: 'relative'
-                        }}>
-                            <ResponsiveContainer width="100%" height={400}>
-                                <PieChart>
-                                    <Pie
-                                        data={chartData}
-                                        cx="50%"
-                                        cy="50%"
-                                        labelLine={false}
-                                        label={renderCustomLabel}
-                                        outerRadius={140}
-                                        innerRadius={85}
-                                        fill="#8884d8"
-                                        dataKey="value"
-                                        stroke="none"
-                                        onClick={(data) => setSelectedComponent(data.name)}
-                                    >
-                                        {chartData.map((entry, index) => (
-                                            <Cell
-                                                key={`cell-${index}`}
-                                                fill={entry.color}
-                                                style={{ filter: selectedComponent === entry.name ? 'drop-shadow(0 0 8px rgba(0,0,0,0.2))' : 'none', cursor: 'pointer' }}
-                                            />
-                                        ))}
-                                    </Pie>
-                                    <Tooltip content={<CustomTooltip />} />
-                                </PieChart>
-                            </ResponsiveContainer>
-                            <div style={{
-                                position: 'absolute',
-                                top: '50%',
-                                left: '50%',
-                                transform: 'translate(-50%, -50%)',
-                                textAlign: 'center',
-                                pointerEvents: 'none'
-                            }}>
-                                <div style={{ fontSize: '40px', fontWeight: 900, color: '#0f172a', lineHeight: 1 }}>
-                                    {heatmapData.totalDefects.toLocaleString()}
+                        {codeChartData.map((item, index) => (
+                            <div
+                                key={item.name}
+                                onClick={() => setSelectedComponent(item.name)}
+                                style={{
+                                    padding: '12px 16px',
+                                    borderRadius: '12px',
+                                    border: `1px solid ${selectedComponent === item.name ? '#6366f1' : '#f1f5f9'}`,
+                                    backgroundColor: selectedComponent === item.name ? '#f8faff' : '#fff',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '2px',
+                                    boxShadow: selectedComponent === item.name ? '0 4px 12px rgba(99, 102, 241, 0.08)' : 'none'
+                                }}
+                            >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: item.color, flexShrink: 0 }} />
+                                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        {item.name}
+                                    </span>
                                 </div>
-                                <div style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginTop: '4px', letterSpacing: '0.05em' }}>
-                                    Влияний
+                                <div style={{ fontSize: '11px', color: '#64748b', paddingLeft: '16px' }}>
+                                    {activeMetric === 'time' ? formatSeconds(item.value) : item.value} ({item.percentage}%)
                                 </div>
                             </div>
-                        </div>
-
-                        {/* Легенда */}
-                        <div style={{
-                            flex: '1 1 auto',
-                            minWidth: '300px',
-                            maxHeight: '500px',
-                            overflowY: 'auto',
-                            padding: '12px'
-                        }}>
-                            <div style={{
-                                display: 'grid',
-                                gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
-                                gap: '12px',
-                            }}>
-                                {heatmapData.components.map((item, index) => {
-                                    const color = index < COLORS.length ? COLORS[index] : '#cccccc';
-                                    const isSelected = selectedComponent === item.componentName;
-                                    return (
-                                        <div
-                                            key={item.componentName}
-                                            onClick={() => setSelectedComponent(item.componentName)}
-                                            style={{
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '12px',
-                                                padding: '12px 16px',
-                                                borderRadius: '16px',
-                                                cursor: 'pointer',
-                                                backgroundColor: isSelected ? '#eff6ff' : '#fcfdfe',
-                                                border: `1.5px solid ${isSelected ? '#6366f1' : '#e2e8f0'}`,
-                                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                                                boxShadow: isSelected ? '0 4px 12px rgba(99, 102, 241, 0.1)' : 'none',
-                                            }}
-                                            onMouseOver={(e) => !isSelected && (e.currentTarget.style.borderColor = '#cbd5e1', e.currentTarget.style.backgroundColor = '#f8fafc')}
-                                            onMouseOut={(e) => !isSelected && (e.currentTarget.style.borderColor = '#e2e8f0', e.currentTarget.style.backgroundColor = '#fcfdfe')}
-                                        >
-                                            <div
-                                                style={{
-                                                    width: '14px',
-                                                    height: '14px',
-                                                    borderRadius: '50%',
-                                                    backgroundColor: color,
-                                                    flexShrink: 0,
-                                                    boxShadow: `0 0 0 3px ${color}20`
-                                                }}
-                                            />
-                                            <div style={{ display: 'flex', flex: 1, flexDirection: 'column', minWidth: 0 }}>
-                                                <span style={{
-                                                    overflow: 'hidden',
-                                                    textOverflow: 'ellipsis',
-                                                    whiteSpace: 'nowrap',
-                                                    color: isSelected ? '#1e3a8a' : '#475569',
-                                                    fontWeight: isSelected ? 700 : 500,
-                                                    fontSize: '14px'
-                                                }}>
-                                                    {item.componentName}
-                                                </span>
-                                                {calculateTimeSpent(item.issueKeys) > 0 && (
-                                                    <span style={{ fontSize: '10px', color: '#6366f1', fontWeight: 600 }}>
-                                                        ⏱ {formatSeconds(calculateTimeSpent(item.issueKeys))}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <span style={{
-                                                fontWeight: 800,
-                                                color: isSelected ? '#1e3a8a' : '#1e293b',
-                                                fontSize: '13px'
-                                            }}>
-                                                {item.percentage}%
-                                            </span>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
+                        ))}
                     </div>
                 </div>
             )}
 
             {/* Статистика по Страницам (Перенесено в блок Code Coverage) */}
-            {!loading && !error && activeTab === 'code' && testCoverageData?.pages && testCoverageData.pages.length > 0 && (
-                <div style={{
-                    backgroundColor: '#fff',
-                    padding: '32px',
-                    borderRadius: '24px',
-                    border: '1px solid #e2e8f0',
-                    boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
-                    marginBottom: '40px'
-                }}>
-                    <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', marginBottom: '8px', letterSpacing: '-0.01em' }}>
-                        Влияние на страницы (Импакт)
-                    </h2>
-                    <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '24px' }}>
-                        Распределение связей между компонентами и страницами приложения
-                    </p>
-
+            {
+                !loading && !error && activeTab === 'code' && testCoverageData?.pages && testCoverageData.pages.length > 0 && (
                     <div style={{
-                        display: 'flex',
-                        gap: '40px',
-                        flexWrap: 'wrap',
-                        alignItems: 'center'
+                        backgroundColor: '#fff',
+                        padding: '32px',
+                        borderRadius: '24px',
+                        border: '1px solid #e2e8f0',
+                        boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
+                        marginBottom: '40px'
                     }}>
-                        {/* Donut Chart */}
-                        <div style={{
-                            flex: '0 0 350px',
-                            width: '350px',
-                            maxWidth: '100%',
-                            position: 'relative'
-                        }}>
-                            <ResponsiveContainer width="100%" height={300}>
-                                <PieChart>
-                                    <Pie
-                                        data={pagesChartData}
-                                        cx="50%"
-                                        cy="50%"
-                                        labelLine={false}
-                                        outerRadius={110}
-                                        innerRadius={70}
-                                        fill="#8884d8"
-                                        dataKey="value"
-                                        stroke="none"
-                                    >
-                                        {pagesChartData.map((entry, index) => (
-                                            <Cell
-                                                key={`cell-page-code-${index}`}
-                                                fill={entry.color}
-                                            />
-                                        ))}
-                                    </Pie>
-                                    <Tooltip content={<CustomTooltip />} />
-                                </PieChart>
-                            </ResponsiveContainer>
-                            <div style={{
-                                position: 'absolute',
-                                top: '50%',
-                                left: '50%',
-                                transform: 'translate(-50%, -50%)',
-                                textAlign: 'center',
-                                pointerEvents: 'none',
-                                width: '120px'
-                            }}>
-                                <div style={{ fontSize: '11px', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', lineHeight: 1.4 }}>
-                                    Плотность<br />маппинга
-                                </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                <h2 style={styles.subHeader}>
+                                    Влияние на страницы (Импакт)
+                                </h2>
+                                <p style={{ fontSize: '14px', color: '#64748b', margin: '4px 0 0 0' }}>
+                                    Распределение связей между компонентами и страницами приложения
+                                </p>
                             </div>
                         </div>
 
-                        {/* Легенда */}
-                        <div style={{
-                            flex: '1 1 auto',
-                            minWidth: '300px',
-                            maxHeight: '400px',
-                            overflowY: 'auto',
-                            padding: '4px'
-                        }}>
-                            <div style={{
-                                display: 'grid',
-                                gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-                                gap: '8px',
-                            }}>
-                                {testCoverageData.pages.map((item, index) => {
-                                    const color = index < COLORS.length ? COLORS[index] : '#cccccc';
-                                    return (
-                                        <div
-                                            key={item.pageName}
-                                            style={{
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '12px',
-                                                padding: '12px 16px',
-                                                borderRadius: '16px',
-                                                backgroundColor: '#f8fafc',
-                                                border: '1px solid #e2e8f0',
-                                                transition: 'all 0.2s'
-                                            }}
-                                            onMouseOver={(e) => (e.currentTarget.style.borderColor = '#cbd5e1', e.currentTarget.style.backgroundColor = '#fff')}
-                                            onMouseOut={(e) => (e.currentTarget.style.borderColor = '#e2e8f0', e.currentTarget.style.backgroundColor = '#f8fafc')}
+                        <div style={{ display: 'flex', gap: '40px', alignItems: 'center' }}>
+                            {/* Pie Chart on the Left (40%) */}
+                            <div style={{ flex: '0 0 400px', height: '400px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <div style={{
+                                    position: 'absolute',
+                                    textAlign: 'center',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    zIndex: 1,
+                                    pointerEvents: 'none'
+                                }}>
+                                    <span style={{ fontSize: '10px', fontWeight: 800, color: '#64748b', lineHeight: 1.2 }}>ПЛОТНОСТЬ</span>
+                                    <span style={{ fontSize: '10px', fontWeight: 800, color: '#64748b', lineHeight: 1.2 }}>МАППИНГА</span>
+                                </div>
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                        <Pie
+                                            data={pagesChartData}
+                                            cx="50%"
+                                            cy="50%"
+                                            innerRadius={80}
+                                            outerRadius={120}
+                                            paddingAngle={0}
+                                            stroke="none"
+                                            dataKey="value"
                                         >
-                                            <div
-                                                style={{
-                                                    width: '12px',
-                                                    height: '12px',
-                                                    borderRadius: '50%',
-                                                    backgroundColor: color,
-                                                    flexShrink: 0,
-                                                }}
-                                            />
-                                            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                                                <span style={{
-                                                    overflow: 'hidden',
-                                                    textOverflow: 'ellipsis',
-                                                    whiteSpace: 'nowrap',
-                                                    color: '#475569',
-                                                    fontWeight: 600,
-                                                    fontSize: '14px'
-                                                }}>
-                                                    {item.pageName}
-                                                </span>
-                                                {calculateTimeSpent(item.issueKeys) > 0 && (
-                                                    <span style={{ fontSize: '10px', color: '#6366f1', fontWeight: 600 }}>
-                                                        ⏱ {formatSeconds(calculateTimeSpent(item.issueKeys))}
-                                                    </span>
-                                                )}
-                                                {item.pageRoute && (
-                                                    <span style={{
-                                                        fontSize: '10px',
-                                                        color: '#94a3b8',
-                                                        textTransform: 'uppercase',
-                                                        fontWeight: 700,
-                                                        letterSpacing: '0.02em'
-                                                    }}>
-                                                        {item.pageRoute}
-                                                    </span>
-                                                )}
-                                            </div>
+                                            {pagesChartData.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={entry.color} />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip content={<CustomTooltip />} />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
+
+                            {/* Cards on the Right (60%) */}
+                            <div style={{
+                                flex: 1,
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(2, 1fr)',
+                                gap: '12px',
+                                maxHeight: '450px',
+                                overflowY: 'auto',
+                                paddingRight: '8px'
+                            }}>
+                                {pagesChartData.map((item, index) => (
+                                    <div
+                                        key={item.name}
+                                        style={{
+                                            padding: '16px',
+                                            borderRadius: '16px',
+                                            border: '1px solid #f1f5f9',
+                                            backgroundColor: '#fff',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: '4px',
+                                            transition: 'all 0.2s',
+                                            boxShadow: '0 2px 8px rgba(0,0,0,0.02)',
+                                            position: 'relative',
+                                            paddingLeft: '32px'
+                                        }}
+                                    >
+                                        <div style={{
+                                            position: 'absolute',
+                                            left: '12px',
+                                            top: '20px',
+                                            width: '10px',
+                                            height: '10px',
+                                            borderRadius: '50%',
+                                            backgroundColor: item.color
+                                        }} />
+
+                                        <div style={{ fontSize: '14px', fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                            {item.name}
                                         </div>
-                                    );
-                                })}
+
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#6366f1', fontWeight: 600 }}>
+                                            {activeMetric === 'time' && <span>⏱</span>}
+                                            {activeMetric === 'time' ? formatSeconds(item.value) : item.value}
+                                            <span style={{ color: '#94a3b8', fontWeight: 400 }}>({item.percentage}%)</span>
+                                        </div>
+
+                                        {item.url && (
+                                            <div style={{ fontSize: '10px', color: '#94a3b8', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                {item.url}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
                             </div>
                         </div>
+
                     </div>
-                </div>
-            )}
+                )}
 
             {/* Test Coverage визуализация */}
-            {!loading && !error && activeTab === 'test' && testCoverageData && (
-                <div>
-                    {/* Функциональные блоки */}
-                    <div style={{
-                        display: 'flex',
-                        gap: '24px',
-                        flexWrap: 'wrap',
-                        alignItems: 'flex-start'
-                    }}>
-                        {/* Функциональные блоки */}
+            {
+                activeTab === 'test' && !loading && !error && testCoverageData && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '40px' }}>
+                        {/* Приоритезация функциональных блоков */}
                         <div style={{
                             backgroundColor: '#fff',
                             padding: '32px',
                             borderRadius: '24px',
                             border: '1px solid #e2e8f0',
                             boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
-                            flex: '1 1 0',
-                            minWidth: '500px',
                         }}>
-                            <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a', marginBottom: '8px' }}>
-                                Влияние на функциональные блоки
-                            </h2>
-                            <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '24px' }}>
-                                Распределение влияния инцидентов по функциональным областям
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                    <h2 style={styles.subHeader}>
+                                        Приоритезация функциональных блоков
+                                    </h2>
+                                    <p style={{ fontSize: '14px', color: '#64748b', margin: '4px 0 0 0' }}>
+                                        Ранжирование по приоритету (Инциденты + Время)
+                                    </p>
+                                </div>
+                                <MetricToggle />
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+                                {/* Pareto Chart for FB - Now Full Width like Code Coverage */}
+                                <div style={{ height: '400px', width: '100%' }}>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart
+                                            data={fbChartData}
+                                            layout="vertical"
+                                            margin={{ top: 5, right: 30, left: 10, bottom: 5 }}
+                                        >
+                                            <XAxis type="number" hide />
+                                            <YAxis
+                                                type="category"
+                                                dataKey="name"
+                                                width={180}
+                                                fontSize={11}
+                                                tick={{ fill: '#475569', fontWeight: 600 }}
+                                                tickFormatter={(value) => value.length > 25 ? value.substring(0, 23) + '...' : value}
+                                            />
+                                            <Tooltip content={<CustomTooltip />} cursor={{ fill: '#f1f5f9' }} />
+                                            <Bar
+                                                dataKey="value"
+                                                radius={[0, 4, 4, 0]}
+                                            >
+                                                {fbChartData.map((entry, index) => (
+                                                    <Cell key={`cell-fb-${index}`} fill={entry.color} />
+                                                ))}
+                                            </Bar>
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+
+                                {/* Priority List - Now as a Grid of Cards like Code Coverage */}
+                                <div style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                                    gap: '12px'
+                                }}>
+                                    {[...(testCoverageData?.functionalBlocks || [])]
+                                        .map(fb => ({ ...fb, priorityScore: calculatePriorityScore(fb) }))
+                                        .sort((a, b) => b.priorityScore - a.priorityScore)
+                                        .slice(0, 20)
+                                        .map((fb, idx) => {
+                                            const entryColor = fbChartData.find(p => p.name === fb.functionalBlockName)?.color || '#94a3b8';
+                                            const totalMetric = getTotalMetricValue(testCoverageData?.functionalBlocks);
+                                            const percentage = totalMetric > 0
+                                                ? (activeMetric === 'time'
+                                                    ? (calculateTimeSpent(fb.issueKeys) / totalMetric * 100)
+                                                    : (activeMetric === 'touches' ? fb.defectCount : fb.uniqueIncidentCount) / totalMetric * 100
+                                                ).toFixed(1)
+                                                : '0.0';
+                                            const value = activeMetric === 'time' ? calculateTimeSpent(fb.issueKeys) : (activeMetric === 'touches' ? fb.defectCount : fb.uniqueIncidentCount);
+
+                                            return (
+                                                <div
+                                                    key={fb.functionalBlockId}
+                                                    onClick={() => setSelectedComponent(fb.functionalBlockName)}
+                                                    style={{
+                                                        padding: '12px 16px',
+                                                        borderRadius: '12px',
+                                                        border: `1px solid ${selectedComponent === fb.functionalBlockName ? '#6366f1' : '#f1f5f9'}`,
+                                                        backgroundColor: selectedComponent === fb.functionalBlockName ? '#f8faff' : '#fff',
+                                                        display: 'flex',
+                                                        flexDirection: 'column',
+                                                        gap: '2px',
+                                                        transition: 'all 0.2s',
+                                                        cursor: 'pointer',
+                                                        boxShadow: selectedComponent === fb.functionalBlockName ? '0 4px 12px rgba(99, 102, 241, 0.08)' : 'none'
+                                                    }}
+                                                >
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: entryColor, flexShrink: 0 }} />
+                                                        <span style={{ fontSize: '12px', fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                            {fb.functionalBlockName}
+                                                        </span>
+                                                    </div>
+                                                    <div style={{ fontSize: '11px', color: '#64748b', paddingLeft: '16px' }}>
+                                                        {activeMetric === 'time' ? formatSeconds(value) : value} ({percentage}%)
+                                                        <span style={{ marginLeft: '8px', color: '#94a3b8', fontSize: '10px' }}>Priority: {fb.priorityScore.toFixed(0)}</span>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+            {/* Модальное окно массового импорта */}
+            {showImportModal && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+                    backdropFilter: 'blur(8px)',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    zIndex: 2000,
+                    animation: 'fadeIn 0.2s ease-out',
+                }}>
+                    <div style={{
+                        backgroundColor: '#fff',
+                        width: '600px',
+                        borderRadius: '24px',
+                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                        overflow: 'hidden',
+                        fontFamily: '"Inter", sans-serif'
+                    }}>
+                        <div style={{
+                            padding: '24px 32px',
+                            borderBottom: '1px solid #e2e8f0',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            background: '#fcfdfe'
+                        }}>
+                            <h2 style={styles.subHeader}>Загрузка истории TIA</h2>
+                            <button
+                                onClick={() => setShowImportModal(false)}
+                                style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    fontSize: '24px',
+                                    color: '#94a3b8',
+                                    cursor: 'pointer',
+                                    padding: '4px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'color 0.2s'
+                                }}
+                                onMouseOver={(e) => e.currentTarget.style.color = '#475569'}
+                                onMouseOut={(e) => e.currentTarget.style.color = '#94a3b8'}
+                            >х</button>
+                        </div>
+
+                        <div style={{ padding: '32px' }}>
+                            <p style={{ marginBottom: '24px', color: '#64748b', fontSize: '14px', lineHeight: '1.6' }}>
+                                Выберите файлы отчетов в формате JSON для массового импорта истории дефектов и привязки их к текущему проекту.
                             </p>
 
                             <div style={{
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: '24px',
-                                alignItems: 'center'
-                            }}>
-                                {/* Donut Chart */}
-                                <div style={{
-                                    width: '100%',
-                                    maxWidth: '350px',
-                                    position: 'relative'
-                                }}>
-                                    <ResponsiveContainer width="100%" height={300}>
-                                        <PieChart>
-                                            <Pie
-                                                data={testCoverageChartData}
-                                                cx="50%"
-                                                cy="50%"
-                                                labelLine={false}
-                                                outerRadius={110}
-                                                innerRadius={70}
-                                                fill="#8884d8"
-                                                dataKey="value"
-                                                stroke="none"
-                                            >
-                                                {testCoverageChartData.map((entry, index) => (
-                                                    <Cell
-                                                        key={`cell-fb-${index}`}
-                                                        fill={entry.color}
-                                                    />
-                                                ))}
-                                            </Pie>
-                                            <Tooltip content={<CustomTooltip />} />
-                                        </PieChart>
-                                    </ResponsiveContainer>
-                                    <div style={{
+                                position: 'relative',
+                                marginBottom: '24px',
+                                border: '2px dashed #e2e8f0',
+                                borderRadius: '16px',
+                                padding: '40px 20px',
+                                textAlign: 'center',
+                                transition: 'all 0.2s ease',
+                                backgroundColor: '#f8fafc',
+                                cursor: 'pointer'
+                            }}
+                                onMouseOver={(e) => (e.currentTarget.style.borderColor = '#6366f1', e.currentTarget.style.backgroundColor = '#f1f5f9')}
+                                onMouseOut={(e) => (e.currentTarget.style.borderColor = '#e2e8f0', e.currentTarget.style.backgroundColor = '#f8fafc')}
+                            >
+                                <input
+                                    type="file"
+                                    multiple
+                                    accept=".json"
+                                    onChange={(e) => setImportFiles(Array.from(e.target.files))}
+                                    style={{
                                         position: 'absolute',
-                                        top: '50%',
-                                        left: '50%',
-                                        transform: 'translate(-50%, -50%)',
-                                        textAlign: 'center',
-                                        pointerEvents: 'none'
-                                    }}>
-                                        <div style={{ fontSize: '11px', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase' }}>
-                                            Плотность маппинга
-                                        </div>
-                                    </div>
-                                </div>
+                                        top: 0,
+                                        left: 0,
+                                        width: '100%',
+                                        height: '100%',
+                                        opacity: 0,
+                                        cursor: 'pointer'
+                                    }}
+                                />
 
-                                {/* Легенда */}
-                                <div style={{
-                                    width: '100%',
-                                    maxHeight: '300px',
-                                    overflowY: 'auto',
-                                    padding: '4px'
-                                }}>
-                                    <div style={{
-                                        display: 'grid',
-                                        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-                                        gap: '8px',
-                                    }}>
-                                        {testCoverageData.functionalBlocks.map((item, index) => {
-                                            const color = index < COLORS.length ? COLORS[index] : '#cccccc';
-                                            return (
-                                                <div
-                                                    key={item.functionalBlockId}
-                                                    style={{
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: '10px',
-                                                        padding: '10px 12px',
-                                                        borderRadius: '12px',
-                                                        backgroundColor: '#f8fafc',
-                                                        border: '1px solid #f1f5f9'
-                                                    }}
-                                                >
-                                                    <div
-                                                        style={{
-                                                            width: '10px',
-                                                            height: '10px',
-                                                            borderRadius: '50%',
-                                                            backgroundColor: color,
-                                                            flexShrink: 0,
-                                                        }}
-                                                    />
-                                                    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                                                        <span style={{
-                                                            overflow: 'hidden',
-                                                            textOverflow: 'ellipsis',
-                                                            whiteSpace: 'nowrap',
-                                                            color: '#475569',
-                                                            fontWeight: 500,
-                                                            fontSize: '13px'
-                                                        }}>
-                                                            {item.functionalBlockName}
-                                                        </span>
-                                                        {calculateTimeSpent(item.issueKeys) > 0 && (
-                                                            <span style={{ fontSize: '10px', color: '#6366f1', fontWeight: 600 }}>
-                                                                ⏱ {formatSeconds(calculateTimeSpent(item.issueKeys))}
-                                                            </span>
-                                                        )}
-                                                        {item.functionalBlockCustomFieldName && (
-                                                            <span style={{
-                                                                fontSize: '10px',
-                                                                color: '#94a3b8',
-                                                                textTransform: 'uppercase',
-                                                                fontWeight: 600
-                                                            }}>
-                                                                {item.functionalBlockCustomFieldName}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            )
-                                        })}
-                                    </div>
+                                <div style={{ fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                                    {importFiles.length > 0 ? `Выбрано файлов: ${importFiles.length}` : 'Нажмите для выбора JSON файлов'}
                                 </div>
+                                <div style={{ fontSize: '12px', color: '#94a3b8' }}>Перетащите файлы сюда или кликните для обзора</div>
+                            </div>
+
+                            {importProcessing && (
+                                <div style={{
+                                    padding: '20px',
+                                    backgroundColor: '#0f172a',
+                                    borderRadius: '12px',
+                                    maxHeight: '180px',
+                                    overflowY: 'auto',
+                                    marginBottom: '24px',
+                                    fontSize: '13px',
+                                    fontFamily: '"SF Mono", "Fira Code", monospace',
+                                    color: '#38bdf8',
+                                    boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)'
+                                }}>
+                                    {importLog.map((log, i) => (
+                                        <div key={i} style={{ marginBottom: '4px', opacity: i === importLog.length - 1 ? 1 : 0.7 }}>
+                                            <span style={{ color: '#64748b' }}>[{new Date().toLocaleTimeString()}]</span> {log}
+                                        </div>
+                                    ))}
+                                    <div id="import-log-end" />
+                                </div>
+                            )}
+
+                            {importError && (
+                                <div style={{
+                                    padding: '16px',
+                                    backgroundColor: '#fef2f2',
+                                    border: '1px solid #fee2e2',
+                                    borderRadius: '12px',
+                                    color: '#dc2626',
+                                    fontSize: '14px',
+                                    marginBottom: '24px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '12px'
+                                }}>
+                                    <span>⚠️</span> {importError}
+                                </div>
+                            )}
+
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                                <button
+                                    onClick={() => setShowImportModal(false)}
+                                    style={{
+                                        padding: '0 24px',
+                                        height: '48px',
+                                        backgroundColor: '#fff',
+                                        color: '#64748b',
+                                        border: '1px solid #e2e8f0',
+                                        borderRadius: '12px',
+                                        fontWeight: 600,
+                                        fontSize: '14px',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s'
+                                    }}
+                                    onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#f8fafc', e.currentTarget.style.borderColor = '#cbd5e1')}
+                                    onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#fff', e.currentTarget.style.borderColor = '#e2e8f0')}
+                                    disabled={importProcessing}
+                                >
+                                    Отмена
+                                </button>
+                                <button
+                                    onClick={handleProcessFiles}
+                                    disabled={importFiles.length === 0 || importProcessing}
+                                    style={{
+                                        padding: '0 24px',
+                                        height: '48px',
+                                        backgroundColor: '#6366f1',
+                                        color: '#fff',
+                                        border: 'none',
+                                        borderRadius: '12px',
+                                        fontWeight: 700,
+                                        fontSize: '14px',
+                                        cursor: 'pointer',
+                                        boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)',
+                                        transition: 'all 0.2s',
+                                        opacity: (importFiles.length === 0 || importProcessing) ? 0.6 : 1
+                                    }}
+                                    onMouseOver={(e) => (importFiles.length > 0 && !importProcessing) && (e.currentTarget.style.backgroundColor = '#4f46e5', e.currentTarget.style.transform = 'translateY(-1px)')}
+                                    onMouseOut={(e) => (importFiles.length > 0 && !importProcessing) && (e.currentTarget.style.backgroundColor = '#6366f1', e.currentTarget.style.transform = 'translateY(0)')}
+                                >
+                                    {importProcessing ? (
+                                        <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />
+                                            Обработка...
+                                        </span>
+                                    ) : 'Начать импорт'}
+                                </button>
                             </div>
                         </div>
                     </div>
                 </div>
-            )}
-
-            {/* Модальное окно массового импорта */}
-            {
-                showImportModal && (
-                    <div style={{
-                        position: 'fixed',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        backgroundColor: 'rgba(15, 23, 42, 0.4)',
-                        backdropFilter: 'blur(8px)',
-                        display: 'flex',
-                        justifyContent: 'center',
-                        alignItems: 'center',
-                        zIndex: 2000,
-                        animation: 'fadeIn 0.2s ease-out',
-                    }}>
-                        <div style={{
-                            backgroundColor: '#fff',
-                            width: '600px',
-                            borderRadius: '24px',
-                            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-                            overflow: 'hidden',
-                            fontFamily: '"Inter", sans-serif'
-                        }}>
-                            <div style={{
-                                padding: '24px 32px',
-                                borderBottom: '1px solid #e2e8f0',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                background: '#fcfdfe'
-                            }}>
-                                <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: 0 }}>Загрузка истории TIA</h2>
-                                <button
-                                    onClick={() => setShowImportModal(false)}
-                                    style={{
-                                        background: 'none',
-                                        border: 'none',
-                                        fontSize: '24px',
-                                        color: '#94a3b8',
-                                        cursor: 'pointer',
-                                        padding: '4px',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        transition: 'color 0.2s'
-                                    }}
-                                    onMouseOver={(e) => e.currentTarget.style.color = '#475569'}
-                                    onMouseOut={(e) => e.currentTarget.style.color = '#94a3b8'}
-                                >©</button>
-                            </div>
-
-                            <div style={{ padding: '32px' }}>
-                                <p style={{ marginBottom: '24px', color: '#64748b', fontSize: '14px', lineHeight: '1.6' }}>
-                                    Выберите файлы отчетов в формате JSON для массового импорта истории дефектов и привязки их к текущему проекту.
-                                </p>
-
-                                <div style={{
-                                    position: 'relative',
-                                    marginBottom: '24px',
-                                    border: '2px dashed #e2e8f0',
-                                    borderRadius: '16px',
-                                    padding: '40px 20px',
-                                    textAlign: 'center',
-                                    transition: 'all 0.2s ease',
-                                    backgroundColor: '#f8fafc',
-                                    cursor: 'pointer'
-                                }}
-                                    onMouseOver={(e) => (e.currentTarget.style.borderColor = '#6366f1', e.currentTarget.style.backgroundColor = '#f1f5f9')}
-                                    onMouseOut={(e) => (e.currentTarget.style.borderColor = '#e2e8f0', e.currentTarget.style.backgroundColor = '#f8fafc')}
-                                >
-                                    <input
-                                        type="file"
-                                        multiple
-                                        accept=".json"
-                                        onChange={(e) => setImportFiles(Array.from(e.target.files))}
-                                        style={{
-                                            position: 'absolute',
-                                            top: 0,
-                                            left: 0,
-                                            width: '100%',
-                                            height: '100%',
-                                            opacity: 0,
-                                            cursor: 'pointer'
-                                        }}
-                                    />
-                                    <div style={{ fontSize: '32px', marginBottom: '12px' }}>📁</div>
-                                    <div style={{ fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
-                                        {importFiles.length > 0 ? `Выбрано файлов: ${importFiles.length}` : 'Нажмите для выбора JSON файлов'}
-                                    </div>
-                                    <div style={{ fontSize: '12px', color: '#94a3b8' }}>Перетащите файлы сюда или кликните для обзора</div>
-                                </div>
-
-                                {importProcessing && (
-                                    <div style={{
-                                        padding: '20px',
-                                        backgroundColor: '#0f172a',
-                                        borderRadius: '12px',
-                                        maxHeight: '180px',
-                                        overflowY: 'auto',
-                                        marginBottom: '24px',
-                                        fontSize: '13px',
-                                        fontFamily: '"SF Mono", "Fira Code", monospace',
-                                        color: '#38bdf8',
-                                        boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)'
-                                    }}>
-                                        {importLog.map((log, i) => (
-                                            <div key={i} style={{ marginBottom: '4px', opacity: i === importLog.length - 1 ? 1 : 0.7 }}>
-                                                <span style={{ color: '#64748b' }}>[{new Date().toLocaleTimeString()}]</span> {log}
-                                            </div>
-                                        ))}
-                                        <div id="import-log-end" />
-                                    </div>
-                                )}
-
-                                {importError && (
-                                    <div style={{
-                                        padding: '16px',
-                                        backgroundColor: '#fef2f2',
-                                        border: '1px solid #fee2e2',
-                                        borderRadius: '12px',
-                                        color: '#dc2626',
-                                        fontSize: '14px',
-                                        marginBottom: '24px',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '12px'
-                                    }}>
-                                        <span>⚠️</span> {importError}
-                                    </div>
-                                )}
-
-                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-                                    <button
-                                        onClick={() => setShowImportModal(false)}
-                                        style={{
-                                            padding: '0 24px',
-                                            height: '48px',
-                                            backgroundColor: '#fff',
-                                            color: '#64748b',
-                                            border: '1px solid #e2e8f0',
-                                            borderRadius: '12px',
-                                            fontWeight: 600,
-                                            fontSize: '14px',
-                                            cursor: 'pointer',
-                                            transition: 'all 0.2s'
-                                        }}
-                                        onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#f8fafc', e.currentTarget.style.borderColor = '#cbd5e1')}
-                                        onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#fff', e.currentTarget.style.borderColor = '#e2e8f0')}
-                                        disabled={importProcessing}
-                                    >
-                                        Отмена
-                                    </button>
-                                    <button
-                                        onClick={handleProcessFiles}
-                                        disabled={importFiles.length === 0 || importProcessing}
-                                        style={{
-                                            padding: '0 24px',
-                                            height: '48px',
-                                            backgroundColor: '#6366f1',
-                                            color: '#fff',
-                                            border: 'none',
-                                            borderRadius: '12px',
-                                            fontWeight: 700,
-                                            fontSize: '14px',
-                                            cursor: 'pointer',
-                                            boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)',
-                                            transition: 'all 0.2s',
-                                            opacity: (importFiles.length === 0 || importProcessing) ? 0.6 : 1
-                                        }}
-                                        onMouseOver={(e) => (importFiles.length > 0 && !importProcessing) && (e.currentTarget.style.backgroundColor = '#4f46e5', e.currentTarget.style.transform = 'translateY(-1px)')}
-                                        onMouseOut={(e) => (importFiles.length > 0 && !importProcessing) && (e.currentTarget.style.backgroundColor = '#6366f1', e.currentTarget.style.transform = 'translateY(0)')}
-                                    >
-                                        {importProcessing ? (
-                                            <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />
-                                                Обработка...
-                                            </span>
-                                        ) : 'Начать импорт'}
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )
+            )
             }
 
             {/* Модальное окно маппинга для импорта */}
@@ -2124,7 +2045,7 @@ const HeatmapPage = ({ projects }) => {
                                 background: '#fcfdfe'
                             }}>
                                 <div>
-                                    <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: 0 }}>Маппинг компонентов</h2>
+                                    <h2 style={styles.subHeader}>Маппинг компонентов</h2>
                                     <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>Свяжите компоненты из отчета с функциональными блоками Allure</div>
                                 </div>
 
@@ -2149,7 +2070,7 @@ const HeatmapPage = ({ projects }) => {
                                         onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#f8fafc', e.currentTarget.style.borderColor = '#cbd5e1')}
                                         onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#fff', e.currentTarget.style.borderColor = '#e2e8f0')}
                                     >
-                                        <span>←</span> Назад к выбору файлов
+                                        Назад к выбору файлов
                                     </button>
 
                                     <button
@@ -2194,7 +2115,8 @@ const HeatmapPage = ({ projects }) => {
                                                 border: '1px solid #cbd5e1',
                                                 fontSize: '14px',
                                                 outline: 'none',
-                                                backgroundColor: '#fff'
+                                                backgroundColor: '#fff',
+                                                color: '#0f172a'
                                             }}
                                         />
                                     </div>
@@ -2218,26 +2140,40 @@ const HeatmapPage = ({ projects }) => {
                                             <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: '#1e293b' }}>
                                                 {selectedComponentForMapping ? `Маппинг для: ${selectedComponentForMapping}` : 'Выберите компонент слева'}
                                             </h3>
-                                            {selectedComponentForMapping && (
-                                                <div style={{ fontSize: '13px', color: '#64748b' }}>
-                                                    {componentMappings[selectedComponentForMapping]?.length || 0} привязано
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                {selectedComponentForMapping && (
+                                                    <div style={{ fontSize: '13px', color: '#64748b' }}>
+                                                        {componentMappings[selectedComponentForMapping]?.length || 0} привязано
+                                                    </div>
+                                                )}
+                                                <div
+                                                    title="Подсказка по маппингу:&#10;• Один клик — выбрать/убрать текущий элемент&#10;• Двойной клик — выбрать/убрать элемент со всеми вложенными"
+                                                    style={{
+                                                        cursor: 'help',
+                                                        fontSize: '16px',
+                                                        backgroundColor: '#f8fafc',
+                                                        width: '28px',
+                                                        height: '28px',
+                                                        borderRadius: '50%',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        border: '1px solid #e2e8f0',
+                                                        transition: 'all 0.2s',
+                                                        visibility: selectedComponentForMapping ? 'visible' : 'hidden'
+                                                    }}
+                                                    onMouseOver={(e) => {
+                                                        e.currentTarget.style.backgroundColor = '#f1f5f9';
+                                                        e.currentTarget.style.transform = 'scale(1.1)';
+                                                    }}
+                                                    onMouseOut={(e) => {
+                                                        e.currentTarget.style.backgroundColor = '#f8fafc';
+                                                        e.currentTarget.style.transform = 'scale(1)';
+                                                    }}
+                                                >
+                                                    💡
                                                 </div>
-                                            )}
-                                        </div>
-                                        <div style={{
-                                            marginBottom: '10px',
-                                            fontSize: '12px',
-                                            color: '#64748b',
-                                            backgroundColor: '#f1f5f9',
-                                            padding: '8px 12px',
-                                            borderRadius: '6px',
-                                            lineHeight: 1.4
-                                        }}>
-                                            <span style={{ fontWeight: 600, color: '#475569' }}>Подсказка:</span>
-                                            <ul style={{ margin: '4px 0 0 0', paddingLeft: '16px' }}>
-                                                <li><b>Один клик</b> — выбрать/убрать текущий элемент</li>
-                                                <li><b>Двойной клик</b> — выбрать/убрать элемент со всеми вложенными</li>
-                                            </ul>
+                                            </div>
                                         </div>
                                         <input
                                             type="text"
@@ -2252,7 +2188,8 @@ const HeatmapPage = ({ projects }) => {
                                                 border: '1px solid #cbd5e1',
                                                 fontSize: '14px',
                                                 outline: 'none',
-                                                backgroundColor: !selectedComponentForMapping ? '#f1f5f9' : '#fff'
+                                                backgroundColor: !selectedComponentForMapping ? '#f1f5f9' : '#fff',
+                                                color: '#0f172a'
                                             }}
                                         />
                                     </div>
@@ -2271,7 +2208,7 @@ const HeatmapPage = ({ projects }) => {
                                                 height: '100%',
                                                 color: '#94a3b8'
                                             }}>
-                                                <div style={{ fontSize: '48px', marginBottom: '16px' }}>👈</div>
+
                                                 <div style={{ fontSize: '16px' }}>Выберите компонент из списка слева,</div>
                                                 <div style={{ fontSize: '14px' }}>чтобы настроить его связи с функциональными блоками</div>
                                             </div>
@@ -2454,7 +2391,7 @@ const HeatmapPage = ({ projects }) => {
                     </div>
                 )
             }
-        </div>
+        </div >
     );
 };
 

@@ -58,6 +58,7 @@ export async function getHeatmapData(req, res) {
             .select(
                 'components.component_name',
                 databasePool.raw('COUNT(component_defects.id) as defect_count'),
+                databasePool.raw('COUNT(DISTINCT COALESCE(component_defects.issue_key, component_defects.id::text)) as unique_incident_count'),
                 databasePool.raw('ARRAY_AGG(DISTINCT component_defects.issue_key) FILTER (WHERE component_defects.issue_key IS NOT NULL) as issue_keys')
             )
             .groupBy('components.component_name');
@@ -142,6 +143,67 @@ export async function getHeatmapData(req, res) {
         const affectedPagesResult = await affectedPagesQuery;
         const affectedPagesCount = affectedPagesResult.length;
 
+        // --- UNMAPPED STATS ---
+        // Get all unique issues that are NOT mapped to any page
+        const issuesMappedToPagesQuery = databasePool('component_defects as cd')
+            .join('components as c', 'cd.component_id', 'c.id')
+            .join('page_component_dependencies as pcd', 'pcd.component_id', 'c.id')
+            .where({ 'c.project_id': projectId })
+            .distinct('cd.issue_key');
+
+        // Apply filters to mapped issues
+        let filteredMappedIssues = issuesMappedToPagesQuery;
+        if (startDate && endDate) filteredMappedIssues = filteredMappedIssues.whereBetween('cd.change_date', [startDate, endDate]);
+        else if (startDate) filteredMappedIssues = filteredMappedIssues.where('cd.change_date', '>=', startDate);
+        else if (endDate) filteredMappedIssues = filteredMappedIssues.where('cd.change_date', '<=', endDate);
+
+        if (parsedReleaseVersions && parsedReleaseVersions.length > 0) filteredMappedIssues = filteredMappedIssues.whereIn('cd.release_version', parsedReleaseVersions);
+        if (parsedIsBugFix !== undefined) filteredMappedIssues = filteredMappedIssues.where('cd.is_bug_fix', parsedIsBugFix);
+        if (componentType) filteredMappedIssues = filteredMappedIssues.where('c.component_type', componentType);
+
+        const mappedIssuesResult = await filteredMappedIssues;
+        const mappedIssueKeys = new Set(mappedIssuesResult.map(r => r.issue_key).filter(Boolean));
+
+        // Get total unique issues for the timeframe
+        let totalIssuesQuery = databasePool('component_defects as cd')
+            .join('components as c', 'cd.component_id', 'c.id')
+            .where({ 'c.project_id': projectId })
+            .distinct('cd.issue_key');
+
+        if (startDate && endDate) totalIssuesQuery = totalIssuesQuery.whereBetween('cd.change_date', [startDate, endDate]);
+        else if (startDate) totalIssuesQuery = totalIssuesQuery.where('cd.change_date', '>=', startDate);
+        else if (endDate) totalIssuesQuery = totalIssuesQuery.where('cd.change_date', '<=', endDate);
+
+        if (parsedReleaseVersions && parsedReleaseVersions.length > 0) totalIssuesQuery = totalIssuesQuery.whereIn('cd.release_version', parsedReleaseVersions);
+        if (parsedIsBugFix !== undefined) totalIssuesQuery = totalIssuesQuery.where('cd.is_bug_fix', parsedIsBugFix);
+        if (componentType) totalIssuesQuery = totalIssuesQuery.where('c.component_type', componentType);
+
+        const totalIssuesResult = await totalIssuesQuery;
+        const totalIssueKeys = totalIssuesResult.map(r => r.issue_key).filter(Boolean);
+        const uniqueTotalIssuesCount = totalIssueKeys.length;
+
+        const unmappedIssueKeys = totalIssueKeys.filter(key => !mappedIssueKeys.has(key));
+        const unmappedIssuesCount = unmappedIssueKeys.length;
+
+        // Top-10 Unmapped Components (components causing impact but not mapped to pages)
+        const unmappedComponentsQuery = databasePool('component_defects as cd')
+            .join('components as c', 'cd.component_id', 'c.id')
+            .leftJoin('page_component_dependencies as pcd', 'pcd.component_id', 'c.id')
+            .where({ 'c.project_id': projectId })
+            .whereNull('pcd.id') // Not in page dependencies
+            .select('c.component_name')
+            .count('cd.id as defect_count')
+            .groupBy('c.component_name')
+            .orderBy('defect_count', 'desc')
+            .limit(10);
+
+        if (startDate && endDate) unmappedComponentsQuery.whereBetween('cd.change_date', [startDate, endDate]);
+        if (parsedReleaseVersions && parsedReleaseVersions.length > 0) unmappedComponentsQuery.whereIn('cd.release_version', parsedReleaseVersions);
+        if (parsedIsBugFix !== undefined) unmappedComponentsQuery.where('cd.is_bug_fix', parsedIsBugFix);
+        if (componentType) unmappedComponentsQuery.where('c.component_type', componentType);
+
+        const topUnmappedComponents = await unmappedComponentsQuery;
+
         // Группируем по компонентам и считаем количество уникальных загрузок
         // Каждая уникальная комбинация (release_version, change_date) = одна загрузка компонента в маппинг
         const componentMap = new Map();
@@ -153,6 +215,7 @@ export async function getHeatmapData(req, res) {
             totalDefects += count;
             componentMap.set(componentName, {
                 count,
+                uniqueIncidentCount: parseInt(row.unique_incident_count, 10) || 0,
                 issueKeys: row.issue_keys || []
             });
         });
@@ -162,6 +225,7 @@ export async function getHeatmapData(req, res) {
             .map(([componentName, data]) => ({
                 componentName,
                 count: data.count,
+                uniqueIncidentCount: data.uniqueIncidentCount,
                 issueKeys: data.issueKeys,
                 percentage: totalDefects > 0 ? ((data.count / totalDefects) * 100).toFixed(1) : '0.0',
             }))
@@ -171,11 +235,15 @@ export async function getHeatmapData(req, res) {
 
         res.status(200).json({
             totalDefects,
+            uniqueTotalIssuesCount,
             components: heatmapData,
             pageStats: {
                 totalProjectPages: totalProjectPagesCount,
                 affectedPages: affectedPagesCount,
-                coveragePercent: totalProjectPagesCount > 0 ? ((affectedPagesCount / totalProjectPagesCount) * 100).toFixed(1) : '0.0'
+                coveragePercent: totalProjectPagesCount > 0 ? ((affectedPagesCount / totalProjectPagesCount) * 100).toFixed(1) : '0.0',
+                unmappedIssuesCount,
+                unmappedIssuesPercent: uniqueTotalIssuesCount > 0 ? ((unmappedIssuesCount / uniqueTotalIssuesCount) * 100).toFixed(1) : '0.0',
+                topUnmappedComponents
             },
             filters: {
                 projectId,
@@ -304,6 +372,7 @@ export async function getTestCoverageData(req, res) {
                 'fb.name as functional_block_name',
                 'fb.custom_field_name as functional_block_custom_field_name',
                 databasePool.raw('COUNT(DISTINCT cd.id) as total_defects'),
+                databasePool.raw('COUNT(DISTINCT COALESCE(cd.issue_key, cd.id::text)) as unique_incidents'),
                 databasePool.raw('ARRAY_AGG(DISTINCT cd.issue_key) FILTER (WHERE cd.issue_key IS NOT NULL) as issue_keys')
             )
             .groupBy('fb.id', 'fb.allure_id', 'fb.name', 'fb.custom_field_name')
@@ -328,6 +397,7 @@ export async function getTestCoverageData(req, res) {
                 functionalBlockName: row.functional_block_name,
                 functionalBlockCustomFieldName: row.functional_block_custom_field_name,
                 defectCount: defectCount,
+                uniqueIncidentCount: parseInt(row.unique_incidents, 10) || 0,
                 issueKeys: row.issue_keys || []
             });
         });
@@ -452,6 +522,7 @@ export async function getTestCoverageData(req, res) {
             .select(
                 'pcd.page_name as page_name',
                 'pcd.page_route as page_route',
+                databasePool.raw('COUNT(DISTINCT COALESCE(cd.issue_key, cd.id::text)) as unique_incidents'),
                 databasePool.raw('ARRAY_AGG(DISTINCT cd.issue_key) FILTER (WHERE cd.issue_key IS NOT NULL) as issue_keys')
             )
             .count('cd.id as total_defects')
@@ -471,6 +542,7 @@ export async function getTestCoverageData(req, res) {
                 pageName: row.page_name,
                 pageRoute: row.page_route,
                 defectCount: defectCount,
+                uniqueIncidentCount: parseInt(row.unique_incidents, 10) || 0,
                 issueKeys: row.issue_keys || []
             });
         });
@@ -564,21 +636,41 @@ export async function bulkImportHistory(req, res) {
 
             // 4. Обновляем маппинги функциональных блоков (если переданы)
             if (mappings && typeof mappings === 'object') {
+                // НОВОЕ: Собираем все уникальные Allure ID из маппингов для перевода в UUID
+                const allureFbIds = new Set();
+                Object.values(mappings).forEach(fbIds => {
+                    if (Array.isArray(fbIds)) {
+                        fbIds.forEach(id => {
+                            if (id != null && id !== '') allureFbIds.add(id.toString());
+                        });
+                    }
+                });
+
+                // Получаем маппинг allure_id -> id (UUID) из БД
+                const fbMappings = await trx('functional_blocks')
+                    .where({ project_id: projectId })
+                    .whereIn('allure_id', Array.from(allureFbIds))
+                    .select('id', 'allure_id');
+
+                const allureToUuidMap = new Map(fbMappings.map(m => [m.allure_id, m.id]));
+
                 for (const [compName, fbIds] of Object.entries(mappings)) {
                     const compId = nameToIdMap.get(compName);
                     if (compId && Array.isArray(fbIds)) {
-                        // Фильтруем null/undefined значения
-                        const validFbIds = fbIds.filter(fbId => fbId != null && fbId !== '');
+                        // Переводим Allure ID в UUID
+                        const validFbUuids = fbIds
+                            .map(id => id ? allureToUuidMap.get(id.toString()) : null)
+                            .filter(uuid => uuid != null);
 
                         // Удаляем старые маппинги этого компонента перед вставкой новых
                         await trx('component_functional_blocks')
                             .where({ component_id: compId })
                             .del();
 
-                        if (validFbIds.length > 0) {
-                            const mappingInserts = validFbIds.map(fbId => ({
+                        if (validFbUuids.length > 0) {
+                            const mappingInserts = validFbUuids.map(fbUuid => ({
                                 component_id: compId,
-                                functional_block_id: fbId
+                                functional_block_id: fbUuid
                             }));
                             await trx('component_functional_blocks').insert(mappingInserts);
                         }
@@ -591,7 +683,9 @@ export async function bulkImportHistory(req, res) {
             const defectInserts = [];
             items.forEach(item => {
                 if (item.affected_components && Array.isArray(item.affected_components)) {
-                    item.affected_components.forEach(compName => {
+                    item.affected_components.forEach(comp => {
+                        // Handle both string format and object format {name, type}
+                        const compName = typeof comp === 'string' ? comp : comp.name;
                         const compId = nameToIdMap.get(compName);
                         if (compId) {
                             defectInserts.push({
@@ -635,7 +729,9 @@ export async function bulkImportHistory(req, res) {
                         const pageRoute = page.page_meta?.route || '';
 
                         if (pageName && page.depends_on_components && Array.isArray(page.depends_on_components)) {
-                            page.depends_on_components.forEach(compName => {
+                            page.depends_on_components.forEach(comp => {
+                                // Handle both string format and object format {name, type}
+                                const compName = typeof comp === 'string' ? comp : comp.name;
                                 const compId = nameToIdMap.get(compName);
                                 if (compId) {
                                     // Проверяем, не добавляли ли мы уже такую зависимость в этом батче
