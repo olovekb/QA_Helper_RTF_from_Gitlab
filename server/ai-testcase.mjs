@@ -392,6 +392,19 @@ function removeTextBeforeSuggestion(inputText) {
 }
 
 /**
+ * Исправить пропущенную открывающую кавычку у строкового значения в ответе AI
+ * @param jsonText - сырой JSON
+ */
+export function repairJsonCommonErrors(jsonText) {
+    if (!jsonText || typeof jsonText !== 'string') return jsonText;
+    // паттерн: "key": UnquotedValue"
+    return jsonText.replace(
+        /"((?:title|recommendation|severity|category))":\s+([^"\s][^"]*?)"\s*([,}\]])/g,
+        (_, key, value, suffix) => `"${key}": "${value}"${suffix}`
+    );
+}
+
+/**
  * Извлекает JSON из текста, который может быть обернут в markdown блоки
  */
 function extractJSON(responseText) {
@@ -944,6 +957,7 @@ ${STYLE_GUIDE}
 
 # ФОРМАТ ОТВЕТА:
 Верни СТРОГО JSON. Ключи — числовые ID без префиксов.
+Все строковые значения (title, recommendation, severity, category) ОБЯЗАТЕЛЬНО в двойных кавычках.
 {
   "171010": [
     {
@@ -1033,8 +1047,18 @@ ${casesForPrompt}`;
     console.log(responseText);
 
     try {
-        const jsonText = extractJSON(responseText);
-        const rawRecommendations = JSON.parse(jsonText);
+        let jsonText = extractJSON(responseText);
+        let rawRecommendations;
+        try {
+            rawRecommendations = JSON.parse(jsonText);
+        } catch (firstError) {
+            const repaired = repairJsonCommonErrors(jsonText);
+            if (repaired !== jsonText) {
+                rawRecommendations = JSON.parse(repaired);
+            } else {
+                throw firstError;
+            }
+        }
         const { recommendations, rawByKey } = normalizeRecommendations(rawRecommendations, batch);
 
         console.log(`\nУспешно получены AI-рекомендации для ${Object.keys(recommendations).length} тест-кейсов`);

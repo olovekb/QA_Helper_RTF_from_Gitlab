@@ -410,7 +410,12 @@ const App = ({ projects }) => {
         const saved = localStorage.getItem(feedbackStorageKey);
         const initialExpanded = saved === null ? true : saved === 'true';
 
-        // iFrame с формой обратной связи по статическому анализу
+        // iFrame с формой обратной связи по статическому анализу (Yandex Forms)
+        if (!document.querySelector('script[src="https://forms.yandex.ru/_static/embed.js"]')) {
+          const yaScript = document.createElement('script');
+          yaScript.src = 'https://forms.yandex.ru/_static/embed.js';
+          document.head.appendChild(yaScript);
+        }
         const iframeWrapper = document.createElement('div');
         iframeWrapper.className = 'feedback-iframe-wrapper';
         iframeWrapper.style.cssText = 'margin-top: 20px; padding-top: 20px; border-top: 1px solid #4b5563;';
@@ -424,10 +429,9 @@ const App = ({ projects }) => {
           <div class="feedback-dropdown-content" style="display: ${initialExpanded ? 'block' : 'none'}; margin-top: 12px;">
             <iframe
               id="${feedbackIframeId}"
-              src="https://docs.google.com/forms/d/e/1FAIpQLSf0pG0OPJn52nOzVTNafxYs9cfPM9qliQhMZ5x8Dic3pf_GGQ/viewform?embedded=true"
+              src="https://forms.yandex.ru/u/698dbc41eb6146267a790a39?iframe=1"
               frameborder="0"
-              marginheight="0"
-              marginwidth="0"
+              name="ya-form-698dbc41eb6146267a790a39"
               title="Форма обратной связи"
               style="width: 90vw; max-width: 657px; height: 800px;"
             >Загрузка…</iframe>
