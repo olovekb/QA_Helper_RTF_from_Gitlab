@@ -208,10 +208,15 @@ cd ..
 
 ```env
 ALLOWED_ORIGINS=http://localhost:3000
+```
+
+2. Cоздать в папке `tia-mapping-service` файл `.env` с параметрами:
+
+```env
 TIA_ALLOWED_ORIGINS=http://localhost:3000
 ```
 
-2. Создать в папке `client` файл `.env.local` с параметрами:
+3. Создать в папке `client` файл `.env.local` с параметрами:
 
 ```env
 REACT_APP_SERVER_URL=http://localhost:5000/api

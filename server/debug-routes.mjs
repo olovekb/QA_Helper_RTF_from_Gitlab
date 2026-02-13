@@ -3,12 +3,13 @@
  */
 
 import { runAutomatedTest, analyzeResults, compareWithReference } from './debug-agent.mjs';
+import { analyzeProjectRules, debugRuleApplication, getRulesForProject } from './validation-engine.mjs';
 
 /**
  * Регистрирует debug маршруты на Express app
  */
 export function registerDebugRoutes(app) {
-    
+
     /**
      * POST /api/debug/test-agent
      * Автоматическое тестирование агента с заданными требованиями
@@ -118,9 +119,108 @@ export function registerDebugRoutes(app) {
         }
     });
 
+    /**
+     * POST /api/debug/analyze-rules
+     * Анализ правил для проекта
+     * Body: { projectId: string }
+     */
+    app.post('/api/debug/analyze-rules', async (req, res) => {
+        try {
+            const { projectId } = req.body;
+
+            if (!projectId) {
+                return res.status(400).json({ error: 'projectId is required' });
+            }
+
+            const analysis = analyzeProjectRules(projectId);
+
+            res.json({
+                success: true,
+                analysis,
+                timestamp: new Date().toISOString()
+            });
+
+        } catch (error) {
+            console.error('[DEBUG] Ошибка анализа правил:', error);
+            res.status(500).json({
+                success: false,
+                error: error.message
+            });
+        }
+    });
+
+    /**
+     * POST /api/debug/test-rule-application
+     * Отладка применения правил к конкретному тест-кейсу
+     * Body: { testCase: object, projectId: string }
+     */
+    app.post('/api/debug/test-rule-application', async (req, res) => {
+        try {
+            const { testCase, projectId } = req.body;
+
+            if (!testCase || !projectId) {
+                return res.status(400).json({ error: 'testCase and projectId are required' });
+            }
+
+            const debugInfo = debugRuleApplication(testCase, projectId);
+
+            res.json({
+                success: true,
+                debugInfo,
+                timestamp: new Date().toISOString()
+            });
+
+        } catch (error) {
+            console.error('[DEBUG] Ошибка отладки правил:', error);
+            res.status(500).json({
+                success: false,
+                error: error.message
+            });
+        }
+    });
+
+    /**
+     * GET /api/debug/rules/:projectId
+     * Получение всех правил для проекта
+     */
+    app.get('/api/debug/rules/:projectId', async (req, res) => {
+        try {
+            const { projectId } = req.params;
+            const rules = getRulesForProject(projectId);
+
+            const rulesSummary = rules.map(rule => ({
+                id: rule.id,
+                name: rule.name,
+                source: rule.source,
+                enabled: rule.enabled !== false,
+                checkType: rule.check_type,
+                category: rule.category,
+                level: rule.level,
+                appliesTo: rule.appliesTo
+            }));
+
+            res.json({
+                success: true,
+                projectId,
+                totalRules: rules.length,
+                rules: rulesSummary,
+                timestamp: new Date().toISOString()
+            });
+
+        } catch (error) {
+            console.error('[DEBUG] Ошибка получения правил:', error);
+            res.status(500).json({
+                success: false,
+                error: error.message
+            });
+        }
+    });
+
     console.log('[DEBUG] Debug API маршруты зарегистрированы:');
     console.log('[DEBUG]   POST /api/debug/test-agent');
     console.log('[DEBUG]   POST /api/debug/validate-model');
     console.log('[DEBUG]   POST /api/debug/validate-cases');
+    console.log('[DEBUG]   POST /api/debug/analyze-rules');
+    console.log('[DEBUG]   POST /api/debug/test-rule-application');
+    console.log('[DEBUG]   GET  /api/debug/rules/:projectId');
 }
-

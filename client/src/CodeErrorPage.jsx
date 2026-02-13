@@ -536,7 +536,6 @@ export default function CodeErrorPage({ projects }) {
     const [tasks, setTasks] = usePersistentState('codeErrorTasks', []);
     const [jiraProject, setJiraProject] = usePersistentState('jiraProject', '');
     const [jiraPat, setJiraPat] = usePersistentState('jiraPat', '');
-    const [openRouterKey, setOpenRouterKey] = usePersistentState('openRouterKey', '');
     const [epicOption, setEpicOption] = usePersistentState('codeErrorEpic', null);
     const [assigneeOption, setAssigneeOption] = usePersistentState('codeErrorAssignee', null);
     const [versionOption, setVersionOption] = usePersistentState('codeErrorVersion', null);
@@ -861,8 +860,7 @@ export default function CodeErrorPage({ projects }) {
         const t = tasks[idx];
         setAiLoading(l => ({ ...l, [idx]: true }));
         try {
-            const headers = openRouterKey ? { 'X-OpenRouter-Key': openRouterKey } : {};
-            const { data } = await axios.post(`${config.serverUrl}/bug/ai-review`, { task: t }, { headers });
+            const { data } = await axios.post(`${config.serverUrl}/bug/ai-review`, { task: t });
             setTasks(ts => ts.map((c, i) => i === idx ? {
                 ...c,
                 aiSummary: data.summaryFeedback, aiDescription: data.descriptionFeedback,
@@ -1174,19 +1172,6 @@ ${t.expected}
                         <label>Jira PAT (Personal Access Token)</label>
                         <input type="password" value={jiraPat} onChange={e => setJiraPat(e.target.value)} placeholder="Ваш токен доступа Jira" />
                     </div>
-                    <div className="field">
-                        <label>
-                            OpenRouter API Key 
-                            <span style={{ cursor: 'help', marginLeft: '5px' }} title="Оставьте пустым для использования API-ключа по умолчанию">ⓘ</span>
-                        </label>
-                        <input 
-                            type="password" 
-                            value={openRouterKey} 
-                            onChange={e => setOpenRouterKey(e.target.value.trim())} 
-                            placeholder="sk-or-..." 
-                        />
-                    </div>
-                    {/* FIXED: Added field wrapper and label */}
                     <div className="field">
                         <label>Проект Allure</label>
                         <Select

@@ -9,6 +9,7 @@ import { marked } from 'marked'; // Импорт библиотеки marked
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import GlobalBackgroundProgress from './components/GlobalBackgroundProgress';
 import ErrorBoundary from './components/ErrorBoundary';
+import RulesModal from './components/RulesModal';
 
 function usePersistentState(key, defaultValue) {
   const [state, setState] = useState(defaultValue);
@@ -40,7 +41,6 @@ function usePersistentState(key, defaultValue) {
 const App = ({ projects }) => {
   const [projectId, setProjectId] = useState(config.projectId || '');
   const [jiraIssue, setJiraIssue] = useState(config.jiraIssue || '');
-  const [openRouterKey, setOpenRouterKey] = usePersistentState('openRouterKey', '');
   const [loading, setLoading] = useState(false);
   const [htmlReport, setHtmlReport] = useState('');
   const [fixStatus, setFixStatus] = useState(false);
@@ -51,6 +51,7 @@ const App = ({ projects }) => {
   const [showCleanupModal, setShowCleanupModal] = useState(false);
   const [cleanupLoading, setCleanupLoading] = useState(false);
   const [cleanupResult, setCleanupResult] = useState(null);
+  const [showRulesModal, setShowRulesModal] = useState(false);
 
   const navigate = useNavigate();
   const reportContainerRef = useRef(null);
@@ -70,6 +71,18 @@ const App = ({ projects }) => {
       setHtmlReport(savedReport);
     }
   }, []);
+
+  const syncProjectFromJiraPrefix = (value) => {
+    const prefix = value.split('-')[0]?.trim().toUpperCase();
+    if (!prefix) return;
+    const matched = projects.find(
+      (p) => String(p.name).trim().toUpperCase() === prefix
+    );
+    if (matched) {
+      const id = String(matched.id);
+      setProjectId((prev) => (prev === id ? prev : id));
+    }
+  };
 
   // Делегирование кликов внутри контейнера, обработка кнопок AI-рекомендаций
   useEffect(() => {
@@ -104,8 +117,7 @@ const App = ({ projects }) => {
       const recParagraph = container.querySelector(`#ai-rec-text-${testId}`);
 
       try {
-        const headers = openRouterKey ? { 'X-OpenRouter-Key': openRouterKey } : {};
-        const response = await axios.post(`${config.serverUrl}/ai-recommendation`, payload, { headers });
+        const response = await axios.post(`${config.serverUrl}/ai-recommendation`, payload);
         const recommendation = response.data.recommendation || 'Нет рекомендаций';
 
         if (recParagraph) {
@@ -127,6 +139,371 @@ const App = ({ projects }) => {
       container.removeEventListener('click', handleButtonClick);
     };
   }, [htmlReport, projectId]);
+
+  // Фильтрация по категориям и дропдауны в структуре
+  useEffect(() => {
+    const container = reportContainerRef.current;
+    if (!container || !htmlReport) return;
+    const select = container.querySelector('#category-select');
+    const tree = container.querySelector('#nav-tree');
+    if (!select || !tree) return;
+
+    const applyFilter = () => {
+      const val = select.value;
+      const leaves = tree.querySelectorAll('.tree-leaf');
+      leaves.forEach((li) => {
+        const cats = (li.getAttribute('data-categories') || '').split(',').map((s) => s.trim());
+        const show = val === '_all' || cats.indexOf(val) >= 0;
+        li.classList.toggle('filtered-out', !show);
+      });
+      const nodes = tree.querySelectorAll('.tree-node');
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        const n = nodes[i];
+        const childrenUl = n.querySelector(':scope > .tree-children');
+        if (!childrenUl) continue;
+        const hasVisible = Array.prototype.some.call(childrenUl.children, (c) => !c.classList.contains('filtered-out'));
+        n.classList.toggle('filtered-out', !hasVisible);
+      }
+      const countVisibleLeaves = (node) => {
+        return node.querySelectorAll('.tree-leaf:not(.filtered-out)').length;
+      };
+      nodes.forEach((n) => {
+        const countSpan = n.querySelector(':scope > .tree-row .tree-count');
+        if (countSpan) {
+          const visibleCount = countVisibleLeaves(n);
+          countSpan.textContent = visibleCount;
+        }
+      });
+    };
+
+    select.addEventListener('change', applyFilter);
+    applyFilter();
+
+    const svgChevronRight = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2l4 3-4 3"/></svg>';
+    const svgChevronDown = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3l3 4 3-4"/></svg>';
+    const setToggleIcon = (el, expanded) => {
+      el.innerHTML = expanded ? svgChevronDown : svgChevronRight;
+    };
+    const toggleBtns = container.querySelectorAll('.tree-toggle');
+    toggleBtns.forEach((btn) => {
+      const targetId = btn.getAttribute('data-target');
+      if (!targetId) return;
+      const ul = document.getElementById(targetId);
+      if (!ul) return;
+      const treeRow = btn.closest('.tree-row');
+      if (!treeRow) return;
+      
+      const toggleNode = () => {
+        ul.classList.toggle('collapsed');
+        setToggleIcon(btn, !ul.classList.contains('collapsed'));
+      };
+      
+      // Клик на иконку
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleNode();
+      });
+      
+      // Клик на всю строку
+      treeRow.addEventListener('click', (e) => {
+        if (e.target.closest('.tree-checkbox') || e.target.closest('.fix-checkbox') || e.target.closest('a')) return;
+        toggleNode();
+      });
+      
+      const isRoot = !!btn.closest('[data-depth="0"]');
+      if (isRoot) {
+        ul.classList.remove('collapsed');
+        setToggleIcon(btn, true);
+      } else {
+        ul.classList.add('collapsed');
+        setToggleIcon(btn, false);
+      }
+    });
+
+    return () => {
+      select.removeEventListener('change', applyFilter);
+    };
+  }, [htmlReport]);
+
+  useEffect(() => {
+    const container = reportContainerRef.current;
+    if (!container || !htmlReport) return;
+
+    const styleId = 'react-report-styles';
+    let styleElement = document.getElementById(styleId);
+    if (!styleElement) {
+      styleElement = document.createElement('style');
+      styleElement.id = styleId;
+      styleElement.textContent = `
+        .test-lists {
+          flex: 0 0 40% !important;
+          min-width: 250px !important;
+          max-width: 70% !important;
+          display: flex !important;
+          flex-direction: column !important;
+          gap: 20px !important;
+          margin-bottom: 0 !important;
+        }
+        
+        .test-cases-details {
+          flex: 1 !important;
+          min-height: 400px !important;
+        }
+        
+        .test-lists .scrollable-list {
+          max-height: none !important;
+          overflow: visible !important;
+        }
+        
+        .test-case {
+          display: none !important;
+          border-bottom: none !important;
+        }
+        
+        .test-case.active {
+          display: block !important;
+        }
+        
+        .tree-leaf a.active-link {
+          font-weight: 600 !important;
+          background-color: #374151 !important;
+          padding: 2px 6px !important;
+          border-radius: 4px !important;
+          text-decoration: none !important;
+        }
+      `;
+      document.head.appendChild(styleElement);
+    }
+
+    // Модифицируем структуру DOM
+    const testLists = container.querySelector('.test-lists');
+    const testDetails = container.querySelector('.test-cases-details');
+    
+    if (testLists && testDetails && !container.querySelector('.main-layout')) {
+      // Создаем новую структуру
+      const mainLayout = document.createElement('div');
+      mainLayout.className = 'main-layout';
+      mainLayout.id = 'main-layout';
+      mainLayout.style.cssText = 'display: flex; gap: 0; margin-bottom: 30px; align-items: stretch;';
+      
+      const resizerElement = document.createElement('div');
+      resizerElement.className = 'resizer';
+      resizerElement.id = 'resizer';
+      resizerElement.style.cssText = 'flex: 0 0 4px; background: #4b5563; cursor: col-resize; position: relative; transition: background-color 0.2s; margin: 0 8px;';
+      
+      resizerElement.addEventListener('mouseenter', () => {
+        resizerElement.style.background = '#6366f1';
+      });
+      resizerElement.addEventListener('mouseleave', () => {
+        resizerElement.style.background = '#4b5563';
+      });
+      
+      const emptyStateElement = document.createElement('div');
+      emptyStateElement.className = 'empty-state';
+      emptyStateElement.style.cssText = 'display: flex; align-items: center; justify-content: center; min-height: 400px; color: #d1d5db; font-size: 1.1rem; text-align: center;';
+      emptyStateElement.innerHTML = '<p>Выберите тест-кейс для просмотра деталей</p>';
+      
+      // перемещение элементов
+      const parent = testLists.parentElement;
+      parent.insertBefore(mainLayout, testLists);
+      mainLayout.appendChild(testLists);
+      mainLayout.appendChild(resizerElement);
+      mainLayout.appendChild(testDetails);
+      testDetails.insertBefore(emptyStateElement, testDetails.firstChild);
+    }
+
+    // обработка кликов по тест-кейсам в структуре для отображения превью
+    const emptyState = container.querySelector('.empty-state');
+    const testCases = container.querySelectorAll('.test-case');
+    const treeLinks = container.querySelectorAll('.tree-leaf a');
+
+    const showTestCase = (testId) => {
+      if (emptyState) emptyState.style.display = 'none';
+      
+      testCases.forEach((tc) => {
+        tc.classList.remove('active');
+      });
+      
+      const targetCase = document.getElementById(testId);
+      
+      if (targetCase) {
+        targetCase.classList.add('active');
+        
+        treeLinks.forEach((link) => {
+          link.classList.remove('active-link');
+        });
+        const activeLink = container.querySelector(`.tree-leaf a[href="#${testId}"]`);
+        if (activeLink) {
+          activeLink.classList.add('active-link');
+        }
+      }
+    };
+
+    treeLinks.forEach((link) => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const href = link.getAttribute('href');
+        if (href && href.startsWith('#')) {
+          showTestCase(href.substring(1));
+        }
+      });
+    });
+
+    // ресайз колонок
+    const resizer = container.querySelector('#resizer');
+    const leftPanel = container.querySelector('#test-lists');
+    
+    let cleanupResize = null;
+
+    if (resizer && leftPanel) {
+      let isResizing = false;
+
+      const handleMouseDown = (e) => {
+        isResizing = true;
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+        e.stopPropagation();
+      };
+
+      const handleMouseMove = (e) => {
+        if (!isResizing) return;
+
+        const containerLeft = leftPanel.parentElement.getBoundingClientRect().left;
+        const newWidth = e.clientX - containerLeft;
+
+        if (newWidth >= 250 && newWidth <= 800) {
+          leftPanel.style.setProperty('flex-basis', `${newWidth}px`, 'important');
+          leftPanel.style.setProperty('width', `${newWidth}px`, 'important');
+          leftPanel.style.setProperty('flex-grow', '0', 'important');
+          leftPanel.style.setProperty('flex-shrink', '0', 'important');
+        }
+        e.preventDefault();
+      };
+
+      const handleMouseUp = (e) => {
+        if (isResizing) {
+          isResizing = false;
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+        }
+        e.preventDefault();
+      };
+
+      resizer.addEventListener('mousedown', handleMouseDown);
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+
+      cleanupResize = () => {
+        resizer.removeEventListener('mousedown', handleMouseDown);
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+    // TODO: убрать после завершения сбора ОС 
+    // Дропдаун с формой обратной связи (состояние в localStorage)
+    const feedbackIframeId = 'feedback-form-iframe';
+    const feedbackStorageKey = 'feedbackFormExpanded';
+    if (!container.querySelector(`#${feedbackIframeId}`)) {
+      const mainLayout = container.querySelector('#main-layout');
+      if (mainLayout) {
+        const saved = localStorage.getItem(feedbackStorageKey);
+        const initialExpanded = saved === null ? true : saved === 'true';
+
+        // iFrame с формой обратной связи по статическому анализу
+        const iframeWrapper = document.createElement('div');
+        iframeWrapper.className = 'feedback-iframe-wrapper';
+        iframeWrapper.style.cssText = 'margin-top: 20px; padding-top: 20px; border-top: 1px solid #4b5563;';
+        const svgChevronDown = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3l3 4 3-4"/></svg>';
+        const svgChevronRight = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2l4 3-4 3"/></svg>';
+        iframeWrapper.innerHTML = `
+          <div class="feedback-dropdown-header" data-expanded="${initialExpanded}" style="cursor: pointer; font-size: 14px; color: #9ca3af; user-select: none; display: flex; align-items: center; justify-content: center; gap: 6px;">
+            <span class="feedback-dropdown-icon">${initialExpanded ? svgChevronDown : svgChevronRight}</span>
+            Оставить обратную связь
+          </div>
+          <div class="feedback-dropdown-content" style="display: ${initialExpanded ? 'block' : 'none'}; margin-top: 12px;">
+            <iframe
+              id="${feedbackIframeId}"
+              src="https://docs.google.com/forms/d/e/1FAIpQLSf0pG0OPJn52nOzVTNafxYs9cfPM9qliQhMZ5x8Dic3pf_GGQ/viewform?embedded=true"
+              frameborder="0"
+              marginheight="0"
+              marginwidth="0"
+              title="Форма обратной связи"
+              style="width: 90vw; max-width: 657px; height: 800px;"
+            >Загрузка…</iframe>
+          </div>
+        `;
+        mainLayout.parentElement.appendChild(iframeWrapper);
+
+        const header = iframeWrapper.querySelector('.feedback-dropdown-header');
+        const content = iframeWrapper.querySelector('.feedback-dropdown-content');
+        const iconEl = iframeWrapper.querySelector('.feedback-dropdown-icon');
+        header.addEventListener('click', () => {
+          const expanded = header.getAttribute('data-expanded') === 'true';
+          const newExpanded = !expanded;
+          header.setAttribute('data-expanded', newExpanded);
+          content.style.display = newExpanded ? 'block' : 'none';
+          if (iconEl) iconEl.innerHTML = newExpanded ? svgChevronDown : svgChevronRight;
+          localStorage.setItem(feedbackStorageKey, String(newExpanded));
+        });
+      }
+    }
+
+    // Общий cleanup
+    return () => {
+      if (cleanupResize) cleanupResize();
+      const iframeWrapper = container?.querySelector('.feedback-iframe-wrapper');
+      if (iframeWrapper) iframeWrapper.remove();
+    };
+  }, [htmlReport]);
+
+  // клавиатурные события
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // закрыть модальное окно правил
+      if (e.key === 'Escape') {
+        if (showRulesModal) {
+          setShowRulesModal(false);
+        }
+        if (showCleanupModal) {
+          setShowCleanupModal(false);
+        }
+      }
+
+      // открыть модальное окно правил
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        if (projectId && !showRulesModal) {
+          setShowRulesModal(true);
+        }
+      }
+
+      // скачать репорт
+      if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+        e.preventDefault();
+        if (htmlReport && !loading) {
+          downloadHtml();
+        }
+      }
+
+      // фокус на фильтр категорий
+      if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const activeElement = document.activeElement;
+        if (activeElement?.tagName !== 'INPUT' && activeElement?.tagName !== 'TEXTAREA') {
+          e.preventDefault();
+          const categorySelect = document.getElementById('category-select');
+          if (categorySelect) {
+            categorySelect.focus();
+          }
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showRulesModal, showCleanupModal, projectId, htmlReport, loading]);
 
   const downloadHtml = () => {
     const htmlContent = sessionStorage.getItem('htmlReport');
@@ -294,12 +671,12 @@ const App = ({ projects }) => {
       </div>
       {activeTab === 'analysis' && (
         <div style={{
-          maxWidth: '800px',
+          maxWidth: '90vw',
           margin: '0 auto',
           padding: '40px 20px'
         }}>
           <form onSubmit={handleSubmit} style={{
-            backgroundColor: '#ffffff',
+            backgroundColor: '#1f2937',
             padding: '32px',
             borderRadius: '12px',
             boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
@@ -311,7 +688,7 @@ const App = ({ projects }) => {
                 marginBottom: '8px',
                 fontSize: '14px',
                 fontWeight: '600',
-                color: '#374151'
+                color: '#d1d5db'
               }}>
                 Выберите проект:
               </label>
@@ -322,16 +699,16 @@ const App = ({ projects }) => {
                   width: '100%',
                   padding: '12px 16px',
                   fontSize: '15px',
-                  border: '1px solid #d1d5db',
+                  border: '1px solid #4b5563',
                   borderRadius: '8px',
-                  backgroundColor: '#ffffff',
-                  color: '#1f2937',
+                  backgroundColor: '#374151',
+                  color: '#f9fafb',
                   cursor: 'pointer',
                   transition: 'all 0.2s',
                   outline: 'none'
                 }}
-                onFocus={(e) => e.target.style.borderColor = '#3b82f6'}
-                onBlur={(e) => e.target.style.borderColor = '#d1d5db'}
+                onFocus={(e) => e.target.style.borderColor = '#6366f1'}
+                onBlur={(e) => e.target.style.borderColor = '#4b5563'}
               >
                 <option value="">Выберите проект</option>
                 {projects.map((project) => (
@@ -347,22 +724,26 @@ const App = ({ projects }) => {
                 marginBottom: '8px',
                 fontSize: '14px',
                 fontWeight: '600',
-                color: '#374151'
+                color: '#d1d5db'
               }}>
                 Номер задачи из Jira:
               </label>
               <input 
                 type="text" 
                 value={jiraIssue} 
-                onChange={(e) => setJiraIssue(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setJiraIssue(v);
+                  syncProjectFromJiraPrefix(v);
+                }}
                 style={{
                   width: '100%',
                   padding: '12px 16px',
                   fontSize: '15px',
-                  border: '1px solid #d1d5db',
+                  border: '1px solid #4b5563',
                   borderRadius: '8px',
-                  backgroundColor: '#ffffff',
-                  color: '#1f2937',
+                  backgroundColor: '#374151',
+                  color: '#f9fafb',
                   outline: 'none',
                   transition: 'all 0.2s',
                   boxSizing: 'border-box'
@@ -371,77 +752,64 @@ const App = ({ projects }) => {
                 onBlur={(e) => e.target.style.borderColor = '#d1d5db'}
               />
             </div>
-            <div style={{ marginBottom: '32px' }}>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                fontSize: '14px',
-                fontWeight: '600',
-                color: '#374151'
-              }}>
-                OpenRouter API Key 
-                <span style={{ 
-                  cursor: 'help', 
-                  marginLeft: '5px',
-                  color: '#6b7280'
-                }} title="Оставьте пустым для использования API-ключа по умолчанию">ⓘ</span>:
-              </label>
-              <input 
-                type="password" 
-                value={openRouterKey} 
-                onChange={(e) => setOpenRouterKey(e.target.value.trim())} 
-                placeholder="sk-or-..."
+            {/* Кнопка просмотра правил */}
+            {projectId && (
+              <button 
+                type="button"
+                onClick={() => setShowRulesModal(true)}
                 style={{
                   width: '100%',
-                  padding: '12px 16px',
-                  fontSize: '15px',
-                  border: '1px solid #d1d5db',
+                  padding: '12px 24px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: '#3b82f6',
+                  backgroundColor: 'transparent',
+                  border: '2px solid #3b82f6',
                   borderRadius: '8px',
-                  backgroundColor: '#ffffff',
-                  color: '#1f2937',
-                  outline: 'none',
-                  transition: 'all 0.2s',
-                  boxSizing: 'border-box'
+                  cursor: 'pointer',
+                  margin: '0px'
                 }}
-                onFocus={(e) => e.target.style.borderColor = '#3b82f6'}
-                onBlur={(e) => e.target.style.borderColor = '#d1d5db'}
-              />
-            </div>
+              >
+                Правила статанализа
+              </button>
+            )}
+            
             <button 
               type="submit" 
-              disabled={loading}
+              disabled={loading || !projectId}
               style={{
                 width: '100%',
                 padding: '14px 24px',
                 fontSize: '16px',
                 fontWeight: '600',
                 color: '#ffffff',
-                backgroundColor: loading ? '#9ca3af' : '#3b82f6',
+                backgroundColor: (loading || !projectId) ? '#9ca3af' : '#3b82f6',
                 border: 'none',
                 borderRadius: '8px',
-                cursor: loading ? 'not-allowed' : 'pointer',
+                cursor: (loading || !projectId) ? 'not-allowed' : 'pointer',
                 transition: 'all 0.2s',
-                boxShadow: loading ? 'none' : '0 2px 4px rgba(59, 130, 246, 0.3)'
+                boxShadow: (loading || !projectId) ? 'none' : '0 2px 4px rgba(59, 130, 246, 0.3)'
               }}
               onMouseEnter={(e) => {
-                if (!loading) {
+                if (!loading && projectId) {
                   e.target.style.backgroundColor = '#2563eb';
                   e.target.style.boxShadow = '0 4px 8px rgba(59, 130, 246, 0.4)';
                   e.target.style.transform = 'translateY(-1px)';
                 }
               }}
               onMouseLeave={(e) => {
-                if (!loading) {
+                if (!loading && projectId) {
                   e.target.style.backgroundColor = '#3b82f6';
                   e.target.style.boxShadow = '0 2px 4px rgba(59, 130, 246, 0.3)';
                   e.target.style.transform = 'translateY(0)';
                 }
               }}
             >
-              {loading ? 'Анализ запущен...' : 'Запустить анализ'}
+              {loading ? 'Анализ запущен...' : !projectId ? 'Выберите проект' : 'Запустить анализ'}
             </button>
           </form>
           {htmlReport && !loading && (
+            <>
             <div style={{ marginBottom: '32px', textAlign: 'center' }}>
               <button 
                 onClick={downloadHtml} 
@@ -471,12 +839,23 @@ const App = ({ projects }) => {
                 Скачать отчёт
               </button>
             </div>
+            <div className="floating-buttons analysis-floating">
+              <span />
+              <button
+                type="button"
+                className="btn btn-secondary btn-top"
+                onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+              >
+                ↑ Вверх
+              </button>
+            </div>
+            </>
           )}
           <div ref={reportContainerRef} style={{
-            backgroundColor: '#ffffff',
+            backgroundColor: '#1f2937',
             padding: '32px',
             borderRadius: '12px',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.2)',
             minHeight: '200px'
           }}>
             {loading ? (
@@ -519,10 +898,10 @@ const App = ({ projects }) => {
             Экспорт XMind в Allure
           </h2>
           <div style={{
-            backgroundColor: '#ffffff',
+            backgroundColor: '#1f2937',
             padding: '32px',
             borderRadius: '12px',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.2)',
             marginBottom: '24px'
           }}>
             <div style={{ marginBottom: '24px' }}>
@@ -531,7 +910,7 @@ const App = ({ projects }) => {
                 marginBottom: '8px',
                 fontSize: '14px',
                 fontWeight: '600',
-                color: '#374151'
+                color: '#d1d5db'
               }}>
                 Выберите проект:
               </label>
@@ -542,17 +921,17 @@ const App = ({ projects }) => {
                   width: '100%',
                   padding: '12px 16px',
                   fontSize: '15px',
-                  border: '1px solid #d1d5db',
+                  border: '1px solid #4b5563',
                   borderRadius: '8px',
-                  backgroundColor: '#ffffff',
-                  color: '#1f2937',
+                  backgroundColor: '#374151',
+                  color: '#f9fafb',
                   cursor: 'pointer',
                   transition: 'all 0.2s',
                   outline: 'none',
                   boxSizing: 'border-box'
                 }}
-                onFocus={(e) => e.target.style.borderColor = '#3b82f6'}
-                onBlur={(e) => e.target.style.borderColor = '#d1d5db'}
+                onFocus={(e) => e.target.style.borderColor = '#6366f1'}
+                onBlur={(e) => e.target.style.borderColor = '#4b5563'}
               >
                 <option value="">Выберите проект</option>
                 {projects.map((project) => (
@@ -568,7 +947,7 @@ const App = ({ projects }) => {
                 marginBottom: '8px',
                 fontSize: '14px',
                 fontWeight: '600',
-                color: '#374151'
+                color: '#d1d5db'
               }}>
                 Загрузить XMind файл:
               </label>
@@ -780,14 +1159,14 @@ const App = ({ projects }) => {
           backdropFilter: 'blur(2px)'
         }}>
           <div style={{
-            backgroundColor: 'white',
+            backgroundColor: '#1f2937',
             padding: '40px',
             borderRadius: '16px',
             maxWidth: '600px',
             width: '90%',
             maxHeight: '90vh',
             overflowY: 'auto',
-            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.2)',
             position: 'relative'
           }}>
             <h2 style={{ 
@@ -1116,6 +1495,14 @@ const App = ({ projects }) => {
         </div>
       )}
       </div>
+      
+      {/* Модалка с правилами валидации */}
+      <RulesModal 
+        isOpen={showRulesModal}
+        onClose={() => setShowRulesModal(false)}
+        projectId={projectId}
+        projects={projects}
+      />
     </ErrorBoundary>
   );
 };

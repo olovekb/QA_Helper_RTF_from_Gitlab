@@ -2,3 +2,5 @@
 **/package-lock.json
 **/.env
 **/pgdata
+**/report/
+ai-logs/

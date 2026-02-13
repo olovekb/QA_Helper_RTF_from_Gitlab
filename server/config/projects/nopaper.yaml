@@ -1,0 +1,14 @@
+# Кастомные правила для Nopaper (id = 2)
+project_rules:
+  "2":
+    - id: "nopaper_block_required"
+      name: "Обязательное поле Block (кастомное правило проекта)"
+      description: "Обязательно наличие заполненного поля Block"
+      level: "warning"
+      enabled: true
+      category: "custom_fields"
+      check_type: "custom_field_check"
+      params:
+        field: "Block"
+        operator: "not_empty"
+        error_message: "Не получено значение кастомного поля Block"

@@ -189,8 +189,17 @@ import { spinningLoader } from './spinning-loader.mjs';
 import pLimit from 'p-limit';
 import { formatTestCaseAsJson } from './generate-json.mjs';
 import { staticAnalysis } from './static-analysis.mjs';
+import {
+    getAllRulesDocumentation,
+    getAllRulesForDocumentation,
+    getAllProjects,
+    getProjectSettings,
+    getBaseRulesDocumentation,
+    getProjectRulesDocumentation
+} from './validation-engine.mjs';
+import { writeValidationRulesMarkdown } from './scripts/generate-validation-rules-md.mjs';
 import { exportStructureAllure, exportStructureAllureNocode } from './xmind-parce/export-structure-allure.mjs';
-import { analyzeTestCaseWithAI } from './ai-testcase.mjs';
+import { analyzeTestCaseWithAI, analyzeBulkTestCasesWithAI, extractExpectedResult } from './ai-testcase.mjs';
 import { fetchConfluencePage } from './confluenceFetcher.mjs';
 import { analyzeRequirementWithAI } from './analyzeRequirementWithAI.mjs';
 import { Buffer } from 'buffer';
@@ -2290,28 +2299,22 @@ function convertAllureStepsToFormat(stepsRaw, layer) {
         // Обычный шаг
         const stepBody = step.body || '';
 
-        // Если это E2E и у шага есть expectedResultId, извлекаем ожидаемый результат
-        if (isE2E && step.expectedResultId) {
-            const expectedResultContainer = scenarioSteps[step.expectedResultId];
-            if (expectedResultContainer && expectedResultContainer.children) {
-                // Извлекаем текст ожидаемого результата из дочерних шагов
-                const expectedResultChildren = expectedResultContainer.children || [];
-                const expectedResultTexts = expectedResultChildren
-                    .map(childId => {
-                        const childStep = scenarioSteps[childId];
-                        return childStep?.body || '';
-                    })
-                    .filter(text => text.trim().length > 0);
-
-                if (expectedResultTexts.length > 0) {
-                    // Объединяем все тексты ожидаемого результата в одну строку
-                    const expectedResultText = expectedResultTexts.join('\n');
+        // Если у шага есть expectedResultId, извлекаем ожидаемый результат
+        if (step.expectedResultId) {
+            const expectedResultText = extractExpectedResult(step.expectedResultId, scenarioSteps);
+            
+            if (expectedResultText) {
+                if (isE2E) {
+                    // Для E2E сохраняем как объект
                     convertedSteps.push({
                         action: stepBody,
                         expectedResult: expectedResultText
                     });
-                    continue;
+                } else {
+                    // Для Integration тестов сохраняем как строку с ожидаемым результатом
+                    convertedSteps.push(`${stepBody}\nОжидаемый результат: ${expectedResultText}`);
                 }
+                continue;
             }
         }
 
@@ -2344,15 +2347,20 @@ async function filterCases(allCases, jiraIssue, projectId) {
             }
 
             // Запускаем запросы параллельно
-            const [tags, stepsRaw, expectedResult, status, layer, precondition, customFields] = await Promise.all([
+            const [tags, stepsRaw, expectedResult, status, layer, precondition, customFields, overview] = await Promise.all([
                 getCaseTags(id),
                 getTestCaseSteps(id),
                 getTestCaseExpectedResult(id),
                 getTestCaseStatus(id),
                 getTestCaseLayer(id),
                 getTestCasePrecondition(id),
-                getTestCaseCustomFields(id, projectId)
+                getTestCaseCustomFields(id, projectId),
+                getTestCaseOverview(id)
             ]);
+
+            // Извлекаем параметры и примеры из overview (значения параметров приходят в examples)
+            const parameters = overview?.parameters || [];
+            const examples = overview?.examples || [];
 
             // Логируем детальную информацию только для проблемных тест-кейсов (уменьшаем шум)
             if ((id === 168712 || id === 168807 || id === 168813) && (!stepsRaw || Array.isArray(stepsRaw) || !stepsRaw.scenario)) {
@@ -2384,7 +2392,9 @@ async function filterCases(allCases, jiraIssue, projectId) {
                 layer,
                 status,
                 precondition,
-                customFields
+                customFields,
+                parameters,
+                examples
             });
         })
     );
@@ -2398,7 +2408,14 @@ async function filterCases(allCases, jiraIssue, projectId) {
 // API для анализа тест-кейсов
 app.post('/api/analyze', async (req, res) => {
     const { projectId, jiraIssue } = req.body;
-    console.log(`Запрос /api/analyze получил: ${JSON.stringify(req.body)}`)
+    console.log(`Запрос /api/analyze получил: ${JSON.stringify(req.body)}`);
+
+    if (!projectId) {
+        return res.status(400).json({ error: 'projectId обязателен для анализа' });
+    }
+    if (!jiraIssue) {
+        return res.status(400).json({ error: 'jiraIssue обязателен для анализа' });
+    }
 
     try {
         let spinnerInterval = spinningLoader('Получение всех тест-кейсов проекта...');
@@ -2421,7 +2438,45 @@ app.post('/api/analyze', async (req, res) => {
 
         // Вывод краткой информации
         console.log(`Обработано тест-кейсов для анализа: ${jsonResult.length}`);
-        const htmlReport = await staticAnalysis(jsonResult, projectId); // Генерация анализа
+        
+        let aiRecommendations = null;
+        try {
+            spinnerInterval = spinningLoader('Анализ тест-кейсов с помощью AI...');
+            const apiKey = req.headers['x-openrouter-key'] || null;
+            
+            console.log(`\nЗАПУСК МАССОВОГО AI-АНАЛИЗА:`);
+            console.log(`Проект: ${projectId}`);
+            console.log(`Jira Issue: ${jiraIssue}`);
+            console.log(`Количество тест-кейсов: ${filteredCases.length}`);
+            console.log(`API ключ: ${apiKey ? 'Предоставлен пользователем' : 'Используется системный'}`);
+            
+            aiRecommendations = await analyzeBulkTestCasesWithAI(filteredCases, apiKey, jiraIssue, projectId);
+            clearInterval(spinnerInterval);
+            
+            console.log(`\nAI-АНАЛИЗ ЗАВЕРШЕН УСПЕШНО:`);
+            console.log(`Получено рекомендаций: ${Object.keys(aiRecommendations).length}`);
+            
+            // Статистика по severity
+            const severityStats = {};
+            Object.values(aiRecommendations).forEach(recs => {
+                const arr = Array.isArray(recs) ? recs : (recs && recs.recommendation ? [recs] : []);
+                arr.forEach(rec => {
+                    if (rec && rec.severity) {
+                        severityStats[rec.severity] = (severityStats[rec.severity] || 0) + 1;
+                    }
+                });
+            });
+            console.log(`Статистика: ${JSON.stringify(severityStats)}`);
+            
+        } catch (aiError) {
+            clearInterval(spinnerInterval);
+            console.error(`\nОшибка :`);
+            console.error(`Детали: ${aiError.message}`);
+            console.error(`Проект: ${projectId}, Jira: ${jiraIssue}`);
+            console.log(`Продолжаем с результатами статического анализа`);
+        }
+      
+        const htmlReport = await staticAnalysis(jsonResult, projectId, aiRecommendations);
 
         // Возвращаем форматированный результат в ответе
         res.json(htmlReport);
@@ -2505,11 +2560,18 @@ app.post('/api/ai-recommendation', async (req, res) => {
             // ✅ Преобразуем структуру Allure (с expectedResultId) в наш формат (с action/expectedResult)
             const steps = convertAllureStepsToFormat(stepsRaw, layer);
 
+            // Сохраняем сырые шаги для formatStepsForPrompt (структура Allure с root/scenarioSteps/sharedSteps)
+            const hasValidStructure = stepsRaw && typeof stepsRaw === 'object' && !Array.isArray(stepsRaw) &&
+                ((stepsRaw.scenario && stepsRaw.scenario.root && stepsRaw.scenario.scenarioSteps) ||
+                    (stepsRaw.root && stepsRaw.scenarioSteps));
+            const validStepsRaw = hasValidStructure ? stepsRaw : null;
+
             // Обновляем объект, сохраняя все поля, что пришли от клиента и дополняем недостающие.
             testCase = {
                 ...testCase,
                 tags,
                 steps,
+                stepsRaw: validStepsRaw,  // Сохраняем только валидную структуру или null
                 expectedResult,
                 status,
                 layer,
@@ -2533,7 +2595,8 @@ app.post('/api/ai-recommendation', async (req, res) => {
         }
 
         // Вызываем функцию анализа тест-кейса с использованием ИИ
-        const recommendation = await analyzeTestCaseWithAI(testCase, apiKey);
+        const jiraIssue = testCase.issue || null;
+        const recommendation = await analyzeTestCaseWithAI(testCase, apiKey, jiraIssue, testCase.projectId);
         res.json({ recommendation });
     } catch (error) {
         console.error('Ошибка в /ai-recommendation:', error.message);
@@ -2563,6 +2626,132 @@ function normalizeContextInput(v) {
     return String(v);
 }
 
+// API для работы с правилами валидации
+
+/**
+ * Получить список всех правил валидации для проекта
+ */
+app.get('/api/validation/rules', async (req, res) => {
+    try {
+        const { projectId } = req.query;
+
+        if (!projectId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Параметр projectId обязателен'
+            });
+        }
+
+        const rules = getAllRulesForDocumentation(projectId);
+        const projectSettings = getProjectSettings(projectId);
+
+        res.json({
+            success: true,
+            projectId,
+            projectName: projectSettings.name,
+            rules,
+            thresholds: {
+                error: projectSettings.error_threshold,
+                warning: projectSettings.warning_threshold
+            }
+        });
+    } catch (error) {
+        console.error('[API] Ошибка получения правил:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Получить список всех проектов с настройками
+ */
+app.get('/api/validation/projects', async (req, res) => {
+    try {
+        const projects = getAllProjects();
+
+        res.json({
+            success: true,
+            projects
+        });
+    } catch (error) {
+        console.error('[API] Ошибка получения проектов:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Экспорт правил в Markdown формат для документации
+ */
+app.get('/api/validation/rules/export', async (req, res) => {
+    try {
+        const { projectId } = req.query;
+
+        if (!projectId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Параметр projectId обязателен'
+            });
+        }
+
+        const validationMdPath = join(__dirname, 'config', 'validation-rules.md');
+        const fullMd = readFileSync(validationMdPath, 'utf8');
+        const projectIdStr = String(projectId);
+
+        const baseStart = fullMd.indexOf('## Базовые правила');
+        const projectsStart = fullMd.indexOf('## Проекты');
+        if (baseStart === -1 || projectsStart === -1) {
+            throw new Error('Невалидный формат validation-rules.md: не найдены секции "Базовые правила" / "Проекты"');
+        }
+        let baseSection = fullMd.slice(baseStart, projectsStart).trimEnd();
+        baseSection = baseSection.replace(/\n---\s*$/m, '').trimEnd();
+
+        const escapedId = projectIdStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const projectHeaderRe = new RegExp(`^###\\s+.*\\(ID:\\s*${escapedId}\\)\\s*$`, 'm');
+        const match = fullMd.match(projectHeaderRe);
+
+        let markdown;
+        let projectName;
+
+        if (match && match.index != null) {
+            const projectStart = match.index;
+            const projectEnd = fullMd.indexOf('\n---', projectStart);
+            const projectSection = (projectEnd !== -1 ? fullMd.slice(projectStart, projectEnd) : fullMd.slice(projectStart)).trimEnd();
+            projectName = String(match[0] || '').trim();
+            markdown = [
+                '# Правила статического анализа тест-кейсов',
+                '',
+                baseSection,
+                '---',
+                '',
+                projectSection
+            ].join('\n');
+        } else {
+            projectName = `ID: ${projectIdStr} (только базовые правила)`;
+            markdown = [
+                '# Правила статического анализа тест-кейсов',
+                '',
+                baseSection
+            ].join('\n');
+        }
+
+        res.json({
+            success: true,
+            markdown,
+            projectName: projectName || `ID: ${projectIdStr}`
+        });
+    } catch (error) {
+        console.error('[API] Ошибка экспорта правил:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
 
 /**
  * POST /api/analyze/solution
@@ -7306,9 +7495,8 @@ app.post('/api/create-test-cases', async (req, res) => {
             if (c.scenario) expectedCustomFields['Scenario'] = c.scenario;
             if (c.code || c.codeNode) expectedCustomFields['Code'] = c.code || c.codeNode;
 
-            // Для nocode проектов (1 и 307) добавляем Block и SubBlock
-            const nocodeProjectIds = ['1', '307'];
-            if (nocodeProjectIds.includes(String(projectId))) {
+            // Для nocode проекта (307) добавляем Block и SubBlock
+            if (projectId === '307') {
                 // Ищем Block и SubBlock в кастомных полях
                 if (Array.isArray(c.customFields)) {
                     for (const { name, value } of c.customFields) {
@@ -7322,8 +7510,10 @@ app.post('/api/create-test-cases', async (req, res) => {
                 }
             }
 
+
             // Проверяем, существует ли уже тест-кейс с таким названием и кастомными полями
             const existing = await findTestCaseByName(projectId, c.title, expectedCustomFields);
+
 
             if (existing) {
                 console.log(`[create-test-cases] ⚠️ Тест-кейс с названием "${c.title}" и такими же кастомными полями уже существует (ID: ${existing.id}). Пропускаем создание и обновление.`);
@@ -7331,6 +7521,7 @@ app.post('/api/create-test-cases', async (req, res) => {
                 // Это гарантирует, что при загрузке новой тестовой модели старые тест-кейсы не будут изменены
                 continue;
             }
+
 
             // Создаём новый TC
             const tc = await createTestCaseAllure({ projectId, name: c.title });
@@ -7594,9 +7785,11 @@ app.post('/api/create-test-cases', async (req, res) => {
 app.post('/api/cleanup-duplicates', async (req, res) => {
     const { projectId } = req.body;
 
+
     if (!projectId) {
         return res.status(400).json({ error: 'projectId обязателен' });
     }
+
 
     // Делаем эндпоинт асинхронным по умолчанию, чтобы избежать 504 от reverse-proxy на больших проектах.
     // Для синхронного режима можно вызвать /api/cleanup-duplicates?sync=true
@@ -7641,9 +7834,11 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
     try {
         console.log(`[cleanup-duplicates] (sync) Начинаем очистку дублей для проекта ${projectId}`);
 
+
         // Получаем все тест-кейсы проекта
         const allCases = await getAllTestCases(projectId);
         console.log(`[cleanup-duplicates] Получено ${allCases.length} тест-кейсов`);
+
 
         // Получаем теги для каждого тест-кейса
         const casesWithTags = await Promise.all(
@@ -7669,12 +7864,14 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
             })
         );
 
+
         // Функция для вычисления ключа группировки (название + теги)
         const getGroupKey = (tc) => {
             const normalizedTitle = (tc.name || '').trim().toLowerCase();
             const tagsKey = tc.tagNames.join(',');
             return `${normalizedTitle}||${tagsKey}`;
         };
+
 
         // Группируем тест-кейсы по ключу
         const groups = {};
@@ -7686,6 +7883,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
             groups[key].push(tc);
         });
 
+
         // Функция для вычисления "полноты" тест-кейса
         const computeContentScore = async (tc) => {
             let score = 0;
@@ -7694,13 +7892,16 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
             let stepsCount = 0;
             let stepsTotalLength = 0;
 
+
             // Название (базовая оценка)
             if (tc.name) score += tc.name.length;
+
 
             // Теги (важно для группировки)
             if (tc.tagNames && tc.tagNames.length > 0) {
                 score += tc.tagNames.length * 5;
             }
+
 
             try {
                 // Precondition (важное поле)
@@ -7715,6 +7916,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                     }
                 }
 
+
                 // Expected Result (важное поле)
                 const expectedResult = await getTestCaseExpectedResult(tc.id);
                 if (expectedResult) {
@@ -7726,6 +7928,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                         score += 50; // Бонус за наличие expected result
                     }
                 }
+
 
                 // Steps (самое важное - шаги тест-кейса)
                 const steps = await getTestCaseSteps(tc.id);
@@ -7747,6 +7950,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                     }
                 }
 
+
                 // Custom Fields (дополнительная информация)
                 const customFields = await getTestCaseCustomFields(tc.id, projectId);
                 if (Array.isArray(customFields) && customFields.length > 0) {
@@ -7756,10 +7960,12 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                 console.warn(`[cleanup-duplicates] Ошибка при вычислении score для ТК ${tc.id}:`, error.message);
             }
 
+
             // Дополнительные бонусы за полноту
             if (hasPrecondition && hasExpectedResult && stepsCount > 0) {
                 score += 100; // Бонус за полностью заполненный тест-кейс
             }
+
 
             return {
                 score,
@@ -7769,6 +7975,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                 stepsTotalLength
             };
         };
+
 
         // Удаляем ТОЛЬКО черновики (Draft). Активные и другие статусы не удаляем.
         const isDraftStatus = (tc) => {
@@ -7783,6 +7990,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
         const duplicateGroups = []; // Массив для хранения информации о группах дублей
         const skippedNonDraft = []; // Дубли, которые нельзя удалить из-за статуса
 
+
         for (const [key, group] of Object.entries(groups)) {
             if (group.length <= 1) {
                 // Нет дублей в группе
@@ -7790,7 +7998,9 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                 continue;
             }
 
+
             console.log(`[cleanup-duplicates] Найдена группа дублей (${group.length} шт.): "${group[0].name}"`);
+
 
             // Вычисляем score для каждого тест-кейса в группе
             const casesWithScores = await Promise.all(
@@ -7804,6 +8014,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                 })
             );
 
+
             // Сортируем по убыванию score с дополнительными критериями для разрешения ничьих.
             // ВАЖНО: это сортировка "лучшего" — но удаляем мы ТОЛЬКО Draft.
             const compareByBest = (a, b) => {
@@ -7815,6 +8026,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                     return -1; // a с шагами, b без шагов - a лучше
                 }
 
+
                 // 0.1. Если оба без шагов, но у одного есть precondition/expected - он лучше
                 if (a.scoreData.stepsCount === 0 && b.scoreData.stepsCount === 0) {
                     const aHasContent = a.scoreData.hasPrecondition || a.scoreData.hasExpectedResult;
@@ -7824,20 +8036,24 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                     }
                 }
 
+
                 // 1. Основной критерий - общий score
                 if (b.score !== a.score) {
                     return b.score - a.score;
                 }
+
 
                 // 2. Если score одинаковый - предпочитаем больше шагов
                 if (b.scoreData.stepsCount !== a.scoreData.stepsCount) {
                     return b.scoreData.stepsCount - a.scoreData.stepsCount;
                 }
 
+
                 // 3. Если шаги одинаковые - предпочитаем больше общую длину шагов
                 if (b.scoreData.stepsTotalLength !== a.scoreData.stepsTotalLength) {
                     return b.scoreData.stepsTotalLength - a.scoreData.stepsTotalLength;
                 }
+
 
                 // 4. Если все одинаково - предпочитаем тот, у которого есть precondition и expected result
                 const aHasBoth = a.scoreData.hasPrecondition && a.scoreData.hasExpectedResult;
@@ -7845,6 +8061,7 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                 if (aHasBoth !== bHasBoth) {
                     return bHasBoth ? 1 : -1;
                 }
+
 
                 // 5. Если все абсолютно одинаково - оставляем более старый (меньший ID, обычно создан раньше)
                 return a.case.id - b.case.id;
@@ -16885,6 +17102,13 @@ app.post('/api/generate-xmind', async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
+// Генерация validation-rules.md при старте (из конфига)
+try {
+    writeValidationRulesMarkdown();
+} catch (e) {
+    console.warn('[startup] Не удалось сгенерировать validation-rules.md:', e.message);
+}
 
 // Запуск сервера
 app.listen(PORT, () => {

@@ -1,3 +1,28 @@
+/**
+ * Собрать параметры с значениями из "examples" (ТестОпс возвращает имена в "parameters", а значения в объекте "examples")
+ */
+function buildParametersWithValues(parameters, examples) {
+    if (!parameters?.length) return [];
+    const valuesByParam = new Map();
+    for (const p of parameters) {
+        const name = p?.name?.trim();
+        if (name) valuesByParam.set(name, new Set());
+    }
+    for (const ex of examples || []) {
+        const exParams = ex?.parameters || [];
+        for (const p of exParams) {
+            const name = p?.name?.trim();
+            const val = p?.value != null ? String(p.value).trim() : null;
+            if (name && val && valuesByParam.has(name)) {
+                valuesByParam.get(name).add(val);
+            }
+        }
+    }
+    return Array.from(valuesByParam.entries())
+        .filter(([, vals]) => vals.size > 0)
+        .map(([name, vals]) => ({ name, values: Array.from(vals) }));
+}
+
 export async function formatTestCaseAsJson(testCase) {
 
     // Формируем базовую структуру тест-кейса
@@ -14,6 +39,7 @@ export async function formatTestCaseAsJson(testCase) {
         })) || [],
         tags: testCase.tags?.map(tag => tag.name) || [],
         expectedResult: testCase.expectedResult || 'Нет результата',
+        parameters: buildParametersWithValues(testCase.parameters || [], testCase.examples || []),
     };
 
     // Форматируем шаги
@@ -67,7 +93,7 @@ async function formatStepsAsJson(steps) {
                 if (sharedStep) {
                     let sharedStepObj = {
                         index: stepIndex,
-                        description: sharedStep.body + ' - Общий шаг' || 'Нет описания общего шага',
+                        description: sharedStep.body || 'Нет описания общего шага',
                         type: 'sharedStep', // Тип шага для обозначения, что это общий шаг
                         childSteps: [], // Для хранения вложенных шагов
                     };
@@ -76,11 +102,38 @@ async function formatStepsAsJson(steps) {
                     sharedStepChildren.forEach((sharedStepId, sharedStepIndex) => {
                         const sharedStepStep = steps.sharedStepScenarioSteps[sharedStepId];
                         if (sharedStepStep) {
-                            sharedStepObj.childSteps.push({
+                            let childStepObj = {
                                 index: `${stepIndex}.${sharedStepIndex + 1}`,
                                 description: sharedStepStep.body || 'Нет описания шага общего шага',
                                 attachment: getAttachmentName(sharedStepStep.attachmentId) || null,
-                            });
+                            };
+                            
+                            // Извлечение ожидаемого результата для подшага, если есть expectedResultId
+                            if (sharedStepStep.expectedResultId) {
+                                const expectedResultContainer = steps.sharedStepScenarioSteps[sharedStepStep.expectedResultId];
+                                if (expectedResultContainer) {
+                                    let expectedResultText = '';
+                                    
+                                    if (expectedResultContainer.children && expectedResultContainer.children.length > 0) {
+                                        const expectedResultTexts = expectedResultContainer.children
+                                            .map(childId => {
+                                                const childStep = steps.sharedStepScenarioSteps[childId];
+                                                return childStep?.body || '';
+                                            })
+                                            .filter(text => text.trim().length > 0);
+                                        expectedResultText = expectedResultTexts.join('\n');
+                                    } else if (expectedResultContainer.body && 
+                                              expectedResultContainer.body !== 'Expected Result') {
+                                        expectedResultText = expectedResultContainer.body;
+                                    }
+                                    
+                                    if (expectedResultText.trim().length > 0) {
+                                        childStepObj.expectedResult = expectedResultText;
+                                    }
+                                }
+                            }
+                            
+                            sharedStepObj.childSteps.push(childStepObj);
                         }
                     });
 
@@ -96,6 +149,31 @@ async function formatStepsAsJson(steps) {
                     description: step.body || getAttachmentName(step.attachmentId) || 'Нет описания шага',
                     attachment: getAttachmentName(step.attachmentId) || null,
                 };
+
+                // Извлечение ожидаемого результата, если у шага есть expectedResultId
+                if (step.expectedResultId) {
+                    const expectedResultContainer = steps.scenarioSteps[step.expectedResultId];
+                    if (expectedResultContainer) {
+                        let expectedResultText = '';
+                        
+                        if (expectedResultContainer.children && expectedResultContainer.children.length > 0) {
+                            const expectedResultTexts = expectedResultContainer.children
+                                .map(childId => {
+                                    const childStep = steps.scenarioSteps[childId];
+                                    return childStep?.body || '';
+                                })
+                                .filter(text => text.trim().length > 0);
+                            expectedResultText = expectedResultTexts.join('\n');
+                        } else if (expectedResultContainer.body && 
+                                  expectedResultContainer.body !== 'Expected Result') {
+                            expectedResultText = expectedResultContainer.body;
+                        }
+                        
+                        if (expectedResultText.trim().length > 0) {
+                            stepObj.expectedResult = expectedResultText;
+                        }
+                    }
+                }
 
                 // Если есть дочерние шаги, добавляем их
                 if (step.body && step.body.includes("\n")) {

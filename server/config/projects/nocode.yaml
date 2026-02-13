@@ -1,0 +1,34 @@
+# Кастомные правила для Nocode (id = 307)
+project_rules:
+  "307":
+    - id: "integration_feature_story_scenario"
+      name: "Стуктура в интеграционных тест-кейсах"
+      description: "Для Integration тестов обязательны кастомные поля Block, SubBlock, Feature, Story и Scenario"
+      level: "error"
+      enabled: true
+      category: "custom_fields"
+      check_type: "custom_field_check"
+      params:
+        operator: "all_required"
+        fields: ["Block", "SubBlock", "Feature", "Story", "Scenario"]
+        error_message: "Для Integration тестов обязательны поля Block, SubBlock, Feature, Story и Scenario"
+      appliesTo:
+        field: "layer"
+        operator: "in"
+        value: ["Integration frontend Tests", "Integration backend Tests"]
+
+    - id: "e2e_feature_story"
+      name: "Стуктура в E2E тест-кейсах"
+      description: "Для E2E тестов обязательны кастомные поля Block, SubBlock, Feature и Story"
+      level: "error"
+      enabled: true
+      category: "custom_fields"
+      check_type: "custom_field_check"
+      params:
+        operator: "all_required"
+        fields: ["Block", "SubBlock", "Feature", "Story"]
+        error_message: "Для E2E тестов обязательны поля Block, SubBlock, Feature и Story"
+      appliesTo:
+        field: "layer"
+        operator: "in"
+        value: ["E2E Tests"]
