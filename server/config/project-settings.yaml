@@ -1,0 +1,55 @@
+# ═══════════════════════════════════════════════════════════════
+# НАСТРОЙКИ ПРОЕКТОВ ДЛЯ СТАТИЧЕСКОГО АНАЛИЗА
+# ═══════════════════════════════════════════════════════════════
+#
+# Этот файл содержит настройки для каждого проекта:
+# - Название проекта
+# - Порог допустимых warnings (в процентах)
+# - Дополнительные настройки анализа
+#
+# Lead of QA определяет процент warnings для своего проекта.
+# ═══════════════════════════════════════════════════════════════
+
+# Настройки по умолчанию
+default:
+  name: "Дефолтный проект"
+  warning_threshold: 10  # максимум 10% ворнингов для прохождения ревью
+  error_threshold: 0
+  show_statistics: true
+
+# Настройки конкретных проектов
+projects:
+  "6":
+    name: "ККБ ЮЛ"
+    warning_threshold: 50
+    error_threshold: 0
+    show_statistics: true
+    description: "Abanking Classic — ККБ ЮЛ"
+    
+  "5":
+    name: "ККБ ФЛ"
+    warning_threshold: 50 
+    error_threshold: 0
+    show_statistics: true
+    description: "Abanking Classic — ККБ ФЛ"
+
+  "4":
+    name: "Ингосстрах"
+    warning_threshold: 50
+    error_threshold: 0
+    show_statistics: false
+    description: "Abanking Classic — Ингосстрах"
+
+  "2":
+    name: "Nopaper"
+    warning_threshold: 50
+    error_threshold: 0
+    show_statistics: true
+    description: "Nopaper"
+    
+  "307":
+    name: "Nocode"
+    warning_threshold: 50
+    error_threshold: 0
+    show_statistics: true
+    description: "Nocode"    
