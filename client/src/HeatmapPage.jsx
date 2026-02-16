@@ -243,9 +243,7 @@ const HeatmapPage = ({ projects }) => {
             currentData.functionalBlocks.forEach(fb => fb.issueKeys?.forEach(k => allKeys.add(k)));
         }
 
-        const totalIncidents = activeTab === 'code'
-            ? (currentData.uniqueTotalIssuesCount || allKeys.size)
-            : allKeys.size;
+        const totalIncidents = currentData.uniqueTotalIssuesCount || allKeys.size;
 
         const totalTime = Array.from(allKeys).reduce((acc, key) => acc + (issueTimeMap[key] || 0), 0);
 

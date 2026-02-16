@@ -374,11 +374,11 @@ export async function getTestCoverageData(req, res) {
             .leftJoin('component_defects as cd', 'cd.component_id', 'c.id')
             .where({ 'fb.project_id': projectId });
 
-        if (componentType) {
-            query = query.where('c.component_type', componentType);
-        }
+        // НЕ фильтруем по componentType здесь!
+        // Функциональный блок должен собирать дефекты от ВСЕХ связанных компонентов
+        // (включая Pages), чтобы приоритизация была полной.
 
-        // Применяем фильтры к дефектам
+        // Применяем фильтры к дефектам (ВСЕ фильтры ДО select/groupBy)
         if (startDate && endDate) {
             query = query.whereBetween('cd.change_date', [startDate, endDate]);
         } else if (startDate) {
@@ -389,6 +389,10 @@ export async function getTestCoverageData(req, res) {
 
         if (parsedReleaseVersions && parsedReleaseVersions.length > 0) {
             query = query.whereIn('cd.release_version', parsedReleaseVersions);
+        }
+
+        if (parsedIsBugFix !== undefined) {
+            query = query.where('cd.is_bug_fix', parsedIsBugFix);
         }
 
         query = query
@@ -402,23 +406,18 @@ export async function getTestCoverageData(req, res) {
                 databasePool.raw('ARRAY_AGG(DISTINCT cd.issue_key) FILTER (WHERE cd.issue_key IS NOT NULL) as issue_keys')
             )
             .groupBy('fb.id', 'fb.allure_id', 'fb.name', 'fb.custom_field_name')
-            .having(databasePool.raw('COUNT(DISTINCT cd.id)'), '>', 0)
-        if (parsedIsBugFix !== undefined) {
-            query = query.where('cd.is_bug_fix', parsedIsBugFix);
-        }
+            .having(databasePool.raw('COUNT(DISTINCT cd.id)'), '>', 0);
 
         const results = await query;
 
         // Считаем общее количество дефектов ГЛОБАЛЬНО (уникально по всем замапленным компонентам)
         // Чтобы сумма в карточках и проценты были корректными.
+        // Глобальные итоги: также без фильтра componentType — считаем ВСЕ дефекты
+        // замапленных компонентов, чтобы итог в карточках совпадал с суммой по блокам.
         let subQueryForTotal = databasePool(relevantComponents.as('rc'))
             .join('components as c', 'rc.component_id', 'c.id')
             .join('component_defects as cd', 'cd.component_id', 'c.id')
             .where({ 'c.project_id': projectId });
-
-        if (componentType) {
-            subQueryForTotal = subQueryForTotal.where('c.component_type', componentType);
-        }
         if (parsedIsBugFix !== undefined) {
             subQueryForTotal = subQueryForTotal.where('cd.is_bug_fix', parsedIsBugFix);
         }
