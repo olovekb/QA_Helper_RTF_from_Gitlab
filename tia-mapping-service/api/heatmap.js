@@ -359,7 +359,7 @@ export async function getTestCoverageData(req, res) {
         // 1. Для каждого дефекта находим основной функциональный блок (чтобы сумма была правильной)
         const defectToFbSubquery = databasePool(relevantComponents.as('rc'))
             .select('rc.component_id')
-            .min('rc.functional_block_id as primary_fb_id')
+            .select(databasePool.raw('MIN(rc.functional_block_id::text)::uuid as primary_fb_id'))
             .groupBy('rc.component_id');
 
         let query = databasePool('functional_blocks as fb')
