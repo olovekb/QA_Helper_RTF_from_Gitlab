@@ -924,16 +924,33 @@ const HeatmapPage = ({ projects }) => {
                 return;
             }
         }
+
         setLoading(true);
         try {
-            await axios.post(`${config.TIAUrl}/api/heatmap/bulk-import`, {
-                projectId,
-                items: parsedHistoryItems,
-                mappings: componentMappings
-            });
+            // Чтобы обойти ограничение Nginx 413 Payload Too Large, 
+            // отправляем историю частями (чанками) по 100 записей.
+            const chunkSize = 100;
+            const totalItems = parsedHistoryItems.length;
+            const chunksCount = Math.ceil(totalItems / chunkSize);
+
+            console.log(`Начало импорта: ${totalItems} элементов, ${chunksCount} частей.`);
+
+            for (let i = 0; i < chunksCount; i++) {
+                const start = i * chunkSize;
+                const end = Math.min(start + chunkSize, totalItems);
+                const chunk = parsedHistoryItems.slice(start, end);
+
+                console.log(`Отправка части ${i + 1}/${chunksCount} (элементы ${start + 1}-${end})...`);
+
+                await axios.post(`${config.TIAUrl}/api/heatmap/bulk-import`, {
+                    projectId,
+                    items: chunk,
+                    mappings: componentMappings
+                });
+            }
 
             setShowMappingModal(false);
-            alert('История успешно импортирована!');
+            alert(`История успешно импортирована (${totalItems} записей)!`);
             loadAvailableVersions();
             if (activeTab === 'code') {
                 loadHeatmapData();
