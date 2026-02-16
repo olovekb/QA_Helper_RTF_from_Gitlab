@@ -2267,24 +2267,26 @@ const HeatmapPage = ({ projects }) => {
 
                                 <button
                                     onClick={() => handleSaveBulkHistory(false)}
+                                    disabled={loading}
                                     style={{
                                         padding: '0 24px',
                                         height: '44px',
-                                        backgroundColor: '#10b981',
+                                        backgroundColor: loading ? '#6ee7b7' : '#10b981',
                                         color: '#fff',
                                         border: 'none',
                                         borderRadius: '10px',
                                         fontWeight: 600,
                                         fontSize: '14px',
-                                        cursor: 'pointer',
+                                        cursor: loading ? 'not-allowed' : 'pointer',
+                                        opacity: loading ? 0.7 : 1,
                                         boxShadow: '0 4px 12px rgba(16, 185, 129, 0.2)',
                                         transition: 'all 0.2s',
                                         display: 'flex',
                                         alignItems: 'center',
                                         gap: '8px'
                                     }}
-                                    onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#059669', e.currentTarget.style.transform = 'translateY(-1px)')}
-                                    onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#10b981', e.currentTarget.style.transform = 'translateY(0)')}
+                                    onMouseOver={(e) => !loading && (e.currentTarget.style.backgroundColor = '#059669', e.currentTarget.style.transform = 'translateY(-1px)')}
+                                    onMouseOut={(e) => !loading && (e.currentTarget.style.backgroundColor = '#10b981', e.currentTarget.style.transform = 'translateY(0)')}
                                 >
                                     <span>Завершить импорт и маппинг</span>
                                     {loading && <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />}
