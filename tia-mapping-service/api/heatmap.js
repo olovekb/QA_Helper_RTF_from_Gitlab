@@ -345,9 +345,7 @@ export async function getTestCoverageData(req, res) {
         // Стратегия связывания:
         //   1. Прямой маппинг: FB напрямую связан с компонентом
         //   2. FB -> Page -> дочерние компоненты: если FB замаплен на Page,
-        //      берём все дочерние компоненты этой Page (у них есть дефекты)
-        //   3. FB -> Component -> sibling через Page: если FB замаплен на компонент,
-        //      берём все компоненты, которые находятся на тех же Pages
+        //      берём все дочерние компоненты этой Page (у них есть реальные дефекты)
         const relevantComponents = databasePool('component_functional_blocks as cfb')
             .select('cfb.functional_block_id', 'cfb.component_id')
             .union(function () {
@@ -361,18 +359,6 @@ export async function getTestCoverageData(req, res) {
                             .andOn('pcd.project_id', '=', 'c.project_id');
                     })
                     .where('c.component_type', 'page');
-            })
-            .union(function () {
-                // FB -> Code Component -> его Pages -> sibling Code Components на тех же Pages
-                // Если FB замаплен на обычный компонент, находим все Pages, на которых он есть,
-                // и подтягиваем все другие компоненты с этих Pages
-                this.select('cfb.functional_block_id', 'pcd_sibling.component_id')
-                    .from('component_functional_blocks as cfb')
-                    .join('page_component_dependencies as pcd_self', 'pcd_self.component_id', 'cfb.component_id')
-                    .join('page_component_dependencies as pcd_sibling', function () {
-                        this.on('pcd_sibling.page_name', '=', 'pcd_self.page_name')
-                            .andOn('pcd_sibling.project_id', '=', 'pcd_self.project_id');
-                    });
             });
 
         let query = databasePool('functional_blocks as fb')
@@ -417,13 +403,11 @@ export async function getTestCoverageData(req, res) {
 
         const results = await query;
 
-        // Считаем общее количество дефектов ГЛОБАЛЬНО (уникально по всем замапленным компонентам)
-        // Чтобы сумма в карточках и проценты были корректными.
-        // Глобальные итоги: также без фильтра componentType — считаем ВСЕ дефекты
-        // замапленных компонентов, чтобы итог в карточках совпадал с суммой по блокам.
-        let subQueryForTotal = databasePool(relevantComponents.as('rc'))
-            .join('components as c', 'rc.component_id', 'c.id')
-            .join('component_defects as cd', 'cd.component_id', 'c.id')
+        // Глобальные итоги: считаем ВСЕ дефекты проекта (как Code tab),
+        // чтобы касания/инциденты/время совпадали между вкладками,
+        // а проценты показывали долю каждого блока от ВСЕХ дефектов.
+        let subQueryForTotal = databasePool('component_defects as cd')
+            .join('components as c', 'cd.component_id', 'c.id')
             .where({ 'c.project_id': projectId });
         if (parsedIsBugFix !== undefined) {
             subQueryForTotal = subQueryForTotal.where('cd.is_bug_fix', parsedIsBugFix);
@@ -440,12 +424,14 @@ export async function getTestCoverageData(req, res) {
         }
 
         const [globalStats] = await subQueryForTotal.select(
-            databasePool.raw('COUNT(DISTINCT cd.id) as total_defects'),
-            databasePool.raw('COUNT(DISTINCT cd.issue_key) as unique_incidents')
+            databasePool.raw('COUNT(cd.id) as total_defects'),
+            databasePool.raw('COUNT(DISTINCT cd.issue_key) as unique_incidents'),
+            databasePool.raw('ARRAY_AGG(DISTINCT cd.issue_key) FILTER (WHERE cd.issue_key IS NOT NULL) as all_issue_keys')
         );
 
         const totalDefectsGlobal = parseInt(globalStats.total_defects, 10) || 0;
         const uniqueTotalIssuesCountGlobal = parseInt(globalStats.unique_incidents, 10) || 0;
+        const allIssueKeysGlobal = globalStats.all_issue_keys || [];
 
         const functionalBlocksMap = new Map();
         results.forEach(row => {
@@ -634,6 +620,7 @@ export async function getTestCoverageData(req, res) {
             pages: pagesData,
             totalDefects: totalDefectsGlobal,
             uniqueTotalIssuesCount: uniqueTotalIssuesCountGlobal,
+            allIssueKeys: allIssueKeysGlobal,
             filters: {
                 projectId,
                 startDate: startDate || null,

@@ -232,18 +232,21 @@ const HeatmapPage = ({ projects }) => {
         const currentData = activeTab === 'code' ? heatmapData : testCoverageData;
         if (!currentData) return { totalTouches: 0, totalIncidents: 0, totalTime: 0 };
 
-        // Касания (общая сумма изменений)
+        // Касания (общая сумма изменений) — берём серверное значение
         const totalTouches = currentData.totalDefects || 0;
 
-        // Инциденты и Время (уникальные баги во всем представлении)
+        // Инциденты — серверное значение
+        const totalIncidents = currentData.uniqueTotalIssuesCount || 0;
+
+        // Время — считаем на основе issue keys
+        // Для test tab используем allIssueKeys из API (все ключи проекта),
+        // для code tab собираем из компонентов
         const allKeys = new Set();
         if (activeTab === 'code' && currentData.components) {
             currentData.components.forEach(c => c.issueKeys?.forEach(k => allKeys.add(k)));
-        } else if (activeTab === 'test' && currentData.functionalBlocks) {
-            currentData.functionalBlocks.forEach(fb => fb.issueKeys?.forEach(k => allKeys.add(k)));
+        } else if (activeTab === 'test' && currentData.allIssueKeys) {
+            currentData.allIssueKeys.forEach(k => allKeys.add(k));
         }
-
-        const totalIncidents = currentData.uniqueTotalIssuesCount || allKeys.size;
 
         const totalTime = Array.from(allKeys).reduce((acc, key) => acc + (issueTimeMap[key] || 0), 0);
 
