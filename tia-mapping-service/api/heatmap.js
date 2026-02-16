@@ -58,7 +58,7 @@ export async function getHeatmapData(req, res) {
             .select(
                 'components.component_name',
                 databasePool.raw('COUNT(component_defects.id) as defect_count'),
-                databasePool.raw('COUNT(DISTINCT COALESCE(component_defects.issue_key, component_defects.id::text)) as unique_incident_count'),
+                databasePool.raw('COUNT(DISTINCT component_defects.issue_key) as unique_incident_count'),
                 databasePool.raw('ARRAY_AGG(DISTINCT component_defects.issue_key) FILTER (WHERE component_defects.issue_key IS NOT NULL) as issue_keys')
             )
             .groupBy('components.component_name');
@@ -409,7 +409,7 @@ export async function getTestCoverageData(req, res) {
                 'fb.name as functional_block_name',
                 'fb.custom_field_name as functional_block_custom_field_name',
                 databasePool.raw('COUNT(DISTINCT cd.id) as total_defects'),
-                databasePool.raw('COUNT(DISTINCT COALESCE(cd.issue_key, cd.id::text)) as unique_incidents'),
+                databasePool.raw('COUNT(DISTINCT cd.issue_key) as unique_incidents'),
                 databasePool.raw('ARRAY_AGG(DISTINCT cd.issue_key) FILTER (WHERE cd.issue_key IS NOT NULL) as issue_keys')
             )
             .groupBy('fb.id', 'fb.allure_id', 'fb.name', 'fb.custom_field_name')
@@ -441,7 +441,7 @@ export async function getTestCoverageData(req, res) {
 
         const [globalStats] = await subQueryForTotal.select(
             databasePool.raw('COUNT(DISTINCT cd.id) as total_defects'),
-            databasePool.raw('COUNT(DISTINCT COALESCE(cd.issue_key, cd.id::text)) as unique_incidents')
+            databasePool.raw('COUNT(DISTINCT cd.issue_key) as unique_incidents')
         );
 
         const totalDefectsGlobal = parseInt(globalStats.total_defects, 10) || 0;
@@ -596,7 +596,7 @@ export async function getTestCoverageData(req, res) {
             .select(
                 'pcd.page_name as page_name',
                 'pcd.page_route as page_route',
-                databasePool.raw('COUNT(DISTINCT COALESCE(cd.issue_key, cd.id::text)) as unique_incidents'),
+                databasePool.raw('COUNT(DISTINCT cd.issue_key) as unique_incidents'),
                 databasePool.raw('ARRAY_AGG(DISTINCT cd.issue_key) FILTER (WHERE cd.issue_key IS NOT NULL) as issue_keys')
             )
             .count('cd.id as total_defects')
