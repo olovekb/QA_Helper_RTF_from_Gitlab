@@ -235,19 +235,17 @@ const HeatmapPage = ({ projects }) => {
         // Касания (общая сумма изменений)
         const totalTouches = currentData.totalDefects || 0;
 
-        // Инциденты (уникальные баги во всем представлении)
-        // Для Heatmap это uniqueTotalIssuesCount, для Test Coverage берем из ответа сервера
-        const totalIncidents = activeTab === 'code'
-            ? currentData.uniqueTotalIssuesCount || 0
-            : (currentData.functionalBlocks?.reduce((acc, fb) => acc + (fb.uniqueIncidentCount || 0), 0) || 0);
-
-        // Время (сумма Jira-времени для всех уникальных ключей в текущем виде)
+        // Инциденты и Время (уникальные баги во всем представлении)
         const allKeys = new Set();
         if (activeTab === 'code' && currentData.components) {
             currentData.components.forEach(c => c.issueKeys?.forEach(k => allKeys.add(k)));
         } else if (activeTab === 'test' && currentData.functionalBlocks) {
             currentData.functionalBlocks.forEach(fb => fb.issueKeys?.forEach(k => allKeys.add(k)));
         }
+
+        const totalIncidents = activeTab === 'code'
+            ? (currentData.uniqueTotalIssuesCount || allKeys.size)
+            : allKeys.size;
 
         const totalTime = Array.from(allKeys).reduce((acc, key) => acc + (issueTimeMap[key] || 0), 0);
 
@@ -1053,12 +1051,12 @@ const HeatmapPage = ({ projects }) => {
 
     const getTotalMetricValue = (items) => {
         if (!items) return 0;
-        if (activeMetric === 'time') {
+        if (activeMetric === 'time' || activeMetric === 'incidents') {
             const allKeys = new Set();
             items.forEach(item => {
                 if (item.issueKeys) item.issueKeys.forEach(k => allKeys.add(k));
             });
-            return calculateTimeSpent(Array.from(allKeys));
+            return activeMetric === 'time' ? calculateTimeSpent(Array.from(allKeys)) : allKeys.size;
         }
         return items.reduce((sum, i) => sum + getMetricValue(i), 0);
     };
@@ -1093,10 +1091,13 @@ const HeatmapPage = ({ projects }) => {
 
         if (others.length > 0) {
             let othersValue = 0;
+            const othersKeys = new Set();
+            others.forEach(i => i.issueKeys?.forEach(k => othersKeys.add(k)));
+
             if (activeMetric === 'time') {
-                const othersKeys = new Set();
-                others.forEach(i => i.issueKeys?.forEach(k => othersKeys.add(k)));
                 othersValue = calculateTimeSpent(Array.from(othersKeys));
+            } else if (activeMetric === 'incidents') {
+                othersValue = othersKeys.size;
             } else {
                 othersValue = others.reduce((sum, i) => sum + getMetricValue(i), 0);
             }
@@ -1106,6 +1107,7 @@ const HeatmapPage = ({ projects }) => {
                 name: 'Прочие',
                 value: othersValue,
                 defectCount: othersDefects,
+                uniqueIncidentCount: othersKeys.size,
                 percentage: totalValue > 0 ? ((othersValue / totalValue) * 100).toFixed(1) : 0,
                 color: '#94a3b8'
             });

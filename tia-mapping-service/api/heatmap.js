@@ -356,9 +356,15 @@ export async function getTestCoverageData(req, res) {
                     .where('c.component_type', 'page');
             });
 
+        // 1. Для каждого дефекта находим основной функциональный блок (чтобы сумма была правильной)
+        const defectToFbSubquery = databasePool(relevantComponents.as('rc'))
+            .select('rc.component_id')
+            .min('rc.functional_block_id as primary_fb_id')
+            .groupBy('rc.component_id');
+
         let query = databasePool('functional_blocks as fb')
-            .join(relevantComponents.as('rc'), 'fb.id', 'rc.functional_block_id')
-            .join('components as c', 'rc.component_id', 'c.id')
+            .join(defectToFbSubquery.as('dfb'), 'fb.id', 'dfb.primary_fb_id')
+            .join('components as c', 'dfb.component_id', 'c.id')
             .leftJoin('component_defects as cd', 'cd.component_id', 'c.id')
             .where({ 'fb.project_id': projectId });
 
@@ -532,7 +538,23 @@ export async function getTestCoverageData(req, res) {
         // Если хотим "Test Coverage" pie chart, то сумма должна быть 100%. Значит дефект должен принадлежать ОДНОЙ категории.
         // Для роутов мы делали MIN(page_route). Сделаем так же для страниц, чтобы сумма сходилась.
 
-        const pagesResults = await defectPageQuery
+        // 3. Для каждого дефекта находим ПЕРВУЮ страницу (чтобы не дублировать дефект в общем итоге)
+        const defectToPageSubquery = databasePool('component_defects as cd')
+            .join('components as c', 'cd.component_id', 'c.id')
+            .join('page_component_dependencies as pcd', 'pcd.component_id', 'c.id')
+            .where({ 'c.project_id': projectId })
+            .select('cd.id as defect_id')
+            .min('pcd.page_name as primary_page')
+            .groupBy('cd.id');
+
+        const pagesResults = await databasePool
+            .from(defectToPageSubquery.as('dp'))
+            .join('component_defects as cd', 'dp.defect_id', 'cd.id')
+            .join('components as c', 'cd.component_id', 'c.id')
+            .join('page_component_dependencies as pcd', function () {
+                this.on('pcd.page_name', '=', 'dp.primary_page')
+                    .andOn('pcd.component_id', '=', 'c.id');
+            })
             .select(
                 'pcd.page_name as page_name',
                 'pcd.page_route as page_route',
