@@ -724,12 +724,20 @@ export async function bulkImportHistory(req, res) {
                 const chunkSize = 500;
                 for (let i = 0; i < defectInserts.length; i += chunkSize) {
                     const chunk = defectInserts.slice(i, i + chunkSize);
-                    // Используем onConflict для дедупликации - индекс idx_component_defects_unique_v3
-                    // включает: component_id, change_date, issue_key, mr_iid, release_version
+                    // Используем onConflict для дедупликации и UPSERT - индекс idx_component_defects_unique_v4
+                    // включает: component_id, change_date, issue_key, mr_iid
                     await trx('component_defects')
                         .insert(chunk)
-                        .onConflict(['component_id', 'change_date', 'issue_key', 'mr_iid', 'release_version'])
-                        .ignore();
+                        .onConflict(['component_id', 'change_date', 'issue_key', 'mr_iid'])
+                        .merge([
+                            'release_version',
+                            'is_bug_fix',
+                            'mr_title',
+                            'source_branch',
+                            'target_branch',
+                            'merged_at',
+                            'web_url'
+                        ]);
                 }
             }
 
