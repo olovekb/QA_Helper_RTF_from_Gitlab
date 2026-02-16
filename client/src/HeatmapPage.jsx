@@ -1051,6 +1051,18 @@ const HeatmapPage = ({ projects }) => {
         return 0;
     };
 
+    const getTotalMetricValue = (items) => {
+        if (!items) return 0;
+        if (activeMetric === 'time') {
+            const allKeys = new Set();
+            items.forEach(item => {
+                if (item.issueKeys) item.issueKeys.forEach(k => allKeys.add(k));
+            });
+            return calculateTimeSpent(Array.from(allKeys));
+        }
+        return items.reduce((sum, i) => sum + getMetricValue(i), 0);
+    };
+
     const calculatePriorityScore = (fb) => {
         const incidents = fb.uniqueIncidentCount || 0;
         const timeSpent = calculateTimeSpent(fb.issueKeys) / 3600; // hours
@@ -1080,7 +1092,15 @@ const HeatmapPage = ({ projects }) => {
         }));
 
         if (others.length > 0) {
-            const othersValue = others.reduce((sum, i) => sum + getMetricValue(i), 0);
+            let othersValue = 0;
+            if (activeMetric === 'time') {
+                const othersKeys = new Set();
+                others.forEach(i => i.issueKeys?.forEach(k => othersKeys.add(k)));
+                othersValue = calculateTimeSpent(Array.from(othersKeys));
+            } else {
+                othersValue = others.reduce((sum, i) => sum + getMetricValue(i), 0);
+            }
+
             const othersDefects = others.reduce((sum, i) => sum + (i.count || i.defectCount || 0), 0);
             result.push({
                 name: 'Прочие',
@@ -1093,7 +1113,6 @@ const HeatmapPage = ({ projects }) => {
         return result;
     };
 
-    const getTotalMetricValue = (items) => items?.reduce((sum, i) => sum + getMetricValue(i), 0) || 0;
 
     const codeChartData = prepareParetoData(heatmapData?.components, getTotalMetricValue(heatmapData?.components));
     const pagesChartData = prepareParetoData(testCoverageData?.pages, getTotalMetricValue(testCoverageData?.pages));

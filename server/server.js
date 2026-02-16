@@ -1162,7 +1162,7 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '200mb' }));
 app.options('*', cors(corsOptions));
 const limit = pLimit(100);
 
@@ -2302,7 +2302,7 @@ function convertAllureStepsToFormat(stepsRaw, layer) {
         // Если у шага есть expectedResultId, извлекаем ожидаемый результат
         if (step.expectedResultId) {
             const expectedResultText = extractExpectedResult(step.expectedResultId, scenarioSteps);
-            
+
             if (expectedResultText) {
                 if (isE2E) {
                     // Для E2E сохраняем как объект
@@ -2438,24 +2438,24 @@ app.post('/api/analyze', async (req, res) => {
 
         // Вывод краткой информации
         console.log(`Обработано тест-кейсов для анализа: ${jsonResult.length}`);
-        
+
         let aiRecommendations = null;
         try {
             spinnerInterval = spinningLoader('Анализ тест-кейсов с помощью AI...');
             const apiKey = req.headers['x-openrouter-key'] || null;
-            
+
             console.log(`\nЗАПУСК МАССОВОГО AI-АНАЛИЗА:`);
             console.log(`Проект: ${projectId}`);
             console.log(`Jira Issue: ${jiraIssue}`);
             console.log(`Количество тест-кейсов: ${filteredCases.length}`);
             console.log(`API ключ: ${apiKey ? 'Предоставлен пользователем' : 'Используется системный'}`);
-            
+
             aiRecommendations = await analyzeBulkTestCasesWithAI(filteredCases, apiKey, jiraIssue, projectId);
             clearInterval(spinnerInterval);
-            
+
             console.log(`\nAI-АНАЛИЗ ЗАВЕРШЕН УСПЕШНО:`);
             console.log(`Получено рекомендаций: ${Object.keys(aiRecommendations).length}`);
-            
+
             // Статистика по severity
             const severityStats = {};
             Object.values(aiRecommendations).forEach(recs => {
@@ -2467,7 +2467,7 @@ app.post('/api/analyze', async (req, res) => {
                 });
             });
             console.log(`Статистика: ${JSON.stringify(severityStats)}`);
-            
+
         } catch (aiError) {
             clearInterval(spinnerInterval);
             console.error(`\nОшибка :`);
@@ -2475,7 +2475,7 @@ app.post('/api/analyze', async (req, res) => {
             console.error(`Проект: ${projectId}, Jira: ${jiraIssue}`);
             console.log(`Продолжаем с результатами статического анализа`);
         }
-      
+
         const htmlReport = await staticAnalysis(jsonResult, projectId, aiRecommendations);
 
         // Возвращаем форматированный результат в ответе

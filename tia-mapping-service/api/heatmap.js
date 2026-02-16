@@ -342,9 +342,23 @@ export async function getTestCoverageData(req, res) {
         logInfo(`Получение данных Test Coverage для проекта ${projectId}, isBugFix=${parsedIsBugFix}, releaseVersions=${parsedReleaseVersions?.join(',') || 'all'}`);
 
         // Строим запрос: для каждого функционального блока суммируем дефекты всех связанных компонентов
+        // Учитываем как прямые маппинги (Компонент -> Блок), так и через связи (Страница -> Блок)
+        const relevantComponents = databasePool('component_functional_blocks as cfb')
+            .select('cfb.functional_block_id', 'cfb.component_id')
+            .union(function () {
+                this.select('cfb.functional_block_id', 'pcd.component_id')
+                    .from('component_functional_blocks as cfb')
+                    .join('components as c', 'cfb.component_id', 'c.id')
+                    .join('page_component_dependencies as pcd', function () {
+                        this.on('pcd.page_name', '=', 'c.component_name')
+                            .andOn('pcd.project_id', '=', 'c.project_id');
+                    })
+                    .where('c.component_type', 'page');
+            });
+
         let query = databasePool('functional_blocks as fb')
-            .join('component_functional_blocks as cfb', 'fb.id', 'cfb.functional_block_id')
-            .join('components as c', 'cfb.component_id', 'c.id')
+            .join(relevantComponents.as('rc'), 'fb.id', 'rc.functional_block_id')
+            .join('components as c', 'rc.component_id', 'c.id')
             .leftJoin('component_defects as cd', 'cd.component_id', 'c.id')
             .where({ 'fb.project_id': projectId });
 
