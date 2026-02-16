@@ -342,11 +342,17 @@ export async function getTestCoverageData(req, res) {
         logInfo(`Получение данных Test Coverage для проекта ${projectId}, isBugFix=${parsedIsBugFix}, releaseVersions=${parsedReleaseVersions?.join(',') || 'all'}`);
 
         // Строим запрос: для каждого функционального блока суммируем дефекты всех связанных компонентов
-        // Учитываем: 1. Прямой маппинг. 2. FB->Page->Children. 3. FB->Component->Parent Page.
+        // Стратегия связывания:
+        //   1. Прямой маппинг: FB напрямую связан с компонентом
+        //   2. FB -> Page -> дочерние компоненты: если FB замаплен на Page,
+        //      берём все дочерние компоненты этой Page (у них есть дефекты)
+        //   3. FB -> Component -> sibling через Page: если FB замаплен на компонент,
+        //      берём все компоненты, которые находятся на тех же Pages
         const relevantComponents = databasePool('component_functional_blocks as cfb')
             .select('cfb.functional_block_id', 'cfb.component_id')
             .union(function () {
-                // FB -> Page -> Child Components
+                // FB -> Page -> Child Code Components
+                // Если FB замаплен на компонент типа Page, находим все дочерние компоненты этой Page
                 this.select('cfb.functional_block_id', 'pcd.component_id')
                     .from('component_functional_blocks as cfb')
                     .join('components as c', 'cfb.component_id', 'c.id')
@@ -357,15 +363,16 @@ export async function getTestCoverageData(req, res) {
                     .where('c.component_type', 'page');
             })
             .union(function () {
-                // FB -> Child Component -> Parent Page
-                this.select('cfb.functional_block_id', 'c_page.id as component_id')
+                // FB -> Code Component -> его Pages -> sibling Code Components на тех же Pages
+                // Если FB замаплен на обычный компонент, находим все Pages, на которых он есть,
+                // и подтягиваем все другие компоненты с этих Pages
+                this.select('cfb.functional_block_id', 'pcd_sibling.component_id')
                     .from('component_functional_blocks as cfb')
-                    .join('page_component_dependencies as pcd', 'pcd.component_id', 'cfb.component_id')
-                    .join('components as c_page', function () {
-                        this.on('c_page.component_name', '=', 'pcd.page_name')
-                            .andOn('c_page.project_id', '=', 'pcd.project_id');
-                    })
-                    .where('c_page.component_type', 'page');
+                    .join('page_component_dependencies as pcd_self', 'pcd_self.component_id', 'cfb.component_id')
+                    .join('page_component_dependencies as pcd_sibling', function () {
+                        this.on('pcd_sibling.page_name', '=', 'pcd_self.page_name')
+                            .andOn('pcd_sibling.project_id', '=', 'pcd_self.project_id');
+                    });
             });
 
         let query = databasePool('functional_blocks as fb')
