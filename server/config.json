@@ -23,5 +23,6 @@
                            "meta-llama/llama-4-maverick:free"
                        ],
     "debugContextPages":  false,
-    "bddServerUrl":  "http://localhost:5002"
+    "bddServerUrl":  "http://localhost:5002",
+    "analyticsWebhookUrl":  "https://script.google.com/macros/s/AKfycbzPVb9a8r8hMsPQ5-uW4dxKOTo3An6xiqmHbA5elyJ01Xbd3iZTDd8PNL-GG0Th70I/exec"
 }

@@ -5,6 +5,7 @@ import Select from 'react-select';
 import { useNavigate } from 'react-router-dom'; // Added useNavigate
 import config from './config.json';
 import styles from './styles';
+import { trackEvent } from './analytics';
 
 const COLORS = [
     '#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d',
@@ -288,6 +289,7 @@ const HeatmapPage = ({ projects }) => {
 
     const handleProcessFiles = async () => {
         if (importFiles.length === 0) return;
+        trackEvent('heatmap_process_files', { page: '/heatmap', projectId });
 
         setImportProcessing(true);
         setImportError('');
@@ -912,6 +914,7 @@ const HeatmapPage = ({ projects }) => {
     };
 
     const handleSaveBulkHistory = async (force = false) => {
+        trackEvent('heatmap_save_history', { page: '/heatmap', projectId, extra: { force, count: parsedHistoryItems?.length } });
         // Валидация незамапленных компонентов
         if (!force) {
             const allComponents = Array.from(new Set(parsedHistoryItems.flatMap(item =>

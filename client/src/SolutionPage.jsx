@@ -18,6 +18,7 @@ import TestModelReviewModal from './components/test-model/TestModelReviewModal';
 import GlobalGenerationWindow from './components/GlobalGenerationWindow';
 import ErrorBoundary from './components/ErrorBoundary';
 import * as pdfjsLib from 'pdfjs-dist/build/pdf';
+import { trackEvent } from './analytics';
 
 // CSS для анимаций прогресс-бара
 const progressBarStyles = `
@@ -59,21 +60,26 @@ marked.setOptions({
   breaks: true,
 });
 
-function useDebounce(value, delay) {
+function useDebounce (value, delay)
+{
   const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
+  useEffect(() =>
+  {
     const h = setTimeout(() => setDebounced(value), delay);
     return () => clearTimeout(h);
   }, [value, delay]);
   return debounced;
 }
 
-function usePersistentState(key, defaultValue) {
+function usePersistentState (key, defaultValue)
+{
   const [state, setState] = useState(defaultValue);
   const isFirstMount = useRef(true);
-  useEffect(() => {
+  useEffect(() =>
+  {
     idbGet(key)
-      .then(stored => {
+      .then(stored =>
+      {
         if (stored !== undefined) {
           setState(stored);
         } else {
@@ -83,14 +89,16 @@ function usePersistentState(key, defaultValue) {
       .catch(console.warn);
   }, [key]);
 
-  useEffect(() => {
+  useEffect(() =>
+  {
     if (isFirstMount.current) {
       isFirstMount.current = false;
       return;
     }
 
     if (key === 'solutionTasks') {
-      const toPersist = (Array.isArray(state) ? state : []).map(t => {
+      const toPersist = (Array.isArray(state) ? state : []).map(t =>
+      {
         const {
           attachments,
           requirementAttachments,
@@ -120,20 +128,24 @@ export const SolutionCard = ({
   isCollapsed, onToggleCollapse, fillFieldsWithAI,
   aiFillLoading,
   setAttachmentsMap
-}) => {
+}) =>
+{
 
-  const handleChange = field => e => {
+  const handleChange = field => e =>
+  {
     const v = e.target.type === 'checkbox'
       ? e.target.checked
       : e.target.value;
     onUpdate(index, { ...task, [field]: v });
   };
 
-  const handlePaste = field => async e => {
+  const handlePaste = field => async e =>
+  {
     const rawFiles = Array.from(e.clipboardData.files || []);
     if (!rawFiles.length) return;
     e.preventDefault();
-    const renamedFiles = rawFiles.map((f, idx) => {
+    const renamedFiles = rawFiles.map((f, idx) =>
+    {
       const ext = f.name.split('.').pop();
       const uniqueName = `screenshot-${Date.now()}-${idx}.${ext}`;
       return new File([f], uniqueName, { type: f.type });
@@ -168,151 +180,153 @@ export const SolutionCard = ({
   const toOptions = key =>
     (fieldOptions[key] || []).map(o => ({ value: o.id, label: o.name }));
 
-  const formatAllureOptionLabel = (opt, { context }) => {
+  const formatAllureOptionLabel = (opt, { context }) =>
+  {
     if (context === 'value') return opt.label.split('(')[0].trim();
     return (
       <div className="allure-option-container">
         <div className="allure-option">
-          <span className="allure-option__name">{opt.label}</span>
-          <span className="allure-option__details">ID: {opt.value}</span>
+          <span className="allure-option__name">{ opt.label }</span>
+          <span className="allure-option__details">ID: { opt.value }</span>
         </div>
-        {opt.linked && <span className="allure-option__linked">уже привязан</span>}
+        { opt.linked && <span className="allure-option__linked">уже привязан</span> }
       </div>
     );
   };
 
   return (
-    <div className={`task-card ${task.isNew ? 'new-task' : ''}`}>
+    <div className={ `task-card ${task.isNew ? 'new-task' : ''}` }>
       <div className="task-header">
         <button
           className="collapse-toggle"
-          onClick={() => onToggleCollapse(index)}
-          title={isCollapsed ? "Развернуть" : "Свернуть"}
+          onClick={ () => onToggleCollapse(index) }
+          title={ isCollapsed ? "Развернуть" : "Свернуть" }
         >
-          {isCollapsed ? '▶' : '▼'}
+          { isCollapsed ? '▶' : '▼' }
         </button>
         <input
           type="checkbox"
-          checked={task.selected}
-          onChange={handleChange('selected')}
+          checked={ task.selected }
+          onChange={ handleChange('selected') }
           title="Выбрать/снять выбор"
         />
-        <div className="field" style={{ flexGrow: 1 }}>
-          <label htmlFor={`summary-${index}`}>Тема*</label>
+        <div className="field" style={ { flexGrow: 1 } }>
+          <label htmlFor={ `summary-${index}` }>Тема*</label>
           <input
-            id={`summary-${index}`}
+            id={ `summary-${index}` }
             type="text"
             placeholder="Краткое описание проблемы"
-            value={task.summary}
-            onChange={handleChange('summary')}
+            value={ task.summary }
+            onChange={ handleChange('summary') }
           />
         </div>
-        <button onClick={() => onDelete(index)} title="Удалить задачу">❌</button>
+        <button onClick={ () => onDelete(index) } title="Удалить задачу">❌</button>
       </div>
 
-      {task.aiSummary && (
+      { task.aiSummary && (
         <div className="ai-feedback full-width">
-          <strong>AI Тема:</strong> {task.aiSummary}
+          <strong>AI Тема:</strong> { task.aiSummary }
         </div>
-      )}
+      ) }
 
-      <div className={`card-body ${isCollapsed ? 'collapsed' : ''}`}>
-        {/* Исходное требование */}
+      <div className={ `card-body ${isCollapsed ? 'collapsed' : ''}` }>
+        {/* Исходное требование */ }
         <div className="field full-width">
-          <label htmlFor={`requirement-${index}`}>Исходное требование*</label>
+          <label htmlFor={ `requirement-${index}` }>Исходное требование*</label>
           <textarea
-            id={`requirement-${index}`}
-            rows={4}
+            id={ `requirement-${index}` }
+            rows={ 4 }
             placeholder="Текст требования"
-            value={task.requirement}
-            onChange={handleChange('requirement')}
-            onPaste={handlePaste('requirement')}
+            value={ task.requirement }
+            onChange={ handleChange('requirement') }
+            onPaste={ handlePaste('requirement') }
           />
         </div>
-        {task.aiRequirement && (
+        { task.aiRequirement && (
           <div className="ai-feedback full-width">
-            <strong>AI Требование:</strong> {task.aiRequirement}
+            <strong>AI Требование:</strong> { task.aiRequirement }
           </div>
-        )}
+        ) }
 
-        {/* Описание проблемы (description) */}
+        {/* Описание проблемы (description) */ }
         <div className="field full-width">
-          <label htmlFor={`description-${index}`}>Описание проблемы*</label>
+          <label htmlFor={ `description-${index}` }>Описание проблемы*</label>
           <textarea
-            id={`description-${index}`}
-            rows={4}
+            id={ `description-${index}` }
+            rows={ 4 }
             placeholder="Детальное описание проблемы..."
-            value={task.description}
-            onChange={handleChange('description')}
-            onPaste={handlePaste('description')}
+            value={ task.description }
+            onChange={ handleChange('description') }
+            onPaste={ handlePaste('description') }
           />
         </div>
-        {task.aiDescription && (
+        { task.aiDescription && (
           <div className="ai-feedback full-width">
-            <strong>AI Описание:</strong> {task.aiDescription}
+            <strong>AI Описание:</strong> { task.aiDescription }
           </div>
-        )}
+        ) }
 
-        {/* Фактический и ожидаемый результат */}
+        {/* Фактический и ожидаемый результат */ }
         <div className="field-group">
           <div className="field full-width">
-            <label htmlFor={`actual-${index}`}>Фактический результат*</label>
+            <label htmlFor={ `actual-${index}` }>Фактический результат*</label>
             <textarea
-              id={`actual-${index}`}
-              rows={2}
+              id={ `actual-${index}` }
+              rows={ 2 }
               placeholder="Что произошло на самом деле"
-              value={task.actual}
-              onChange={handleChange('actual')}
-              onPaste={handlePaste('actual')}
+              value={ task.actual }
+              onChange={ handleChange('actual') }
+              onPaste={ handlePaste('actual') }
             />
           </div>
-          {task.aiActual && (
+          { task.aiActual && (
             <div className="ai-feedback full-width">
-              <strong>AI Фактический:</strong> {task.aiActual}
+              <strong>AI Фактический:</strong> { task.aiActual }
             </div>
-          )}
+          ) }
           <div className="field full-width">
-            <label htmlFor={`expected-${index}`}>Ожидаемый результат*</label>
+            <label htmlFor={ `expected-${index}` }>Ожидаемый результат*</label>
             <textarea
-              id={`expected-${index}`}
-              rows={2}
+              id={ `expected-${index}` }
+              rows={ 2 }
               placeholder="Что должно было произойти"
-              value={task.expected}
-              onChange={handleChange('expected')}
-              onPaste={handlePaste('expected')}
+              value={ task.expected }
+              onChange={ handleChange('expected') }
+              onPaste={ handlePaste('expected') }
             />
           </div>
-          {task.aiExpected && (
+          { task.aiExpected && (
             <div className="ai-feedback full-width">
-              <strong>AI Ожидаемый:</strong> {task.aiExpected}
+              <strong>AI Ожидаемый:</strong> { task.aiExpected }
             </div>
-          )}
+          ) }
         </div>
 
-        {/* Нарушенные свойства */}
+        {/* Нарушенные свойства */ }
         <div className="field full-width">
-          <label htmlFor={`properties-${index}`}>Нарушенные свойства (через запятую)</label>
+          <label htmlFor={ `properties-${index}` }>Нарушенные свойства (через запятую)</label>
           <textarea
-            id={`properties-${index}`}
-            rows={2}
+            id={ `properties-${index}` }
+            rows={ 2 }
             placeholder="Нарушенные свойства"
-            value={task.properties}
-            onChange={handleChange('properties')}
+            value={ task.properties }
+            onChange={ handleChange('properties') }
           />
         </div>
-        {task.aiProperties && (
+        { task.aiProperties && (
           <div className="ai-feedback full-width">
-            <strong>AI Свойства:</strong> {task.aiProperties}
+            <strong>AI Свойства:</strong> { task.aiProperties }
           </div>
-        )}
+        ) }
 
-        {/* Общие вложения */}
+        {/* Общие вложения */ }
         <div className="field full-width">
           <label>Прикрепить файлы</label>
           <input
             type="file"
             multiple
-            onChange={async e => {
+            onChange={ async e =>
+            {
               const MAX_FILE_SIZE = 50 * 1024 * 1024;
               const MAX_FILE_COUNT = 20;
               let rawFiles = Array.from(e.target.files);
@@ -343,21 +357,23 @@ export const SolutionCard = ({
                   common: [...(m[task.id]?.common || []), ...serialized]
                 }
               }));
-            }}
+            } }
           />
-          {task.attachments?.length > 0 && (
+          { task.attachments?.length > 0 && (
             <ul className="attached-list">
-              {task.attachments.map((f, i) => (
-                <li key={i}>
-                  {f.name}
+              { task.attachments.map((f, i) => (
+                <li key={ i }>
+                  { f.name }
                   <button
                     type="button"
                     className="remove-attachment-btn"
-                    onClick={() => {
+                    onClick={ () =>
+                    {
                       const newAttachments = task.attachments.filter((_, idx) => idx !== i);
                       onUpdate(index, { ...task, attachments: newAttachments });
 
-                      setAttachmentsMap(m => {
+                      setAttachmentsMap(m =>
+                      {
                         const entry = m[task.id] || {};
                         const common = (entry.common || []).filter(x => x.name !== f.name);
                         return {
@@ -368,26 +384,26 @@ export const SolutionCard = ({
                           }
                         };
                       });
-                    }}
+                    } }
                     title="Удалить файл"
                   >
                     ❌
                   </button>
                 </li>
-              ))}
+              )) }
             </ul>
-          )}
+          ) }
         </div>
 
-        {/* Дополнительная информация */}
+        {/* Дополнительная информация */ }
         <div className="field-group">
           <div className="field">
             <label>Ссылка на требование</label>
             <input
               type="text"
               placeholder="URL в Confluence"
-              value={task.requirementLink}
-              onChange={handleChange('requirementLink')}
+              value={ task.requirementLink }
+              onChange={ handleChange('requirementLink') }
             />
           </div>
           <div className="field">
@@ -395,13 +411,13 @@ export const SolutionCard = ({
             <input
               type="text"
               placeholder="URL в Figma"
-              value={task.mockup}
-              onChange={handleChange('mockup')}
+              value={ task.mockup }
+              onChange={ handleChange('mockup') }
             />
           </div>
         </div>
 
-        {/* AI‐кнопки */}
+        {/* AI‐кнопки */ }
         <div className="ai-controls">
         </div>
       </div>
@@ -411,7 +427,8 @@ export const SolutionCard = ({
 
 
 // --- Confluence helpers (ID/URL -> pageId) ---
-const getConfluencePageId = (raw) => {
+const getConfluencePageId = (raw) =>
+{
   if (!raw) return '';
   const s = String(raw).trim();
   if (/^\d+$/.test(s)) return s;
@@ -428,7 +445,8 @@ const getConfluencePageId = (raw) => {
   }
 };
 
-const parseManyPageIds = (rawList) => {
+const parseManyPageIds = (rawList) =>
+{
   if (!rawList) return [];
   return [...new Set(
     String(rawList)
@@ -439,7 +457,8 @@ const parseManyPageIds = (rawList) => {
 };
 
 
-export default function SolutionPage({ projects = [] }) {
+export default function SolutionPage ({ projects = [] })
+{
   const [attachmentsMap, setAttachmentsMap] = useAttachmentsMap('solutionAttachmentsMap');
   const [defaultStand, setDefaultStand] = usePersistentState('defaultStand', '');
   const [defaultEnv, setDefaultEnv] = usePersistentState('defaultEnv', '');
@@ -484,9 +503,10 @@ export default function SolutionPage({ projects = [] }) {
   const [isGenModalOpen, setGenModalOpen] = useState(false);
   const [isReviewModalOpen, setReviewModalOpen] = useState(false);
   const [generatedCases, setGeneratedCases] = useState([]);
-  
+
   // Логирование изменений generatedCases
-  useEffect(() => {
+  useEffect(() =>
+  {
     console.log('SolutionPage: generatedCases state changed:', generatedCases);
     console.log('SolutionPage: generatedCases length:', generatedCases?.length);
   }, [generatedCases]);
@@ -501,26 +521,31 @@ export default function SolutionPage({ projects = [] }) {
   const [reviewerOption, setReviewerOption] =
     usePersistentState('solutionReviewer', []);
 
-  useEffect(() => {
+  useEffect(() =>
+  {
     if (reviewerOption && !Array.isArray(reviewerOption)) {
       setReviewerOption([reviewerOption]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  useEffect(() => {
+  useEffect(() =>
+  {
     if (tasks.length > 0 && tasks[0].selected === undefined) {
       setTasks(ts => ts.map(t => ({ ...t, selected: true })));
     }
   }, [tasks, setTasks]);
-  useEffect(() => {
+  useEffect(() =>
+  {
     idbSet('__initialized__', true)
       .catch(console.warn);
   }, []);
-  useEffect(() => {
+  useEffect(() =>
+  {
     setTasks(ts => ts.map(t => ({ ...t, allureDefect: null })));
   }, [allureProject, setTasks]);
   const cardRefs = useRef([]);
-  useEffect(() => {
+  useEffect(() =>
+  {
     // Миграция: если новый массив пуст, но в старом поле есть данные — распарсить
     if (!Array.isArray(contextPageIds) || contextPageIds.length) return;
     const parsed = parseManyPageIds(contextPageIdsInput);
@@ -528,17 +553,20 @@ export default function SolutionPage({ projects = [] }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // запускаем один раз
 
-  useEffect(() => {
+  useEffect(() =>
+  {
     cardRefs.current = tasks.map((_, i) => cardRefs.current[i] || React.createRef());
   }, [tasks]);
 
-  const scrollToTask = useCallback((i) => {
+  const scrollToTask = useCallback((i) =>
+  {
     const el = document.getElementById(`task-${i}`);
     if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, []);
 
-  const loadLinkTypes = useCallback(async () => {
+  const loadLinkTypes = useCallback(async () =>
+  {
     if (!jiraPat) return;
     try {
       const { data } = await axios.get(
@@ -554,7 +582,8 @@ export default function SolutionPage({ projects = [] }) {
 
   useEffect(() => { loadLinkTypes() }, [loadLinkTypes]);
 
-  const loadIssueOptions = async input => {
+  const loadIssueOptions = async input =>
+  {
     if (!jiraProject || !jiraPat) return [];
 
     const q = input.trim();
@@ -588,7 +617,8 @@ export default function SolutionPage({ projects = [] }) {
   };
 
 
-  const buildRequirementsPayload = ({ includeRequirements = false } = {}) => {
+  const buildRequirementsPayload = ({ includeRequirements = false } = {}) =>
+  {
     const parsedGlossaryId = getConfluencePageId(glossaryPageId);
     const parsedContextIds = (Array.isArray(contextPageIds) ? contextPageIds : [])
       .map(getConfluencePageId)
@@ -617,7 +647,8 @@ export default function SolutionPage({ projects = [] }) {
   };
 
 
-  const prepareRequirements = () => {
+  const prepareRequirements = () =>
+  {
     const reqsFromTasks = tasks.map(t => t.requirement?.trim()).filter(r => r);
     if (reqsFromTasks.length > 0) {
       return reqsFromTasks;
@@ -634,7 +665,8 @@ export default function SolutionPage({ projects = [] }) {
 
 
   // группируем текстовые фрагменты в строки по Y
-  const groupByRows = (items, tol = 2) => {
+  const groupByRows = (items, tol = 2) =>
+  {
     const buckets = new Map();
     for (const it of items) {
       const x = it.transform[4], y = it.transform[5];
@@ -651,7 +683,8 @@ export default function SolutionPage({ projects = [] }) {
   };
 
   // кластеризуем X-позиции, чтобы понять «колонки»
-  const detectColumns = (rows, tol = 12) => {
+  const detectColumns = (rows, tol = 12) =>
+  {
     const xs = [];
     rows.forEach(r => r.forEach(c => xs.push(c.x)));
     xs.sort((a, b) => a - b);
@@ -670,7 +703,8 @@ export default function SolutionPage({ projects = [] }) {
   };
 
   // строим одну «строку таблицы» по ближайшей колонке
-  const placeIntoColumns = (cells, colXs, tol = 12) => {
+  const placeIntoColumns = (cells, colXs, tol = 12) =>
+  {
     const row = Array(colXs.length).fill('');
     for (const c of cells) {
       let idx = 0, best = Infinity;
@@ -690,7 +724,8 @@ export default function SolutionPage({ projects = [] }) {
   };
 
   // считаем «насколько это таблица»: много повторных межсловных зазоров по X
-  const looksLikeTable = (rows) => {
+  const looksLikeTable = (rows) =>
+  {
     let tableishLines = 0;
     for (const r of rows) {
       let bigGaps = 0;
@@ -705,7 +740,8 @@ export default function SolutionPage({ projects = [] }) {
   };
 
   // fallback — собрать обычную строку с пробелами/« | » по большим зазорам
-  const joinWithGaps = (cells) => {
+  const joinWithGaps = (cells) =>
+  {
     let s = '';
     for (let i = 0; i < cells.length; i++) {
       const cur = cells[i], prev = cells[i - 1];
@@ -720,7 +756,8 @@ export default function SolutionPage({ projects = [] }) {
 
   // ===== обработчик загрузки PDF =====
   /** @param {File} file */
-  const handlePdfUpload = async (file) => {
+  const handlePdfUpload = async (file) =>
+  {
     setPdfExtracting(true);
     try {
       const buf = await file.arrayBuffer();
@@ -795,28 +832,32 @@ export default function SolutionPage({ projects = [] }) {
   const [generatedModel, setGeneratedModel] = usePersistentState('generatedModel', null);
 
   // Автоматически возобновляем проверку статуса при загрузке страницы
-  useEffect(() => {
+  useEffect(() =>
+  {
     if (generationTaskId && generationStatus === 'processing') {
       checkGenerationStatus(generationTaskId);
     }
   }, [generationTaskId, generationStatus]);
 
   // Автоматически возобновляем проверку статуса генерации тестовой модели
-  useEffect(() => {
+  useEffect(() =>
+  {
     if (modelGenerationTaskId && modelGenerationStatus === 'processing') {
       checkModelGenerationStatus(modelGenerationTaskId);
     }
   }, [modelGenerationTaskId, modelGenerationStatus]);
 
   // Автоматически возобновляем проверку статуса BDD генерации
-  useEffect(() => {
+  useEffect(() =>
+  {
     if (bddTaskId && bddTaskId !== 'undefined' && bddTaskId !== 'null' && bddStatus === 'processing') {
       checkBddStatus(bddTaskId);
     }
   }, [bddTaskId, bddStatus]);
 
   // Уведомляем GlobalBackgroundProgress об изменениях состояния
-  useEffect(() => {
+  useEffect(() =>
+  {
     window.dispatchEvent(new CustomEvent('updateTestCaseGeneration', {
       detail: {
         status: generationStatus,
@@ -827,7 +868,8 @@ export default function SolutionPage({ projects = [] }) {
     }));
   }, [generationStatus, generationProgress, generationTaskId, isGenerationMinimized]);
 
-  useEffect(() => {
+  useEffect(() =>
+  {
     window.dispatchEvent(new CustomEvent('updateTestModelGeneration', {
       detail: {
         status: modelGenerationStatus,
@@ -839,8 +881,10 @@ export default function SolutionPage({ projects = [] }) {
   }, [modelGenerationStatus, modelGenerationProgress, modelGenerationTaskId, modelIsMinimized]);
 
   // Загружаем сохраненные BDD результаты при инициализации
-  useEffect(() => {
-    const loadSavedBddResult = async () => {
+  useEffect(() =>
+  {
+    const loadSavedBddResult = async () =>
+    {
       try {
         const saved = await idbGet('bddResult');
         if (saved) {
@@ -859,8 +903,10 @@ export default function SolutionPage({ projects = [] }) {
   }, []);
 
   // Загружаем сохраненные тест-кейсы при инициализации (только если нет активной задачи)
-  useEffect(() => {
-    const loadSavedTestCases = async () => {
+  useEffect(() =>
+  {
+    const loadSavedTestCases = async () =>
+    {
       // ✅ ВАЖНО: Сначала загружаем generationTaskId из IndexedDB, так как usePersistentState загружает асинхронно
       let activeTaskId = generationTaskId;
       if (!activeTaskId) {
@@ -905,7 +951,8 @@ export default function SolutionPage({ projects = [] }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Проверяем, нужно ли открыть модальное окно генерации
-  useEffect(() => {
+  useEffect(() =>
+  {
     const shouldOpenModal = localStorage.getItem('openGenerationModal');
     if (shouldOpenModal === 'true') {
       // Очищаем флаг
@@ -916,14 +963,15 @@ export default function SolutionPage({ projects = [] }) {
     }
   }, []);
 
-  const checkGenerationStatus = async (taskId) => {
+  const checkGenerationStatus = async (taskId) =>
+  {
     try {
       // ✅ Добавляем параметр ?nocache=true для принудительной очистки кэша на сервере
       // Это гарантирует, что мы получим актуальные данные, а не закэшированные
       const { data } = await axios.get(`${config.serverUrl}/generate-test-cases-status/${taskId}?nocache=${Date.now()}`);
       setGenerationProgress(data.progress);
       setGenerationStatus(data.status);
-      
+
       if (data.status === 'completed') {
         console.log('SolutionPage: received test cases from server:', data.result.testCases);
         console.log('SolutionPage: test cases length:', data.result.testCases?.length);
@@ -938,7 +986,7 @@ export default function SolutionPage({ projects = [] }) {
         setGenerationProgress(100);
         setGenerationStatus('completed'); // Не сбрасываем статус, а устанавливаем 'completed'
         setIsGenerationMinimized(false); // Показать модальное окно при завершении
-        
+
         // Очищаем временные данные генерации (батчим операции)
         await Promise.all([
           idbSet('generationTaskId', null),
@@ -946,7 +994,7 @@ export default function SolutionPage({ projects = [] }) {
           idbSet('generationStatus', null),
           idbSet('isGenerationMinimized', false)
         ]);
-        
+
         // Показать уведомление о завершении
         if (window.Notification && Notification.permission === 'granted') {
           new Notification('Генерация завершена', {
@@ -961,7 +1009,8 @@ export default function SolutionPage({ projects = [] }) {
         setGenerationStatus(null);
       } else if (data.status === 'processing') {
         // Продолжаем опрашивать статус каждые 5 секунд (оптимизация)
-        setTimeout(() => {
+        setTimeout(() =>
+        {
           if (generationTaskId === taskId) {
             checkGenerationStatus(taskId);
           }
@@ -978,7 +1027,8 @@ export default function SolutionPage({ projects = [] }) {
   };
 
   // Функция для отмены генерации
-  const cancelGeneration = useCallback(async (taskId, type) => {
+  const cancelGeneration = useCallback(async (taskId, type) =>
+  {
     try {
       const response = await fetch(`/api/cancel-generation/${taskId}`, {
         method: 'POST',
@@ -1010,33 +1060,36 @@ export default function SolutionPage({ projects = [] }) {
   }, []);
 
   // Добавляем функцию отмены в window для глобального доступа
-  useEffect(() => {
+  useEffect(() =>
+  {
     window.cancelGeneration = cancelGeneration;
-    return () => {
+    return () =>
+    {
       delete window.cancelGeneration;
     };
   }, [cancelGeneration]);
 
   // Проверка статуса генерации тестовой модели
-  const checkModelGenerationStatus = async (taskId) => {
+  const checkModelGenerationStatus = async (taskId) =>
+  {
     try {
       const { data } = await axios.get(`${config.serverUrl}/generate-test-model-status/${taskId}`);
       setModelGenerationProgress(data.progress);
       setModelGenerationStatus(data.status);
-      
+
       if (data.status === 'completed') {
         setModelGenerationTaskId(null);
         setModelGenerationProgress(100);
         setModelGenerationStatus('completed');
         setModelIsMinimized(false);
-        
+
         // Сохраняем результат в IndexedDB и состояние
         if (data.result && data.result.testModel) {
           await idbSet('generatedTestModel', data.result.testModel);
           setGeneratedModel(data.result.testModel);
           console.log('Тестовая модель сохранена в IndexedDB и состояние');
         }
-        
+
         // Очищаем временные данные генерации (батчим операции)
         await Promise.all([
           idbSet('modelGenerationTaskId', null),
@@ -1044,7 +1097,7 @@ export default function SolutionPage({ projects = [] }) {
           idbSet('modelGenerationStatus', null),
           idbSet('modelIsMinimized', false)
         ]);
-        
+
         // Показать уведомление о завершении
         if (window.Notification && Notification.permission === 'granted') {
           new Notification('Генерация тестовой модели завершена', {
@@ -1059,7 +1112,8 @@ export default function SolutionPage({ projects = [] }) {
         setModelGenerationStatus(null);
       } else if (data.status === 'processing') {
         // Продолжаем опрашивать статус каждые 5 секунд (оптимизация)
-        setTimeout(() => {
+        setTimeout(() =>
+        {
           if (modelGenerationTaskId === taskId) {
             checkModelGenerationStatus(taskId);
           }
@@ -1075,11 +1129,13 @@ export default function SolutionPage({ projects = [] }) {
     }
   };
 
-  const handleGenerateModel = async (modelStructure, includeBackendTests = true) => {
+  const handleGenerateModel = async (modelStructure, includeBackendTests = true) =>
+  {
+    trackEvent('generate_test_model', { page: '/solution', projectId: allureProject?.id, taskId: confluencePageId });
     console.log('SolutionPage: получена структура тестовой модели для генерации тест-кейсов:', modelStructure);
     console.log('SolutionPage: количество features в структуре:', modelStructure?.length);
     console.log('SolutionPage: includeBackendTests:', includeBackendTests);
-    
+
     const payloadBase = buildRequirementsPayload({ includeRequirements: true });
 
     // Запрашиваем разрешение на уведомления
@@ -1093,17 +1149,17 @@ export default function SolutionPage({ projects = [] }) {
       setGeneratedCases([]);
       localStorage.removeItem('generatedTestCases');
       setGenerationStatus(null);
-      
+
       // Сначала пробуем асинхронный API
       try {
-        const payload = { 
-          ...payloadBase, 
+        const payload = {
+          ...payloadBase,
           modelStructure,
           includeBackendTests: includeBackendTests !== false, // ✅ Передаём флаг включения backend тестов
           ...(allureProject ? { projectId: allureProject } : {})  // ✅ Добавляем projectId для shared steps
         };
         console.log('SolutionPage: отправляем payload с modelStructure:', payload);
-        
+
         const { data } = await axios.post(
           `${config.serverUrl}/generate-test-cases-async`,
           payload, {
@@ -1112,7 +1168,7 @@ export default function SolutionPage({ projects = [] }) {
           }
         }
         );
-        
+
         setGenerationTaskId(data.taskId);
         setGenerationProgress(0);
         setGenerationStatus('processing');
@@ -1141,44 +1197,45 @@ export default function SolutionPage({ projects = [] }) {
   };
 
   // Проверка статуса BDD генерации
-  const checkBddStatus = async (taskId) => {
+  const checkBddStatus = async (taskId) =>
+  {
     // Проверяем, что taskId валиден
     if (!taskId || taskId === 'undefined' || taskId === 'null') {
       console.warn('[BDD] checkBddStatus вызван с невалидным taskId:', taskId);
       return;
     }
-    
+
     try {
       const { data } = await axios.get(`${config.bddServerUrl || config.serverUrl}/api/bdd/status/${taskId}?nocache=${Date.now()}`, {
         timeout: 30000
       });
       setBddProgress(data.progress || 0);
       setBddStatus(data.status);
-      
+
       if (data.status === 'completed') {
         console.log('BDD генерация завершена:', data.result);
-        
+
         // Сохраняем результат
         if (data.result) {
           setBddResult(data.result);
           await idbSet('bddResult', data.result);
         }
-        
+
         setBddTaskId(null);
         setBddProgress(100);
         setBddStatus('completed');
         setIsBddMinimized(false);
-        
+
         // Очищаем временные данные задачи, но сохраняем результат
         await Promise.all([
           idbSet('bddTaskId', null),
           idbSet('bddProgress', 0),
           idbSet('isBddMinimized', false)
         ]);
-        
+
         // Открываем модальное окно для просмотра результатов
         setIsBddReviewModalOpen(true);
-        
+
         // Показать уведомление
         if (window.Notification && Notification.permission === 'granted') {
           new Notification('BDD генерация завершена', {
@@ -1193,7 +1250,8 @@ export default function SolutionPage({ projects = [] }) {
         setBddStatus(null);
       } else if (data.status === 'processing') {
         // Продолжаем опрашивать статус
-        setTimeout(() => {
+        setTimeout(() =>
+        {
           if (bddTaskId === taskId) {
             checkBddStatus(taskId);
           }
@@ -1209,29 +1267,31 @@ export default function SolutionPage({ projects = [] }) {
   };
 
   // Функция для регенерации BDD тестов (очищает старые результаты и запускает новую генерацию)
-  const handleRegenerateBDD = async () => {
+  const handleRegenerateBDD = async () =>
+  {
     // Закрываем модальное окно
     setIsBddReviewModalOpen(false);
-    
+
     // Очищаем старые результаты
     setBddResult(null);
     setBddStatus(null);
     setBddTaskId(null);
     setBddProgress(0);
-    
+
     await Promise.all([
       idbSet('bddResult', null),
       idbSet('bddStatus', null),
       idbSet('bddTaskId', null),
       idbSet('bddProgress', 0)
     ]);
-    
+
     // Запускаем новую генерацию
     await handleGenerateBDDInternal();
   };
 
   // Внутренняя функция для генерации BDD тестов (без проверки на существующие результаты)
-  const handleGenerateBDDInternal = async () => {
+  const handleGenerateBDDInternal = async () =>
+  {
 
     const payloadBase = buildRequirementsPayload({ includeRequirements: true });
 
@@ -1245,9 +1305,9 @@ export default function SolutionPage({ projects = [] }) {
         ...payloadBase,
         ...(allureProject ? { projectId: typeof allureProject === 'string' ? allureProject : allureProject.id } : {})
       };
-      
+
       console.log('BDD: отправляем запрос на генерацию:', payload);
-      
+
       const { data } = await axios.post(
         `${config.bddServerUrl || config.serverUrl}/api/bdd/generate`,
         payload,
@@ -1258,7 +1318,7 @@ export default function SolutionPage({ projects = [] }) {
           timeout: 30000
         }
       );
-      
+
       setBddTaskId(data.taskId);
       setBddProgress(0);
       setBddStatus('processing');
@@ -1270,26 +1330,29 @@ export default function SolutionPage({ projects = [] }) {
   };
 
   // Функция для генерации BDD тестов (публичная, с проверкой на существующие результаты)
-  const handleGenerateBDD = async () => {
+  const handleGenerateBDD = async () =>
+  {
     // Если уже есть завершенные результаты - открываем превью
     if (bddStatus === 'completed' && bddResult) {
       setIsBddReviewModalOpen(true);
       return;
     }
-    
+
     // Иначе запускаем генерацию
     await handleGenerateBDDInternal();
   };
 
   // вызывается из ревью, отправляет финальный список в Allure и закрывает
-  const handleConfirmSend = finalCases => {
+  const handleConfirmSend = finalCases =>
+  {
     // … тут ваша логика отправки в Allure …
     console.log('Отправляем в Allure:', finalCases);
     setReviewModalOpen(false);
   };
 
   // Очищает все сохраненные состояния ревью тест-кейсов в localStorage
-  const clearReviewState = useCallback(() => {
+  const clearReviewState = useCallback(() =>
+  {
     try {
       const keysToRemove = [];
       for (let i = 0; i < localStorage.length; i++) {
@@ -1308,37 +1371,39 @@ export default function SolutionPage({ projects = [] }) {
   }, []);
 
   // Функция для очистки состояния тест-кейсов
-  const handleClearTestCases = useCallback(() => {
+  const handleClearTestCases = useCallback(() =>
+  {
     if (window.confirm('Вы уверены, что хотите удалить все сгенерированные тест-кейсы? Это действие нельзя отменить.')) {
       setGeneratedCases([]);
       setGenerationStatus(null);
       setGenerationTaskId(null);
       setGenerationProgress(0);
       setIsGenerationMinimized(false);
-      
+
       // Очищаем сохраненные данные
       localStorage.removeItem('generatedTestCases');
       clearReviewState();
-      
+
       // Очищаем данные из IndexedDB
       idbSet('generationTaskId', null).catch(console.warn);
       idbSet('generationProgress', 0).catch(console.warn);
       idbSet('generationStatus', null).catch(console.warn);
       idbSet('isGenerationMinimized', false).catch(console.warn);
-      
+
       console.log('Состояние тест-кейсов очищено');
     }
   }, [clearReviewState]);
 
   // Функция для очистки состояния тестовой модели
-  const handleClearTestModel = useCallback(() => {
+  const handleClearTestModel = useCallback(() =>
+  {
     if (window.confirm('Вы уверены, что хотите удалить сгенерированную тестовую модель? Это действие нельзя отменить.')) {
       setGeneratedModel(null);
       setModelGenerationStatus(null);
       setModelGenerationTaskId(null);
       setModelGenerationProgress(0);
       setModelIsMinimized(false);
-      
+
       // Очищаем данные из IndexedDB
       idbSet('generatedTestModel', null).catch(console.warn);
       idbSet('testModelTree', null).catch(console.warn);
@@ -1346,12 +1411,13 @@ export default function SolutionPage({ projects = [] }) {
       idbSet('modelGenerationProgress', 0).catch(console.warn);
       idbSet('modelGenerationStatus', null).catch(console.warn);
       idbSet('modelIsMinimized', false).catch(console.warn);
-      
+
       console.log('Состояние тестовой модели очищено');
     }
   }, []);
 
-  const loadMeta = useCallback(async () => {
+  const loadMeta = useCallback(async () =>
+  {
     if (!debProject || !debPat) return;
     setIsMetaLoading(true); setMetaError('');
     try {
@@ -1370,7 +1436,8 @@ export default function SolutionPage({ projects = [] }) {
       .then(r => r.data.map(u => ({ value: u.name, label: u.displayName })))
       .catch(() => []);
 
-  const loadTransitions = useCallback(async () => {
+  const loadTransitions = useCallback(async () =>
+  {
     if (!debProject || !debPat) return;
     try {
       const sample = 'JMT-15044';
@@ -1380,7 +1447,8 @@ export default function SolutionPage({ projects = [] }) {
   }, [debProject, debPat]);
   useEffect(() => { if (modalOpen) loadTransitions(); }, [modalOpen, loadTransitions]);
 
-  useEffect(() => {
+  useEffect(() =>
+  {
     setTasks(ts =>
       ts.map(t => ({
         ...t,
@@ -1396,7 +1464,8 @@ export default function SolutionPage({ projects = [] }) {
     );
   }, [attachmentsMap, setTasks]);
 
-  const loadDefectOptions = async (projectId, input) => {
+  const loadDefectOptions = async (projectId, input) =>
+  {
     if (!projectId) return [];
 
     const needle = input.trim().toLowerCase();
@@ -1440,7 +1509,8 @@ export default function SolutionPage({ projects = [] }) {
     ];
   };
 
-  const fetchDefectDetails = async (idx, defectId) => {
+  const fetchDefectDetails = async (idx, defectId) =>
+  {
     try {
       const { data } = await axios.get(`${config.serverUrl}/allure/defect/${defectId}/details`);
       setTasks(ts => ts.map((t, i) => i === idx ? {
@@ -1456,14 +1526,17 @@ export default function SolutionPage({ projects = [] }) {
     }
   };
 
-  const handleFillAllWithAI = async () => {
+  const handleFillAllWithAI = async () =>
+  {
+    trackEvent('fill_all_ai', { page: '/solution', projectId: allureProject?.id, taskId: jiraProject });
     if (!jiraProject || !jiraPat) {
       alert('Сначала укажите Project Key и Jira PAT');
       return;
     }
     setAiFillAllLoading(true);
     try {
-      const updated = await Promise.all(tasks.map(async (t) => {
+      const updated = await Promise.all(tasks.map(async (t) =>
+      {
         if (!t.selected) return t;
         const payload = {
           summary: t.summary,
@@ -1493,7 +1566,8 @@ export default function SolutionPage({ projects = [] }) {
     }
   };
 
-  const fillFieldsWithAI = async idx => {
+  const fillFieldsWithAI = async idx =>
+  {
     const t = tasks[idx];
     setAiFillLoading(l => ({ ...l, [idx]: true }));
     try {
@@ -1528,7 +1602,8 @@ export default function SolutionPage({ projects = [] }) {
     }
   };
 
-  const runAi = async idx => {
+  const runAi = async idx =>
+  {
     const t = tasks[idx];
     setAiLoading(l => ({ ...l, [idx]: true }));
     try {
@@ -1550,7 +1625,8 @@ export default function SolutionPage({ projects = [] }) {
     }
   };
 
-  const handleAdd = () => {
+  const handleAdd = () =>
+  {
     const newId = uuidv4();
     setAttachmentsMap(prev => ({
       ...prev,
@@ -1596,20 +1672,25 @@ export default function SolutionPage({ projects = [] }) {
       aiProperties: '',
     }, ...prev]);
 
-    setCollapsedStates(prev => {
+    setCollapsedStates(prev =>
+    {
       const next = { 0: false };
-      Object.entries(prev).forEach(([key, val]) => {
+      Object.entries(prev).forEach(([key, val]) =>
+      {
         next[Number(key) + 1] = val;
       });
       return next;
     });
   };
 
-  const handleDelete = i => {
+  const handleDelete = i =>
+  {
     setTasks(ts => ts.filter((_, idx) => idx !== i));
-    setCollapsedStates(prev => {
+    setCollapsedStates(prev =>
+    {
       const newStates = {};
-      Object.keys(prev).forEach(key => {
+      Object.keys(prev).forEach(key =>
+      {
         const intKey = parseInt(key, 10);
         if (intKey < i) {
           newStates[intKey] = prev[key];
@@ -1623,14 +1704,17 @@ export default function SolutionPage({ projects = [] }) {
 
   const handleUpdate = (i, upd) => setTasks(ts => ts.map((t, idx) => idx === i ? upd : t));
 
-  const handleToggleCollapse = index => {
+  const handleToggleCollapse = index =>
+  {
     setCollapsedStates(prev => ({
       ...prev,
       [index]: !prev[index]
     }));
   };
 
-  const handleAnalyzeSolution = async () => {
+  const handleAnalyzeSolution = async () =>
+  {
+    trackEvent('ai_analyze_requirements', { page: '/solution', projectId: allureProject?.id, taskId: confluencePageId });
     setLoading(true);
     setAnalysisResult(null);
 
@@ -1660,15 +1744,18 @@ export default function SolutionPage({ projects = [] }) {
 
 
 
-  const parseDocumentationErrors = (response) => {
+  const parseDocumentationErrors = (response) =>
+  {
     if (!response) return [];
     const blocks = response.split('```').filter((_, i) => i % 2 === 1);
 
-    return blocks.map(block => {
+    return blocks.map(block =>
+    {
       const lines = block.trim().split('\n');
       const requirement = lines.find(l => l.startsWith('###'))?.replace(/^###\s*/, '').trim() || '';
 
-      const getField = (label) => {
+      const getField = (label) =>
+      {
         const line = lines.find(l => l.includes(label));
         return line ? line.split(label)[1].trim() : '';
       };
@@ -1716,7 +1803,9 @@ export default function SolutionPage({ projects = [] }) {
     }).filter(t => t.summary);
   };
 
-  const handleCreateAll = async () => {
+  const handleCreateAll = async () =>
+  {
+    trackEvent('create_jira_tasks', { page: '/solution', projectId: allureProject?.id, taskId: jiraProject, extra: { count: tasks.filter(t => t.selected).length } });
     setCreating(true);
     setResults([]);
     const out = [];
@@ -1851,422 +1940,426 @@ export default function SolutionPage({ projects = [] }) {
 
   return (
     <ErrorBoundary>
-    <div className="solution-page">
-      <h1>Тестирование требований</h1>
+      <div className="solution-page">
+        <h1>Тестирование требований</h1>
 
-      <section className="page-section">
-        <h2>1. Настройки подключения</h2>
-        <div className="settings-grid">
-          <div className="field full-width">
-            <label>Project Key (Jira)</label>
-            <input type="text" value={jiraProject} onChange={e => setJiraProject(e.target.value.toUpperCase())} required placeholder="PROJ" />
+        <section className="page-section">
+          <h2>1. Настройки подключения</h2>
+          <div className="settings-grid">
+            <div className="field full-width">
+              <label>Project Key (Jira)</label>
+              <input type="text" value={ jiraProject } onChange={ e => setJiraProject(e.target.value.toUpperCase()) } required placeholder="PROJ" />
+            </div>
+            <div className="field">
+              <label>Jira PAT (Personal Access Token)</label>
+              <input type="password" value={ jiraPat } onChange={ e => setJiraPat(e.target.value) } placeholder="Ваш токен доступа Jira" />
+            </div>
+            <div className="field">
+              <label>Проект Allure</label>
+              <Select
+                classNamePrefix="select"
+                placeholder="Выберите проект Allure…"
+                options={ projects.map(p => ({ value: p.id, label: p.name })) }
+                value={
+                  projects
+                    .map(p => ({ value: p.id, label: p.name }))
+                    .find(o => o.value === allureProject) || null
+                }
+                isClearable
+                onChange={ opt => setAllureProject(opt?.value || '') }
+                styles={ { menuPortal: base => ({ ...base, zIndex: 9999 }) } }
+                menuPortalTarget={ document.body }
+              />
+            </div>
           </div>
-          <div className="field">
-            <label>Jira PAT (Personal Access Token)</label>
-            <input type="password" value={jiraPat} onChange={e => setJiraPat(e.target.value)} placeholder="Ваш токен доступа Jira" />
-          </div>
-          <div className="field">
-            <label>Проект Allure</label>
-            <Select
-              classNamePrefix="select"
-              placeholder="Выберите проект Allure…"
-              options={projects.map(p => ({ value: p.id, label: p.name }))}
-              value={
-                projects
-                  .map(p => ({ value: p.id, label: p.name }))
-                  .find(o => o.value === allureProject) || null
-              }
-              isClearable
-              onChange={opt => setAllureProject(opt?.value || '')}
-              styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
-              menuPortalTarget={document.body}
-            />
-          </div>
-        </div>
 
-        {isMetaLoading && <p className="status-message loading">Загрузка метаданных Jira…</p>}
-        {metaError && <p className="status-message error">{metaError}</p>}
-        {ready && <p className="status-message success">Метаданные Jira успешно загружены</p>}
-      </section>
+          { isMetaLoading && <p className="status-message loading">Загрузка метаданных Jira…</p> }
+          { metaError && <p className="status-message error">{ metaError }</p> }
+          { ready && <p className="status-message success">Метаданные Jira успешно загружены</p> }
+        </section>
 
-      <div className="input-area">
-        <div className="input-tabs">
-          <button type="button" className={inputMode === 'confluence' ? 'active' : ''} onClick={() => setInputMode('confluence')}>Загрузить из Confluence</button>
-          <button type="button" className={inputMode === 'text' ? 'active' : ''} onClick={() => setInputMode('text')}>Вставить текст</button>
-          <button type="button" className={inputMode === 'pdf' ? 'active' : ''} onClick={() => setInputMode('pdf')}>Загрузить PDF</button>
-        </div>
-
-        {inputMode === 'pdf' && (
-          <div className="pdf-inputs">
-            <input type="file" accept="application/pdf"
-              onChange={e => e.target.files?.[0] && handlePdfUpload(e.target.files[0])} />
-            {pdfExtracting && <p>Извлекается текст из PDF…</p>}
+        <div className="input-area">
+          <div className="input-tabs">
+            <button type="button" className={ inputMode === 'confluence' ? 'active' : '' } onClick={ () => setInputMode('confluence') }>Загрузить из Confluence</button>
+            <button type="button" className={ inputMode === 'text' ? 'active' : '' } onClick={ () => setInputMode('text') }>Вставить текст</button>
+            <button type="button" className={ inputMode === 'pdf' ? 'active' : '' } onClick={ () => setInputMode('pdf') }>Загрузить PDF</button>
           </div>
-        )}
 
-        {inputMode === 'text' ? (
-          <div className="md-split">
-            <textarea
-              placeholder="Вставьте текст требований для анализа..."
-              value={solutionText}
-              onChange={e => setSolutionText(e.target.value)}
-              rows={12}
-              className="md-editor"
-            />
-          </div>
-        ) : (
+          { inputMode === 'pdf' && (
+            <div className="pdf-inputs">
+              <input type="file" accept="application/pdf"
+                onChange={ e => e.target.files?.[0] && handlePdfUpload(e.target.files[0]) } />
+              { pdfExtracting && <p>Извлекается текст из PDF…</p> }
+            </div>
+          ) }
+
+          { inputMode === 'text' ? (
+            <div className="md-split">
+              <textarea
+                placeholder="Вставьте текст требований для анализа..."
+                value={ solutionText }
+                onChange={ e => setSolutionText(e.target.value) }
+                rows={ 12 }
+                className="md-editor"
+              />
+            </div>
+          ) : (
+            <div className="confluence-inputs">
+              <input
+                type="text"
+                placeholder="Confluence Page ID (напр., 133465419)"
+                name="confluencePageId"
+                autoComplete="off"
+                value={ confluencePageId }
+                onChange={ e => setConfluencePageId(e.target.value) }
+              />
+              <input
+                type="password"
+                placeholder="Ваш Bearer токен для Confluence"
+                name="confluenceToken"
+                autoComplete="new-password"
+                value={ bearerToken }
+                onChange={ e => setBearerToken(e.target.value) }
+              />
+
+            </div>
+
+
+          ) }
+          {/* --- Глоссарий для всех режимов --- */ }
           <div className="confluence-inputs">
             <input
               type="text"
-              placeholder="Confluence Page ID (напр., 133465419)"
-              name="confluencePageId"
-              autoComplete="off"
-              value={confluencePageId}
-              onChange={e => setConfluencePageId(e.target.value)}
+              placeholder="Глоссарий: Confluence Page ID или URL (необязательно)"
+              value={ glossaryPageId }
+              onChange={ e => setGlossaryPageId(e.target.value) }
             />
-            <input
-              type="password"
-              placeholder="Ваш Bearer токен для Confluence"
-              name="confluenceToken"
-              autoComplete="new-password"
-              value={bearerToken}
-              onChange={e => setBearerToken(e.target.value)}
-            />
-
           </div>
+          {/* --- Доп. контекст только для text и pdf --- */ }
+          { (inputMode === 'text' || inputMode === 'pdf') && (
+            <div className="confluence-inputs">
+              <div className="ctx-select">
+                <CreatableSelect
+                  classNamePrefix="select"
+                  isMulti
+                  placeholder="Доп. контекст: добавьте Page ID/URL и нажмите Enter"
+                  value={ (contextPageIds || []).map(v => ({ value: v, label: v })) }
+                  onChange={ (opts) =>
+                  {
+                    const vals = (opts || []).map(o => o.value);
+                    setContextPageIds(vals);
+                    // дополнительная синхронизация "на всякий":
+                    setContextPageIdsInput(vals.length ? vals.join(' ') : '');
+                  } }
+                  onCreateOption={ (inputValue) => setContextPageIds([...(contextPageIds || []), inputValue]) }
+                  formatCreateLabel={ (inputValue) => `Добавить: ${inputValue}` }
+                  menuPortalTarget={ document.body }
+                  menuPosition="fixed"
+                  styles={ {
+                    container: (base) => ({ ...base, width: '100%' }),
+                    control: (base) => ({ ...base, minHeight: 44 }),
+                    valueContainer: (base) => ({
+                      ...base,
+                      flexWrap: 'nowrap',     // чтобы чипы не ломались в столбик
+                      overflowX: 'auto',      // горизонтальный скролл, если много ID
+                    }),
+                    multiValue: (base) => ({ ...base, marginRight: 8 }),
+                    menuPortal: (base) => ({ ...base, zIndex: 9999 }),
+                  } }
+                />
+              </div>
 
-
-        )}
-        {/* --- Глоссарий для всех режимов --- */}
-        <div className="confluence-inputs">
-          <input
-            type="text"
-            placeholder="Глоссарий: Confluence Page ID или URL (необязательно)"
-            value={glossaryPageId}
-            onChange={e => setGlossaryPageId(e.target.value)}
-          />
-        </div>
-        {/* --- Доп. контекст только для text и pdf --- */}
-        {(inputMode === 'text' || inputMode === 'pdf') && (
-          <div className="confluence-inputs">
-            <div className="ctx-select">
-              <CreatableSelect
-                classNamePrefix="select"
-                isMulti
-                placeholder="Доп. контекст: добавьте Page ID/URL и нажмите Enter"
-                value={(contextPageIds || []).map(v => ({ value: v, label: v }))}
-                onChange={(opts) => {
-                  const vals = (opts || []).map(o => o.value);
-                  setContextPageIds(vals);
-                  // дополнительная синхронизация "на всякий":
-                  setContextPageIdsInput(vals.length ? vals.join(' ') : '');
-                }}
-                onCreateOption={(inputValue) => setContextPageIds([...(contextPageIds || []), inputValue])}
-                formatCreateLabel={(inputValue) => `Добавить: ${inputValue}`}
-                menuPortalTarget={document.body}
-                menuPosition="fixed"
-                styles={{
-                  container: (base) => ({ ...base, width: '100%' }),
-                  control: (base) => ({ ...base, minHeight: 44 }),
-                  valueContainer: (base) => ({
-                    ...base,
-                    flexWrap: 'nowrap',     // чтобы чипы не ломались в столбик
-                    overflowX: 'auto',      // горизонтальный скролл, если много ID
-                  }),
-                  multiValue: (base) => ({ ...base, marginRight: 8 }),
-                  menuPortal: (base) => ({ ...base, zIndex: 9999 }),
-                }}
+              <textarea
+                className="context-input"
+                placeholder="Инструкция к доп. контексту: что именно брать из ссылок (напр.: 'используй только разделы «Термины» и «Ограничения»')"
+                value={ contextInstruction }
+                onChange={ e => setContextInstruction(e.target.value) }
+                rows={ 2 }
               />
             </div>
+          ) }
 
-            <textarea
-              className="context-input"
-              placeholder="Инструкция к доп. контексту: что именно брать из ссылок (напр.: 'используй только разделы «Термины» и «Ограничения»')"
-              value={contextInstruction}
-              onChange={e => setContextInstruction(e.target.value)}
-              rows={2}
-            />
-          </div>
-        )}
-
-        <button className="analyze-button" onClick={handleAnalyzeSolution} disabled={!canAnalyze}>
-          {loading ? 'Анализируется...' : '🚀 Запустить AI-анализ'}
-        </button>
-      </div>
-
-      {loading && <div className="loader">Анализ в процессе...</div>}
-      {analysisResult?.error && <div className="error-message">Ошибка: {analysisResult.error}</div>}
-
-      <div className="task-controls">
-        <button className="btn btn-secondary" onClick={handleAdd}>➕ Добавить задачу</button>
-        <button
-          className="btn btn-primary"
-          disabled={selectedTasksCount === 0 || !ready}
-          onClick={() => {
-            setResults([]);
-            setModalOpen(true);
-          }}
-        >
-          ⚙️ Создать в Jira ({selectedTasksCount})
-        </button>
-        <button className="btn btn-danger" onClick={async () => {
-          if (window.confirm('Вы уверены, что хотите очистить все задачи и настройки? Это действие необратимо.')) {
-            await idbClear(); window.location.reload();
-          }
-        }}>
-          🗑️ Очистить всё
-        </button>
-      </div>
-      {tasks.length > 3 && (
-        <div className="mini-nav">
-          {tasks.map((t, i) => (
-            <button type="button"
-              key={i}
-              onClick={() => scrollToTask(i)}
-            >
-              {i + 1}. {t.summary || 'Без темы'}
-            </button>
-          ))}
+          <button className="analyze-button" onClick={ handleAnalyzeSolution } disabled={ !canAnalyze }>
+            { loading ? 'Анализируется...' : '🚀 Запустить AI-анализ' }
+          </button>
         </div>
-      )}
-      
-      
-      {/* Глобальное окно генерации */}
-      <GlobalGenerationWindow 
-        projects={projects}
-        buildRequirementsPayload={buildRequirementsPayload}
-        prepareRequirements={prepareRequirements}
-        inputMode={inputMode}
-        solutionText={solutionText}
-        confluencePageId={confluencePageId}
-        bearerToken={bearerToken}
-        glossary={glossary}
-        glossaryPageId={glossaryPageId}
-        contextText={contextText}
-        contextPageIds={contextPageIds}
-        contextInstruction={contextInstruction}
-        tasks={tasks}
-        // Состояния генерации
-        generationTaskId={generationTaskId}
-        setGenerationTaskId={setGenerationTaskId}
-        generationProgress={generationProgress}
-        setGenerationProgress={setGenerationProgress}
-        generationStatus={generationStatus}
-        setGenerationStatus={setGenerationStatus}
-        isGenerationMinimized={isGenerationMinimized}
-        setIsGenerationMinimized={setIsGenerationMinimized}
-        generatedCases={generatedCases}
-        setGeneratedCases={setGeneratedCases}
-        checkGenerationStatus={checkGenerationStatus}
-        handleGenerateModel={handleGenerateModel}
-        // Состояния генерации тестовой модели
-        modelGenerationTaskId={modelGenerationTaskId}
-        setModelGenerationTaskId={setModelGenerationTaskId}
-        modelGenerationProgress={modelGenerationProgress}
-        setModelGenerationProgress={setModelGenerationProgress}
-        modelGenerationStatus={modelGenerationStatus}
-        setModelGenerationStatus={setModelGenerationStatus}
-        modelIsMinimized={modelIsMinimized}
-        setModelIsMinimized={setModelIsMinimized}
-        checkModelGenerationStatus={checkModelGenerationStatus}
-        generatedModel={generatedModel}
-        cancelGeneration={cancelGeneration}
-        jiraProject={jiraProject}
-        allureProject={allureProject ? (typeof allureProject === 'string' ? { id: allureProject } : allureProject) : null}
-        jiraPat={jiraPat}
-        reviewModalOpen={isReviewModalOpen}
-        setReviewModalOpen={setReviewModalOpen}
-        onClearTestCases={handleClearTestCases}
-        onClearTestModel={handleClearTestModel}
-        clearReviewState={clearReviewState}
-        // BDD генерация
-        handleGenerateBDD={handleGenerateBDD}
-        bddTaskId={bddTaskId}
-        bddProgress={bddProgress}
-        bddStatus={bddStatus}
-        bddReviewModalOpen={isBddReviewModalOpen}
-        setBddReviewModalOpen={setIsBddReviewModalOpen}
-        bddResult={bddResult}
-        onRegenerateBDD={handleRegenerateBDD}
-      />
-      
 
-      {/* Основной список задач */}
-      <div className="task-list">
-        {tasks.map((t, i) => (
-          <div key={t.id} id={`task-${i}`} ref={cardRefs.current[i]}>
-            <SolutionCard
-              index={i}
-              task={t}
-              onUpdate={handleUpdate}
-              onDelete={handleDelete}
-              fieldOptions={fieldOptions}
-              loadDefectOptions={loadDefectOptions}
-              allureProject={allureProject}
-              onDefectSelect={fetchDefectDetails}
-              runAi={runAi}
-              aiLoading={aiLoading[i]}
-              fillFieldsWithAI={fillFieldsWithAI}
-              aiFillLoading={aiFillLoading[i] || false}
-              isCollapsed={!!collapsedStates[i]}
-              onToggleCollapse={handleToggleCollapse}
-              setAttachmentsMap={setAttachmentsMap}
-            />
-          </div>
-        ))}
-      </div>
+        { loading && <div className="loader">Анализ в процессе...</div> }
+        { analysisResult?.error && <div className="error-message">Ошибка: { analysisResult.error }</div> }
 
-      {modalOpen && (
-        <div className="modal">
-          <div className="modal-content">
-            <button className="modal-close-btn" onClick={() => setModalOpen(false)}>×</button>
-            <h2>2. Общие поля для ({selectedTasksCount}) задач</h2>
-            <fieldset disabled={!ready || creating} className="common-fields-group">
-              <legend>Общие поля Jira</legend>
-
-              <div className="field full-width">
-                <label>Epic Link</label>
-                <AsyncSelect
-                  classNamePrefix="select"
-                  cacheOptions
-                  defaultOptions
-                  loadOptions={loadIssueOptions}
-                  placeholder="Начните вводить Epic Link…"
-                  value={epicOption}
-                  onChange={opt => setEpicOption(opt)}
-                  noOptionsMessage={() => 'Нет совпадений'}
-                  isClearable
-                />
-              </div>
-
-              <div className="field">
-                <label>Исполнитель (необязательно)</label>
-                <AsyncSelect
-                  classNamePrefix="select"
-                  cacheOptions
-                  defaultOptions
-                  loadOptions={loadUserOptions}
-                  placeholder="Начните вводить имя…"
-                  value={assigneeOption}
-                  onChange={opt => setAssigneeOption(opt)}
-                  noOptionsMessage={() => 'Нет совпадений'}
-                  isClearable
-                />
-              </div>
-              <div className="field">
-                <label>Основной исполнитель</label>
-                <AsyncSelect
-                  classNamePrefix="select"
-                  cacheOptions
-                  defaultOptions
-                  loadOptions={loadUserOptions}
-                  placeholder="Начните вводить имя…"
-                  value={mainExecutorOption}
-                  onChange={opt => setMainExecutorOption(opt)}
-                  noOptionsMessage={() => 'Нет совпадений'}
-                  isClearable
-                />
-              </div>
-
-              <div className="field">
-                <label>Ревьюеры</label>
-                <AsyncSelect
-                  classNamePrefix="select"
-                  cacheOptions
-                  defaultOptions
-                  isMulti
-                  loadOptions={loadUserOptions}
-                  placeholder="Начните вводить имена…"
-                  value={reviewerOption || []}
-                  onChange={opts => setReviewerOption(opts || [])}
-                  noOptionsMessage={() => 'Нет совпадений'}
-                  isClearable
-                />
-              </div>
-              <div className="field">
-                <label>Статус задачи</label>
-                <Select
-                  classNamePrefix="select"
-                  placeholder="Выберите статус…"
-                  isClearable
-                  options={transitions.map(t => ({ value: t.id, label: t.name }))}
-                  value={
-                    transitions
-                      .map(t => ({ value: t.id, label: t.name }))
-                      .find(o => o.value === targetStatus) || null
-                  }
-                  onChange={opt => setTargetStatus(opt?.value || null)}
-                  styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
-                  menuPortalTarget={document.body}
-                  menuPosition="fixed"
-                  menuPlacement="auto"
-                />
-              </div>
-            </fieldset>
-            <fieldset disabled={!ready || creating} className="common-fields-group">
-              <legend>Связь запроса</legend>
-              <div className="field">
-                <label>Ключ задачи</label>
-                <AsyncSelect
-                  classNamePrefix="select"
-                  cacheOptions
-                  defaultOptions
-                  loadOptions={loadIssueOptions}
-                  placeholder="Начните вводить ключ задачи…"
-                  value={requestLinkOption}
-                  onChange={opt => {
-                    setRequestLinkOption(opt);
-                  }}
-                  noOptionsMessage={() => 'Ничего не найдено'}
-                  isClearable
-                />
-              </div>
-              <div className="field">
-                <label>Тип связи</label>
-                <Select
-                  classNamePrefix="select"
-                  placeholder="Выберите тип..."
-                  options={filteredLinkTypes}
-                  value={filteredLinkTypes.find(o => o.value === requestLinkType) || null}
-                  onChange={opt => setRequestLinkType(opt?.value || null)}
-                  isClearable
-                />
-              </div>
-            </fieldset>
-            <div className="buttons">
-              <button onClick={handleCreateAll} disabled={!ready || creating} className="btn btn-primary">
-                {creating ? 'Создание…' : `Подтвердить и создать ${selectedTasksCount} задач`}
+        <div className="task-controls">
+          <button className="btn btn-secondary" onClick={ handleAdd }>➕ Добавить задачу</button>
+          <button
+            className="btn btn-primary"
+            disabled={ selectedTasksCount === 0 || !ready }
+            onClick={ () =>
+            {
+              setResults([]);
+              setModalOpen(true);
+            } }
+          >
+            ⚙️ Создать в Jira ({ selectedTasksCount })
+          </button>
+          <button className="btn btn-danger" onClick={ async () =>
+          {
+            if (window.confirm('Вы уверены, что хотите очистить все задачи и настройки? Это действие необратимо.')) {
+              await idbClear(); window.location.reload();
+            }
+          } }>
+            🗑️ Очистить всё
+          </button>
+        </div>
+        { tasks.length > 3 && (
+          <div className="mini-nav">
+            { tasks.map((t, i) => (
+              <button type="button"
+                key={ i }
+                onClick={ () => scrollToTask(i) }
+              >
+                { i + 1 }. { t.summary || 'Без темы' }
               </button>
-            </div>
-            {results.length > 0 && (
-              <div className="jira-result">
-                <h3>Результаты создания:</h3>
-                {results.map((r, i) =>
-                  r.success
-                    ? <p key={i} className="success">✅ <b>{r.key}:</b> <a href={`${config.jiraBaseUrl || 'https://jira.abanking.ru'}/browse/${r.key}`} target="_blank" rel="noreferrer">{r.summary}</a></p>
-                    : <p key={i} className="error">❌ <b>{r.summary}:</b> {r.error}</p>
-                )}
-              </div>
-            )}
+            )) }
           </div>
-        </div>
-      )}
-      <div className="floating-buttons">
-        <button
-          className="btn btn-secondary btn-back"
-          onClick={() => navigate('/')}
-        >
-          ← Назад
-        </button>
-        <button
-          className="btn btn-secondary btn-top"
-          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-        >
-          ↑ Вверх
-        </button>
-      </div>
+        ) }
 
-    </div>
+
+        {/* Глобальное окно генерации */ }
+        <GlobalGenerationWindow
+          projects={ projects }
+          buildRequirementsPayload={ buildRequirementsPayload }
+          prepareRequirements={ prepareRequirements }
+          inputMode={ inputMode }
+          solutionText={ solutionText }
+          confluencePageId={ confluencePageId }
+          bearerToken={ bearerToken }
+          glossary={ glossary }
+          glossaryPageId={ glossaryPageId }
+          contextText={ contextText }
+          contextPageIds={ contextPageIds }
+          contextInstruction={ contextInstruction }
+          tasks={ tasks }
+          // Состояния генерации
+          generationTaskId={ generationTaskId }
+          setGenerationTaskId={ setGenerationTaskId }
+          generationProgress={ generationProgress }
+          setGenerationProgress={ setGenerationProgress }
+          generationStatus={ generationStatus }
+          setGenerationStatus={ setGenerationStatus }
+          isGenerationMinimized={ isGenerationMinimized }
+          setIsGenerationMinimized={ setIsGenerationMinimized }
+          generatedCases={ generatedCases }
+          setGeneratedCases={ setGeneratedCases }
+          checkGenerationStatus={ checkGenerationStatus }
+          handleGenerateModel={ handleGenerateModel }
+          // Состояния генерации тестовой модели
+          modelGenerationTaskId={ modelGenerationTaskId }
+          setModelGenerationTaskId={ setModelGenerationTaskId }
+          modelGenerationProgress={ modelGenerationProgress }
+          setModelGenerationProgress={ setModelGenerationProgress }
+          modelGenerationStatus={ modelGenerationStatus }
+          setModelGenerationStatus={ setModelGenerationStatus }
+          modelIsMinimized={ modelIsMinimized }
+          setModelIsMinimized={ setModelIsMinimized }
+          checkModelGenerationStatus={ checkModelGenerationStatus }
+          generatedModel={ generatedModel }
+          cancelGeneration={ cancelGeneration }
+          jiraProject={ jiraProject }
+          allureProject={ allureProject ? (typeof allureProject === 'string' ? { id: allureProject } : allureProject) : null }
+          jiraPat={ jiraPat }
+          reviewModalOpen={ isReviewModalOpen }
+          setReviewModalOpen={ setReviewModalOpen }
+          onClearTestCases={ handleClearTestCases }
+          onClearTestModel={ handleClearTestModel }
+          clearReviewState={ clearReviewState }
+          // BDD генерация
+          handleGenerateBDD={ handleGenerateBDD }
+          bddTaskId={ bddTaskId }
+          bddProgress={ bddProgress }
+          bddStatus={ bddStatus }
+          bddReviewModalOpen={ isBddReviewModalOpen }
+          setBddReviewModalOpen={ setIsBddReviewModalOpen }
+          bddResult={ bddResult }
+          onRegenerateBDD={ handleRegenerateBDD }
+        />
+
+
+        {/* Основной список задач */ }
+        <div className="task-list">
+          { tasks.map((t, i) => (
+            <div key={ t.id } id={ `task-${i}` } ref={ cardRefs.current[i] }>
+              <SolutionCard
+                index={ i }
+                task={ t }
+                onUpdate={ handleUpdate }
+                onDelete={ handleDelete }
+                fieldOptions={ fieldOptions }
+                loadDefectOptions={ loadDefectOptions }
+                allureProject={ allureProject }
+                onDefectSelect={ fetchDefectDetails }
+                runAi={ runAi }
+                aiLoading={ aiLoading[i] }
+                fillFieldsWithAI={ fillFieldsWithAI }
+                aiFillLoading={ aiFillLoading[i] || false }
+                isCollapsed={ !!collapsedStates[i] }
+                onToggleCollapse={ handleToggleCollapse }
+                setAttachmentsMap={ setAttachmentsMap }
+              />
+            </div>
+          )) }
+        </div>
+
+        { modalOpen && (
+          <div className="modal">
+            <div className="modal-content">
+              <button className="modal-close-btn" onClick={ () => setModalOpen(false) }>×</button>
+              <h2>2. Общие поля для ({ selectedTasksCount }) задач</h2>
+              <fieldset disabled={ !ready || creating } className="common-fields-group">
+                <legend>Общие поля Jira</legend>
+
+                <div className="field full-width">
+                  <label>Epic Link</label>
+                  <AsyncSelect
+                    classNamePrefix="select"
+                    cacheOptions
+                    defaultOptions
+                    loadOptions={ loadIssueOptions }
+                    placeholder="Начните вводить Epic Link…"
+                    value={ epicOption }
+                    onChange={ opt => setEpicOption(opt) }
+                    noOptionsMessage={ () => 'Нет совпадений' }
+                    isClearable
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Исполнитель (необязательно)</label>
+                  <AsyncSelect
+                    classNamePrefix="select"
+                    cacheOptions
+                    defaultOptions
+                    loadOptions={ loadUserOptions }
+                    placeholder="Начните вводить имя…"
+                    value={ assigneeOption }
+                    onChange={ opt => setAssigneeOption(opt) }
+                    noOptionsMessage={ () => 'Нет совпадений' }
+                    isClearable
+                  />
+                </div>
+                <div className="field">
+                  <label>Основной исполнитель</label>
+                  <AsyncSelect
+                    classNamePrefix="select"
+                    cacheOptions
+                    defaultOptions
+                    loadOptions={ loadUserOptions }
+                    placeholder="Начните вводить имя…"
+                    value={ mainExecutorOption }
+                    onChange={ opt => setMainExecutorOption(opt) }
+                    noOptionsMessage={ () => 'Нет совпадений' }
+                    isClearable
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Ревьюеры</label>
+                  <AsyncSelect
+                    classNamePrefix="select"
+                    cacheOptions
+                    defaultOptions
+                    isMulti
+                    loadOptions={ loadUserOptions }
+                    placeholder="Начните вводить имена…"
+                    value={ reviewerOption || [] }
+                    onChange={ opts => setReviewerOption(opts || []) }
+                    noOptionsMessage={ () => 'Нет совпадений' }
+                    isClearable
+                  />
+                </div>
+                <div className="field">
+                  <label>Статус задачи</label>
+                  <Select
+                    classNamePrefix="select"
+                    placeholder="Выберите статус…"
+                    isClearable
+                    options={ transitions.map(t => ({ value: t.id, label: t.name })) }
+                    value={
+                      transitions
+                        .map(t => ({ value: t.id, label: t.name }))
+                        .find(o => o.value === targetStatus) || null
+                    }
+                    onChange={ opt => setTargetStatus(opt?.value || null) }
+                    styles={ { menuPortal: base => ({ ...base, zIndex: 9999 }) } }
+                    menuPortalTarget={ document.body }
+                    menuPosition="fixed"
+                    menuPlacement="auto"
+                  />
+                </div>
+              </fieldset>
+              <fieldset disabled={ !ready || creating } className="common-fields-group">
+                <legend>Связь запроса</legend>
+                <div className="field">
+                  <label>Ключ задачи</label>
+                  <AsyncSelect
+                    classNamePrefix="select"
+                    cacheOptions
+                    defaultOptions
+                    loadOptions={ loadIssueOptions }
+                    placeholder="Начните вводить ключ задачи…"
+                    value={ requestLinkOption }
+                    onChange={ opt =>
+                    {
+                      setRequestLinkOption(opt);
+                    } }
+                    noOptionsMessage={ () => 'Ничего не найдено' }
+                    isClearable
+                  />
+                </div>
+                <div className="field">
+                  <label>Тип связи</label>
+                  <Select
+                    classNamePrefix="select"
+                    placeholder="Выберите тип..."
+                    options={ filteredLinkTypes }
+                    value={ filteredLinkTypes.find(o => o.value === requestLinkType) || null }
+                    onChange={ opt => setRequestLinkType(opt?.value || null) }
+                    isClearable
+                  />
+                </div>
+              </fieldset>
+              <div className="buttons">
+                <button onClick={ handleCreateAll } disabled={ !ready || creating } className="btn btn-primary">
+                  { creating ? 'Создание…' : `Подтвердить и создать ${selectedTasksCount} задач` }
+                </button>
+              </div>
+              { results.length > 0 && (
+                <div className="jira-result">
+                  <h3>Результаты создания:</h3>
+                  { results.map((r, i) =>
+                    r.success
+                      ? <p key={ i } className="success">✅ <b>{ r.key }:</b> <a href={ `${config.jiraBaseUrl || 'https://jira.abanking.ru'}/browse/${r.key}` } target="_blank" rel="noreferrer">{ r.summary }</a></p>
+                      : <p key={ i } className="error">❌ <b>{ r.summary }:</b> { r.error }</p>
+                  ) }
+                </div>
+              ) }
+            </div>
+          </div>
+        ) }
+        <div className="floating-buttons">
+          <button
+            className="btn btn-secondary btn-back"
+            onClick={ () => navigate('/') }
+          >
+            ← Назад
+          </button>
+          <button
+            className="btn btn-secondary btn-top"
+            onClick={ () => window.scrollTo({ top: 0, behavior: 'smooth' }) }
+          >
+            ↑ Вверх
+          </button>
+        </div>
+
+      </div>
     </ErrorBoundary>
   );
 }

@@ -8,6 +8,7 @@ import styles from './styles'; // Импортируем стили
 import Loader from './Loader'; // Предполагаем, что есть компонент Loader
 import config from './config';
 import GlobalBackgroundProgress from './components/GlobalBackgroundProgress';
+import { trackEvent } from './analytics';
 
 const TIAPage = ({ projects }) => {
     const [projectId, setProjectId] = useState('');
@@ -392,6 +393,7 @@ const TIAPage = ({ projects }) => {
     };
 
     const handleCreateTestPlan = () => {
+        trackEvent('tia_create_test_plan', { page: '/tia', projectId, taskId: jiraLink?.split('/').pop() });
         if (mode === 'light') {
             setError('Переключитесь в режим маппинга для создания запуска.');
             return;
@@ -510,6 +512,7 @@ const TIAPage = ({ projects }) => {
     };
 
     const handlePartialSave = async () => {
+        trackEvent('tia_partial_save', { page: '/tia', projectId });
         setIsPartialSaving(true);
         setError('');
         setPartialSaveMessage('');
@@ -589,6 +592,7 @@ const TIAPage = ({ projects }) => {
     };
 
     const handleCreateStubs = async () => {
+        trackEvent('tia_create_stubs', { page: '/tia', projectId, taskId: jiraLink?.split('/').pop() });
         setIsCreatingStubs(true);
         try {
             // Extract issue key from jiraLink if possible
@@ -706,6 +710,7 @@ const TIAPage = ({ projects }) => {
 
     // Создание нескольких запусков последовательно (Split-режим)
     const createMultipleLaunches = async () => {
+        trackEvent('tia_create_launches', { page: '/tia', projectId, extra: { count: launchGroups?.length } });
         setLoadingState(prev => ({ ...prev, launch: true }));
         setError('');
         setSuccessMessage('');
@@ -964,6 +969,7 @@ const TIAPage = ({ projects }) => {
 
     // Legacy: handleMappingConfirm теперь вызывает handleOpenSplitModal для launch
     const handleMappingConfirm = async (createType = 'launch') => {
+        trackEvent('tia_mapping_confirm', { page: '/tia', projectId, taskId: jiraLink?.split('/').pop() });
         // Для launch — открываем Split Modal
         if (createType === 'launch') {
             await handleOpenSplitModal();

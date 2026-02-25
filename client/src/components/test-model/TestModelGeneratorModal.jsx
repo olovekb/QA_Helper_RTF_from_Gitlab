@@ -9,6 +9,7 @@ import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
 import config from '../../config';
 import JSZip from 'jszip';
+import { trackEvent } from '../../analytics';
 
 // --- Component-specific styles ---
 export const StyleInjector = () => {
@@ -740,6 +741,7 @@ export default function TestModelGeneratorModal({
     };
 
     const handleGenerateXmind = async () => {
+        trackEvent('export_xmind_modal', { page: '/solution' });
         setIsGeneratingXmind(true);
 
         const STYLE_IDS = {
@@ -1311,6 +1313,7 @@ export default function TestModelGeneratorModal({
 
     // --- новый handleGenerateModel ---
     const handleGenerateModel = async () => {
+        trackEvent('generate_test_model_modal', { page: '/solution' });
         setIsGeneratingModel(true);
         setLocalGeneratedModel(null);
         // Очищаем предыдущие результаты при новой генерации
@@ -1386,6 +1389,7 @@ export default function TestModelGeneratorModal({
 
     // Обработчик доработки модели
     const handleRefineModel = async () => {
+        trackEvent('refine_test_model', { page: '/solution' });
         if (!localGeneratedModel || localGeneratedModel.length === 0) {
             alert('Сначала сгенерируйте модель');
             return;
@@ -1848,7 +1852,9 @@ export default function TestModelGeneratorModal({
         e.preventDefault();
         e.stopPropagation();
         if (isGeneratingCases || isGeneratingModel || isGeneratingXmind) return;
-        
+
+        trackEvent('to_test_cases', { page: '/solution', extra: { featuresCount: convertTreeToModel(treeData)?.length, includeBackendTests } });
+
         try {
             if (typeof onGenerate === 'function') {
                 // ✅ Преобразуем treeData обратно в формат модели (удаляем служебные поля id, isExpanded)
