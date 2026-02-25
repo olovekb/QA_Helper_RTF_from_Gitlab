@@ -6,6 +6,7 @@ import config from '../config';
 import TestModelGeneratorModal from './test-model/TestModelGeneratorModal';
 import TestModelReviewModal from './test-model/TestModelReviewModal';
 import BDDReviewModal from './bdd/BDDReviewModal';
+import { trackEvent } from '../analytics';
 
 // CSS для анимаций
 const animationStyles = `
@@ -139,6 +140,7 @@ const GlobalGenerationWindow = ({
 
   // Обработчик генерации тест-кейсов
   const handleGenerateCases = async (modelStructure, includeBackendTests = true) => {
+    trackEvent('generate_test_cases', { page: location.pathname, projectId: allureProject?.id });
     console.log('GlobalGenerationWindow: получена структура тестовой модели для генерации тест-кейсов:', modelStructure);
     console.log('GlobalGenerationWindow: количество features в структуре:', modelStructure?.length);
     console.log('GlobalGenerationWindow: includeBackendTests:', includeBackendTests);
@@ -184,6 +186,7 @@ const GlobalGenerationWindow = ({
 
   // Обработчик открытия модального окна тестовой модели
   const handleOpenModelModal = () => {
+    trackEvent('open_generation_modal', { page: location.pathname, projectId: allureProject?.id });
     setIsGenModalOpen(true);
   };
 
@@ -268,6 +271,7 @@ const GlobalGenerationWindow = ({
 
   // Обработчик открытия модального окна просмотра тест-кейсов
   const handleOpenReviewModal = () => {
+    trackEvent('open_test_cases_review', { page: location.pathname, projectId: allureProject?.id });
     setReviewModalOpen(true);
     // Обновляем счетчик при открытии модалки
     setTimeout(() => {

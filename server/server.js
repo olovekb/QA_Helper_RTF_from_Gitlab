@@ -1171,7 +1171,43 @@ const limit = pLimit(100);
 // ============================================================================
 registerDebugRoutes(app);
 
+// Отправка событий в google-таблицу
+app.post('/api/analytics/event', async (req, res) => {
+    const webhookUrl = config.analyticsWebhookUrl;
+    if (!webhookUrl) {
+        return res.status(200).json({ ok: true });
+    }
 
+    const { action, page, clientId, projectId, taskId, extra } = req.body || {};
+    const origin = req.headers.origin || req.headers.referer || '';
+    const isLocal = origin && /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?(\/|$)/i.test(origin);
+
+    const payload = {
+        action: action || '',
+        page: page || '',
+        timestamp: new Date().toISOString(),
+        clientId: isLocal ? 'dev' : (clientId || ''),
+        projectId: projectId || '',
+        taskId: taskId || '',
+        extra: extra ? JSON.stringify(extra) : ''
+    };
+
+    res.status(200).json({ ok: true });
+
+    try {
+        const whRes = await fetch(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!whRes.ok) {
+            const text = await whRes.text().catch(() => '');
+            console.warn('[analytics] Webhook non-OK:', whRes.status, text?.slice(0, 200));
+        }
+    } catch (err) {
+        console.warn('[analytics] Webhook error:', err?.message || err);
+    }
+});
 
 // Универсальный рефайнер требований: подтягивает Confluence, сжимает глоссарий/контекст через prepareContextWithAI,
 // возвращает совместимый интерфейс: { refinedArray, refinedText }

@@ -11,6 +11,7 @@ import { v4 as uuidv4 } from 'uuid';
 import useAttachmentsMap from './components/useAttachmentsMap'
 import { serializeFile } from './components/fileStorage'
 import GlobalBackgroundProgress from './components/GlobalBackgroundProgress';
+import { trackEvent } from './analytics';
 
 function useDebounce(value, delay) {
     const [debounced, setDebounced] = useState(value);
@@ -777,6 +778,7 @@ export default function CodeErrorPage({ projects }) {
     };
 
     const handleFillAllWithAI = async () => {
+        trackEvent('fill_all_ai', { page: '/code-error', projectId: allureProject, taskId: jiraProject });
         if (!jiraProject || !jiraPat) {
             alert('Сначала укажите Project Key и Jira PAT');
             return;
@@ -820,6 +822,7 @@ export default function CodeErrorPage({ projects }) {
 
 
     const fillFieldsWithAI = async idx => {
+        trackEvent('ai_fill_fields', { page: '/code-error', projectId: allureProject, taskId: jiraProject });
         const t = tasks[idx];
         setAiFillLoading(l => ({ ...l, [idx]: true }));
         try {
@@ -857,6 +860,7 @@ export default function CodeErrorPage({ projects }) {
     };
 
     const runAi = async idx => {
+        trackEvent('ai_review_task', { page: '/code-error', projectId: allureProject, taskId: jiraProject });
         const t = tasks[idx];
         setAiLoading(l => ({ ...l, [idx]: true }));
         try {
@@ -975,6 +979,7 @@ export default function CodeErrorPage({ projects }) {
     };
 
     const handleCreateAll = async () => {
+        trackEvent('create_jira_tasks', { page: '/code-error', projectId: allureProject, taskId: jiraProject, extra: { count: tasks.filter(t => t.selected).length } });
         console.log('handleCreateAll called', { ready, creating });
         setCreating(true);
         setResults([]);

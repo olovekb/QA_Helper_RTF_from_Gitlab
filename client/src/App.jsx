@@ -10,6 +10,7 @@ import { get as idbGet, set as idbSet } from 'idb-keyval';
 import GlobalBackgroundProgress from './components/GlobalBackgroundProgress';
 import ErrorBoundary from './components/ErrorBoundary';
 import RulesModal from './components/RulesModal';
+import { trackEvent } from './analytics';
 
 function usePersistentState(key, defaultValue) {
   const [state, setState] = useState(defaultValue);
@@ -537,6 +538,7 @@ const App = ({ projects }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    trackEvent('static_analysis', { page: '/', projectId, taskId: jiraIssue });
     setLoading(true);
     setHtmlReport('');
 
@@ -565,6 +567,7 @@ const App = ({ projects }) => {
   };
 
   const handleExportClick = async () => {
+    trackEvent('export_xmind_to_allure', { page: '/', projectId });
     setLoading(true);
     if (!xmindFile) {
       setExportMessage('Пожалуйста, загрузите файл XMind.');
@@ -615,6 +618,7 @@ const App = ({ projects }) => {
       alert('Пожалуйста, выберите проект.');
       return;
     }
+    trackEvent('cleanup_duplicates', { page: '/', projectId });
 
     setCleanupLoading(true);
     setCleanupResult(null);
