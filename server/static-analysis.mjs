@@ -7,7 +7,8 @@ import { validateTestCase, getProjectSettings } from './validation-engine.mjs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-function escapeHtml(value) {
+function escapeHtml (value)
+{
     return String(value)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
@@ -31,7 +32,8 @@ const CATEGORY_NAMES = {
 /** Порядок кастомных полей для иерархии (от большего к меньшему) */
 const HIERARCHY_FIELDS = ['Block', 'SubBlock', 'Feature', 'Story', 'Scenario', 'Code'];
 
-function getCustomFieldValue(testCase, fieldName) {
+function getCustomFieldValue (testCase, fieldName)
+{
     const cf = testCase.customFields?.find(f =>
         String(f.name || '').toLowerCase() === String(fieldName).toLowerCase()
     );
@@ -41,11 +43,13 @@ function getCustomFieldValue(testCase, fieldName) {
 
 const PLACEHOLDER_LABELS = ['(Без значения)', 'Без названия', 'Без значения'];
 
-function isPlaceholderLabel(label) {
+function isPlaceholderLabel (label)
+{
     return PLACEHOLDER_LABELS.some(p => String(label || '').trim() === p);
 }
 
-function buildTree(tests, fieldNames = HIERARCHY_FIELDS, depth = 0) {
+function buildTree (tests, fieldNames = HIERARCHY_FIELDS, depth = 0)
+{
     const field = fieldNames[depth];
     const groups = new Map();
     for (const t of tests) {
@@ -76,20 +80,24 @@ function buildTree(tests, fieldNames = HIERARCHY_FIELDS, depth = 0) {
     return result;
 }
 
-function countInTree(nodes) {
+function countInTree (nodes)
+{
     return nodes.reduce((sum, n) =>
         sum + (n.tests?.length || 0) + (n.children?.length ? countInTree(n.children) : 0), 0);
 }
 
 let _treeIdSeq = 0;
-function renderTreeHtml(nodes, statusMaps, testCategoriesMap = null, depth = 0) {
+function renderTreeHtml (nodes, statusMaps, testCategoriesMap = null, depth = 0)
+{
     if (!nodes || nodes.length === 0) return '';
-    const getStatusClass = (test) => {
+    const getStatusClass = (test) =>
+    {
         if (statusMaps?.failedIds?.has(test.id)) return 'failed-text';
         if (statusMaps?.warningIds?.has(test.id)) return 'warning-text';
         return 'success-text';
     };
-    const getDataCategories = (test) => {
+    const getDataCategories = (test) =>
+    {
         if (!testCategoriesMap) return '';
         const cats = testCategoriesMap.get(test.id) || [];
         return escapeHtml(cats.join(','));
@@ -152,7 +160,7 @@ export async function staticAnalysis (testCases, projectId, aiRecommendations = 
         const aiRecs = aiRecommendations && aiRecommendations[testCase.id] ? aiRecommendations[testCase.id] : [];
         const aiRecsArray = Array.isArray(aiRecs) ? aiRecs : (aiRecs && aiRecs.recommendation ? [aiRecs] : []);
         console.log(`AI-рекомендаций найдено: ${aiRecsArray.length}`);
-        
+
         const { report, hasErrors, hasWarnings, errorCount, warningCount, issueCategories = [] } =
             await generateTestCaseReport(testCase, projectId, aiRecsArray);
 
@@ -378,7 +386,7 @@ async function generateTestCaseReport (testCase, projectId, aiRecommendations = 
     if (aiRecommendations.length > 0) {
         console.log(`Детали AI-рекомендаций: ${JSON.stringify(aiRecommendations, null, 2)}`);
     }
-    
+
     const validation = validateTestCase(testCase, projectId);
     let output = '';
 
@@ -455,23 +463,24 @@ async function generateTestCaseReport (testCase, projectId, aiRecommendations = 
 
             output += `<li class="${stepClass}">`;
             const stepDescription = escapeHtml(step.description || '—');
-            
+
             // бейдж общего шага
-            const sharedStepBadge = step.type === 'sharedStep' 
-                ? ' <span class="shared-step-badge">Общий шаг</span>' 
+            const sharedStepBadge = step.type === 'sharedStep'
+                ? ' <span class="shared-step-badge">Общий шаг</span>'
                 : '';
-            
+
             output += `<div class="step-header"><strong>Шаг ${index + 1}:</strong> ${stepDescription}${sharedStepBadge}</div>`;
 
             // подшаги общего шага
             if (step.type === 'sharedStep' && step.childSteps && step.childSteps.length > 0) {
                 output += `<div class="step-expected">`;
                 output += `<ul class="shared-step-children">`;
-                step.childSteps.forEach((childStep) => {
+                step.childSteps.forEach((childStep) =>
+                {
                     const childDescription = escapeHtml(childStep.description || '—');
                     output += `<li class="shared-child-step">`;
                     output += `<div class="child-step-description">${childDescription}</div>`;
-                    
+
                     // ожидаемый результат подшага
                     if (childStep.expectedResult) {
                         const expectedHtml = escapeHtml(childStep.expectedResult).replace(/\n/g, '<br>');
@@ -479,7 +488,7 @@ async function generateTestCaseReport (testCase, projectId, aiRecommendations = 
                         output += `<span class="child-expected-label">ОР:</span> ${expectedHtml}`;
                         output += `</div>`;
                     }
-                    
+
                     output += `</li>`;
                 });
                 output += `</ul>`;
@@ -520,38 +529,53 @@ async function generateTestCaseReport (testCase, projectId, aiRecommendations = 
     }
     output += `</details>`;
 
-    // Конвертация ответа AI в формат, совместимый со статанализом 
+    // Конвертация ответа AI в формат, совместимый со статанализом
     const aiErrors = aiRecommendations
         .filter(r => r && r.severity === 'error')
-        .map(r => ({ 
-            ruleName: r.title || CATEGORY_NAMES[r.category] || CATEGORY_NAMES.other, 
-            message: r.recommendation, 
-            category: r.category || 'other', 
-            isAI: true 
+        .map(r => ({
+            ruleName: r.title || CATEGORY_NAMES[r.category] || CATEGORY_NAMES.other,
+            message: r.recommendation,
+            category: r.category || 'other',
+            isAI: true
         }));
     const aiWarnings = aiRecommendations
         .filter(r => r && r.severity === 'warning')
-        .map(r => ({ 
-            ruleName: r.title || CATEGORY_NAMES[r.category] || CATEGORY_NAMES.other, 
-            message: r.recommendation, 
-            category: r.category || 'other', 
-            isAI: true 
+        .map(r => ({
+            ruleName: r.title || CATEGORY_NAMES[r.category] || CATEGORY_NAMES.other,
+            message: r.recommendation,
+            category: r.category || 'other',
+            isAI: true
         }));
 
     const allErrors = [...validation.errors, ...aiErrors];
     const allWarnings = [...validation.warnings, ...aiWarnings];
 
+    const totalErrorItems = allErrors.reduce((sum, e) =>
+        sum + (e.stepErrors ? e.stepErrors.length : 1), 0);
     if (allErrors.length > 0) {
         output += `<div class="issues-section errors-section">`;
-        output += `<h2>Ошибки (${allErrors.length}):</h2>`;
+        output += `<h2>Ошибки (${totalErrorItems}):</h2>`;
         output += `<ul class="issues-list">`;
 
         const errorsByCategory = groupByCategory(allErrors);
 
         for (const [category, errors] of Object.entries(errorsByCategory)) {
             const nonStepErrors = errors.filter(error => !error.stepErrors);
+            const stepErrorsExpanded = errors
+                .filter(error => error.stepErrors && error.stepErrors.length > 0)
+                .flatMap(error => error.stepErrors.map(se =>
+                {
+                    const step = testCase.steps?.[se.stepIndex - 1];
+                    const stepName = step?.description ? String(step.description).trim() : null;
+                    return {
+                        ruleName: error.ruleName,
+                        message: se.message,
+                        stepIndex: se.stepIndex,
+                        stepName: stepName ? (stepName.length > 80 ? stepName.slice(0, 77) + '…' : stepName) : null
+                    };
+                }));
 
-            if (nonStepErrors.length > 0) {
+            if (nonStepErrors.length > 0 || stepErrorsExpanded.length > 0) {
                 output += `<li class="category-group">`;
                 output += `<strong>Категория: ${getCategoryName(category)}</strong>`;
                 output += `<ul>`;
@@ -561,6 +585,15 @@ async function generateTestCaseReport (testCase, projectId, aiRecommendations = 
                     output += `<span class="rule-name">${escapeHtml(error.ruleName)}</span>: ${escapeHtml(error.message)}`;
                     output += `</li>`;
                 });
+                stepErrorsExpanded.forEach(err =>
+                {
+                    output += `<li class="error-item">`;
+                    const stepLabel = err.stepName
+                        ? `Шаг ${err.stepIndex}: «${escapeHtml(err.stepName)}»`
+                        : `Шаг ${err.stepIndex}`;
+                    output += `<span class="rule-name">${escapeHtml(err.ruleName)}</span> (${stepLabel}): ${escapeHtml(err.message)}`;
+                    output += `</li>`;
+                });
                 output += `</ul></li>`;
             }
         }
@@ -568,17 +601,32 @@ async function generateTestCaseReport (testCase, projectId, aiRecommendations = 
     }
 
     // Вывод предупреждений
+    const totalWarningItems = allWarnings.reduce((sum, w) =>
+        sum + (w.stepErrors ? w.stepErrors.length : 1), 0);
     if (allWarnings.length > 0) {
         output += `<div class="issues-section warnings-section">`;
-        output += `<h2>Предупреждения (${allWarnings.length}):</h2>`;
+        output += `<h2>Предупреждения (${totalWarningItems}):</h2>`;
         output += `<ul class="issues-list">`;
 
         const warningsByCategory = groupByCategory(allWarnings);
 
         for (const [category, warnings] of Object.entries(warningsByCategory)) {
             const nonStepWarnings = warnings.filter(warning => !warning.stepErrors);
+            const stepWarningsExpanded = warnings
+                .filter(warning => warning.stepErrors && warning.stepErrors.length > 0)
+                .flatMap(warning => warning.stepErrors.map(sw =>
+                {
+                    const step = testCase.steps?.[sw.stepIndex - 1];
+                    const stepName = step?.description ? String(step.description).trim() : null;
+                    return {
+                        ruleName: warning.ruleName,
+                        message: sw.message,
+                        stepIndex: sw.stepIndex,
+                        stepName: stepName ? (stepName.length > 80 ? stepName.slice(0, 77) + '…' : stepName) : null
+                    };
+                }));
 
-            if (nonStepWarnings.length > 0) {
+            if (nonStepWarnings.length > 0 || stepWarningsExpanded.length > 0) {
                 output += `<li class="category-group">`;
                 output += `<strong>Категория: ${getCategoryName(category)}</strong>`;
                 output += `<ul>`;
@@ -586,6 +634,15 @@ async function generateTestCaseReport (testCase, projectId, aiRecommendations = 
                 {
                     output += `<li class="warning-item">`;
                     output += `<span class="rule-name">${escapeHtml(warning.ruleName)}</span>: ${escapeHtml(warning.message)}`;
+                    output += `</li>`;
+                });
+                stepWarningsExpanded.forEach(warn =>
+                {
+                    output += `<li class="warning-item">`;
+                    const stepLabel = warn.stepName
+                        ? `Шаг ${warn.stepIndex}: «${escapeHtml(warn.stepName)}»`
+                        : `Шаг ${warn.stepIndex}`;
+                    output += `<span class="rule-name">${escapeHtml(warn.ruleName)}</span> (${stepLabel}): ${escapeHtml(warn.message)}`;
                     output += `</li>`;
                 });
                 output += `</ul></li>`;

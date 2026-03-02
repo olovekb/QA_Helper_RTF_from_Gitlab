@@ -13,7 +13,8 @@ export const BATCH_SIZE = 20;
 /**
  * Создание папки, если не найдена
  */
-function ensureAILogsDir() {
+function ensureAILogsDir ()
+{
     if (!fs.existsSync(AI_LOGS_DIR)) {
         fs.mkdirSync(AI_LOGS_DIR, { recursive: true });
     }
@@ -33,7 +34,8 @@ const EXAMPLES_MD_DIR = path.join('./server/config/examples', 'test-cases');
  * @param content - содержимое .md-файла
  * @returns {string[]} массив markdown-блоков примеров
  */
-function parseMdExamples(content) {
+function parseMdExamples (content)
+{
     const blocks = content
         .split(/\r?\n---\r?\n/)
         .flatMap(block => block.split(/\r?\n\r?\n(?=## Пример )/))
@@ -46,7 +48,8 @@ function parseMdExamples(content) {
  * Загрузка примеров тест-кейсов для конкретного слоя из MD-файлов
  * @param layer - название слоя ("Integration frontend Tests")
  */
-function getExamplesForLayer(layer) {
+function getExamplesForLayer (layer)
+{
     const filename = LAYER_TO_MD[layer] || 'integration-fe.md';
     const filepath = path.join(EXAMPLES_MD_DIR, filename);
 
@@ -66,10 +69,12 @@ function getExamplesForLayer(layer) {
  * Загружает все примеры тест-кейсов из .md-файлов в server/config/examples/test-cases/
  * @returns объект с примерами, сгруппированными по слоям
  */
-function loadAllExamples() {
+function loadAllExamples ()
+{
     const allExamples = {};
 
-    Object.entries(LAYER_TO_MD).forEach(([layerName, filename]) => {
+    Object.entries(LAYER_TO_MD).forEach(([layerName, filename]) =>
+    {
         const filepath = path.join(EXAMPLES_MD_DIR, filename);
         try {
             if (fs.existsSync(filepath)) {
@@ -91,7 +96,8 @@ function loadAllExamples() {
  * Объединить примеры для промпта
  * @param examples - массив markdown-строк или объект { layer: string[] }
  */
-function prepareExamplesForPrompt(examples) {
+function prepareExamplesForPrompt (examples)
+{
     if (!examples) {
         return 'Примеры отсутствуют';
     }
@@ -107,7 +113,8 @@ function prepareExamplesForPrompt(examples) {
         const layers = Object.keys(examples);
         if (layers.length === 0) return 'Примеры отсутствуют';
 
-        return layers.map(layer => {
+        return layers.map(layer =>
+        {
             const blocks = examples[layer];
             const formatted = blocks
                 .map((ex, idx) => `ПРИМЕР ${idx + 1}:\n${ex}`)
@@ -123,14 +130,15 @@ function prepareExamplesForPrompt(examples) {
  * Создать сообщение для роли developer с примерами
  * @param examples - примеры тест-кейсов
  */
-function createDeveloperContent(examples) {
-    const hasExamples = (Array.isArray(examples) && examples.length > 0) || 
-                        (typeof examples === 'object' && Object.keys(examples).length > 0);
-    
+function createDeveloperContent (examples)
+{
+    const hasExamples = (Array.isArray(examples) && examples.length > 0) ||
+        (typeof examples === 'object' && Object.keys(examples).length > 0);
+
     if (!hasExamples) {
         return null;
     }
-    
+
     return `Вот примеры эталонных тест-кейсов из нашего проекта, которые полностью соответствуют стайлгайду:
 
 ${prepareExamplesForPrompt(examples)}
@@ -141,11 +149,12 @@ ${prepareExamplesForPrompt(examples)}
 /**
  * Генерация стайл-гайда с правилами из конфига (static-analysis-rules.yaml)
  */
-function generateStyleGuide(projectId) {
+function generateStyleGuide (projectId)
+{
     console.log(`\n[generateStyleGuide] projectId = ${projectId} (${typeof projectId})`);
-    
+
     let styleGuide = `# НАШ СТАЙЛГАЙД:`;
-    
+
     if (!projectId) {
         console.warn('[generateStyleGuide] projectId отсутствует');
         return styleGuide;
@@ -154,10 +163,11 @@ function generateStyleGuide(projectId) {
     try {
         const aiRules = getAIRulesForProject(projectId);
         console.log(`[generateStyleGuide] Получено правил: ${aiRules?.length || 0}`);
-        
+
         if (aiRules && aiRules.length > 0) {
             // Добавляем все AI-правила из yaml с нумерацией
-            aiRules.forEach((rule, index) => {
+            aiRules.forEach((rule, index) =>
+            {
                 const ruleNumber = index + 1;
                 styleGuide += `\n${ruleNumber}. ${rule.ai_prompt}`;
             });
@@ -168,12 +178,13 @@ function generateStyleGuide(projectId) {
     } catch (error) {
         console.error('[generateStyleGuide] Ошибка:', error.message);
     }
-    
+
     return styleGuide;
 }
 
 
-export function extractStepText(step) {
+export function extractStepText (step)
+{
     if (typeof step === 'string') {
         return step.trim();
     }
@@ -187,7 +198,8 @@ export function extractStepText(step) {
     if (step.bodyJson && typeof step.bodyJson === 'object') {
         if (step.bodyJson.content && Array.isArray(step.bodyJson.content)) {
             return step.bodyJson.content
-                .map(paragraph => {
+                .map(paragraph =>
+                {
                     if (paragraph.content && Array.isArray(paragraph.content)) {
                         return paragraph.content.map(item => item.text || "").join(" ");
                     }
@@ -199,7 +211,8 @@ export function extractStepText(step) {
     return "";
 }
 
-function transformSteps(rawStepsStr) {
+function transformSteps (rawStepsStr)
+{
     const tokens = rawStepsStr.split(',')
         .map(token => token.trim())
         .filter(token => token.length > 0);
@@ -214,7 +227,8 @@ function transformSteps(rawStepsStr) {
             steps.push({ action: tokens[i] });
         }
     }
-    const formattedSteps = steps.map((step, idx) => {
+    const formattedSteps = steps.map((step, idx) =>
+    {
         let result = `Шаг ${idx + 1}: ${step.action}`;
         if (step.expectedResult) {
             result += `\nОжидаемый результат: ${step.expectedResult}`;
@@ -231,7 +245,8 @@ function transformSteps(rawStepsStr) {
  * @param {string} rawSteps - Исходная строка с шагами.
  * @returns {string} - Форматированная строка с нумерованными шагами.
  */
-function formatStepsFromString(rawSteps) {
+function formatStepsFromString (rawSteps)
+{
     if (!rawSteps || typeof rawSteps !== 'string') {
         return 'не указаны';
     }
@@ -239,7 +254,8 @@ function formatStepsFromString(rawSteps) {
         .split(',')
         .map(step => step.trim())
         .filter(step => step.length > 0)
-        .map((step, index) => {
+        .map((step, index) =>
+        {
             const capitalizedStep = step.charAt(0).toUpperCase() + step.slice(1);
             return `${index + 1}. ${capitalizedStep}`;
         })
@@ -247,7 +263,8 @@ function formatStepsFromString(rawSteps) {
 }
 
 // --- ИЗМЕНЕНО: Основная функция анализа ---
-export async function analyzeTestCaseWithAI(testCase, apiKey = null, jiraIssue = null, projectId = null) {
+export async function analyzeTestCaseWithAI (testCase, apiKey = null, jiraIssue = null, projectId = null)
+{
     try {
         const testName = testCase.name ? testCase.name : "Неизвестно";
 
@@ -258,12 +275,14 @@ export async function analyzeTestCaseWithAI(testCase, apiKey = null, jiraIssue =
 
         const customFieldsText = Array.isArray(testCase.customFields)
             ? testCase.customFields
-                .map(cf => {
+                .map(cf =>
+                {
                     if (cf.customField && cf.customField.name) {
                         let values = 'нет';
                         if (Array.isArray(cf.values) && cf.values.length > 0) {
                             values = cf.values
-                                .map(v => {
+                                .map(v =>
+                                {
                                     if (typeof v === 'object' && v !== null) {
                                         return v.name ? v.name : JSON.stringify(v);
                                     }
@@ -284,7 +303,7 @@ export async function analyzeTestCaseWithAI(testCase, apiKey = null, jiraIssue =
         // Загрузка примеров для слоя тест-кейса
         const layerName = testCase.layer && testCase.layer.name ? testCase.layer.name : null;
         const examples = layerName ? getExamplesForLayer(layerName) : [];
-        
+
         const developerContent = createDeveloperContent(examples);
 
         // Вставляем отформатированные шаги в промпт
@@ -385,7 +404,8 @@ ${formattedStepsForPrompt || 'не указаны'}
     }
 }
 
-function removeTextBeforeSuggestion(inputText) {
+function removeTextBeforeSuggestion (inputText)
+{
     const regex = /.*(Предложи улучшения для теста\.)/s;
     const result = inputText.replace(regex, '$1').trim();
     return result;
@@ -395,7 +415,8 @@ function removeTextBeforeSuggestion(inputText) {
  * Исправить пропущенную открывающую кавычку у строкового значения в ответе AI
  * @param jsonText - сырой JSON
  */
-export function repairJsonCommonErrors(jsonText) {
+export function repairJsonCommonErrors (jsonText)
+{
     if (!jsonText || typeof jsonText !== 'string') return jsonText;
     // паттерн: "key": UnquotedValue"
     return jsonText.replace(
@@ -407,19 +428,20 @@ export function repairJsonCommonErrors(jsonText) {
 /**
  * Извлекает JSON из текста, который может быть обернут в markdown блоки
  */
-function extractJSON(responseText) {
+function extractJSON (responseText)
+{
     // Пробуем найти JSON в markdown блоке
     const markdownMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (markdownMatch) {
         return markdownMatch[1];
     }
-    
+
     // Пробуем найти JSON объект в тексте
     const jsonMatch = responseText.match(/(\{[\s\S]*\})/);
     if (jsonMatch) {
         return jsonMatch[1];
     }
-    
+
     // Возвращаем как есть
     return responseText;
 }
@@ -428,7 +450,8 @@ function extractJSON(responseText) {
  * Нормализует рекомендации AI к ожидаемому формату
  * Преобразует различные варианты ключей (строковые, числовые, с префиксами) к единому виду
  */
-function normalizeRecommendations(rawRecommendations, testCases) {
+function normalizeRecommendations (rawRecommendations, testCases)
+{
     // Нормализуем: AI может вернуть массив или один объект на тест-кейс
     const rawByKey = {};
     for (const [id, rec] of Object.entries(rawRecommendations)) {
@@ -436,22 +459,24 @@ function normalizeRecommendations(rawRecommendations, testCases) {
     }
 
     // Функция для поиска рекомендаций по ID с учетом различных форматов
-    const findRecommendations = (tcId) => {
+    const findRecommendations = (tcId) =>
+    {
         const idStr = String(tcId);
         // Проверяем различные варианты ключей:
         // - точное совпадение с числом
         // - точное совпадение со строкой
         // - с префиксом "ID" + число
         // - с префиксом "ID " + число (с пробелом)
-        return rawByKey[tcId] ?? 
-               rawByKey[idStr] ?? 
-               rawByKey[`ID${idStr}`] ?? 
-               rawByKey[`ID ${idStr}`];
+        return rawByKey[tcId] ??
+            rawByKey[idStr] ??
+            rawByKey[`ID${idStr}`] ??
+            rawByKey[`ID ${idStr}`];
     };
 
     // Строим итоговый объект с ключами = ID тест-кейсов
     const recommendations = {};
-    testCases.forEach(tc => {
+    testCases.forEach(tc =>
+    {
         const recs = findRecommendations(tc.id);
         if (recs && recs.length > 0) {
             recommendations[tc.id] = recs;
@@ -464,17 +489,19 @@ function normalizeRecommendations(rawRecommendations, testCases) {
 /**
  * Извлечение ожидаемог результата из структуры шагов
  */
-export function extractExpectedResult(expectedResultId, scenarioSteps) {
+export function extractExpectedResult (expectedResultId, scenarioSteps)
+{
     if (!expectedResultId || !scenarioSteps) return null;
-    
+
     const expectedResultContainer = scenarioSteps[expectedResultId];
     if (!expectedResultContainer) return null;
-    
+
     let expectedResultText = '';
-    
+
     if (expectedResultContainer.children && expectedResultContainer.children.length > 0) {
         const expectedResultTexts = expectedResultContainer.children
-            .map(childId => {
+            .map(childId =>
+            {
                 const childStep = scenarioSteps[childId];
                 return extractStepText(childStep);
             })
@@ -487,19 +514,20 @@ export function extractExpectedResult(expectedResultId, scenarioSteps) {
             expectedResultText = bodyText;
         }
     }
-    
+
     return expectedResultText.trim().length > 0 ? expectedResultText : null;
 }
 
 /**
  * Рекурсивая обработка вложенных шагов через children
  */
-function processStepChildren(stepId, scenarioSteps, sharedSteps, sharedStepScenarioSteps, indent = '   ') {
+function processStepChildren (stepId, scenarioSteps, sharedSteps, sharedStepScenarioSteps, indent = '   ')
+{
     const step = scenarioSteps[stepId];
     if (!step) return [];
-    
+
     const result = [];
-    
+
     // Обработка shared step в children
     if (step.sharedStepId) {
         const sharedStep = sharedSteps[step.sharedStepId];
@@ -507,32 +535,34 @@ function processStepChildren(stepId, scenarioSteps, sharedSteps, sharedStepScena
             const sharedStepText = extractStepText(sharedStep);
             if (sharedStepText) {
                 result.push(`${indent}- ${sharedStepText} (общий шаг)`);
-                
+
                 // Обработка вложенного шага shared step
                 if (sharedStep.children && Array.isArray(sharedStep.children)) {
-                    sharedStep.children.forEach(childId => {
+                    sharedStep.children.forEach(childId =>
+                    {
                         const childStep = sharedStepScenarioSteps[childId];
                         if (childStep) {
                             const childText = extractStepText(childStep);
                             if (childText) {
                                 result.push(`${indent}  - ${childText}`);
-                                
+
                                 // Обработка ожидаемого результата для подшага
                                 const expectedResult = extractExpectedResult(
-                                    childStep.expectedResultId, 
+                                    childStep.expectedResultId,
                                     sharedStepScenarioSteps
                                 );
                                 if (expectedResult) {
                                     result.push(`${indent}    Ожидаемый результат: ${expectedResult}`);
                                 }
                             }
-                            
+
                             // Обработка вложенных шаги подшага
                             if (childStep.children && Array.isArray(childStep.children)) {
-                                childStep.children.forEach(nestedChildId => {
+                                childStep.children.forEach(nestedChildId =>
+                                {
                                     result.push(...processStepChildren(
-                                        nestedChildId, 
-                                        sharedStepScenarioSteps, 
+                                        nestedChildId,
+                                        sharedStepScenarioSteps,
                                         sharedSteps,
                                         sharedStepScenarioSteps,
                                         indent + '    '
@@ -549,35 +579,37 @@ function processStepChildren(stepId, scenarioSteps, sharedSteps, sharedStepScena
         const stepText = extractStepText(step);
         if (stepText) {
             result.push(`${indent}- ${stepText}`);
-            
+
             // Обработкеа ожидаемого результата
             const expectedResult = extractExpectedResult(step.expectedResultId, scenarioSteps);
             if (expectedResult) {
                 result.push(`${indent}  Ожидаемый результат: ${expectedResult}`);
             }
         }
-        
+
         // Обработка вложенных шагов
         if (step.children && Array.isArray(step.children)) {
-            step.children.forEach(childId => {
+            step.children.forEach(childId =>
+            {
                 result.push(...processStepChildren(
-                    childId, 
-                    scenarioSteps, 
+                    childId,
+                    scenarioSteps,
                     sharedSteps,
-                    sharedStepScenarioSteps, 
+                    sharedStepScenarioSteps,
                     indent + '  '
                 ));
             });
         }
     }
-    
+
     return result;
 }
 
 /**
  * Убрать лишние переносы строк — артефакт экспорта из ТестОпса
  */
-function normalizePreconditionForPrompt(precondition) {
+function normalizePreconditionForPrompt (precondition)
+{
     if (!precondition || typeof precondition !== 'string') return precondition || '';
     return precondition.replace(/\n{3,}/g, '\n\n').trim();
 }
@@ -586,7 +618,8 @@ function normalizePreconditionForPrompt(precondition) {
  * Отформатировать параметры тест-кейса в md
  * @param tc - тест-кейс с полями parameters
  */
-export function formatParametersForPrompt(tc) {
+export function formatParametersForPrompt (tc)
+{
     const params = tc.parameters || [];
     const examples = tc.examples || [];
 
@@ -600,7 +633,8 @@ export function formatParametersForPrompt(tc) {
         const rows = [];
         for (const ex of examples) {
             const exParams = ex?.parameters || [];
-            const row = paramNames.map(name => {
+            const row = paramNames.map(name =>
+            {
                 const p = exParams.find(ep => (ep.name || ep.parameter || '').trim() === name);
                 return p?.value != null ? String(p.value).trim() : '—';
             });
@@ -613,12 +647,14 @@ export function formatParametersForPrompt(tc) {
     }
 
     // parameters с values == таблица "Параметр | Значения"
-    const withValues = params.filter(p => {
+    const withValues = params.filter(p =>
+    {
         const vals = p.values;
         return Array.isArray(vals) && vals.length > 0;
     });
     if (withValues.length > 0) {
-        const lines = withValues.map(p => {
+        const lines = withValues.map(p =>
+        {
             const name = (p.name || p.parameter || '?').trim();
             const vals = p.values.map(v => String(v).trim());
             return `${name} | ${vals.join(', ')}`;
@@ -635,20 +671,23 @@ export function formatParametersForPrompt(tc) {
  * Форматирует шаги тест-кейса в нумерованный список (универсальная версия)
  * Используется как для одиночного, так и для массового анализа
  */
-function formatStepsForPrompt(steps) {
+function formatStepsForPrompt (steps)
+{
     if (!steps) return 'не указаны';
 
     let formattedStepsArray = [];
 
     // 1. Извлекаем шаги в виде массива текстовых строк
     if (Array.isArray(steps)) {
-        steps.forEach(step => {
+        steps.forEach(step =>
+        {
             if (step.type === 'sharedStep') {
                 const sharedStepHeader = `${extractStepText(step)} (общий шаг)`;
                 formattedStepsArray.push(sharedStepHeader);
-                
+
                 if (step.childSteps && Array.isArray(step.childSteps)) {
-                    step.childSteps.forEach(childStep => {
+                    step.childSteps.forEach(childStep =>
+                    {
                         const childText = childStep.description || extractStepText(childStep);
                         if (childText) {
                             formattedStepsArray.push(`   - ${childText}`);
@@ -665,13 +704,14 @@ function formatStepsForPrompt(steps) {
                 }
             }
         });
-        
+
         if (formattedStepsArray.length === 0) return 'не указаны';
-        
+
         // Нумеруются только основные шаги (строки без отступа)
         let stepNumber = 1;
         return formattedStepsArray
-            .map(text => {
+            .map(text =>
+            {
                 // Не нумеруются строки с отступом == подшаги и их ожидаемые результаты
                 if (text.startsWith('   ')) {
                     return text;
@@ -681,20 +721,20 @@ function formatStepsForPrompt(steps) {
                 }
             })
             .join('\n');
-            
+
     } else if (steps && typeof steps === 'object') {
         // Проверяем наличие структуры Allure с root/scenarioSteps/sharedSteps
         const root = steps.root || (steps.scenario && steps.scenario.root);
         const scenarioSteps = steps.scenarioSteps || (steps.scenario && steps.scenario.scenarioSteps);
         const sharedSteps = steps.sharedSteps || {};
         const sharedStepScenarioSteps = steps.sharedStepScenarioSteps || {};
-        
+
         if (root && scenarioSteps && root.children && Array.isArray(root.children)) {
             // Обрабатываем шаги в правильном порядке через root.children
             for (const stepId of root.children) {
                 const step = scenarioSteps[stepId];
                 if (!step) continue;
-                
+
                 // Обработка shared step
                 if (step.sharedStepId) {
                     const sharedStep = sharedSteps[step.sharedStepId];
@@ -702,32 +742,34 @@ function formatStepsForPrompt(steps) {
                         const sharedStepText = extractStepText(sharedStep);
                         if (sharedStepText) {
                             formattedStepsArray.push(`${sharedStepText} (общий шаг)`);
-                            
+
                             // Обрабатываем вложенные шаги shared step
                             if (sharedStep.children && Array.isArray(sharedStep.children)) {
-                                sharedStep.children.forEach(childId => {
+                                sharedStep.children.forEach(childId =>
+                                {
                                     const childStep = sharedStepScenarioSteps[childId];
                                     if (childStep) {
                                         const childText = extractStepText(childStep);
                                         if (childText) {
                                             formattedStepsArray.push(`   - ${childText}`);
-                                            
+
                                             // Обрабатываем ожидаемый результат для подшага
                                             const expectedResult = extractExpectedResult(
-                                                childStep.expectedResultId, 
+                                                childStep.expectedResultId,
                                                 sharedStepScenarioSteps
                                             );
                                             if (expectedResult) {
                                                 formattedStepsArray.push(`     Ожидаемый результат: ${expectedResult}`);
                                             }
                                         }
-                                        
+
                                         // Обрабатываем вложенные шаги подшага
                                         if (childStep.children && Array.isArray(childStep.children)) {
-                                            childStep.children.forEach(nestedChildId => {
+                                            childStep.children.forEach(nestedChildId =>
+                                            {
                                                 formattedStepsArray.push(...processStepChildren(
-                                                    nestedChildId, 
-                                                    sharedStepScenarioSteps, 
+                                                    nestedChildId,
+                                                    sharedStepScenarioSteps,
                                                     sharedSteps,
                                                     sharedStepScenarioSteps,
                                                     '     '
@@ -744,20 +786,21 @@ function formatStepsForPrompt(steps) {
                     const stepText = extractStepText(step);
                     if (stepText) {
                         formattedStepsArray.push(stepText);
-                        
+
                         // Обрабатываем ожидаемый результат
                         const expectedResult = extractExpectedResult(step.expectedResultId, scenarioSteps);
                         if (expectedResult) {
                             formattedStepsArray.push(`   Ожидаемый результат: ${expectedResult}`);
                         }
                     }
-                    
+
                     // Обрабатываем вложенные шаги (могут быть shared steps)
                     if (step.children && Array.isArray(step.children)) {
-                        step.children.forEach(childId => {
+                        step.children.forEach(childId =>
+                        {
                             formattedStepsArray.push(...processStepChildren(
-                                childId, 
-                                scenarioSteps, 
+                                childId,
+                                scenarioSteps,
                                 sharedSteps,
                                 sharedStepScenarioSteps
                             ));
@@ -765,13 +808,14 @@ function formatStepsForPrompt(steps) {
                     }
                 }
             }
-            
+
             if (formattedStepsArray.length === 0) return 'не указаны';
-            
+
             // Нумеруются только основные шаги (строки без отступа)
             let stepNumber = 1;
             return formattedStepsArray
-                .map(text => {
+                .map(text =>
+                {
                     // Не нумеруются строки с отступом == подшаги и их ожидаемые результаты
                     if (text.startsWith('   ')) {
                         return text;
@@ -786,10 +830,11 @@ function formatStepsForPrompt(steps) {
             const rawStepsArray = Object.values(steps.scenarioSteps)
                 .map(step => extractStepText(step))
                 .filter(text => text !== "");
-            
+
             if (rawStepsArray.length > 0) {
                 return rawStepsArray
-                    .map((step, index) => {
+                    .map((step, index) =>
+                    {
                         const capitalizedStep = step.charAt(0).toUpperCase() + step.slice(1);
                         return `${index + 1}. ${capitalizedStep}`;
                     })
@@ -803,14 +848,16 @@ function formatStepsForPrompt(steps) {
     return 'не указаны';
 }
 
-export async function analyzeBulkTestCasesWithAI(testCases, apiKey = null, jiraIssue = null, projectId = null) {
+export async function analyzeBulkTestCasesWithAI (testCases, apiKey = null, jiraIssue = null, projectId = null)
+{
     try {
         if (!Array.isArray(testCases) || testCases.length === 0) {
             throw new Error('Не найдено тест-кейсов для анализа');
         }
 
         console.log(`\nОТЛАДКА ID И СЛОЕВ ТЕСТ-КЕЙСОВ:`);
-        testCases.forEach((tc, index) => {
+        testCases.forEach((tc, index) =>
+        {
             console.log(`   ${index + 1}. ID: "${tc.id}" (тип: ${typeof tc.id}), Layer: ${JSON.stringify(tc.layer)}`);
         });
 
@@ -841,7 +888,8 @@ export async function analyzeBulkTestCasesWithAI(testCases, apiKey = null, jiraI
         console.error(`- Время ошибки: ${new Date().toISOString()}`);
 
         const errorResponse = {};
-        (testCases || []).forEach(tc => {
+        (testCases || []).forEach(tc =>
+        {
             errorResponse[tc.id] = [{
                 recommendation: `Произошла ошибка при AI-анализе: ${error.message}. Попробуйте запросить индивидуальный анализ этого тест-кейса.`,
                 severity: 'error',
@@ -857,7 +905,8 @@ export async function analyzeBulkTestCasesWithAI(testCases, apiKey = null, jiraI
  * Строит общий контекст для нескольких батчей (style guide, примеры).
  * Вызывается один раз при totalBatches > 1.
  */
-function buildBulkSharedContext(projectId) {
+function buildBulkSharedContext (projectId)
+{
     const styleGuide = generateStyleGuide(projectId);
     const allExamples = loadAllExamples();
     return {
@@ -877,11 +926,13 @@ function buildBulkSharedContext(projectId) {
  * @param {Object|null} sharedContext - предзагруженный контекст при totalBatches > 1
  * @returns {Promise<Object>} рекомендации { [tc.id]: [...] }
  */
-async function processBulkBatch(batch, apiKey, jiraIssue, projectId, batchIndex = 0, totalBatches = 1, sharedContext = null) {
+async function processBulkBatch (batch, apiKey, jiraIssue, projectId, batchIndex = 0, totalBatches = 1, sharedContext = null)
+{
     const STYLE_GUIDE = sharedContext ? sharedContext.styleGuide : generateStyleGuide(projectId);
     const developerContent = sharedContext ? sharedContext.developerContent : createDeveloperContent(loadAllExamples());
 
-    const casesForPrompt = batch.map(tc => {
+    const casesForPrompt = batch.map(tc =>
+    {
         const stepsToFormat = tc.stepsRaw || tc.steps;
         const paramsBlock = formatParametersForPrompt(tc);
         return `
@@ -892,6 +943,7 @@ ${paramsBlock ? `### Параметры\n${paramsBlock}\n` : ''}### Предус
 ${normalizePreconditionForPrompt(tc.precondition) || 'не указаны'}
 ### Шаги
 ${formatStepsForPrompt(stepsToFormat)}
+
 ### Ожидаемый результат
 ${tc.expectedResult || 'не указан'}
 ---`;
@@ -906,23 +958,25 @@ ${STYLE_GUIDE}
 Разрешено создать warning или improvement с чётким обоснованием, если это повышает воспроизводимость или проверяемость теста.
 
 # ДОПУСТИМЫЕ ИСКЛЮЧЕНИЯ
- - Игнорируй технические артефакты экспорта: markdown, лишние переносы строк
- - Игнорируй плейсхолдеры в угловых скобках <Название>
- - Игнорируй моки в предусловиях (валидная практика)
- - Игнорируй промежуточные "Ожидаемый результат:" на слое "E2E Tests" (это ожидаемые результаты шагов)
- - Игнорируй длинные названия, если они точно описывают проверку
- - Игнорируй конкретные значения в ОР (даты, суммы) для детерминированных проверок
+ - Игнорируй технические артефакты экспорта: markdown, лишние переносы строк;
+ - Игнорируй плейсхолдеры в угловых скобках <Название>;
+ - Игнорируй длинные названия, если они точно описывают проверку;
+ - Игнорируй конкретные значения в ОР (даты, суммы) для детерминированных проверок;
  - Если критерий проверки явно вытекает из предусловий и однозначно проверяем — не создавай рекомендацию. Если из текста невозможно понять, что именно считается успешным результатом — создавай error.
  - Не рекомендуй добавлять в ОР условия из предусловий: если в предусловиях указано "Установить разрешение экрана 320px" — не пиши "уточните при ширине 320px" в рекомендации по ОР
  - Общий шаг в секции Шаги допустим: если авторизация или навигация помечена как "(общий шаг)" и находится в Шагах — это шаг, а не предусловие; не выдавай рекомендацию "Предусловие содержит действия"
  - НЕ рекомендуй "разделить на несколько тест-кейсов", если все пункты ожидаемого результата относятся к одной странице/экрану и одному логическому результату (например: заголовок, блок категории и список операций на странице операций по категории — это одна проверка "отображение страницы")
  - HTTP-метод в API-шагах: если в тексте шага есть слово GET, POST, PUT, DELETE или PATCH — метод УЖЕ указан. НЕ создавай рекомендацию "Нет HTTP-метода", "Отсутствие HTTP-метода" и т.п. НЕ предлагай переформулировать "Вызвать GET запрос" на "Отправить GET запрос" — оба варианта корректны. Проверяй наличие метода по ключевому слову (GET/POST/etc), а не по глаголу (Выполнить/Вызвать/Отправить)
+ - Шаг с ключевой фразой "(общий шаг)" может содержать несколько последовательных подшагов (строки с отступом и '-'). Подшаги уже являются разделением на отдельные действия. НЕ выдавай рекомендации "Несколько действий в шаге", "Разделить на отдельные шаги", "Каждое действие должно быть отдельным шагом" для шагов с пометкой "(общий шаг)";
+ - Ожидаемый результат шага может быть указан после ключевой фразы "Ожидаемый результат:";
+ - Подмена/моки в предусловии это валидная практика;
+ - Секция "### Ожидаемый результат" — это итоговый ОР всего тест-кейса (результат сценария)
 
 # ЗАДАЧА:
-Найди 
+Найди
 1. Нарушения стайлгайда;
 2. Потенциальные улучшения, которые повысят качество тест-дизайна.
-Улучшения должны быть обоснованы и конкретны, без абстрактных или косметических рекомендаций. Если есть error — не предлагай улучшения.
+Улучшения должны быть обоснованы и конкретны, без абстрактных или косметических рекомендаций.
 Если есть только warning — допускается предлагать улучшения, если они не дублируют замечания.
 Не добавляй внешний контекст и не предполагай скрытую бизнес-логику.
 Анализируй только структуру и явно описанное поведение тест-кейса.
@@ -1064,15 +1118,18 @@ ${casesForPrompt}`;
         console.log(`\nУспешно получены AI-рекомендации для ${Object.keys(recommendations).length} тест-кейсов`);
         console.log(`Ключи в ответе AI: ${Object.keys(rawByKey).map(k => `"${k}" (${typeof k})`).join(', ')}`);
         console.log(`Рекомендации по тест-кейсам:`);
-        Object.entries(recommendations).forEach(([id, recs]) => {
-            recs.forEach((r, i) => {
+        Object.entries(recommendations).forEach(([id, recs]) =>
+        {
+            recs.forEach((r, i) =>
+            {
                 const sev = r.severity === 'error' ? '[ERROR]' : r.severity === 'warning' ? '[WARN]' : '[OK]';
                 console.log(`  ${id}[${i}]: ${sev} ${(r.recommendation || '').substring(0, 80)}...`);
             });
         });
 
         console.log(`\nПроверка совпадения ID:`);
-        batch.forEach(tc => {
+        batch.forEach(tc =>
+        {
             const tcIdStr = String(tc.id);
             const hasRecommendation = recommendations.hasOwnProperty(tcIdStr) || recommendations.hasOwnProperty(tc.id);
             console.log(`   Тест-кейс "${tcIdStr}" -> Рекомендация: ${hasRecommendation ? '✅' : '❌'}`);
@@ -1090,7 +1147,8 @@ ${casesForPrompt}`;
         console.log(responseText);
 
         const errorResponse = {};
-        batch.forEach(tc => {
+        batch.forEach(tc =>
+        {
             errorResponse[tc.id] = [{
                 recommendation: `Ошибка парсинга AI ответа: ${parseError.message}`,
                 severity: 'error',
