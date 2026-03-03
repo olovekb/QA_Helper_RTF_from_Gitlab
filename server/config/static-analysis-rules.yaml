@@ -48,16 +48,16 @@ base_rules:
       case_insensitive: true
       error_message: "Название тест-кейса начинается с глагола или слова 'Тест', 'Проверка', 'Попытка'"
 
-  - id: "parameters_usage"
-    name: "Хотя бы один параметр используется в шагах"
-    description: "Минимум один из объявленных параметров должен использоваться в шагах тест-кейса (в формате {{paramName}}), чтобы при запуске создавался отдельный экземпляр ТК для каждой комбинации параметров"
-    level: "warning"
-    enabled: true
-    is_ai_enabled: false
-    category: "parameters"
-    check_type: "parameters_usage_check"
-    params:
-      error_message: "Ни один параметр не используется в шагах"
+  #- id: "parameters_usage"
+  #  name: "Хотя бы один параметр используется в шагах"
+  #  description: "Минимум один из объявленных параметров должен использоваться в шагах тест-кейса (в формате {{paramName}}), чтобы при запуске создавался отдельный экземпляр ТК для каждой комбинации параметров"
+  #  level: "warning"
+  #  enabled: true
+  #  is_ai_enabled: false
+  #  category: "parameters"
+  #  check_type: "parameters_usage_check"
+  #  params:
+  #    error_message: "Ни один параметр не используется в шагах"
 
   - id: "test_layer"
     name: "Заполнен тестовый слой"
