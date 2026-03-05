@@ -19,6 +19,16 @@ import GlobalGenerationWindow from './components/GlobalGenerationWindow';
 import ErrorBoundary from './components/ErrorBoundary';
 import * as pdfjsLib from 'pdfjs-dist/build/pdf';
 import { trackEvent } from './analytics';
+import { tasksWord } from './utils/textHelpers';
+import { formatPropertiesForJira, stripPropertyLinks, VIOLATED_PROPERTY_LINK } from './utils/propertiesHelpers';
+import { useDebounce } from './hooks/useDebounce';
+import { usePersistentState } from './hooks/usePersistentState';
+import { useShowScrollTop } from './hooks/useShowScrollTop';
+import { createHandleChange, createHandlePaste } from './utils/taskFieldHelpers';
+import ArrowUpIcon from './components/ArrowUpIcon';
+import JiraMarkdownField from './components/JiraMarkdownField';
+import AttachmentsField from './components/AttachmentsField';
+import TaskSidebar from './components/TaskSidebar';
 
 // CSS для анимаций прогресс-бара
 const progressBarStyles = `
@@ -60,157 +70,103 @@ marked.setOptions({
   breaks: true,
 });
 
-function useDebounce (value, delay)
+const VIOLATED_PROPERTY_OPTIONS = [
+  { value: 'Завершенность', label: 'Завершенность' },
+  { value: 'Атомарность', label: 'Атомарность' },
+  { value: 'Непротиворечивость', label: 'Непротиворечивость' },
+  { value: 'Недвусмысленность', label: 'Недвусмысленность' },
+  { value: 'Выполнимость', label: 'Выполнимость' },
+  { value: 'Обязательность', label: 'Обязательность' },
+  { value: 'Корректность', label: 'Корректность' },
+  { value: 'Проверяемость', label: 'Проверяемость' }
+];
+
+const REQUIRED_FIELDS = [
+  { key: 'summary', id: i => `field-summary-${i}` },
+  { key: 'requirement', id: i => `field-requirement-${i}` },
+  { key: 'description', id: i => `field-description-${i}` },
+  { key: 'actual', id: i => `field-actual-${i}` },
+  { key: 'expected', id: i => `field-expected-${i}` }
+];
+
+const isEmptyRequired = (task, key) =>
 {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() =>
-  {
-    const h = setTimeout(() => setDebounced(value), delay);
-    return () => clearTimeout(h);
-  }, [value, delay]);
-  return debounced;
-}
+  switch (key) {
+    case 'summary': return !(task.summary || '').trim();
+    case 'requirement': return !(task.requirement || '').trim();
+    case 'description': return !(task.description || '').trim();
+    case 'actual': return !(task.actual || '').trim();
+    case 'expected': return !(task.expected || '').trim();
+    default: return false;
+  }
+};
 
-function usePersistentState (key, defaultValue)
+const getFirstInvalidFieldId = (task, index) =>
 {
-  const [state, setState] = useState(defaultValue);
-  const isFirstMount = useRef(true);
-  useEffect(() =>
-  {
-    idbGet(key)
-      .then(stored =>
-      {
-        if (stored !== undefined) {
-          setState(stored);
-        } else {
-          idbSet(key, defaultValue).catch(console.warn);
-        }
-      })
-      .catch(console.warn);
-  }, [key]);
-
-  useEffect(() =>
-  {
-    if (isFirstMount.current) {
-      isFirstMount.current = false;
-      return;
-    }
-
-    if (key === 'solutionTasks') {
-      const toPersist = (Array.isArray(state) ? state : []).map(t =>
-      {
-        const {
-          attachments,
-          requirementAttachments,
-          descriptionAttachments,
-          stepsAttachments,
-          actualAttachments,
-          expectedAttachments,
-          ...rest
-        } = t;
-        return rest;
-      });
-      idbSet(key, toPersist)
-        .catch(err => console.warn('IDB error saving tasks:', err));
-    } else {
-      idbSet(key, state)
-        .catch(err => console.warn(`IDB error saving "${key}":`, err));
-    }
-  }, [key, state]);
-
-  return [state, setState];
-}
+  for (const { key, id } of REQUIRED_FIELDS) {
+    if (isEmptyRequired(task, key)) return id(index);
+  }
+  return null;
+};
 
 export const SolutionCard = ({
-  task, index, onUpdate, onDelete,
+  task, index, onUpdate, onDelete, onDeleteClick,
   fieldOptions, loadDefectOptions, onDefectSelect,
   allureProject, runAi, aiLoading,
   isCollapsed, onToggleCollapse, fillFieldsWithAI,
   aiFillLoading,
-  setAttachmentsMap
+  setAttachmentsMap,
+  attachmentsMap = {},
+  forceValidation = false
 }) =>
 {
+  const [touchedFields, setTouchedFields] = useState(() => new Set());
+  const [violatedPropertyOptions, setViolatedPropertyOptions] = useState([]);
 
-  const handleChange = field => e =>
+  const isFieldInvalid = useCallback((fieldKey) =>
   {
-    const v = e.target.type === 'checkbox'
-      ? e.target.checked
-      : e.target.value;
-    onUpdate(index, { ...task, [field]: v });
-  };
+    const touched = touchedFields.has(fieldKey) || forceValidation;
+    return touched && isEmptyRequired(task, fieldKey);
+  }, [touchedFields, forceValidation, task]);
 
-  const handlePaste = field => async e =>
+  const handleBlur = useCallback((fieldKey) =>
   {
-    const rawFiles = Array.from(e.clipboardData.files || []);
-    if (!rawFiles.length) return;
-    e.preventDefault();
-    const renamedFiles = rawFiles.map((f, idx) =>
-    {
-      const ext = f.name.split('.').pop();
-      const uniqueName = `screenshot-${Date.now()}-${idx}.${ext}`;
-      return new File([f], uniqueName, { type: f.type });
-    });
+    setTouchedFields(prev => new Set(prev).add(fieldKey));
+  }, []);
 
-    const placeholders = renamedFiles
-      .map(f => `!${f.name}|thumbnail!`)
-      .join('\n');
-    const existingText = task[field] || '';
-    const needsSeparator =
-      existingText !== '' && !existingText.endsWith('\n');
-    const markup = (needsSeparator ? '\n' : '') + placeholders;
-    const attKey = field + 'Attachments';
-    const prevList = task[attKey] || [];
-
-    onUpdate(index, {
-      ...task,
-      [field]: existingText + markup,
-      [attKey]: [...prevList, ...renamedFiles]
-    });
-    const serialized = await Promise.all(renamedFiles.map(f => serializeFile(f)))
-    setAttachmentsMap(m => ({
-      ...m,
-      [task.id]: {
-        ...(m[task.id] || {}),
-        common: [...(m[task.id]?.common || []), ...serialized],
-        [field]: [...(m[task.id]?.[field] || []), ...renamedFiles]
-      }
-    }));
-  };
-
-  const toOptions = key =>
-    (fieldOptions[key] || []).map(o => ({ value: o.id, label: o.name }));
-
-  const formatAllureOptionLabel = (opt, { context }) =>
+  useEffect(() =>
   {
-    if (context === 'value') return opt.label.split('(')[0].trim();
-    return (
-      <div className="allure-option-container">
-        <div className="allure-option">
-          <span className="allure-option__name">{ opt.label }</span>
-          <span className="allure-option__details">ID: { opt.value }</span>
-        </div>
-        { opt.linked && <span className="allure-option__linked">уже привязан</span> }
-      </div>
-    );
-  };
+    const propsText = (task.properties || '').trim();
+    const linkMatch = propsText.match(/\[([^\]]+)\|https:\/\/confluence\.artsofte\.ru\/x\/Bru6CQ\]/);
+    const names = linkMatch
+      ? linkMatch[1].split(',').map(s => s.trim()).filter(Boolean)
+      : propsText ? propsText.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const opts = names.map(n => VIOLATED_PROPERTY_OPTIONS.find(o => o.value === n)).filter(Boolean);
+    setViolatedPropertyOptions(opts);
+  }, [task.properties]);
+
+  const handleChange = createHandleChange(task, index, onUpdate);
+  const handlePaste = createHandlePaste(task, index, onUpdate, setAttachmentsMap, { serializeFile, includeCommon: true });
 
   return (
     <div className={ `task-card ${task.isNew ? 'new-task' : ''}` }>
       <div className="task-header">
-        <button
-          className="collapse-toggle"
-          onClick={ () => onToggleCollapse(index) }
-          title={ isCollapsed ? "Развернуть" : "Свернуть" }
-        >
-          { isCollapsed ? '▶' : '▼' }
-        </button>
+        { onToggleCollapse && (
+          <button
+            className="collapse-toggle"
+            onClick={ () => onToggleCollapse(index) }
+            title={ isCollapsed ? "Развернуть" : "Свернуть" }
+          >
+            { isCollapsed ? '▶' : '▼' }
+          </button>
+        ) }
         <input
           type="checkbox"
           checked={ task.selected }
           onChange={ handleChange('selected') }
           title="Выбрать/снять выбор"
         />
-        <div className="field" style={ { flexGrow: 1 } }>
+        <div id={ `field-summary-${index}` } className={ `field ${isFieldInvalid('summary') ? 'field-invalid' : ''}` } style={ { flexGrow: 1 } }>
           <label htmlFor={ `summary-${index}` }>Тема*</label>
           <input
             id={ `summary-${index}` }
@@ -218,9 +174,18 @@ export const SolutionCard = ({
             placeholder="Краткое описание проблемы"
             value={ task.summary }
             onChange={ handleChange('summary') }
+            onBlur={ () => handleBlur('summary') }
           />
         </div>
-        <button onClick={ () => onDelete(index) } title="Удалить задачу">❌</button>
+        <button
+          className="btn-secondary"
+          onClick={ () => (onDeleteClick ? onDeleteClick(index) : onDelete(index)) }
+          title="Удалить задачу"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" vectorEffect="non-scaling-stroke">
+            <path d="M16 6v-.8c0-1.12 0-1.68-.218-2.108a2 2 0 0 0-.874-.874C14.48 2 13.92 2 12.8 2h-1.6c-1.12 0-1.68 0-2.108.218a2 2 0 0 0-.874.874C8 3.52 8 4.08 8 5.2V6m2 5.5v5m4-5v5M3 6h18m-2 0v11.2c0 1.68 0 2.52-.327 3.162a3 3 0 0 1-1.311 1.311C16.72 22 15.88 22 14.2 22H9.8c-1.68 0-2.52 0-3.162-.327a3 3 0 0 1-1.311-1.311C5 19.72 5 18.88 5 17.2V6" />
+          </svg>
+        </button>
       </div>
 
       { task.aiSummary && (
@@ -231,7 +196,7 @@ export const SolutionCard = ({
 
       <div className={ `card-body ${isCollapsed ? 'collapsed' : ''}` }>
         {/* Исходное требование */ }
-        <div className="field full-width">
+        <div id={ `field-requirement-${index}` } className={ `field full-width ${isFieldInvalid('requirement') ? 'field-invalid' : ''}` }>
           <label htmlFor={ `requirement-${index}` }>Исходное требование*</label>
           <textarea
             id={ `requirement-${index}` }
@@ -239,6 +204,7 @@ export const SolutionCard = ({
             placeholder="Текст требования"
             value={ task.requirement }
             onChange={ handleChange('requirement') }
+            onBlur={ () => handleBlur('requirement') }
             onPaste={ handlePaste('requirement') }
           />
         </div>
@@ -249,15 +215,17 @@ export const SolutionCard = ({
         ) }
 
         {/* Описание проблемы (description) */ }
-        <div className="field full-width">
+        <div id={ `field-description-${index}` } className={ `field full-width ${isFieldInvalid('description') ? 'field-invalid' : ''}` }>
           <label htmlFor={ `description-${index}` }>Описание проблемы*</label>
-          <textarea
+          <JiraMarkdownField
             id={ `description-${index}` }
-            rows={ 4 }
-            placeholder="Детальное описание проблемы..."
             value={ task.description }
-            onChange={ handleChange('description') }
+            onChange={ val => onUpdate(index, { ...task, description: val }) }
+            onBlur={ () => handleBlur('description') }
             onPaste={ handlePaste('description') }
+            imageAttachments={ attachmentsMap[task.id]?.description || [] }
+            placeholder="Детальное описание проблемы..."
+            minHeight={ 136 }
           />
         </div>
         { task.aiDescription && (
@@ -268,15 +236,17 @@ export const SolutionCard = ({
 
         {/* Фактический и ожидаемый результат */ }
         <div className="field-group">
-          <div className="field full-width">
+          <div id={ `field-actual-${index}` } className={ `field full-width ${isFieldInvalid('actual') ? 'field-invalid' : ''}` }>
             <label htmlFor={ `actual-${index}` }>Фактический результат*</label>
-            <textarea
+            <JiraMarkdownField
               id={ `actual-${index}` }
-              rows={ 2 }
-              placeholder="Что произошло на самом деле"
               value={ task.actual }
-              onChange={ handleChange('actual') }
+              onChange={ val => onUpdate(index, { ...task, actual: val }) }
+              onBlur={ () => handleBlur('actual') }
               onPaste={ handlePaste('actual') }
+              imageAttachments={ attachmentsMap[task.id]?.actual || [] }
+              placeholder="Что произошло на самом деле"
+              minHeight={ 80 }
             />
           </div>
           { task.aiActual && (
@@ -284,15 +254,17 @@ export const SolutionCard = ({
               <strong>AI Фактический:</strong> { task.aiActual }
             </div>
           ) }
-          <div className="field full-width">
+          <div id={ `field-expected-${index}` } className={ `field full-width ${isFieldInvalid('expected') ? 'field-invalid' : ''}` }>
             <label htmlFor={ `expected-${index}` }>Ожидаемый результат*</label>
-            <textarea
+            <JiraMarkdownField
               id={ `expected-${index}` }
-              rows={ 2 }
-              placeholder="Что должно было произойти"
               value={ task.expected }
-              onChange={ handleChange('expected') }
+              onChange={ val => onUpdate(index, { ...task, expected: val }) }
+              onBlur={ () => handleBlur('expected') }
               onPaste={ handlePaste('expected') }
+              imageAttachments={ attachmentsMap[task.id]?.expected || [] }
+              placeholder="Что должно было произойти"
+              minHeight={ 80 }
             />
           </div>
           { task.aiExpected && (
@@ -304,13 +276,29 @@ export const SolutionCard = ({
 
         {/* Нарушенные свойства */ }
         <div className="field full-width">
-          <label htmlFor={ `properties-${index}` }>Нарушенные свойства (через запятую)</label>
-          <textarea
-            id={ `properties-${index}` }
-            rows={ 2 }
-            placeholder="Нарушенные свойства"
-            value={ task.properties }
-            onChange={ handleChange('properties') }
+          <label>Нарушенное свойство</label>
+          <Select
+            classNamePrefix="select"
+            placeholder="Выберите..."
+            isMulti
+            closeMenuOnSelect={ false }
+            isClearable
+            options={ VIOLATED_PROPERTY_OPTIONS }
+            value={ violatedPropertyOptions }
+            onChange={ opts =>
+            {
+              const selected = opts || [];
+              setViolatedPropertyOptions(selected);
+              const rest = stripPropertyLinks(task.properties || '');
+              const block =
+                selected.length > 0
+                  ? `[${selected.map(o => o.value).join(', ')}|${VIOLATED_PROPERTY_LINK}]`
+                  : '';
+              const newProps = [block, rest].filter(Boolean).join('\n\n');
+              onUpdate(index, { ...task, properties: newProps });
+            } }
+            styles={ { menuPortal: base => ({ ...base, zIndex: 9999 }) } }
+            menuPortalTarget={ document.body }
           />
         </div>
         { task.aiProperties && (
@@ -320,80 +308,16 @@ export const SolutionCard = ({
         ) }
 
         {/* Общие вложения */ }
-        <div className="field full-width">
-          <label>Прикрепить файлы</label>
-          <input
-            type="file"
-            multiple
-            onChange={ async e =>
-            {
-              const MAX_FILE_SIZE = 50 * 1024 * 1024;
-              const MAX_FILE_COUNT = 20;
-              let rawFiles = Array.from(e.target.files);
-
-              const existingCount = (task.attachments || []).length;
-              if (existingCount + rawFiles.length > MAX_FILE_COUNT) {
-                alert(`Нельзя прикрепить более ${MAX_FILE_COUNT} файлов (уже ${existingCount}).`);
-                rawFiles = rawFiles.slice(0, MAX_FILE_COUNT - existingCount);
-              }
-
-              const tooBig = rawFiles.filter(f => f.size > MAX_FILE_SIZE);
-              if (tooBig.length) {
-                const f = tooBig[0];
-                alert(`Файл "${f.name}" слишком большой (${(f.size / 1024 / 1024).toFixed(1)} МБ). Максимум 50 МБ.`);
-                rawFiles = rawFiles.filter(f => f.size <= MAX_FILE_SIZE);
-              }
-              if (!rawFiles.length) return;
-
-              onUpdate(index, {
-                ...task,
-                attachments: [...(task.attachments || []), ...rawFiles]
-              });
-              const serialized = await Promise.all(rawFiles.map(f => serializeFile(f)));
-              setAttachmentsMap(m => ({
-                ...m,
-                [task.id]: {
-                  ...(m[task.id] || {}),
-                  common: [...(m[task.id]?.common || []), ...serialized]
-                }
-              }));
-            } }
-          />
-          { task.attachments?.length > 0 && (
-            <ul className="attached-list">
-              { task.attachments.map((f, i) => (
-                <li key={ i }>
-                  { f.name }
-                  <button
-                    type="button"
-                    className="remove-attachment-btn"
-                    onClick={ () =>
-                    {
-                      const newAttachments = task.attachments.filter((_, idx) => idx !== i);
-                      onUpdate(index, { ...task, attachments: newAttachments });
-
-                      setAttachmentsMap(m =>
-                      {
-                        const entry = m[task.id] || {};
-                        const common = (entry.common || []).filter(x => x.name !== f.name);
-                        return {
-                          ...m,
-                          [task.id]: {
-                            ...entry,
-                            common,
-                          }
-                        };
-                      });
-                    } }
-                    title="Удалить файл"
-                  >
-                    ❌
-                  </button>
-                </li>
-              )) }
-            </ul>
-          ) }
-        </div>
+        {/* Общие вложения */ }
+        <AttachmentsField
+          task={ task }
+          index={ index }
+          onUpdate={ onUpdate }
+          setAttachmentsMap={ setAttachmentsMap }
+          attachmentsMap={ attachmentsMap }
+          commonOnly
+          label="Прикрепить файлы"
+        />
 
         {/* Дополнительная информация */ }
         <div className="field-group">
@@ -467,6 +391,7 @@ export default function SolutionPage ({ projects = [] })
   const [defaultMockup, setDefaultMockup] = usePersistentState('defaultMockup', '');
 
   const [tasks, setTasks] = usePersistentState('solutionTasks', []);
+  const [taskGroups, setTaskGroups] = usePersistentState('solutionTaskGroups', []);
   const [jiraProject, setJiraProject] = usePersistentState('jiraProject', '');
   const [jiraPat, setJiraPat] = usePersistentState('jiraPat', '');
   const [epicOption, setEpicOption] = usePersistentState('solutionEpic', null);
@@ -480,6 +405,7 @@ export default function SolutionPage ({ projects = [] })
   const [metaError, setMetaError] = useState('');
   const [creating, setCreating] = useState(false);
   const [results, setResults] = useState([]);
+  const resultsRef = useRef(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [aiLoading, setAiLoading] = useState({});
   const [requestLinkOption, setRequestLinkOption] = usePersistentState('solutionReqLink', null);
@@ -499,6 +425,12 @@ export default function SolutionPage ({ projects = [] })
   const debPat = useDebounce(jiraPat, 500);
   const allowedLinkNames = ['Блокирует', 'Относится', 'Клонирование', 'Порождение'];
   const [collapsedStates, setCollapsedStates] = useState({});
+  const [selectedTaskIndex, setSelectedTaskIndex] = useState(0);
+  const [defaultsCollapsed, setDefaultsCollapsed] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [forceValidationForTaskIndex, setForceValidationForTaskIndex] = useState(null);
+  const [showValidationToast, setShowValidationToast] = useState(false);
+  const validationToastTimerRef = useRef(null);
   const requestLinkIssue = requestLinkOption?.value || null;
   const [isGenModalOpen, setGenModalOpen] = useState(false);
   const [isReviewModalOpen, setReviewModalOpen] = useState(false);
@@ -521,6 +453,17 @@ export default function SolutionPage ({ projects = [] })
   const [reviewerOption, setReviewerOption] =
     usePersistentState('solutionReviewer', []);
 
+  const showValidationFailedToast = useCallback(() =>
+  {
+    if (validationToastTimerRef.current) clearTimeout(validationToastTimerRef.current);
+    setShowValidationToast(true);
+    validationToastTimerRef.current = setTimeout(() =>
+    {
+      setShowValidationToast(false);
+      validationToastTimerRef.current = null;
+    }, 3000);
+  }, []);
+
   useEffect(() =>
   {
     if (reviewerOption && !Array.isArray(reviewerOption)) {
@@ -534,6 +477,14 @@ export default function SolutionPage ({ projects = [] })
       setTasks(ts => ts.map(t => ({ ...t, selected: true })));
     }
   }, [tasks, setTasks]);
+  useEffect(() =>
+  {
+    if (tasks.length === 0) {
+      setSelectedTaskIndex(0);
+    } else if (selectedTaskIndex >= tasks.length) {
+      setSelectedTaskIndex(Math.max(0, tasks.length - 1));
+    }
+  }, [tasks.length, selectedTaskIndex]);
   useEffect(() =>
   {
     idbSet('__initialized__', true)
@@ -1421,7 +1372,7 @@ export default function SolutionPage ({ projects = [] })
     if (!debProject || !debPat) return;
     setIsMetaLoading(true); setMetaError('');
     try {
-      const { data } = await axios.post(`${config.serverUrl}/jira/meta`, { projectKey: debProject, pat: debPat });
+      const { data } = await axios.post(`${config.serverUrl}/jira/meta`, { projectKey: debProject, pat: debPat, issueTypeId: '12812' });
       setFieldOptions(data.options); setFieldIds(data.fieldIds);
     } catch (e) {
       setMetaError(e.response?.data?.error || e.message);
@@ -1446,6 +1397,13 @@ export default function SolutionPage ({ projects = [] })
     } catch { console.warn('Не удалось загрузить transitions'); }
   }, [debProject, debPat]);
   useEffect(() => { if (modalOpen) loadTransitions(); }, [modalOpen, loadTransitions]);
+
+  useEffect(() =>
+  {
+    if (results.length > 0 && resultsRef.current) {
+      resultsRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [results]);
 
   useEffect(() =>
   {
@@ -1545,7 +1503,8 @@ export default function SolutionPage ({ projects = [] })
           stand: t.stand,
           env: t.env,
           pat: jiraPat,
-          projectKey: jiraProject
+          projectKey: jiraProject,
+          issueTypeId: '12812'
         };
         const { data } = await axios.post(
           `${config.serverUrl}/jira/ai-fill-fields`,
@@ -1578,7 +1537,8 @@ export default function SolutionPage ({ projects = [] })
         stand: t.stand,
         env: t.env,
         pat: jiraPat,
-        projectKey: jiraProject
+        projectKey: jiraProject,
+        issueTypeId: '12812'
       };
       const { data } = await axios.post(
         `${config.serverUrl}/jira/ai-fill-fields`,
@@ -1625,7 +1585,7 @@ export default function SolutionPage ({ projects = [] })
     }
   };
 
-  const handleAdd = () =>
+  const handleAdd = (groupId) =>
   {
     const newId = uuidv4();
     setAttachmentsMap(prev => ({
@@ -1640,7 +1600,7 @@ export default function SolutionPage ({ projects = [] })
       }
     }));
 
-    setTasks(prev => [{
+    const newTask = {
       id: newId,
       summary: '',
       requirement: '',
@@ -1670,21 +1630,44 @@ export default function SolutionPage ({ projects = [] })
       aiActual: '',
       aiExpected: '',
       aiProperties: '',
-    }, ...prev]);
+      ...(groupId ? { groupId } : {}),
+    };
+
+    let insertIdx = 0;
+    if (groupId) {
+      let lastIdx = -1;
+      tasks.forEach((t, i) => { if (t.groupId === groupId) lastIdx = i; });
+      if (lastIdx >= 0) insertIdx = lastIdx + 1;
+    }
+
+    setTasks(prev =>
+    {
+      if (insertIdx > 0) {
+        const next = [...prev];
+        next.splice(insertIdx, 0, newTask);
+        return next;
+      }
+      return [newTask, ...prev];
+    });
+
+    setSelectedTaskIndex(insertIdx);
 
     setCollapsedStates(prev =>
     {
-      const next = { 0: false };
+      const next = {};
       Object.entries(prev).forEach(([key, val]) =>
       {
-        next[Number(key) + 1] = val;
+        const k = Number(key);
+        next[k >= insertIdx ? k + 1 : k] = val;
       });
+      next[insertIdx] = false;
       return next;
     });
   };
 
   const handleDelete = i =>
   {
+    const deleted = tasks[i];
     setTasks(ts => ts.filter((_, idx) => idx !== i));
     setCollapsedStates(prev =>
     {
@@ -1700,9 +1683,46 @@ export default function SolutionPage ({ projects = [] })
       });
       return newStates;
     });
+    if (deleted?.groupId) {
+      const remaining = tasks.filter((t, idx) => idx !== i && t.groupId === deleted.groupId).length;
+      if (remaining <= 1) {
+        setTaskGroups(gs => gs.filter(g => g.id !== deleted.groupId));
+        setTasks(ts => ts.map(t => t.groupId === deleted.groupId ? { ...t, groupId: undefined } : t));
+      }
+    }
   };
 
-  const handleUpdate = (i, upd) => setTasks(ts => ts.map((t, idx) => idx === i ? upd : t));
+  const handleUpdate = (i, upd) =>
+  {
+    if (forceValidationForTaskIndex === i) setForceValidationForTaskIndex(null);
+    setTasks(ts => ts.map((t, idx) => idx === i ? upd : t));
+  };
+
+  const handleDeleteSelected = () =>
+  {
+    let remaining = tasks.filter(t => !t.selected);
+    const keptIndices = tasks.map((t, i) => t.selected ? -1 : i).filter(i => i >= 0);
+
+    const groupCounts = {};
+    remaining.forEach(t => { if (t.groupId) groupCounts[t.groupId] = (groupCounts[t.groupId] || 0) + 1; });
+    const toDissolve = new Set(taskGroups.filter(g => (groupCounts[g.id] || 0) <= 1).map(g => g.id));
+    if (toDissolve.size > 0) {
+      remaining = remaining.map(t => toDissolve.has(t.groupId) ? { ...t, groupId: undefined } : t);
+      setTaskGroups(gs => gs.filter(g => !toDissolve.has(g.id)));
+    }
+
+    setTasks(remaining);
+    setCollapsedStates(prev =>
+    {
+      const next = {};
+      keptIndices.forEach((oldIdx, newIdx) => {
+        if (prev[oldIdx] !== undefined) next[newIdx] = prev[oldIdx];
+      });
+      return next;
+    });
+    setSelectedTaskIndex(remaining.length ? Math.min(selectedTaskIndex, remaining.length - 1) : -1);
+    setDeleteModalOpen(false);
+  };
 
   const handleToggleCollapse = index =>
   {
@@ -1811,7 +1831,8 @@ export default function SolutionPage ({ projects = [] })
     const out = [];
 
     for (const t of tasks.filter(t => t.selected)) {
-      const desc = `h3. Исходное требование\n${t.requirement}\n\nh3. Описание проблемы\n${t.description || '(не заполнено)'}\n\nh3. Нарушенные свойства\n${t.properties}\n\nh3. Фактический результат\n{quote}${t.actual || '(не заполнено)'}{quote}\n\nh3. Ожидаемый результат\n{quote}${t.expected || '(не заполнено)'}{quote}\n*Макет:* ${t.mockup || 'не указано'}\n*Ссылка на требование:* ${t.requirementLink || 'не указано'}`;
+      const propsBlock = formatPropertiesForJira(t.properties);
+      const desc = `h3. Исходное требование\n${t.requirement}\n\nh3. Описание проблемы\n${t.description || '(не заполнено)'}\n\nh3. Нарушенные свойства\n${propsBlock}\n\nh3. Фактический результат\n{quote}${t.actual || '(не заполнено)'}{quote}\n\nh3. Ожидаемый результат\n{quote}${t.expected || '(не заполнено)'}{quote}\n*Макет:* ${t.mockup || 'не указано'}\n*Ссылка на требование:* ${t.requirementLink || 'не указано'}`;
 
       const fields = {
         project: { key: jiraProject },
@@ -1933,6 +1954,7 @@ export default function SolutionPage ({ projects = [] })
   const ready = !isMetaLoading && !metaError && Object.keys(fieldOptions).length > 0;
   const selectedTasksCount = tasks.filter(t => t.selected).length;
   const navigate = useNavigate();
+  const showScrollTop = useShowScrollTop();
   const filteredLinkTypes = linkTypes.filter(o =>
     allowedLinkNames.includes(o.value)
   );
@@ -1941,10 +1963,32 @@ export default function SolutionPage ({ projects = [] })
   return (
     <ErrorBoundary>
       <div className="solution-page">
+        <button
+          className="btn btn-secondary page-nav-back"
+          onClick={ () => navigate('/') }
+        >
+          ← Назад
+        </button>
         <h1>Тестирование требований</h1>
 
         <section className="page-section">
-          <h2>1. Настройки подключения</h2>
+          <div className="page-section-header">
+            <h2>Настройки подключения</h2>
+            <div className="page-section-header-right">
+              <button
+                type="button"
+                className="btn btn-link"
+                onClick={ async () =>
+                {
+                  if (window.confirm('Вы уверены, что хотите очистить все задачи и настройки? Это действие необратимо.')) {
+                    await idbClear(); window.location.reload();
+                  }
+                } }
+              >
+                Очистить всё
+              </button>
+            </div>
+          </div>
           <div className="settings-grid">
             <div className="field full-width">
               <label>Project Key (Jira)</label>
@@ -1999,7 +2043,7 @@ export default function SolutionPage ({ projects = [] })
                 placeholder="Вставьте текст требований для анализа..."
                 value={ solutionText }
                 onChange={ e => setSolutionText(e.target.value) }
-                rows={ 12 }
+                rows={ 3 }
                 className="md-editor"
               />
             </div>
@@ -2080,48 +2124,12 @@ export default function SolutionPage ({ projects = [] })
           ) }
 
           <button className="analyze-button" onClick={ handleAnalyzeSolution } disabled={ !canAnalyze }>
-            { loading ? 'Анализируется...' : '🚀 Запустить AI-анализ' }
+            { loading ? 'Анализируется...' : 'Запустить AI-анализ' }
           </button>
         </div>
 
         { loading && <div className="loader">Анализ в процессе...</div> }
         { analysisResult?.error && <div className="error-message">Ошибка: { analysisResult.error }</div> }
-
-        <div className="task-controls">
-          <button className="btn btn-secondary" onClick={ handleAdd }>➕ Добавить задачу</button>
-          <button
-            className="btn btn-primary"
-            disabled={ selectedTasksCount === 0 || !ready }
-            onClick={ () =>
-            {
-              setResults([]);
-              setModalOpen(true);
-            } }
-          >
-            ⚙️ Создать в Jira ({ selectedTasksCount })
-          </button>
-          <button className="btn btn-danger" onClick={ async () =>
-          {
-            if (window.confirm('Вы уверены, что хотите очистить все задачи и настройки? Это действие необратимо.')) {
-              await idbClear(); window.location.reload();
-            }
-          } }>
-            🗑️ Очистить всё
-          </button>
-        </div>
-        { tasks.length > 3 && (
-          <div className="mini-nav">
-            { tasks.map((t, i) => (
-              <button type="button"
-                key={ i }
-                onClick={ () => scrollToTask(i) }
-              >
-                { i + 1 }. { t.summary || 'Без темы' }
-              </button>
-            )) }
-          </div>
-        ) }
-
 
         {/* Глобальное окно генерации */ }
         <GlobalGenerationWindow
@@ -2183,36 +2191,163 @@ export default function SolutionPage ({ projects = [] })
         />
 
 
-        {/* Основной список задач */ }
-        <div className="task-list">
-          { tasks.map((t, i) => (
-            <div key={ t.id } id={ `task-${i}` } ref={ cardRefs.current[i] }>
-              <SolutionCard
-                index={ i }
-                task={ t }
+        <div className="bug-report-layout">
+          { tasks.length > 0 && (
+            <div className="task-area-left">
+              <button
+                className="collapse-toggle"
+                onClick={ () => setDefaultsCollapsed(prev => !prev) }
+              >
+                <span className="collapse-toggle-text">Значения по умолчанию</span>
+                <svg className={ `collapse-toggle-icon ${defaultsCollapsed ? 'collapsed' : ''}` } width="14" height="14" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M2 3l3 4 3-4" />
+                </svg>
+              </button>
+              <div className={ `defaults-panel ${defaultsCollapsed ? 'collapsed' : ''}` }>
+                <div className="field-group">
+                  <div className="field full-width">
+                    <label>Ссылка на требование</label>
+                    <input
+                      type="text"
+                      placeholder="URL в Confluence"
+                      value={ defaultRequirementLink }
+                      onChange={ e =>
+                      {
+                        const v = e.target.value;
+                        setDefaultRequirementLink(v);
+                        setTasks(ts => ts.map(t => ({ ...t, requirementLink: v })));
+                      } }
+                    />
+                  </div>
+                  <div className="field full-width">
+                    <label>Макет</label>
+                    <input
+                      type="text"
+                      placeholder="URL в Figma"
+                      value={ defaultMockup }
+                      onChange={ e =>
+                      {
+                        const v = e.target.value;
+                        setDefaultMockup(v);
+                        setTasks(ts => ts.map(t => ({ ...t, mockup: v })));
+                      } }
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className={ `task-controls-wrapper${selectedTasksCount > 0 ? ' expanded' : ''}` }>
+                <div className="task-controls">
+                  <button
+                    className="btn btn-primary"
+                    disabled={ !ready }
+                    onClick={ () =>
+                    {
+                      if (selectedTasksCount === 0) return;
+                      const firstInvalidIdx = tasks.findIndex((t, i) => t.selected && getFirstInvalidFieldId(t, i));
+                      if (firstInvalidIdx >= 0) {
+                        const firstInvalidId = getFirstInvalidFieldId(tasks[firstInvalidIdx], firstInvalidIdx);
+                        showValidationFailedToast();
+                        setForceValidationForTaskIndex(firstInvalidIdx);
+                        setSelectedTaskIndex(firstInvalidIdx);
+                        requestAnimationFrame(() =>
+                        {
+                          const el = document.getElementById(firstInvalidId);
+                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        });
+                        return;
+                      }
+                      setResults([]);
+                      setModalOpen(true);
+                    } }
+                  >
+                    Создать в Jira ({ selectedTasksCount })
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={ () => setDeleteModalOpen(true) }
+                  >
+                    Удалить
+                  </button>
+                </div>
+              </div>
+              <TaskSidebar
+                tasks={ tasks }
+                setTasks={ setTasks }
+                groups={ taskGroups }
+                setGroups={ setTaskGroups }
+                selectedTaskIndex={ selectedTaskIndex }
+                setSelectedTaskIndex={ setSelectedTaskIndex }
+                onAdd={ handleAdd }
                 onUpdate={ handleUpdate }
-                onDelete={ handleDelete }
-                fieldOptions={ fieldOptions }
-                loadDefectOptions={ loadDefectOptions }
-                allureProject={ allureProject }
-                onDefectSelect={ fetchDefectDetails }
-                runAi={ runAi }
-                aiLoading={ aiLoading[i] }
-                fillFieldsWithAI={ fillFieldsWithAI }
-                aiFillLoading={ aiFillLoading[i] || false }
-                isCollapsed={ !!collapsedStates[i] }
-                onToggleCollapse={ handleToggleCollapse }
-                setAttachmentsMap={ setAttachmentsMap }
               />
             </div>
-          )) }
+          ) }
+          <div className="task-details">
+            { tasks.length === 0 ? (
+              <div className="task-details-empty">
+                <p>Здесь пока ничего нет</p>
+                <button type="button" className="btn btn-primary" onClick={ handleAdd }>
+                  Добавить задачу
+                </button>
+              </div>
+            ) : selectedTaskIndex >= 0 && selectedTaskIndex < tasks.length ? (
+              <div className="task-list" id={ `task-${selectedTaskIndex}` } ref={ cardRefs.current[selectedTaskIndex] }>
+                <SolutionCard
+                  index={ selectedTaskIndex }
+                  task={ tasks[selectedTaskIndex] }
+                  onUpdate={ handleUpdate }
+                  onDelete={ handleDelete }
+                  fieldOptions={ fieldOptions }
+                  loadDefectOptions={ loadDefectOptions }
+                  allureProject={ allureProject }
+                  onDefectSelect={ fetchDefectDetails }
+                  runAi={ runAi }
+                  aiLoading={ aiLoading[selectedTaskIndex] }
+                  fillFieldsWithAI={ fillFieldsWithAI }
+                  aiFillLoading={ aiFillLoading[selectedTaskIndex] || false }
+                  isCollapsed={ false }
+                  onToggleCollapse={ handleToggleCollapse }
+                  setAttachmentsMap={ setAttachmentsMap }
+                  attachmentsMap={ attachmentsMap }
+                  forceValidation={ forceValidationForTaskIndex === selectedTaskIndex }
+                />
+              </div>
+            ) : null }
+          </div>
         </div>
 
+        { deleteModalOpen && (
+          <div
+            className="modal"
+            onClick={ e => { if (e.target === e.currentTarget) setDeleteModalOpen(false); } }
+          >
+            <div className="modal-content" onClick={ e => e.stopPropagation() }>
+              <h1>Удалить задачи?</h1>
+              <ul className="delete-modal-list">
+                { tasks.filter(t => t.selected).map((t, i) => (
+                  <li key={ i }>{ t.summary || 'Без темы' }</li>
+                )) }
+              </ul>
+              <div className="buttons" style={ { display: 'flex', justifyContent: 'space-between', gap: '12px', marginTop: 16 } }>
+                <button className="btn btn-secondary" onClick={ handleDeleteSelected }>
+                  Да, удалить
+                </button>
+                <button className="btn btn-primary" onClick={ () => setDeleteModalOpen(false) }>
+                  Нет
+                </button>
+              </div>
+            </div>
+          </div>
+        ) }
+
         { modalOpen && (
-          <div className="modal">
-            <div className="modal-content">
+          <div
+            className="modal"
+            onClick={ e => { if (e.target === e.currentTarget) setModalOpen(false); } }
+          >
+            <div className="modal-content" onClick={ e => e.stopPropagation() }>
               <button className="modal-close-btn" onClick={ () => setModalOpen(false) }>×</button>
-              <h2>2. Общие поля для ({ selectedTasksCount }) задач</h2>
+              <h2>2. Общие поля для ({ selectedTasksCount }) { tasksWord(selectedTasksCount, 'genitive') }</h2>
               <fieldset disabled={ !ready || creating } className="common-fields-group">
                 <legend>Общие поля Jira</legend>
 
@@ -2327,37 +2462,48 @@ export default function SolutionPage ({ projects = [] })
                 </div>
               </fieldset>
               <div className="buttons">
-                <button onClick={ handleCreateAll } disabled={ !ready || creating } className="btn btn-primary">
-                  { creating ? 'Создание…' : `Подтвердить и создать ${selectedTasksCount} задач` }
-                </button>
+                { selectedTasksCount === 0 ? (
+                  <button onClick={ () => setModalOpen(false) } className="btn btn-primary">
+                    Вернуться
+                  </button>
+                ) : (
+                  <button onClick={ handleCreateAll } disabled={ !ready || creating } className="btn btn-primary">
+                    { creating ? 'Создание…' : `Подтвердить и создать ${selectedTasksCount} ${tasksWord(selectedTasksCount)}` }
+                  </button>
+                ) }
               </div>
               { results.length > 0 && (
-                <div className="jira-result">
+                <div className="jira-result" ref={ resultsRef }>
                   <h3>Результаты создания:</h3>
                   { results.map((r, i) =>
                     r.success
-                      ? <p key={ i } className="success">✅ <b>{ r.key }:</b> <a href={ `${config.jiraBaseUrl || 'https://jira.abanking.ru'}/browse/${r.key}` } target="_blank" rel="noreferrer">{ r.summary }</a></p>
-                      : <p key={ i } className="error">❌ <b>{ r.summary }:</b> { r.error }</p>
+                      ? <p key={ i } className="success"><b>{ r.key }:</b> <a href={ `${config.jiraBaseUrl || 'https://jira.abanking.ru'}/browse/${r.key}` } target="_blank" rel="noreferrer">{ r.summary }</a></p>
+                      : <p key={ i } className="error"><b>{ r.summary }:</b> { r.error }</p>
                   ) }
                 </div>
               ) }
             </div>
           </div>
         ) }
-        <div className="floating-buttons">
-          <button
-            className="btn btn-secondary btn-back"
-            onClick={ () => navigate('/') }
-          >
-            ← Назад
-          </button>
-          <button
-            className="btn btn-secondary btn-top"
-            onClick={ () => window.scrollTo({ top: 0, behavior: 'smooth' }) }
-          >
-            ↑ Вверх
-          </button>
-        </div>
+        { showValidationToast && (
+          <div className="validation-toast" role="alert">
+            Не заполнены обязательные поля
+          </div>
+        ) }
+        { showScrollTop && (
+          <div className="floating-buttons floating-buttons--top-only">
+            <span />
+            <button
+              type="button"
+              className="btn btn-secondary btn-top"
+              onClick={ () => window.scrollTo({ top: 0, behavior: 'smooth' }) }
+              title="Вверх"
+              aria-label="Вверх"
+            >
+              <ArrowUpIcon />
+            </button>
+          </div>
+        ) }
 
       </div>
     </ErrorBoundary>

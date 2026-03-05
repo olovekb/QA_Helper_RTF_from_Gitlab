@@ -42,21 +42,24 @@
 
 /* Основное оформление */
 body {
-    font-family: Arial, sans-serif;
+    font-family: var(--font-main), Arial, sans-serif;
     padding: 20px;
-    background-color: #1a1a2e;
-    color: #e0e0e0;
+    background-color: var(--bg-main);
+    color: var(--text-primary);
 }
 
 h1,
 h2 {
-    color: #ffffff;
+    color: var(--text-primary);
+}
+
+[data-theme="dark"] h1,
+[data-theme="dark"] h2 {
     text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.6);
 }
 
 h2 {
     margin-top: 30px;
-    border-bottom: 2px solid #9b9b9b;
     padding-bottom: 5px;
 }
 
@@ -80,7 +83,7 @@ li {
 
 .tree-node li {
     padding: 5px 10px 5px 10px;
-    border: 1px solid #496c8f;
+    border: 1px solid var(--border-color);
     box-shadow: none;
 }
 
@@ -99,10 +102,10 @@ ul.failed-list li {
 /* Тестовые блоки */
 .test-case {
     margin-bottom: 30px;
-    border-bottom: 1px solid #ccc;
+    border-bottom: 1px solid var(--border-color);
     padding-bottom: 15px;
-    box-shadow: 3px 3px 10px rgba(0, 0, 0, 0.5);
-    color: #ffffff;
+    box-shadow: var(--shadow-md);
+    color: var(--text-primary);
     text-align: left;
 }
 
@@ -123,12 +126,12 @@ ul.failed-list li {
 
 /* Ссылки */
 a {
-    color: rgb(46, 147, 255);
+    color: var(--primary-accent);
     text-decoration: underline;
 }
 
 a:hover {
-    color: rgb(152, 199, 249);
+    color: var(--primary-hover);
     text-decoration: underline;
 }
 
@@ -147,9 +150,10 @@ form {
     max-width: 70vw;
     margin: 0 auto;
     padding: 20px;
-    background-color: #2c3e50;
+    background-color: var(--bg-content);
     border-radius: 10px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    box-shadow: var(--shadow-md);
+    border: 1px solid var(--border-color);
 }
 
 /* Поля ввода */
@@ -158,23 +162,22 @@ select {
     padding: 10px;
     font-size: 16px;
     border-radius: 6px;
-    border: 1px solid #7f8c8d;
-    background-color: #34495e;
-    color: #ecf0f1;
+    border: 1px solid var(--border-color);
+    background-color: var(--bg-input);
+    color: var(--text-primary);
     outline: none;
     transition: border 0.3s ease, background-color 0.3s ease;
 }
 
 input[type="text"]:focus,
 select:focus {
-    border-color: #3498db;
-    background-color: #2c3e50;
+    border-color: var(--border-focus);
 }
 
 /* Кнопки */
 button {
     padding: 12px 20px;
-    background-color: #3498db;
+    background-color: var(--primary-accent);
     color: white;
     font-size: 16px;
     border: none;
@@ -185,12 +188,12 @@ button {
 
 /* Анимация кнопок */
 button:hover {
-    background-color: #2980b9;
+    background-color: var(--primary-hover);
 }
 
 button:disabled {
-    background-color: #7f8c8d;
-    cursor: not-allowed;
+    background-color: var(--border-color);
+
 }
 
 /* Спиннер */
@@ -203,8 +206,6 @@ button:disabled {
     border-top-color: #fff;
     animation: spin 1s ease-in-out infinite;
     background: transparent;
-    /* Убедитесь, что нет background-color */
-    /* и что нет лишних padding/margin, если не нужны */
 }
 
 @keyframes spin {
@@ -230,9 +231,9 @@ select {
     padding: 10px;
     font-size: 16px;
     border-radius: 6px;
-    border: 1px solid #7f8c8d;
-    background-color: #34495e;
-    color: #ecf0f1;
+    border: 1px solid var(--border-color);
+    background-color: var(--bg-input);
+    color: var(--text-primary);
     outline: none;
     transition: border 0.3s ease, background-color 0.3s ease;
 }
@@ -245,7 +246,7 @@ select {
 }
 
 .tabs button.active {
-    background-color: #4CAF50;
+    background-color: var(--primary-hover);
     color: white;
 }
 
@@ -259,7 +260,7 @@ select {
     font-size: 16px;
     font-weight: bold;
     margin-bottom: 5px;
-    color: #ebe3e3;
+    color: var(--text-secondary);
     text-align: center
 }
 
@@ -267,19 +268,19 @@ select {
 .form-group input[type="file"] {
     padding: 10px;
     font-size: 14px;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border-color);
     border-radius: 5px;
     transition: border-color 0.3s;
 }
 
 .form-group select:hover,
 .form-group input[type="file"]:hover {
-    border-color: #007bff;
+    border-color: var(--border-focus);
 }
 
 button {
     padding: 10px 15px;
-    background-color: #007bff;
+    background-color: var(--primary-accent);
     color: #fff;
     border: none;
     border-radius: 5px;
@@ -290,22 +291,21 @@ button {
 }
 
 button:hover {
-    background-color: #0056b3;
+    background-color: var(--primary-hover);
 }
 
 button:disabled {
-    background-color: #ccc;
-    cursor: not-allowed;
+    background-color: var(--border-color);
 }
 
 .export-message {
     margin-top: 10px;
     font-size: 14px;
-    color: #007bff;
+    color: var(--primary-accent);
 }
 
 .export-link a {
-    color: #28a745;
+    color: var(--success);
     font-size: 16px;
     text-decoration: none;
     font-weight: bold;
@@ -313,7 +313,7 @@ button:disabled {
 
 .export-link a:hover {
     text-decoration: underline;
-    color: #218838;
+    color: var(--primary-hover);
 }
 
 .header-wrapper {
@@ -336,7 +336,7 @@ button:disabled {
 
 .tia-button {
     padding: 8px 12px;
-    background-color: #4c9aff;
+    background-color: var(--primary-accent);
     border: none;
     border-radius: 4px;
     cursor: pointer;
@@ -345,23 +345,30 @@ button:disabled {
 }
 
 .tia-button:hover {
-    background-color: #2575e6;
+    background-color: var(--primary-hover);
 }
 
 .tia-button:focus {
     outline: none;
-    box-shadow: 0 0 5px rgba(0, 123, 255, 0.5);
+    box-shadow: 0 0 5px color-mix(in srgb, var(--primary-accent) 50%, transparent);
 }
 
 .floating-buttons.analysis-floating {
     position: fixed;
-    bottom: 20px;
+    bottom: 70px;
     left: 0;
     right: 0;
     display: flex;
     justify-content: flex-end;
     padding: 0 24px;
     pointer-events: none;
+    z-index: 2000;
+}
+
+.page-nav-back {
+    position: fixed;
+    top: 16px;
+    left: 24px;
     z-index: 2000;
 }
 
@@ -372,37 +379,26 @@ button:disabled {
 .floating-buttons .btn-secondary {
     padding: 10px 20px;
     border-radius: 8px;
-    border: 1px solid #4b5563;
+    border: 1px solid var(--border-color);
     font-size: 1rem;
     font-weight: 600;
     cursor: pointer;
-    background-color: #374151;
-    color: #f9fafb;
+    background-color: var(--bg-input);
+    color: var(--text-primary);
     transition: background-color 0.2s ease;
 }
 
 .floating-buttons .btn-secondary:hover {
-    background-color: #4b5563;
+    background-color: var(--border-color);
 }
 
-/* Модальное окно правил - стили из static-analysis.css */
-:root {
-    --font-main: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    --bg-main: #111827;
-    --bg-content: #1f2937;
-    --bg-input: #374151;
-    --border-color: #4b5563;
-    --border-focus: #6366f1;
-    --text-primary: #f9fafb;
-    --text-secondary: #d1d5db;
-    --text-placeholder: #9ca3af;
-    --primary-accent: #6366f1;
-    --primary-hover: #4f46e5;
-    --success: #22c55e;
-    --error: #ef4444;
-    --warning: #f59e0b;
-    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.15);
-    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.2);
+.floating-buttons .btn-top {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+    min-width: 40px;
+    min-height: 40px;
 }
 
 .rules-modal-overlay {
@@ -420,7 +416,7 @@ button:disabled {
 }
 
 .rules-modal-container {
-    background-color: #1a1d29;
+    background-color: var(--bg-content);
     border-radius: 12px;
     width: 90%;
     max-width: 900px;
@@ -428,13 +424,13 @@ button:disabled {
     display: flex;
     flex-direction: column;
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
-    border: 1px solid #2d3548;
+    border: 1px solid var(--border-color);
     overflow: hidden;
 }
 
 .rules-modal-header {
     padding: 20px 24px;
-    border-bottom: 1px solid #2d3548;
+    border-bottom: 1px solid var(--border-color);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -533,7 +529,7 @@ button:disabled {
 }
 
 .rules-modal-error {
-    background-color: #7f1d1d;
+    background-color: var(--error-bg);
     color: #fecaca;
     padding: 12px 16px;
     border-radius: 8px;
@@ -708,7 +704,7 @@ button:disabled {
 
 .rules-modal-footer {
     padding: 16px 24px;
-    border-top: 1px solid #2d3548;
+    border-top: 1px solid var(--border-color);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -839,4 +835,559 @@ button:disabled {
 .rules-modal-content .level-warning {
     color: #f59e0b;
     background-color: rgba(245, 158, 11, 0.15);
+}
+
+.select__control {
+    background-color: var(--bg-input) !important;
+    border-radius: 8px !important;
+    border: 1px solid var(--border-color) !important;
+    min-height: 42px !important;
+    box-shadow: none !important;
+    transition: border-color 0.2s ease !important;
+    cursor: pointer !important;
+    text-align: left !important;
+}
+
+.select__control--is-focused {
+    border-color: var(--border-focus) !important;
+}
+
+.select__value-container {
+    text-align: left !important;
+}
+
+.select__placeholder {
+    color: var(--text-placeholder) !important;
+    text-align: left !important;
+}
+
+.select__input-container,
+.select__single-value {
+    color: var(--text-primary) !important;
+    text-align: left !important;
+}
+
+.select__multi-value {
+    background-color: var(--border-color) !important;
+    border-radius: 6px !important;
+}
+
+.select__multi-value__label {
+    color: var(--text-primary) !important;
+}
+
+.select__multi-value__remove {
+    color: var(--text-secondary) !important;
+}
+
+.select__multi-value__remove:hover {
+    color: var(--text-primary) !important;
+    background-color: transparent !important;
+}
+
+.select__clear-indicator {
+    color: currentColor;
+    padding: 4px !important;
+}
+
+.select__clear-indicator:hover {
+    color: var(--text-placeholder) !important;
+}
+
+.select__menu {
+    background-color: var(--bg-content) !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: 8px !important;
+    box-shadow: var(--shadow-md) !important;
+    z-index: 100;
+}
+
+.select__option {
+    background-color: transparent !important;
+    color: var(--text-secondary) !important;
+}
+
+.select__option--is-focused {
+    color: color-mix(in srgb, var(--color-text-primary) 5%, white) !important;
+    background-color: color-mix(in srgb, var(--border-color) 25%, transparent) !important;
+    cursor: pointer !important;
+}
+
+.select__option--is-selected {
+    background-color: var(--primary-hover) !important;
+    color: white !important;
+}
+
+.select__option--is-disabled {
+    opacity: 0.5;
+}
+
+.select__option--is-disabled.select__option--is-focused {
+    background-color: transparent !important;
+    color: var(--text-secondary) !important;
+}
+
+/* общие стили для страниц тестирования требований / создания баг-репортов (CodeErrorPage, SolutionPage) */
+.task-details {
+    flex: 1;
+    min-width: 0;
+    background-color: var(--bg-content);
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    min-height: 400px;
+}
+
+.task-details-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-height: 400px;
+    color: var(--text-placeholder);
+    font-size: 1.1rem;
+    text-align: center;
+}
+
+.task-details-empty p {
+    margin: 0;
+}
+
+.task-details-empty .empty-state-dino {
+    opacity: 0.6;
+}
+
+/* лейаут задач, сайдбар, контролы */
+.bug-report-layout {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    margin-top: 24px;
+    margin-bottom: 30px;
+}
+
+.task-area-left {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 0 0 280px;
+    min-width: 220px;
+    max-width: 400px;
+    position: sticky;
+    top: 24px;
+    align-self: flex-start;
+}
+
+.task-controls-wrapper {
+    overflow: hidden;
+    max-height: 0;
+    margin: 0;
+    transition: max-height 0.35s cubic-bezier(0.22, 1, 0.36, 1), margin 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.task-controls-wrapper.expanded {
+    max-height: 250px;
+    margin: 24px 0;
+    overflow: visible;
+}
+
+.task-area-left .task-controls-wrapper {
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.task-area-left .task-controls-wrapper.expanded {
+    max-height: 250px;
+    margin: 0;
+    overflow: visible;
+}
+
+.task-area-left .task-controls {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.task-area-left .collapse-toggle {
+    align-self: flex-start;
+    flex-shrink: 0;
+}
+
+.task-area-left .defaults-panel {
+    flex-shrink: 0;
+}
+
+.task-area-left .task-sidebar {
+    flex: 0 0 auto;
+    min-width: 0;
+    max-width: none;
+}
+
+.task-sidebar {
+    position: relative;
+    flex: 0 0 280px;
+    min-width: 220px;
+    max-width: 400px;
+    background-color: var(--bg-content);
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    padding: 12px 16px;
+}
+
+.task-sidebar-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.task-sidebar-header .btn-sm {
+    padding: 6px 12px;
+    margin: 0;
+    font-size: 0.875rem;
+}
+
+.task-sidebar-header .btn-link {
+    font-size: 0.8125rem;
+    padding: 4px 0;
+    margin: 0;
+}
+
+.task-sidebar-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.task-sidebar-list li {
+    margin: 0;
+}
+
+.task-sidebar-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0;
+}
+
+.task-sidebar-checkbox-wrap {
+    flex-shrink: 0;
+    padding: 5px;
+    margin: -5px;
+    cursor: pointer;
+}
+
+.task-sidebar-row input[type="checkbox"],
+.task-sidebar-group-header input[type="checkbox"] {
+    cursor: pointer;
+    accent-color: var(--primary-accent);
+}
+
+.task-sidebar-item {
+    flex: 1;
+    display: block;
+    min-width: 0;
+    text-align: left;
+    padding: 10px 16px;
+    border: none;
+    background: none;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-sidebar-item:hover {
+    background-color: var(--transparent);
+    color: var(--text-primary);
+}
+
+.task-sidebar-item.active {
+    background-color: color-mix(in srgb, var(--border-color) 25%, transparent);
+    color: var(--text-primary);
+    font-weight: 500;
+    border-left: 3px solid var(--border-color);
+    padding-left: 13px;
+}
+
+/* сайдбар: группы */
+
+.task-sidebar-group {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    margin: 4px 0 !important;
+    overflow: hidden;
+    transition: box-shadow 0.15s ease;
+}
+
+.task-sidebar-group--drop-target {
+    box-shadow: inset 0 0 0 2px var(--border-focus);
+}
+
+.task-sidebar-group-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 8px;
+    background: color-mix(in srgb, var(--border-color) 15%, transparent);
+    cursor: default;
+    user-select: none;
+}
+
+.task-sidebar-group-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.task-sidebar-group-toggle:hover {
+    color: var(--text-primary);
+    background-color: transparent !important;
+}
+
+.task-sidebar-group-name {
+    flex: 1;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: default;
+    user-select: none;
+}
+
+.task-sidebar-group-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    margin-left: 6px;
+    border-radius: 9px;
+    background: color-mix(in srgb, var(--border-color) 40%, transparent);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.task-sidebar-group-name-input {
+    flex: 1;
+    min-width: 0;
+    padding: 2px 6px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-content);
+    color: var(--text-primary);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    outline: none;
+}
+
+.task-sidebar-group-name-input:focus {
+    border-color: var(--border-focus);
+}
+
+.task-sidebar-group-items {
+    list-style: none;
+    margin: 0;
+    padding: 0 0 0 12px;
+}
+
+/* сайдбар: d&d элемент */
+
+.task-sidebar-drag-handle {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    padding: 4px 6px 4px 2px;
+    color: var(--text-secondary);
+    opacity: 0;
+    cursor: grab;
+    transition: opacity 0.15s ease;
+}
+
+.task-sidebar-row:hover .task-sidebar-drag-handle {
+    opacity: 0.5;
+}
+
+.task-sidebar-drag-handle:hover {
+    opacity: 1 !important;
+}
+
+/* сайдбар: удаление из группы */
+
+.task-sidebar-ungroup-zone {
+    position: absolute;
+    bottom: 12px;
+    left: 16px;
+    right: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 8px;
+    border: 2px dashed var(--border-color);
+    border-radius: 8px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-align: center;
+    background: var(--bg-content);
+    z-index: 5;
+    transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.task-sidebar-ungroup-zone--active {
+    border-color: var(--border-focus);
+    color: var(--border-focus);
+    background: color-mix(in srgb, var(--border-focus) 8%, transparent);
+}
+
+/* сайдбар: состояния при d&d */
+
+.task-sidebar-row--dragging {
+    opacity: 0.4;
+}
+
+.task-sidebar-row--drop-target {
+    box-shadow: inset 0 0 0 2px var(--border-focus);
+    border-radius: 6px;
+}
+
+.task-sidebar-row--grouped .task-sidebar-item {
+    padding-left: 8px;
+    font-size: 0.85rem;
+}
+
+/* модалка удаления */
+.delete-modal-list {
+    list-style: none;
+    padding: 0;
+    margin: 12px 0 16px 0;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.delete-modal-list li {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-primary);
+}
+
+.delete-modal-list li:last-child {
+    border-bottom: none;
+}
+
+.delete-modal-task-name {
+    margin: 12px 0 16px 0;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+/* страницы задач и общий UI */
+.btn {
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: none;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease;
+    box-shadow: var(--shadow-sm);
+}
+
+.btn:disabled {
+    background-color: #4b5563 !important;
+    opacity: 0.6;
+    cursor: default;
+}
+
+.btn-primary {
+    background-color: var(--primary-accent);
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: var(--primary-hover);
+}
+
+.btn-secondary {
+    background-color: var(--bg-input);
+    color: var(--text-primary);
+}
+
+.btn-secondary:hover {
+    background-color: var(--border-color);
+}
+
+.btn-danger {
+    background-color: #450a0a;
+    color: var(--text-secondary);
+    border: 1px solid #7f1d1d;
+}
+
+.btn-danger:hover {
+    background-color: #7f1d1d;
+    color: var(--text-primary);
+}
+
+/* валидационная рамка */
+.field-invalid input:not(.w-md-editor-text-input),
+.field-invalid textarea:not(.w-md-editor-text-input) {
+    border-color: var(--error) !important;
+}
+
+.field-invalid .jira-markdown-field .w-md-editor-text-input,
+.field-invalid .jira-markdown-field .w-md-editor-text {
+    border: none !important;
+    box-shadow: none !important;
+}
+
+.field-invalid .select__control {
+    border-color: var(--error) !important;
+}
+
+.field-invalid .jira-markdown-field .w-md-editor {
+    border-color: var(--error) !important;
+}
+
+.validation-toast {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    z-index: 10000;
+    padding: 12px 20px;
+    background-color: #ef44447a;
+    border: 1px solid var(--error);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    box-shadow: var(--shadow-md);
+    animation: validation-toast-in 0.25s ease-out;
+}
+
+@keyframes validation-toast-in {
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
 }

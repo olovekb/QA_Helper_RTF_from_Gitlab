@@ -10,6 +10,7 @@ import '@xyflow/react/dist/style.css';
 import config from '../../config';
 import JSZip from 'jszip';
 import { trackEvent } from '../../analytics';
+import styles from '../../styles';
 
 // --- Component-specific styles ---
 export const StyleInjector = () => {
@@ -194,7 +195,7 @@ export const StyleInjector = () => {
         }
         .button-base:disabled {
             opacity: 0.6;
-            cursor: not-allowed;
+            cursor: default;
         }
 
         .button-primary {
@@ -2006,13 +2007,13 @@ export default function TestModelGeneratorModal({
                             onChange={(e) => setGenerationMode(e.target.value)}
                             disabled={isBusy || modelGenerationStatus === 'processing'}
                             style={{
-                                background: 'var(--bg-tertiary)',
+                                background: 'var(--bg-content)',
                                 border: '1px solid var(--border-primary)',
                                 color: 'var(--text-primary)',
                                 borderRadius: '4px',
                                 padding: '6px 12px',
                                 fontSize: '0.9em',
-                                cursor: (isBusy || modelGenerationStatus === 'processing') ? 'not-allowed' : 'pointer'
+                                cursor: (isBusy || modelGenerationStatus === 'processing') ? 'default' : 'pointer'
                             }}
                         >
                             <option value="create">Создать с нуля</option>
@@ -2026,14 +2027,14 @@ export default function TestModelGeneratorModal({
                         disabled={isBusy || modelGenerationStatus === 'processing' || (generationMode === 'refine' && (!localGeneratedModel || localGeneratedModel.length === 0))}
                         style={{
                             opacity: (isBusy || modelGenerationStatus === 'processing' || (generationMode === 'refine' && (!localGeneratedModel || localGeneratedModel.length === 0))) ? 0.6 : 1,
-                            cursor: (isBusy || modelGenerationStatus === 'processing' || (generationMode === 'refine' && (!localGeneratedModel || localGeneratedModel.length === 0))) ? 'not-allowed' : 'pointer'
+                            cursor: (isBusy || modelGenerationStatus === 'processing' || (generationMode === 'refine' && (!localGeneratedModel || localGeneratedModel.length === 0))) ? 'default' : 'pointer'
                         }}
                     >
                         {modelGenerationStatus === 'processing' 
-                            ? `🔄 ${generationMode === 'create' ? 'Генерация' : 'Доработка'}... ${modelGenerationProgress}%` 
+                            ? `${generationMode === 'create' ? 'Генерация' : 'Доработка'}... ${modelGenerationProgress}%` 
                             : generationMode === 'create' 
-                                ? '🧱 Сгенерировать модель по требованиям'
-                                : '🔧 Доработать модель'}
+                                ? 'Сгенерировать модель по требованиям'
+                                : 'Доработать модель'}
                     </button>
                     {modelDiff && (
                         <button
@@ -2042,7 +2043,7 @@ export default function TestModelGeneratorModal({
                             onClick={() => setShowDiffView(!showDiffView)}
                             disabled={isBusy}
                         >
-                            {showDiffView ? '📋 Скрыть изменения' : '📊 Показать изменения'}
+                            {showDiffView ? 'Скрыть изменения' : 'Показать изменения'}
                         </button>
                     )}
                     <button
@@ -2111,7 +2112,7 @@ export default function TestModelGeneratorModal({
                                         color: 'var(--text-secondary)',
                                         fontStyle: 'italic'
                                     }}>
-                                        💡 Укажите конкретные проблемы для более точной доработки
+                                        Укажите конкретные проблемы для более точной доработки
                                     </div>
                                 </div>
                             )}
@@ -2124,7 +2125,7 @@ export default function TestModelGeneratorModal({
                                     overflowY: 'auto'
                                 }}>
                                     <h4 style={{ margin: '0 0 12px 0', fontSize: '1em', color: 'var(--text-primary)' }}>
-                                        📊 Изменения модели (v{modelVersion - 1} → v{modelVersion})
+                                        Изменения модели (v{modelVersion - 1} → v{modelVersion})
                                     </h4>
                                     <ModelDiffView diff={modelDiff} />
                                 </div>

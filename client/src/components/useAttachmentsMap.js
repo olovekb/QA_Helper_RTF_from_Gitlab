@@ -1,5 +1,5 @@
 // src/hooks/useAttachmentsMap.js
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { serializeFile, deserializeFile } from './fileStorage'
 
@@ -8,8 +8,11 @@ import { serializeFile, deserializeFile } from './fileStorage'
  * словаря вида { [taskId]: { common: File[], description: File[], ... } }
  */
 
-export default function useAttachmentsMap(key) {
+export default function useAttachmentsMap(key, options = {}) {
+    const { onSaved } = options
     const [map, setMap] = useState({})
+    const onSavedRef = useRef(onSaved)
+    onSavedRef.current = onSaved
 
     // 1) При монтировании: загрузить из IDB и десериализовать
     useEffect(() => {
@@ -53,7 +56,7 @@ export default function useAttachmentsMap(key) {
                     )
                 }
             }
-            return idbSet(key, toSave)
+            return idbSet(key, toSave).then(() => onSavedRef.current?.())
         }).catch(console.warn)
     }, [map, key])
 
