@@ -1,0 +1,69 @@
+/* JiraMarkdownField - dark theme matching CodeErrorPage */
+.jira-markdown-field {
+    width: 100%;
+}
+
+.jira-markdown-field .w-md-editor {
+    background-color: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: none !important;
+}
+
+.jira-markdown-field .w-md-editor:focus-within {
+    outline: none;
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--border-focus) 30%, transparent);
+}
+
+.jira-markdown-field .w-md-editor-toolbar {
+    background-color: var(--bg-input);
+    border-bottom: 1px solid var(--border-color);
+    border-radius: 8px 8px 0 0;
+    --md-editor-box-shadow-color: var(--border-color);
+}
+
+.jira-markdown-field .w-md-editor-toolbar li button {
+    color: var(--text-secondary);
+}
+
+.jira-markdown-field .w-md-editor-toolbar li button:hover {
+    color: var(--text-primary);
+    background-color: var(--border-color);
+}
+
+.jira-markdown-field .w-md-editor-content {
+    background-color: var(--bg-input);
+    border-radius: 0 0 8px 8px;
+}
+
+.jira-markdown-field .w-md-editor-text-input,
+.jira-markdown-field .w-md-editor-text-pre,
+.jira-markdown-field .w-md-editor-text-pre > code {
+    color: var(--text-primary);
+    font-family: inherit;
+}
+
+.jira-markdown-field .w-md-editor-text-input::placeholder {
+    color: var(--text-placeholder);
+}
+
+/* костыль для дублирующей обводки фокуса/валидации на textarea */
+.jira-markdown-field .w-md-editor-text-input,
+.jira-markdown-field .w-md-editor-text-input:focus {
+    outline: none;
+    border: none;
+    box-shadow: none;
+}
+
+.jira-markdown-field .w-md-editor-preview {
+    background-color: var(--bg-input);
+}
+
+.jira-markdown-field .w-md-editor-preview .wmde-markdown,
+.jira-markdown-field .w-md-editor-preview .wmde-markdown-color {
+    --color-canvas-default: var(--bg-input);
+    --color-canvas-subtle: var(--bg-input);
+    background-color: var(--bg-input);
+}

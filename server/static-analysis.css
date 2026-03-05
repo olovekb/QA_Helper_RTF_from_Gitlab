@@ -1,20 +1,22 @@
-:root {
-    --font-main: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    --bg-main: #111827;
-    --bg-content: #1f2937;
-    --bg-input: #374151;
-    --border-color: #4b5563;
-    --border-focus: #6366f1;
-    --text-primary: #f9fafb;
-    --text-secondary: #d1d5db;
-    --text-placeholder: #9ca3af;
+:root:not([data-theme]) {
+    --font-main: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --bg-main: #ffffff;
+    --bg-content: #ffffff;
+    --bg-input: #f8fafc;
+    --border-color: #e2e8f0;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-placeholder: #94a3b8;
     --primary-accent: #6366f1;
     --primary-hover: #4f46e5;
-    --success: #22c55e;
-    --error: #ef4444;
-    --warning: #f59e0b;
-    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.15);
-    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.2);
+    --success: #16a34a;
+    --success-bg: #dcfce7;
+    --error: #dc2626;
+    --error-bg: #fef2f2;
+    --warning: #d97706;
+    --warning-bg: #fffbeb;
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md: 0 1px 3px rgb(0 0 0 / 0.1);
 }
 
 /* Базовые стили страницы */
@@ -233,7 +235,7 @@ body {
     align-items: flex-start;
 }
 
-.tree-node > .tree-row {
+.tree-node>.tree-row {
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -244,7 +246,7 @@ body {
     max-width: 100%;
 }
 
-.tree-node > .tree-row .tree-checkbox {
+.tree-node>.tree-row .tree-checkbox {
     cursor: default;
 }
 
@@ -394,7 +396,7 @@ body {
 .allure-link {
     display: inline-block;
     background-color: var(--primary-accent);
-    color: white;
+    color: #fff;
     padding: 8px 16px;
     border-radius: 8px;
     text-decoration: none;
@@ -446,14 +448,14 @@ body {
     transform: rotate(90deg);
 }
 
-.test-case-details > .test-info,
-.test-case-details > h3,
-.test-case-details > .steps-list {
+.test-case-details>.test-info,
+.test-case-details>h3,
+.test-case-details>.steps-list {
     margin-left: 16px;
     margin-right: 16px;
 }
 
-.test-case-details > .steps-list {
+.test-case-details>.steps-list {
     margin-bottom: 16px;
 }
 
@@ -468,7 +470,7 @@ body {
     color: var(--text-secondary);
 }
 
-.test-case-details > h3 + p.test-info {
+.test-case-details>h3+p.test-info {
     margin-left: 16px;
     margin-right: 16px;
 }
@@ -649,7 +651,7 @@ body {
     margin-bottom: 15px;
 }
 
-.category-group > strong {
+.category-group>strong {
     display: block;
     margin-bottom: 8px;
     font-size: 1.1em;
@@ -689,7 +691,7 @@ body {
 
 .ai-recommend-btn {
     background-color: var(--primary-accent);
-    color: white;
+    color: #fff;
     padding: 10px 20px;
     border: none;
     border-radius: 8px;
@@ -710,18 +712,18 @@ body {
 }
 
 .ai-bulk-recommendation.ai-error {
-    background-color: rgba(239, 68, 68, 0.1);
-    border-left-color: #ef4444;
+    background-color: var(--error-bg);
+    border-left-color: var(--error);
 }
 
 .ai-bulk-recommendation.ai-warning {
-    background-color: rgba(245, 158, 11, 0.1);
-    border-left-color: #f59e0b;
+    background-color: var(--warning-bg);
+    border-left-color: var(--warning);
 }
 
 .ai-bulk-recommendation.ai-ok {
-    background-color: rgba(34, 197, 94, 0.1);
-    border-left-color: #22c55e;
+    background-color: var(--success-bg);
+    border-left-color: var(--success);
 }
 
 .ai-bulk-recommendation h3 {
@@ -741,7 +743,7 @@ body {
     font-size: 0.85em;
     padding: 2px 6px;
     border-radius: 4px;
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: color-mix(in srgb, var(--text-primary) 15%, transparent);
 }
 
 .ai-text {

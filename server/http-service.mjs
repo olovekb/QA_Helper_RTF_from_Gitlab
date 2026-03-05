@@ -21,7 +21,8 @@ const HEADERS = {
 let isRefreshing = false;
 let tokenPromise = null;
 
-export async function getJwtToken() {
+export async function getJwtToken ()
+{
     try {
         let spinnerInterval = spinningLoader('Авторизуемся по токену Allure...');
         const response = await axios.post(
@@ -46,10 +47,12 @@ export async function getJwtToken() {
     }
 }
 
-async function refreshJwtToken() {
+async function refreshJwtToken ()
+{
     if (!isRefreshing) {
         isRefreshing = true;
-        tokenPromise = getJwtToken().then((newToken) => {
+        tokenPromise = getJwtToken().then((newToken) =>
+        {
             isRefreshing = false;
             HEADERS['Authorization'] = `Bearer ${newToken}`;
             return newToken;
@@ -59,7 +62,8 @@ async function refreshJwtToken() {
 }
 
 // Обёртка для fetch
-export async function fetchWithAuth(url, options = {}) {
+export async function fetchWithAuth (url, options = {})
+{
     options.headers = {
         ...HEADERS, // Текущие заголовки
         ...(options.headers || {}), // Дополнительные заголовки из запроса
@@ -88,7 +92,8 @@ export async function fetchWithAuth(url, options = {}) {
 /**
  * Функция для получения обзора тест-кейса
  */
-export async function getTestCaseOverview(testCaseId) {
+export async function getTestCaseOverview (testCaseId)
+{
     const BASE_URL = config.baseUrl;
     const url = `${BASE_URL}/testcase/${testCaseId}/overview`;
     const response = await fetchWithAuth(url);
@@ -105,7 +110,8 @@ export async function getTestCaseOverview(testCaseId) {
  * @param {*} size - максимальный размер количества тест-кейсов в ответе
  * @returns allCases - JSON с описанием набора тест-кейсов
  */
-export async function getAllTestCases(projectId, size = 10000) {
+export async function getAllTestCases (projectId, size = 10000)
+{
     const url = `${BASE_URL}/testcase`;
     let page = 0;
     let allCases = [];
@@ -135,17 +141,18 @@ export async function getAllTestCases(projectId, size = 10000) {
  * @param {Object} expectedCustomFields - Ожидаемые кастомные поля в формате { fieldName: fieldValue }
  * @returns {Promise<Object|null>} - Найденный тест-кейс или null
  */
-export async function findTestCaseByName(projectId, name, expectedCustomFields = {}) {
+export async function findTestCaseByName (projectId, name, expectedCustomFields = {})
+{
     if (!projectId || !name) {
         return null;
     }
-    
+
     try {
         const url = `${BASE_URL}/testcase`;
         let page = 0;
         const size = 100;
         const normalizedName = name.trim().toLowerCase();
-        
+
         // Нормализуем ожидаемые кастомные поля
         const normalizedExpectedFields = {};
         for (const [fieldName, fieldValue] of Object.entries(expectedCustomFields)) {
@@ -155,31 +162,31 @@ export async function findTestCaseByName(projectId, name, expectedCustomFields =
                 normalizedExpectedFields[normalizedFieldName] = normalizedFieldValue;
             }
         }
-        
+
         while (true) {
             const response = await fetchWithAuth(`${url}?projectId=${projectId}&page=${page}&size=${size}`);
             if (!response.ok) {
                 console.warn(`Ошибка поиска тест-кейса по названию: ${response.statusText}`);
                 return null;
             }
-            
+
             const data = await response.json();
-            
+
             // Ищем тест-кейсы с таким же названием
-            const candidates = data.content?.filter(tc => 
+            const candidates = data.content?.filter(tc =>
                 tc.name && tc.name.trim().toLowerCase() === normalizedName
             ) || [];
-            
+
             // Если нет кастомных полей для проверки, возвращаем первый найденный
             if (Object.keys(normalizedExpectedFields).length === 0 && candidates.length > 0) {
                 return candidates[0];
             }
-            
+
             // Проверяем кастомные поля для каждого кандидата
             for (const candidate of candidates) {
                 try {
                     const customFields = await getTestCaseCustomFields(candidate.id, projectId);
-                    
+
                     // Нормализуем кастомные поля существующего тест-кейса
                     // Важно: для multi-select полей (например, Code) нужно проверять все значения
                     const candidateFields = {};
@@ -187,14 +194,15 @@ export async function findTestCaseByName(projectId, name, expectedCustomFields =
                         for (const cf of customFields) {
                             const fieldName = cf?.customField?.name || cf?.name;
                             if (!fieldName) continue;
-                            
+
                             const normalizedFieldName = String(fieldName).trim().toLowerCase();
-                            
+
                             // Извлекаем значения: может быть одно значение или массив значений
                             let fieldValues = [];
                             if (cf?.values && Array.isArray(cf.values) && cf.values.length > 0) {
                                 // Multi-select поле - берем все значения
-                                fieldValues = cf.values.map(v => {
+                                fieldValues = cf.values.map(v =>
+                                {
                                     const val = v?.name || v;
                                     return val ? String(val).trim().toLowerCase() : null;
                                 }).filter(Boolean);
@@ -202,35 +210,35 @@ export async function findTestCaseByName(projectId, name, expectedCustomFields =
                                 // Single-select поле
                                 fieldValues = [String(cf.name).trim().toLowerCase()];
                             }
-                            
+
                             if (fieldValues.length > 0) {
                                 // Для полей с несколькими значениями сохраняем массив, для одного - строку
-                                candidateFields[normalizedFieldName] = fieldValues.length === 1 
-                                    ? fieldValues[0] 
+                                candidateFields[normalizedFieldName] = fieldValues.length === 1
+                                    ? fieldValues[0]
                                     : fieldValues;
                             }
                         }
                     }
-                    
+
                     // Сравниваем кастомные поля
                     // Важно: проверяем только важные поля (Feature, Story, Scenario, Code, Block, SubBlock)
                     const importantFields = ['feature', 'story', 'scenario', 'code', 'block', 'subblock'];
                     let fieldsMatch = true;
-                    
+
                     for (const [expectedFieldName, expectedFieldValue] of Object.entries(normalizedExpectedFields)) {
                         // Пропускаем поля, которые не важны для проверки дублей
                         if (!importantFields.includes(expectedFieldName)) {
                             continue;
                         }
-                        
+
                         const candidateValue = candidateFields[expectedFieldName];
-                        
+
                         if (!candidateValue) {
                             // Поле отсутствует в существующем тест-кейсе
                             fieldsMatch = false;
                             break;
                         }
-                        
+
                         // Если это массив (multi-select поле), проверяем, содержится ли значение в массиве
                         if (Array.isArray(candidateValue)) {
                             if (!candidateValue.includes(expectedFieldValue)) {
@@ -245,12 +253,12 @@ export async function findTestCaseByName(projectId, name, expectedCustomFields =
                             }
                         }
                     }
-                    
+
                     // Если все поля совпадают, возвращаем этот тест-кейс
                     if (fieldsMatch && Object.keys(normalizedExpectedFields).length > 0) {
                         return candidate;
                     }
-                    
+
                     // Если не было ожидаемых полей, но название совпало - возвращаем первый
                     if (Object.keys(normalizedExpectedFields).length === 0) {
                         return candidate;
@@ -260,11 +268,11 @@ export async function findTestCaseByName(projectId, name, expectedCustomFields =
                     // Продолжаем проверку других кандидатов
                 }
             }
-            
+
             if (data.last) break;
             page += 1;
         }
-        
+
         return null;
     } catch (error) {
         console.error(`Ошибка при поиске тест-кейса по названию "${name}":`, error.message);
@@ -277,22 +285,23 @@ export async function findTestCaseByName(projectId, name, expectedCustomFields =
  * @param {string|number} testCaseId - ID тест-кейса
  * @returns {Promise<boolean>} - true если успешно удален
  */
-export async function deleteTestCase(testCaseId) {
+export async function deleteTestCase (testCaseId)
+{
     if (!testCaseId) {
         throw new Error('testCaseId is required');
     }
-    
+
     try {
         const url = `${BASE_URL}/testcase/${testCaseId}`;
         const response = await fetchWithAuth(url, {
             method: 'DELETE',
         });
-        
+
         if (!response.ok && response.status !== 404) {
             const txt = await response.text();
             throw new Error(`Allure DELETE test case failed ${response.status}: ${txt}`);
         }
-        
+
         return response.ok || response.status === 404;
     } catch (error) {
         console.error(`Ошибка при удалении тест-кейса ${testCaseId}:`, error.message);
@@ -300,7 +309,8 @@ export async function deleteTestCase(testCaseId) {
     }
 }
 
-export async function getTestCaseSharedStep(sharedStepId) {
+export async function getTestCaseSharedStep (sharedStepId)
+{
     try {
         const url = `${BASE_URL}/sharedstep/${sharedStepId}`;
         // const response = await fetch(url, { headers: HEADERS });
@@ -327,7 +337,8 @@ export async function getTestCaseSharedStep(sharedStepId) {
 
 
 // Функция для получения ожидаемого результата
-export async function getTestCaseExpectedResult(testCaseId) {
+export async function getTestCaseExpectedResult (testCaseId)
+{
     const url = `${BASE_URL}/rs/testcase/${testCaseId}`;
     // const response = await fetch(url, { headers: HEADERS });
     const response = await fetchWithAuth(url);
@@ -339,7 +350,8 @@ export async function getTestCaseExpectedResult(testCaseId) {
 }
 
 // Функция для получения слоя тестирования
-export async function getTestCaseLayer(testCaseId) {
+export async function getTestCaseLayer (testCaseId)
+{
     const url = `${BASE_URL}/rs/testcase/${testCaseId}`;
     //const response = await fetch(url, { headers: HEADERS });
     const response = await fetchWithAuth(url);
@@ -351,7 +363,8 @@ export async function getTestCaseLayer(testCaseId) {
 }
 
 // Функция для получения статуса тестирования
-export async function getTestCaseStatus(testCaseId) {
+export async function getTestCaseStatus (testCaseId)
+{
     const url = `${BASE_URL}/rs/testcase/${testCaseId}`;
     //  const response = await fetch(url, { headers: HEADERS });
     const response = await fetchWithAuth(url);
@@ -363,7 +376,8 @@ export async function getTestCaseStatus(testCaseId) {
 }
 
 // Функция для получения предусловий
-export async function getTestCasePrecondition(testCaseId) {
+export async function getTestCasePrecondition (testCaseId)
+{
     const url = `${BASE_URL}/rs/testcase/${testCaseId}`;
     // const response = await fetch(url, { headers: HEADERS });
     const response = await fetchWithAuth(url);
@@ -376,7 +390,8 @@ export async function getTestCasePrecondition(testCaseId) {
 
 
 // Функция для получения связью с задачей Jira тест-кейса
-export async function getCaseIssue(testCaseId) {
+export async function getCaseIssue (testCaseId)
+{
     const url = `${BASE_URL}/testcase/${testCaseId}/issue`;
     // const response = await fetch(url, { headers: HEADERS });
     const response = await fetchWithAuth(url);
@@ -387,7 +402,8 @@ export async function getCaseIssue(testCaseId) {
 }
 
 // Функция для получения тегов тест-кейса
-export async function getCaseTags(testCaseId) {
+export async function getCaseTags (testCaseId)
+{
     const url = `${BASE_URL}/testcase/${testCaseId}/tag`;
     // const response = await fetch(url, { headers: HEADERS });
     const response = await fetchWithAuth(url);
@@ -397,7 +413,8 @@ export async function getCaseTags(testCaseId) {
     return response.json();
 }
 
-export async function getTestCaseSteps(testCaseId) {
+export async function getTestCaseSteps (testCaseId)
+{
     const url = `${BASE_URL}/testcase/${testCaseId}/step`
     //  const response = await fetch(url, { headers: HEADERS });
     const response = await fetchWithAuth(url);
@@ -410,7 +427,7 @@ export async function getTestCaseSteps(testCaseId) {
         return null;  // Возвращаем null при ошибке, чтобы отличать от пустого ответа
     }
     const data = await response.json();
-    
+
     // Детальное логирование для проблемных тест-кейсов
     if (testCaseId === 168712 || testCaseId === 168807 || testCaseId === 168813) {
         console.log(`\n[DEBUG STEPS API] Тест-кейс ${testCaseId}:`);
@@ -422,7 +439,7 @@ export async function getTestCaseSteps(testCaseId) {
             console.log(JSON.stringify(data, null, 2).substring(0, 1000));
         }
     }
-    
+
     // Если ответ пустой объект или не содержит нужной структуры, возвращаем null
     if (!data || (typeof data === 'object' && Object.keys(data).length === 0)) {
         return null;
@@ -431,7 +448,8 @@ export async function getTestCaseSteps(testCaseId) {
 }
 
 
-export async function getTestCaseCustomFields(testCaseId, projectId) {
+export async function getTestCaseCustomFields (testCaseId, projectId)
+{
     const url = `${BASE_URL}/testcase/${testCaseId}/cfv?projectId=${projectId}&v2=true`;
     // const response = await fetch(url, { headers: HEADERS });
     const response = await fetchWithAuth(url);
@@ -441,6 +459,58 @@ export async function getTestCaseCustomFields(testCaseId, projectId) {
     return await response.json();
 }
 
+
+/**
+ * Получить список запусков Allure по проекту
+ * @param {string|number} projectId
+ * @param {string} [query]
+ * @param {number} [page=0]
+ * @param {number} [size=25]
+ */
+export async function getAllureLaunches (projectId, query = '', page = 0, size = 25)
+{
+    if (!projectId) throw new Error('projectId is required');
+    const url = new URL(`${BASE_URL}/launch`);
+    url.searchParams.set('projectId', projectId);
+    url.searchParams.set('page', page);
+    url.searchParams.set('size', size);
+    url.searchParams.set('preview', 'true');
+    url.searchParams.set('sort', 'createdDate,desc');
+    const searchVal = typeof query === 'string' ? query.trim() : '';
+    if (searchVal) {
+        const searchFilter = JSON.stringify([{ id: 'content', value: searchVal, type: 'string' }]);
+        url.searchParams.set('search', Buffer.from(searchFilter, 'utf8').toString('base64'));
+    }
+
+    const resp = await fetchWithAuth(url.toString(), { credentials: 'include' });
+    if (!resp.ok) {
+        const errBody = await resp.text().catch(() => '');
+        console.error('[getAllureLaunches]', resp.status, url.toString(), '|', errBody);
+        throw new Error(`Allure GET launches failed: ${resp.statusText}`);
+    }
+    const json = await resp.json();
+    return json.content || [];
+}
+
+/**
+ * Получить дефекты запуска
+ * @param {string|number} launchId
+ * @param {number} [page=0]
+ * @param {number} [size=20]
+ */
+export async function getLaunchDefects (launchId, page = 0, size = 20)
+{
+    if (!launchId) throw new Error('launchId is required');
+    const url = new URL(`${BASE_URL}/launch/${launchId}/defect`);
+    url.searchParams.set('page', page);
+    url.searchParams.set('size', size);
+
+    const resp = await fetchWithAuth(url.toString(), { credentials: 'include' });
+    if (!resp.ok) throw new Error(`Allure GET launch defects failed: ${resp.statusText}`);
+    const json = await resp.json();
+    return json.content || [];
+}
+
 /**
  * Получить дефекты из Allure
  * @param {string} projectId
@@ -448,7 +518,8 @@ export async function getTestCaseCustomFields(testCaseId, projectId) {
  * @param {number} [page]
  * @param {number} [size]
  */
-export async function getAllureDefects(projectId, query = '', page = 0, size = 25) {
+export async function getAllureDefects (projectId, query = '', page = 0, size = 25)
+{
     if (!projectId) throw new Error('projectId is required');
     const url = new URL(`${BASE_URL}/defect`);
     url.searchParams.set('projectId', projectId);
@@ -469,7 +540,8 @@ export async function getAllureDefects(projectId, query = '', page = 0, size = 2
  * @param {number} integrationId
  * @param {string} issueName
  */
-export async function linkIssueToAllureDefect(defectId, integrationId, issueName) {
+export async function linkIssueToAllureDefect (defectId, integrationId, issueName)
+{
     const url = `${BASE_URL}/defect/${defectId}/issue`;
     const resp = await fetchWithAuth(url, {
         method: 'POST',
@@ -484,21 +556,22 @@ export async function linkIssueToAllureDefect(defectId, integrationId, issueName
 }
 
 
-export async function analyzeBugWithAI(task, apiKey = null) {
+export async function analyzeBugWithAI (task, apiKey = null)
+{
     const { summary, description, steps, actual, expected } = task;
     const prompt = `
 Ты — эксперт по написанию баг-репортов. Проверь следующие поля по нашему чек-листу:
 
-1. Тема  
-   - Кратко: Что? Где? При каких условиях?  
-   - Без личных местоимений и размытых формулировок.  
-2. Подробное описание  
-   - Должно раскрывать суть ошибки и приводить репродукцию.  
-3. Шаги воспроизведения  
-   - Каждый шаг начинается с глагола, обезличен, ясен.  
-4. Фактический результат  
-   - Ясно и однозначно описывает проблему.  
-5. Ожидаемый результат  
+1. Тема
+   - Кратко: Что? Где? При каких условиях?
+   - Без личных местоимений и размытых формулировок.
+2. Подробное описание
+   - Должно раскрывать суть ошибки и приводить репродукцию.
+3. Шаги воспроизведения
+   - Каждый шаг начинается с глагола, обезличен, ясен.
+4. Фактический результат
+   - Ясно и однозначно описывает проблему.
+5. Ожидаемый результат
    - Ясно и однозначно, что система должна делать.
 
 Вот текущее содержимое:
@@ -558,14 +631,16 @@ ${expected || '<пусто>'}
 /**
  * Получить детали дефекта (с описанием).
  */
-export async function getAllureDefectById(defectId) {
+export async function getAllureDefectById (defectId)
+{
     const url = `${BASE_URL}/defect/${defectId}`;
     const resp = await fetchWithAuth(url, { credentials: 'include' });
     if (!resp.ok) throw new Error(`Allure GET defect failed: ${resp.statusText}`);
     return resp.json(); // вернёт { id, projectId, name, description, … }
 }
 
-export async function getStepsForDefect(defectId) {
+export async function getStepsForDefect (defectId)
+{
     // 1) узнаём связанный testResult
     const trUrl = `${BASE_URL}/defect/${defectId}/testresult?page=0&size=1`;
     const trResp = await fetchWithAuth(trUrl, { credentials: 'include' });
@@ -574,23 +649,22 @@ export async function getStepsForDefect(defectId) {
     const first = trJson.content?.[0];
     if (!first) return [];
 
-    // 2) получаем execution с полями steps + вложенными steps
+    // 2) получаем execution с полями steps
     const executionUrl = `${BASE_URL}/testresult/${first.id}/execution?v2=true`;
     const exResp = await fetchWithAuth(executionUrl, { credentials: 'include' });
     if (!exResp.ok) throw new Error(`Allure GET execution failed: ${exResp.statusText}`);
     const exJson = await exResp.json();
 
-    // 3) Формируем уже пронумерованный и отформатированный список строк:
-    //    родительский – курсивом (_…_), дочерние – с отступом и «n.m»
+    // 3) Формируем пронумерованный список строк
     const lines = [];
-    exJson.steps.forEach((step, i) => {
+    (exJson.steps || []).forEach((step, i) =>
+    {
         const idx = i + 1;
-        // общий шаг – курсивом
-        lines.push(`${idx}. _${step.body}_`);
-        // вложенные шаги
-        (step.steps || []).forEach((child, j) => {
+        lines.push(`${idx}. ${step.body || ''}`);
+        (step.steps || []).forEach((child, j) =>
+        {
             const cidx = j + 1;
-            lines.push(`    ${idx}.${cidx}. ${child.body}`);
+            lines.push(`    ${idx}.${cidx}. ${child.body || ''}`);
         });
     });
 
@@ -607,13 +681,14 @@ export async function getStepsForDefect(defectId) {
  * @param {boolean} [opts.archived=false] – включить архивные или нет
  * @param {string} [opts.search] – текстовый фильтр
  */
-export async function getSharedStepsList({
+export async function getSharedStepsList ({
     projectId,
     page = 0,
     size = 20,
     archived = false,
     search = ''
-}) {
+})
+{
     if (!projectId) {
         throw new Error('projectId is required to fetch shared steps');
     }
@@ -647,7 +722,8 @@ export async function getSharedStepsList({
  * @param {string} opts.name – Название shared step (обязательный)
  * @returns {Promise<Object>} – Созданный shared step с полями id, projectId, name и т.д.
  */
-export async function createSharedStep({ projectId, name }) {
+export async function createSharedStep ({ projectId, name })
+{
     if (!projectId || !name) {
         throw new Error('projectId and name are required to create shared step');
     }
@@ -675,7 +751,8 @@ export async function createSharedStep({ projectId, name }) {
  * @param {boolean} [opts.withExpectedResult=false] – Включать ли Expected Result в запрос
  * @returns {Promise<Object>} – Созданный шаг с полем id
  */
-export async function addStepToSharedStep({ sharedStepId, body, expectedResult, withExpectedResult = false }) {
+export async function addStepToSharedStep ({ sharedStepId, body, expectedResult, withExpectedResult = false })
+{
     if (!sharedStepId) {
         throw new Error('sharedStepId is required to add step to shared step');
     }
@@ -738,7 +815,8 @@ export async function addStepToSharedStep({ sharedStepId, body, expectedResult, 
  * @param {string|number} sharedStepId – ID shared step
  * @returns {Promise<Object>} – Детали shared step
  */
-export async function getSharedStepDetails(sharedStepId) {
+export async function getSharedStepDetails (sharedStepId)
+{
     if (!sharedStepId) {
         throw new Error('sharedStepId is required to get shared step details');
     }
@@ -756,7 +834,8 @@ export async function getSharedStepDetails(sharedStepId) {
 
 
 // 1. Создать ТК
-export async function createTestCaseAllure({ projectId, name }) {
+export async function createTestCaseAllure ({ projectId, name })
+{
     const resp = await fetchWithAuth(`${BASE_URL}/testcase`, {
         method: 'POST',
         body: JSON.stringify({ projectId, name }),
@@ -769,7 +848,8 @@ export async function createTestCaseAllure({ projectId, name }) {
 }
 
 // 2. Обновить основные поля (precondition + expectedResult)
-export async function updateTestCase(testCaseId, { precondition, expectedResult }) {
+export async function updateTestCase (testCaseId, { precondition, expectedResult })
+{
     const body = { id: testCaseId };
     if (precondition !== undefined) body.precondition = precondition;
     if (expectedResult !== undefined) body.expectedResult = expectedResult;
@@ -785,7 +865,8 @@ export async function updateTestCase(testCaseId, { precondition, expectedResult 
 }
 
 // 3. Добавить шаг (body или sharedStepId + вставить после afterId)
-export async function addStepToTestCase(testCaseId, { body, sharedStepId, afterId }) {
+export async function addStepToTestCase (testCaseId, { body, sharedStepId, afterId })
+{
     const payload = { testCaseId };
     if (sharedStepId !== undefined) {
         // ✅ Убеждаемся, что sharedStepId - число (как в примере curl)
@@ -816,7 +897,7 @@ export async function addStepToTestCase(testCaseId, { body, sharedStepId, afterI
         }
     }
     if (afterId !== undefined) payload.afterId = afterId;
-    
+
     // ✅ Добавляем параметр withExpectedResult=false в URL (как в примере curl)
     const resp = await fetchWithAuth(`${BASE_URL}/testcase/step?withExpectedResult=false`, {
         method: 'POST',
@@ -836,11 +917,12 @@ export async function addStepToTestCase(testCaseId, { body, sharedStepId, afterI
  * @param {string} expectedResultText - Текст ожидаемого результата
  * @returns {Promise<Object>} - Созданный Expected Result с полями id
  */
-export async function addExpectedResultToStep(testCaseId, stepId, expectedResultText) {
+export async function addExpectedResultToStep (testCaseId, stepId, expectedResultText)
+{
     if (!expectedResultText || !expectedResultText.trim()) {
         throw new Error('expectedResultText is required');
     }
-    
+
     // ✅ ИСПРАВЛЕНО: Создаем Expected Result как дочерний шаг основного шага
     // Используем parentId для связи с основным шагом (это правильный способ в Allure API)
     const resultPayload = {
@@ -861,17 +943,17 @@ export async function addExpectedResultToStep(testCaseId, stepId, expectedResult
         },
         parentId: stepId  // ✅ Связываем напрямую с основным шагом
     };
-    
+
     const resultResp = await fetchWithAuth(`${BASE_URL}/testcase/step?withExpectedResult=false`, {
         method: 'POST',
         body: JSON.stringify(resultPayload),
     });
-    
+
     if (!resultResp.ok) {
         const txt = await resultResp.text();
         throw new Error(`Allure POST Expected Result failed ${resultResp.status}: ${txt}`);
     }
-    
+
     const result = await resultResp.json();
     // ✅ Из curl примера: ответ содержит createdStepId в корне
     let resultId = result.createdStepId;
@@ -884,11 +966,11 @@ export async function addExpectedResultToStep(testCaseId, stepId, expectedResult
     if (!resultId) {
         resultId = result.id;
     }
-    
+
     if (!resultId) {
         throw new Error(`Не удалось извлечь ID Expected Result из ответа: ${JSON.stringify(result).substring(0, 500)}`);
     }
-    
+
     return {
         resultId,
         stepId
@@ -896,7 +978,8 @@ export async function addExpectedResultToStep(testCaseId, stepId, expectedResult
 }
 
 // 4. Добавить тег к ТК
-export async function addTagToTestCase(testCaseId, name) {
+export async function addTagToTestCase (testCaseId, name)
+{
     // endpoint ожидает массив из одного объекта { name }
     const resp = await fetchWithAuth(
         `${BASE_URL}/testcase/${testCaseId}/tag`,
@@ -916,7 +999,8 @@ export async function addTagToTestCase(testCaseId, name) {
 /**
  * Добавить (или обновить) внешние/внутренние ссылки у тест-кейса
  */
-export async function addLinkToTestCase(testCaseId, { name, url, type }) {
+export async function addLinkToTestCase (testCaseId, { name, url, type })
+{
     // Собираем один элемент массива links
     const linkObj = { name, url };
     if (type) {
@@ -944,7 +1028,8 @@ export async function addLinkToTestCase(testCaseId, { name, url, type }) {
  * @param {number} integrationId — ID интеграции (например, 67)
  * @param {string} issueName — ключ задачи, например "JM-1292"
  */
-export async function linkIssueToTestCase(testCaseId, integrationId, issueName) {
+export async function linkIssueToTestCase (testCaseId, integrationId, issueName)
+{
     // Формируем массив DTO, как в вашем curl
     const payload = [{
         integrationId,
@@ -966,7 +1051,8 @@ export async function linkIssueToTestCase(testCaseId, integrationId, issueName) 
 }
 
 // 7. Установить layer / priority / version
-export async function setTestCaseLayer(testCaseId, testLayerId) {
+export async function setTestCaseLayer (testCaseId, testLayerId)
+{
     const resp = await fetchWithAuth(`${BASE_URL}/testcase/${testCaseId}`, {
         method: 'PATCH',
         body: JSON.stringify({ testLayerId }),
@@ -977,7 +1063,8 @@ export async function setTestCaseLayer(testCaseId, testLayerId) {
     }
     return resp.json();
 }
-export async function setTestCasePriority(testCaseId, priority) {
+export async function setTestCasePriority (testCaseId, priority)
+{
     const resp = await fetchWithAuth(`${BASE_URL}/testcase/${testCaseId}`, {
         method: 'PATCH',
         body: JSON.stringify({ priority }),
@@ -988,7 +1075,8 @@ export async function setTestCasePriority(testCaseId, priority) {
     }
     return resp.json();
 }
-export async function setTestCaseVersion(testCaseId, version) {
+export async function setTestCaseVersion (testCaseId, version)
+{
     const resp = await fetchWithAuth(`${BASE_URL}/testcase/${testCaseId}`, {
         method: 'PATCH',
         body: JSON.stringify({ version }),
@@ -1001,7 +1089,8 @@ export async function setTestCaseVersion(testCaseId, version) {
 }
 
 // 8. Добавить параметр
-export async function addParameterToTestCase(testCaseId, { name, value, type }) {
+export async function addParameterToTestCase (testCaseId, { name, value, type })
+{
     const payload = { name, value };
     if (type) payload.type = type;
     const resp = await fetchWithAuth(`${BASE_URL}/testcase/${testCaseId}/parameter`, {
@@ -1021,7 +1110,8 @@ export async function addParameterToTestCase(testCaseId, { name, value, type }) 
  * @param {Array<Array<{name: string, value: string}>>} examples - массив примеров, каждый пример - массив параметров
  * @returns {Promise<Array>} - массив созданных примеров с id
  */
-export async function createTestCaseExamples(testCaseId, examples) {
+export async function createTestCaseExamples (testCaseId, examples)
+{
     const resp = await fetchWithAuth(
         `${BASE_URL}/testcase/${testCaseId}/example`,
         {
@@ -1043,7 +1133,8 @@ export async function createTestCaseExamples(testCaseId, examples) {
  * @param {Array<{name: string, values: Array<string>}>} parameters - массив параметров с их значениями
  * @returns {Promise<Array>} - массив примеров (комбинаций параметров)
  */
-export async function generatePairwiseExamples(n, parameters) {
+export async function generatePairwiseExamples (n, parameters)
+{
     const resp = await fetchWithAuth(
         `${BASE_URL}/testcase/example/nwise?n=${encodeURIComponent(n)}`,
         {
@@ -1064,7 +1155,8 @@ export async function generatePairwiseExamples(n, parameters) {
  * @param {number} testCaseId
  * @param {string} parameterName - имя параметра для удаления
  */
-export async function deleteTestCaseParameter(testCaseId, parameterName) {
+export async function deleteTestCaseParameter (testCaseId, parameterName)
+{
     // Note: Allure API может не иметь прямого DELETE для параметра
     // В этом случае нужно получить все параметры, удалить нужный и обновить
     const resp = await fetchWithAuth(
@@ -1083,7 +1175,8 @@ export async function deleteTestCaseParameter(testCaseId, parameterName) {
 }
 
 // 9. Создать значение кастомного поля на уровне проекта
-export async function createProjectCustomFieldValue(projectId, customFieldId, name) {
+export async function createProjectCustomFieldValue (projectId, customFieldId, name)
+{
     const resp = await fetchWithAuth(`${BASE_URL}/project/${projectId}/cfv`, {
         method: 'POST',
         body: JSON.stringify({
@@ -1103,12 +1196,13 @@ export async function createProjectCustomFieldValue(projectId, customFieldId, na
  * @param {string|number} testCaseId
  * @param {Array<{ customField: { id: number }, name: string }>} cfvArray
  */
-export async function setTestCaseCustomFieldValues(testCaseId, cfvArray) {
+export async function setTestCaseCustomFieldValues (testCaseId, cfvArray)
+{
     // Валидация входных данных
     if (!Array.isArray(cfvArray)) {
         throw new Error(`cfvArray must be an array, got ${typeof cfvArray}`);
     }
-    
+
     // Проверяем формат каждого элемента
     for (let i = 0; i < cfvArray.length; i++) {
         const item = cfvArray[i];
@@ -1122,19 +1216,19 @@ export async function setTestCaseCustomFieldValues(testCaseId, cfvArray) {
             throw new Error(`cfvArray[${i}].name must be a string, got ${typeof item.name}`);
         }
     }
-    
+
     const url = `${BASE_URL}/testcase/${testCaseId}/cfv`;
     const body = JSON.stringify(cfvArray);
-    
+
     console.log(`[setTestCaseCustomFieldValues] POST ${url}`);
     console.log(`[setTestCaseCustomFieldValues] Body:`, body);
-    
+
     const resp = await fetchWithAuth(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: body,
     });
-    
+
     if (!resp.ok) {
         const txt = await resp.text();
         let errorDetails = '';
@@ -1144,13 +1238,13 @@ export async function setTestCaseCustomFieldValues(testCaseId, cfvArray) {
         } catch {
             errorDetails = txt;
         }
-        
+
         console.error(`[setTestCaseCustomFieldValues] ❌ Ошибка ${resp.status} для ТК ${testCaseId}`);
         console.error(`[setTestCaseCustomFieldValues] Статус: ${resp.status} ${resp.statusText}`);
         console.error(`[setTestCaseCustomFieldValues] Ответ сервера:`, errorDetails);
         console.error(`[setTestCaseCustomFieldValues] Отправленные данные:`, body);
         console.error(`[setTestCaseCustomFieldValues] URL: ${url}`);
-        
+
         // ✅ Анализ ошибки
         const hasNegativeIds = cfvArray.some(item => item.customField?.id < 0);
         if (hasNegativeIds && resp.status === 500) {
@@ -1158,10 +1252,10 @@ export async function setTestCaseCustomFieldValues(testCaseId, cfvArray) {
             console.error(`[setTestCaseCustomFieldValues] ⚠️ В запросе есть поля с отрицательными ID: ${negativeIds.join(', ')}`);
             console.error(`[setTestCaseCustomFieldValues] ⚠️ Это может быть причиной ошибки 500 - системные поля Allure могут не поддерживать установку через /cfv API`);
         }
-        
+
         throw new Error(`Allure POST testcase cfv failed ${resp.status}: ${txt}`);
     }
-    
+
     const result = await resp.json();
     console.log(`[setTestCaseCustomFieldValues] ✅ Успешно установлены кастомные поля для ТК ${testCaseId}`);
     return result;
@@ -1172,7 +1266,8 @@ export async function setTestCaseCustomFieldValues(testCaseId, cfvArray) {
  * @param {number} [size=20] - сколько элементов запрошить
  * @returns {Promise<Array<{id: number, name: string}>>}
  */
-export async function suggestTestLayers(size = 20) {
+export async function suggestTestLayers (size = 20)
+{
     const resp = await fetchWithAuth(
         `${BASE_URL}/testlayer/suggest?size=${encodeURIComponent(size)}`,
         {
@@ -1189,7 +1284,8 @@ export async function suggestTestLayers(size = 20) {
 }
 
 
-export async function getProjectCustomFieldSchema(projectId) {
+export async function getProjectCustomFieldSchema (projectId)
+{
     const resp = await fetchWithAuth(
         `${BASE_URL}/cfschema?projectId=${projectId}`,
         { headers: { 'Accept': 'application/json' } }
@@ -1204,7 +1300,8 @@ export async function getProjectCustomFieldSchema(projectId) {
     return data.content;
 }
 
-export async function createTag(name) {
+export async function createTag (name)
+{
     const resp = await fetchWithAuth(
         `${BASE_URL}/tag`,
         {
@@ -1227,7 +1324,8 @@ export async function createTag(name) {
  * @param {number} [size=20]
  * @returns {Promise<Array<{id: number, name: string}>>}
  */
-export async function suggestTags(projectId, size = 20) {
+export async function suggestTags (projectId, size = 20)
+{
     const resp = await fetchWithAuth(
         `${BASE_URL}/tag/suggest?projectId=${encodeURIComponent(projectId)}&size=${size}`,
         { headers: { 'Accept': 'application/json' } }

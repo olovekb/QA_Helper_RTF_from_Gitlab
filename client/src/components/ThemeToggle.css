@@ -1,0 +1,40 @@
+/* Layout: подвал с тогглом темы */
+.app-layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.app-layout__main {
+  flex: 1;
+}
+
+.app-footer {
+  border-top: 1px solid var(--border-color);
+  padding: 12px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.app-footer__links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-footer__link {
+  font-size: 0.875rem;
+}
+
+.app-footer__separator {
+  color: var(--text-placeholder);
+  font-size: 0.75rem;
+  user-select: none;
+}
+
+.theme-toggle {
+  font-size: 0.875rem;
+}
