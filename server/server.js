@@ -2593,7 +2593,6 @@ app.post('/api/analyze', async (req, res) =>
             console.log(`\nAI-АНАЛИЗ ЗАВЕРШЕН УСПЕШНО:`);
             console.log(`Получено рекомендаций: ${Object.keys(aiRecommendations).length}`);
 
-            // Статистика по severity
             const severityStats = {};
             Object.values(aiRecommendations).forEach(recs =>
             {
@@ -2609,8 +2608,7 @@ app.post('/api/analyze', async (req, res) =>
 
         } catch (aiError) {
             clearInterval(spinnerInterval);
-            console.error(`\nОшибка :`);
-            console.error(`Детали: ${aiError.message}`);
+            console.error(`\nОшибка AI-анализа: ${aiError.message}`);
             console.error(`Проект: ${projectId}, Jira: ${jiraIssue}`);
             console.log(`Продолжаем с результатами статического анализа`);
         }

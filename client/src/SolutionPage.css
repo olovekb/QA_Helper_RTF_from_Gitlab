@@ -382,7 +382,6 @@
   padding: 24px;
   border-radius: 12px;
   margin-bottom: 24px;
-  box-shadow: var(--shadow-md);
 }
 
 .settings-grid {
@@ -435,4 +434,59 @@
   padding-top: 0;
   padding-bottom: 0;
   pointer-events: none;
+}
+
+/* Sticky панель слева (как на CodeErrorPage) */
+.solution-page .bug-report-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  margin-top: 24px;
+  margin-bottom: 30px;
+}
+
+.solution-page .task-area-left {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 0 0 280px;
+  min-width: 220px;
+  max-width: 400px;
+  position: sticky;
+  top: 24px;
+  align-self: flex-start;
+}
+
+.solution-page .task-area-left .task-controls-wrapper {
+  margin: 0;
+  flex-shrink: 0;
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.35s cubic-bezier(0.22, 1, 0.36, 1), margin 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.solution-page .task-area-left .task-controls-wrapper.expanded {
+  max-height: 250px;
+  margin: 0;
+  overflow: visible;
+}
+
+.solution-page .task-area-left .task-controls {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.solution-page .task-area-left .collapse-toggle {
+  align-self: flex-start;
+  flex-shrink: 0;
+}
+
+.solution-page .task-area-left .defaults-panel {
+  flex-shrink: 0;
+}
+
+.solution-page .task-area-left .task-sidebar {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: none;
 }

@@ -276,7 +276,8 @@ export async function callCloudRuAPI(messages, opts = {}) {
         response_format = null,
         tools = null,
         tool_choice = null,
-        fastFailOnNetwork = false
+        fastFailOnNetwork = false,
+        useResponseFormatForCloudRu = false
     } = opts;
 
     // === ПРОВЕРКА API КЛЮЧА ===
@@ -388,23 +389,12 @@ export async function callCloudRuAPI(messages, opts = {}) {
         max_completion_tokens: adjustedMaxTokens
     };
 
-    // Add optional parameters
-    // ⚠️ КРИТИЧНО: Cloud.ru API с response_format (strict: true) вызывает ЗАВИСАНИЯ!
-    // Модель "застревает" в генерации пробелов и не завершает JSON.
-    // РЕШЕНИЕ: ОТКЛЮЧАЕМ response_format полностью, используем только tools!
-    // Валидация будет выполнена на нашей стороне после получения ответа.
+    // По умолчанию response_format (strict: true) в Cloud.ru API отключен, т.к. может вызывать зависание модели
     if (response_format) {
-        const responseFormatStr = JSON.stringify(response_format);
-        const schemaSize = responseFormatStr.length;
-        
-        console.warn(`\n🚨 [cloudru] response_format ОТКЛЮЧЁН для Cloud.ru API!`);
-        console.warn(`📊 Schema size: ${schemaSize} символов`);
-        console.warn(`⚠️  Причина: strict: true вызывает зависания модели (10+ минут, генерация пробелов)`);
-        console.warn(`✅ Используем только tools для валидации формата ответа`);
-        console.warn(`✅ Валидация будет выполнена на нашей стороне\n`);
-        
-        // ПОЛНОСТЬЮ ОТКЛЮЧАЕМ response_format для Cloud.ru
-        // requestBody.response_format = response_format; // ← ЗАКОММЕНТИРОВАНО!
+        if (useResponseFormatForCloudRu) {
+            requestBody.response_format = response_format;
+            console.log(`\n✅ [cloudru] response_format включен, размер: ${JSON.stringify(response_format).length} символов\n`);
+        }
     }
     if (tools) {
         requestBody.tools = tools;
@@ -824,7 +814,8 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
         tools = null,
         tool_choice = null,
         logRateLimit = true,
-        cloudFirstTimeoutMs = 120000
+        cloudFirstTimeoutMs = 120000,
+        useResponseFormatForCloudRu = false
     } = opts;
 
     console.log(`\n🔄 HYBRID API CALL START`);
@@ -853,7 +844,8 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
                 response_format,
                 tools,
                 tool_choice,
-                fastFailOnNetwork: true
+                fastFailOnNetwork: true,
+                useResponseFormatForCloudRu
             });
 
             console.log(`\n✅ [hybrid] Cloud.ru SUCCESS with model: ${model}`);

@@ -111,7 +111,7 @@ function renderTreeHtml (nodes, statusMaps, testCategoriesMap = null, depth = 0)
         html += `<span class="tree-toggle" data-target="${nodeId}" >${hasChildren ? '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2l4 3-4 3"/></svg>' : '<span style="display:inline-block;width:10px"></span>'}</span>`;
         html += `<input type="checkbox" class="tree-checkbox" style="visibility: ${hasChildren ? 'hidden' : 'visible'}">`;
         const fieldPrefix = node.fieldName ? `<span class="tree-field-prefix">${escapeHtml(node.fieldName)}</span> ` : '';
-        html += `<span class="tree-label">${fieldPrefix}${escapeHtml(node.label)}</span>`;
+        html += `<span class="tree-label" title="${escapeHtml(node.label)}">${fieldPrefix}${escapeHtml(node.label)}</span>`;
         if (node.count > 0) {
             html += `<span class="tree-count">${node.count}</span>`;
         }
@@ -125,7 +125,7 @@ function renderTreeHtml (nodes, statusMaps, testCategoriesMap = null, depth = 0)
                 for (const test of node.tests) {
                     const cls = getStatusClass(test);
                     const dataCat = getDataCategories(test);
-                    html += `<li class="tree-leaf" data-categories="${dataCat}"><input type="checkbox" class="fix-checkbox" data-test-id="${test.id}"><a href="#test-${test.id}" class="${cls}">${escapeHtml(test.name)} #${test.id}</a></li>`;
+                    html += `<li class="tree-leaf" data-categories="${dataCat}"><input type="checkbox" class="fix-checkbox" data-test-id="${test.id}"><a href="#test-${test.id}" class="${cls}" title="${escapeHtml(test.name)} #${test.id}">${escapeHtml(test.name)} #${test.id}</a></li>`;
                 }
             }
             html += `</ul>`;
@@ -162,7 +162,7 @@ export async function staticAnalysis (testCases, projectId, aiRecommendations = 
         console.log(`AI-рекомендаций найдено: ${aiRecsArray.length}`);
 
         const { report, hasErrors, hasWarnings, errorCount, warningCount, issueCategories = [] } =
-            await generateTestCaseReport(testCase, projectId, aiRecsArray);
+            await generateTestCaseReport(testCase, projectId, aiRecsArray, testCases[0].issue);
 
         output += `<div id="test-${testCase.id}" class="test-case">${report}</div>`;
 
@@ -203,43 +203,29 @@ export async function staticAnalysis (testCases, projectId, aiRecommendations = 
     if (passesReview) {
         resolution = '<p class="resolution-success">Все тест-кейсы прошли статический анализ</p>';
     } else {
-        const issues = [];
-        if (!passesErrorThreshold) {
-            issues.push(`ошибки превышают порог (${errorPercentage}% > ${projectSettings.error_threshold}%)`);
-        }
-        if (!passesWarningThreshold) {
-            issues.push(`предупреждения превышают порог (${warningPercentage}% > ${projectSettings.warning_threshold}%)`);
-        }
-        resolution = `<p class="resolution-failed">Анализ не пройден: ${issues.join(', ')}</p>`;
+        resolution = '<p class="resolution-failed">Анализ не пройден</p>';
     }
 
     // Статистика
-    const statisticsHtml = `
-        <div class="statistics-panel">
-            <div class="stats-grid">
-                <div class="stat-card stat-total">
-                    <div class="stat-value">${totalTestCases}</div>
-                    <div class="stat-label">Всего тест-кейсов</div>
-                </div>
-                <div class="stat-card stat-warnings" onclick="document.getElementById('test-lists')">
-                    <div class="stat-value">${warningTests.length}</div>
-                    <div class="stat-label">С предупреждениями</div>
-                    <div class="stat-percentage">${warningPercentage}%</div>
-                </div>
-                <div class="stat-card stat-errors" onclick="document.getElementById('test-lists')">
-                    <div class="stat-value">${failedTests.length}</div>
-                    <div class="stat-label">С ошибками</div>
-                    <div class="stat-percentage">${errorPercentage}%</div>
-                </div>
-            </div>
+    const errorOverThreshold = Number(errorPercentage) > projectSettings.error_threshold;
+    const warningOverThreshold = Number(warningPercentage) > projectSettings.warning_threshold;
 
-            <div class="thresholds-info">
-                <h3>Настройки проекта: ${projectSettings.name}</h3>
-                <p><strong>Порог ошибок:</strong> ${projectSettings.error_threshold}% (текущий: ${errorPercentage}%)
-                   </p>
-                <p><strong>Порог предупреждений:</strong> ${projectSettings.warning_threshold}% (текущий: ${warningPercentage}%)
-                   </p>
-            </div>
+    const statisticsHtml = `
+        <div class="stats-bar">
+            <span class="stats-item stats-total"><strong>${totalTestCases}</strong> тест-кейсов</span>
+            <span class="stats-divider"></span>
+            <span class="stats-item stats-err ${errorOverThreshold ? 'over-threshold' : ''}">
+                <strong>${failedTests.length}</strong> с ошибками
+                <span class="stats-pct">${errorPercentage}%</span>
+                <span class="stats-threshold">/ ${projectSettings.error_threshold}%</span>
+            </span>
+            <span class="stats-divider"></span>
+            <span class="stats-item stats-warn ${warningOverThreshold ? 'over-threshold' : ''}">
+                <strong>${warningTests.length}</strong> с предупреждениями
+                <span class="stats-pct">${warningPercentage}%</span>
+                <span class="stats-threshold">/ ${projectSettings.warning_threshold}%</span>
+            </span>
+            <span class="stats-project">${projectSettings.name}</span>
         </div>
     `;
 
@@ -306,11 +292,15 @@ export async function staticAnalysis (testCases, projectId, aiRecommendations = 
       </head>
       <body>
         <div class="header">
-            <h1>Статический анализ тест-кейсов</h1>
-            <h2>Задача: <a href="${config.jiraUrl}/${testCases[0].issue}" target="_blank">${testCases[0].issue}</a></h2>
+            <div class="header-left">
+                <h2>Задача: <a href="${config.jiraUrl}/${testCases[0].issue}" target="_blank">${testCases[0].issue}</a></h2>
+            </div>
+            <div class="header-right">
+                ${resolution}
+                <button type="button" class="header-download-btn" onclick="window.dispatchEvent(new CustomEvent('downloadReport'))">Скачать отчёт</button>
+            </div>
         </div>
 
-        ${resolution}
         ${statisticsHtml}
 
         <div class="test-lists" id="test-lists">
@@ -364,6 +354,31 @@ export async function staticAnalysis (testCases, projectId, aiRecommendations = 
     if(btn.closest('[data-depth="0"]')){ ul.classList.remove('collapsed'); setIcon(true); }
     else { ul.classList.add('collapsed'); setIcon(false); }
   });
+  document.querySelectorAll('.allure-iframe').forEach(function(iframe){
+    var wrapper = iframe.closest('.allure-iframe-wrapper');
+    var fallback = wrapper ? wrapper.querySelector('.allure-iframe-fallback') : null;
+    iframe.addEventListener('load', function(){
+      try { var doc = iframe.contentDocument || iframe.contentWindow.document; if(!doc || !doc.body || doc.body.innerHTML === '') throw 0; }
+      catch(e){ iframe.style.display='none'; if(fallback) fallback.style.display='block'; }
+    });
+    iframe.addEventListener('error', function(){
+      iframe.style.display='none'; if(fallback) fallback.style.display='block';
+    });
+    setTimeout(function(){
+      try { var doc = iframe.contentDocument; if(!doc || !doc.body || doc.body.innerHTML === '') throw 0; }
+      catch(e){ iframe.style.display='none'; if(fallback) fallback.style.display='block'; }
+    }, 3000);
+  });
+  (function alignIssueCols(){
+    var cats = document.querySelectorAll('.issue-category');
+    var maxW = 0;
+    cats.forEach(function(el){ var w = el.offsetWidth; if(w > maxW) maxW = w; });
+    if(maxW > 0){
+      document.querySelectorAll('.issues-body').forEach(function(grid){
+        grid.style.setProperty('--issues-cat-width', maxW + 'px');
+      });
+    }
+  })();
 })();
         </script>
       </body>
@@ -379,7 +394,7 @@ export async function staticAnalysis (testCases, projectId, aiRecommendations = 
     return htmlReport;
 }
 
-async function generateTestCaseReport (testCase, projectId, aiRecommendations = [])
+async function generateTestCaseReport (testCase, projectId, aiRecommendations = [], issueKey = '')
 {
     console.log(`\ngenerateTestCaseReport для ID: "${testCase.id}"`);
     console.log(`AI-рекомендаций передано: ${aiRecommendations.length}`);
@@ -394,139 +409,17 @@ async function generateTestCaseReport (testCase, projectId, aiRecommendations = 
     const statusClass = validation.hasErrors ? 'status-error' :
         validation.hasWarnings ? 'status-warning' : 'status-success';
 
-    output += `<h1 class="${statusClass}">${testCase.name} (ID: ${testCase.id})</h1>`;
-    output += `
-    <p>
-      <a href="${config.url}/project/${projectId}/test-cases/${testCase.id}" target="_blank" class="allure-link">
-        <svg width="18" height="18" viewBox="0 0 36 36" style="vertical-align: middle; margin-right: 8px; display: inline-block;" xmlns="http://www.w3.org/2000/svg">
-          <g>
-            <path fill="#444CE7" d="m10 11.028-8 4.648 16 9.296 8-4.648z"></path>
-            <path fill="#8098F9" d="M26 1.732 18 6.38l8 4.648 8-4.648zm-16 9.296-8 4.648V6.38l8-4.648z"></path>
-            <path fill="#2D31A6" d="M18 24.972v9.296l-8-4.648v-9.296z"></path>
-            <path fill="#8098F9" d="m18 24.972 8-4.648v9.296l-8 4.648z"></path>
-            <path fill="#444CE7" d="m10 11.028 16 9.296 7.14-4.148c.532-.31.86-.88.86-1.499V6.38l-8 4.648-16-9.296z"></path>
-          </g>
-        </svg>
-        Открыть в ТестОпсе
-      </a>
-    </p>`;
+    output += `<h1 class="test-case-title ${statusClass}"><span class="test-case-id">#${testCase.id}</span> ${testCase.name}</h1>`;
 
-    output += `<details class="test-case-details"><summary>Информация о тест-кейсе</summary>`;
-    output += `<div class="test-info">`;
-    output += `<p><strong>Статус:</strong> ${testCase.status}</p>`;
-    output += `<p><strong>Теги:</strong> ${testCase.tags.join(', ') || 'Нет значений'}</p>`;
-    output += `<p><strong>Слой:</strong> ${testCase.layer}</p>`;
-
-    const customFieldsOutput = testCase.customFields
-        .filter(field => field.value !== 'Нет значений')
-        .map(field => `${field.name}: ${field.value}`)
-        .join(', ');
-    output += `<p><strong>Кастомные поля:</strong> ${customFieldsOutput || 'Нет значений'}</p>`;
-
-    const parameters = testCase.parameters || [];
-    if (parameters.length > 0) {
-        output += `<p><strong>Параметры:</strong></p>`;
-        output += `<table class="parameters-table"><thead><tr><th>Параметр</th><th>Значения</th></tr></thead><tbody>`;
-        for (const p of parameters) {
-            const name = escapeHtml(p.name || '?');
-            const vals = Array.isArray(p.values) ? p.values : (p.value != null ? [p.value] : []);
-            const valuesCell = vals.map(v => escapeHtml(String(v))).join(', ');
-            output += `<tr><td>${name}</td><td>${valuesCell}</td></tr>`;
-        }
-        output += `</tbody></table>`;
-    }
-
-    const precondition = (testCase.precondition || '').trim();
-    if (precondition && precondition !== 'Нет предусловия') {
-        output += `<p><strong>Предусловие:</strong> ${escapeHtml(precondition)}</p>`;
-    }
-
+    const allurePageUrl = `${config.url}/project/${projectId}/test-cases/${testCase.id}`;
+    const allureIframeUrl = issueKey
+        ? `${config.url}/iframe/issue-tracker-testcase/${testCase.id}?integrationId=${config.defaultJiraIntegrationId}&issueKey=${encodeURIComponent(issueKey)}`
+        : allurePageUrl;
+    output += `<details class="test-case-details" open><summary>Информация о тест-кейсе</summary>`;
+    output += `<div class="allure-iframe-wrapper">`;
+    output += `<iframe src="${allureIframeUrl}" class="allure-iframe" loading="lazy"></iframe>`;
+    output += `<div class="allure-iframe-fallback">Не удалось загрузить. <a href="${allurePageUrl}" target="_blank">Открыть в новой вкладке</a></div>`;
     output += `</div>`;
-
-    // Шаги
-    if (testCase.steps && testCase.steps.length > 0) {
-        output += `<h3>Шаги:</h3><ul class="steps-list">`;
-        testCase.steps.forEach((step, index) =>
-        {
-            // Проверка наличия ошибок для шага
-            const stepErrors = validation.errors
-                .filter(e => e.stepErrors && e.stepErrors.some(se => se.stepIndex === index + 1))
-                .flatMap(e => e.stepErrors.filter(se => se.stepIndex === index + 1));
-
-            const stepWarnings = validation.warnings
-                .filter(w => w.stepErrors && w.stepErrors.some(sw => sw.stepIndex === index + 1))
-                .flatMap(w => w.stepErrors.filter(sw => sw.stepIndex === index + 1));
-
-            const hasStepIssues = stepErrors.length > 0 || stepWarnings.length > 0;
-            const stepClass = stepErrors.length > 0 ? 'step-error' :
-                stepWarnings.length > 0 ? 'step-warning' : '';
-
-            output += `<li class="${stepClass}">`;
-            const stepDescription = escapeHtml(step.description || '—');
-
-            // бейдж общего шага
-            const sharedStepBadge = step.type === 'sharedStep'
-                ? ' <span class="shared-step-badge">Общий шаг</span>'
-                : '';
-
-            output += `<div class="step-header"><strong>Шаг ${index + 1}:</strong> ${stepDescription}${sharedStepBadge}</div>`;
-
-            // подшаги общего шага
-            if (step.type === 'sharedStep' && step.childSteps && step.childSteps.length > 0) {
-                output += `<div class="step-expected">`;
-                output += `<ul class="shared-step-children">`;
-                step.childSteps.forEach((childStep) =>
-                {
-                    const childDescription = escapeHtml(childStep.description || '—');
-                    output += `<li class="shared-child-step">`;
-                    output += `<div class="child-step-description">${childDescription}</div>`;
-
-                    // ожидаемый результат подшага
-                    if (childStep.expectedResult) {
-                        const expectedHtml = escapeHtml(childStep.expectedResult).replace(/\n/g, '<br>');
-                        output += `<div class="child-step-expected">`;
-                        output += `<span class="child-expected-label">ОР:</span> ${expectedHtml}`;
-                        output += `</div>`;
-                    }
-
-                    output += `</li>`;
-                });
-                output += `</ul>`;
-                output += `</div>`;
-            }
-
-            if (step.expectedResult) {
-                const expectedHtml = escapeHtml(step.expectedResult).replace(/\n/g, '<br>');
-                output += `
-                  <div class="step-expected">
-                    <div class="step-expected-label">Ожидаемый результат:</div>
-                    <div class="step-expected-text">${expectedHtml}</div>
-                  </div>
-                `;
-            }
-
-            if (hasStepIssues) {
-                output += '<ul class="step-issues">';
-                stepErrors.forEach(err =>
-                {
-                    output += `<li class="error-item">${err.message}</li>`;
-                });
-                stepWarnings.forEach(warn =>
-                {
-                    output += `<li class="warning-item">${warn.message}</li>`;
-                });
-                output += '</ul>';
-            }
-            output += `</li>`;
-        });
-        output += `</ul>`;
-    }
-
-    // Ожидаемый результат
-    if (testCase.expectedResult) {
-        output += `<h3>Ожидаемый результат:</h3>`;
-        output += `<p class="test-info">${escapeHtml(testCase.expectedResult)}</p>`;
-    }
     output += `</details>`;
 
     // Конвертация ответа AI в формат, совместимый со статанализом
@@ -550,109 +443,53 @@ async function generateTestCaseReport (testCase, projectId, aiRecommendations = 
     const allErrors = [...validation.errors, ...aiErrors];
     const allWarnings = [...validation.warnings, ...aiWarnings];
 
-    const totalErrorItems = allErrors.reduce((sum, e) =>
-        sum + (e.stepErrors ? e.stepErrors.length : 1), 0);
-    if (allErrors.length > 0) {
-        output += `<div class="issues-section errors-section">`;
-        output += `<h2>Ошибки (${totalErrorItems}):</h2>`;
-        output += `<ul class="issues-list">`;
-
-        const errorsByCategory = groupByCategory(allErrors);
-
-        for (const [category, errors] of Object.entries(errorsByCategory)) {
-            const nonStepErrors = errors.filter(error => !error.stepErrors);
-            const stepErrorsExpanded = errors
-                .filter(error => error.stepErrors && error.stepErrors.length > 0)
-                .flatMap(error => error.stepErrors.map(se =>
-                {
-                    const step = testCase.steps?.[se.stepIndex - 1];
-                    const stepName = step?.description ? String(step.description).trim() : null;
-                    return {
-                        ruleName: error.ruleName,
-                        message: se.message,
-                        stepIndex: se.stepIndex,
-                        stepName: stepName ? (stepName.length > 80 ? stepName.slice(0, 77) + '…' : stepName) : null
-                    };
-                }));
-
-            if (nonStepErrors.length > 0 || stepErrorsExpanded.length > 0) {
-                output += `<li class="category-group">`;
-                output += `<strong>Категория: ${getCategoryName(category)}</strong>`;
-                output += `<ul>`;
-                nonStepErrors.forEach(error =>
-                {
-                    output += `<li class="error-item">`;
-                    output += `<span class="rule-name">${escapeHtml(error.ruleName)}</span>: ${escapeHtml(error.message)}`;
-                    output += `</li>`;
-                });
-                stepErrorsExpanded.forEach(err =>
-                {
-                    output += `<li class="error-item">`;
-                    const stepLabel = err.stepName
-                        ? `Шаг ${err.stepIndex}: «${escapeHtml(err.stepName)}»`
-                        : `Шаг ${err.stepIndex}`;
-                    output += `<span class="rule-name">${escapeHtml(err.ruleName)}</span> (${stepLabel}): ${escapeHtml(err.message)}`;
-                    output += `</li>`;
-                });
-                output += `</ul></li>`;
-            }
+    const flattenIssues = (issues) => {
+        const flat = [];
+        const byCategory = groupByCategory(issues);
+        for (const [category, items] of Object.entries(byCategory)) {
+            const catName = getCategoryName(category);
+            items.forEach(item => {
+                if (item.stepErrors && item.stepErrors.length > 0) {
+                    item.stepErrors.forEach(se => {
+                        const step = testCase.steps?.[se.stepIndex - 1];
+                        const stepName = step?.description ? String(step.description).trim() : null;
+                        const label = stepName
+                            ? `Шаг ${se.stepIndex}: «${escapeHtml(stepName.length > 60 ? stepName.slice(0, 57) + '…' : stepName)}»`
+                            : `Шаг ${se.stepIndex}`;
+                        flat.push({ category: catName, rule: escapeHtml(item.ruleName), stepLabel: label, message: escapeHtml(se.message) });
+                    });
+                } else {
+                    flat.push({ category: catName, rule: escapeHtml(item.ruleName), stepLabel: null, message: escapeHtml(item.message) });
+                }
+            });
         }
-        output += `</ul></div>`;
-    }
+        return flat;
+    };
 
-    // Вывод предупреждений
-    const totalWarningItems = allWarnings.reduce((sum, w) =>
-        sum + (w.stepErrors ? w.stepErrors.length : 1), 0);
-    if (allWarnings.length > 0) {
-        output += `<div class="issues-section warnings-section">`;
-        output += `<h2>Предупреждения (${totalWarningItems}):</h2>`;
-        output += `<ul class="issues-list">`;
+    const renderIssuesList = (items, type) => {
+        let html = `<div class="issues-section ${type}-section">`;
+        const title = type === 'errors' ? 'Ошибки' : 'Предупреждения';
+        html += `<div class="issues-header"><span class="issues-title">${title}</span><span class="issues-count ${type}-count">${items.length}</span></div>`;
+        html += `<div class="issues-body">`;
+        items.forEach(item => {
+            const itemClass = type === 'errors' ? 'error-item' : 'warning-item';
+            const stepPart = item.stepLabel ? ` <span class="issue-step">${item.stepLabel}</span>` : '';
+            html += `<span class="issue-category" title="${item.category}">${item.category}</span>`;
+            html += `<span class="issue-text ${itemClass}"><span class="rule-name">${item.rule}</span>${stepPart}: ${item.message}</span>`;
+        });
+        html += `</div>`;
+        html += `</div>`;
+        return html;
+    };
 
-        const warningsByCategory = groupByCategory(allWarnings);
+    const flatErrors = flattenIssues(allErrors);
+    const flatWarnings = flattenIssues(allWarnings);
 
-        for (const [category, warnings] of Object.entries(warningsByCategory)) {
-            const nonStepWarnings = warnings.filter(warning => !warning.stepErrors);
-            const stepWarningsExpanded = warnings
-                .filter(warning => warning.stepErrors && warning.stepErrors.length > 0)
-                .flatMap(warning => warning.stepErrors.map(sw =>
-                {
-                    const step = testCase.steps?.[sw.stepIndex - 1];
-                    const stepName = step?.description ? String(step.description).trim() : null;
-                    return {
-                        ruleName: warning.ruleName,
-                        message: sw.message,
-                        stepIndex: sw.stepIndex,
-                        stepName: stepName ? (stepName.length > 80 ? stepName.slice(0, 77) + '…' : stepName) : null
-                    };
-                }));
+    if (flatErrors.length > 0) output += renderIssuesList(flatErrors, 'errors');
+    if (flatWarnings.length > 0) output += renderIssuesList(flatWarnings, 'warnings');
 
-            if (nonStepWarnings.length > 0 || stepWarningsExpanded.length > 0) {
-                output += `<li class="category-group">`;
-                output += `<strong>Категория: ${getCategoryName(category)}</strong>`;
-                output += `<ul>`;
-                nonStepWarnings.forEach(warning =>
-                {
-                    output += `<li class="warning-item">`;
-                    output += `<span class="rule-name">${escapeHtml(warning.ruleName)}</span>: ${escapeHtml(warning.message)}`;
-                    output += `</li>`;
-                });
-                stepWarningsExpanded.forEach(warn =>
-                {
-                    output += `<li class="warning-item">`;
-                    const stepLabel = warn.stepName
-                        ? `Шаг ${warn.stepIndex}: «${escapeHtml(warn.stepName)}»`
-                        : `Шаг ${warn.stepIndex}`;
-                    output += `<span class="rule-name">${escapeHtml(warn.ruleName)}</span> (${stepLabel}): ${escapeHtml(warn.message)}`;
-                    output += `</li>`;
-                });
-                output += `</ul></li>`;
-            }
-        }
-        output += `</ul></div>`;
-    }
-
-    if (allErrors.length === 0 && allWarnings.length === 0) {
-        output += `<h2 class="passed">Тест-кейс прошел статический анализ</h2>`;
+    if (flatErrors.length === 0 && flatWarnings.length === 0) {
+        output += `<div class="passed">Тест-кейс прошёл статический анализ</div>`;
     }
 
     // Запрос детального AI-анализа
