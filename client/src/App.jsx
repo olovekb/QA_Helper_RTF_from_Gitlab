@@ -726,7 +726,7 @@ const App = ({ projects }) =>
             margin: '0 auto',
             padding: '40px 20px'
           } }>
-            <form onSubmit={ handleSubmit } style={ {
+            <form className="analysis-form" onSubmit={ handleSubmit } style={ {
               backgroundColor: 'var(--bg-content)',
               padding: '32px',
               borderRadius: '12px',
@@ -734,62 +734,64 @@ const App = ({ projects }) =>
               marginBottom: '32px',
               boxShadow: 'none'
             } }>
-              <div style={ { marginBottom: '24px' } }>
-                <label style={ {
-                  display: 'block',
-                  marginBottom: '8px',
-                  fontSize: '14px',
-                  fontWeight: '600',
-                  color: 'var(--text-secondary)'
-                } }>
-                  Выберите проект:
-                </label>
-                <Select
-                  classNamePrefix="select"
-                  placeholder="Выберите проект"
-                  options={ projects.map(p => ({ value: p.id, label: p.name })) }
-                  value={ (() => { const p = projects.find(pr => pr.id === projectId); return p ? { value: p.id, label: p.name } : null; })() }
-                  onChange={ opt => setProjectId(opt?.value ?? '') }
-                  menuPortalTarget={ document.body }
-                  menuPosition="fixed"
-                  menuPlacement="auto"
-                  styles={ { menuPortal: base => ({ ...base, zIndex: 9999 }) } }
-                />
-              </div>
-              <div style={ { marginBottom: '24px' } }>
-                <label style={ {
-                  display: 'block',
-                  marginBottom: '8px',
-                  fontSize: '14px',
-                  fontWeight: '600',
-                  color: 'var(--text-secondary)'
-                } }>
-                  Номер задачи из Jira:
-                </label>
-                <input
-                  type="text"
-                  value={ jiraIssue }
-                  onChange={ (e) =>
-                  {
-                    const v = e.target.value;
-                    setJiraIssue(v);
-                    syncProjectFromJiraPrefix(v);
-                  } }
-                  style={ {
-                    width: '100%',
-                    padding: '12px 16px',
-                    fontSize: '15px',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '8px',
-                    backgroundColor: 'var(--bg-input)',
-                    color: 'var(--text-primary)',
-                    outline: 'none',
-                    transition: 'all 0.2s',
-                    boxSizing: 'border-box'
-                  } }
-                  onFocus={ (e) => e.target.style.borderColor = 'var(--border-focus)' }
-                  onBlur={ (e) => e.target.style.borderColor = 'var(--border-color)' }
-                />
+              <div style={ { display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' } }>
+                <div style={ { flex: '1', minWidth: '200px' } }>
+                  <label style={ {
+                    display: 'block',
+                    marginBottom: '8px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    color: 'var(--text-secondary)'
+                  } }>
+                    Выберите проект:
+                  </label>
+                  <Select
+                    classNamePrefix="select"
+                    placeholder="Выберите проект"
+                    options={ projects.map(p => ({ value: p.id, label: p.name })) }
+                    value={ (() => { const p = projects.find(pr => pr.id === projectId); return p ? { value: p.id, label: p.name } : null; })() }
+                    onChange={ opt => setProjectId(opt?.value ?? '') }
+                    menuPortalTarget={ document.body }
+                    menuPosition="fixed"
+                    menuPlacement="auto"
+                    styles={ { menuPortal: base => ({ ...base, zIndex: 9999 }) } }
+                  />
+                </div>
+                <div style={ { flex: '1', minWidth: '200px' } }>
+                  <label style={ {
+                    display: 'block',
+                    marginBottom: '8px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    color: 'var(--text-secondary)'
+                  } }>
+                    Номер задачи из Jira:
+                  </label>
+                  <input
+                    type="text"
+                    value={ jiraIssue }
+                    onChange={ (e) =>
+                    {
+                      const v = e.target.value;
+                      setJiraIssue(v);
+                      syncProjectFromJiraPrefix(v);
+                    } }
+                    style={ {
+                      width: '100%',
+                      padding: '12px 16px',
+                      fontSize: '15px',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      backgroundColor: 'var(--bg-input)',
+                      color: 'var(--text-primary)',
+                      outline: 'none',
+                      transition: 'all 0.2s',
+                      boxSizing: 'border-box'
+                    } }
+                    onFocus={ (e) => e.target.style.borderColor = 'var(--border-focus)' }
+                    onBlur={ (e) => e.target.style.borderColor = 'var(--border-color)' }
+                  />
+                </div>
               </div>
               {/* Кнопка просмотра правил */ }
               { projectId && (
@@ -815,34 +817,34 @@ const App = ({ projects }) =>
 
               <button
                 type="submit"
-                disabled={ loading || !projectId }
+                disabled={ loading || !projectId || !jiraIssue.trim() }
                 style={ {
                   width: '100%',
                   padding: '14px 24px',
+
                   fontSize: '16px',
                   fontWeight: '600',
                   color: 'white',
-                  backgroundColor: (loading || !projectId) ? 'var(--border-color)' : 'var(--primary-accent)',
+                  backgroundColor: (loading || !projectId || !jiraIssue.trim()) ? 'var(--border-color)' : 'var(--primary-accent)',
                   border: 'none',
-                  borderRadius: '8px',
-                  cursor: (loading || !projectId) ? 'default' : 'pointer',
+                  borderRadius: '6px',
+                  cursor: (loading || !projectId || !jiraIssue.trim()) ? 'default' : 'pointer',
                   transition: 'all 0.2s',
-                  boxShadow: (loading || !projectId) ? 'none' : '0 2px 4px rgba(59, 130, 246, 0.3)'
                 } }
                 onMouseEnter={ (e) =>
                 {
-                  if (!loading && projectId) {
+                  if (!loading && projectId && jiraIssue.trim()) {
                     e.target.style.backgroundColor = 'var(--primary-hover)';
                   }
                 } }
                 onMouseLeave={ (e) =>
                 {
-                  if (!loading && projectId) {
+                  if (!loading && projectId && jiraIssue.trim()) {
                     e.target.style.backgroundColor = 'var(--primary-accent)';
                   }
                 } }
               >
-                { loading ? 'Анализ запущен...' : !projectId ? 'Выберите проект' : 'Запустить анализ' }
+                { loading ? 'Анализ запущен...' : !projectId ? 'Выберите проект' : !jiraIssue.trim() ? 'Введите номер задачи' : 'Запустить анализ' }
               </button>
             </form>
             { htmlReport && !loading && showScrollTop && (

@@ -30,6 +30,7 @@ import JiraMarkdownField from './components/JiraMarkdownField';
 import AttachmentsField from './components/AttachmentsField';
 import TaskSidebar from './components/TaskSidebar';
 import PhraseLoader from './components/PhraseLoader';
+import UndoDeleteToast from './components/UndoDeleteToast';
 
 // CSS для анимаций прогресс-бара
 const progressBarStyles = `
@@ -429,6 +430,7 @@ export default function SolutionPage ({ projects = [] })
   const [selectedTaskIndex, setSelectedTaskIndex] = useState(0);
   const [defaultsCollapsed, setDefaultsCollapsed] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [undoDeleteState, setUndoDeleteState] = useState(null);
   const [forceValidationForTaskIndex, setForceValidationForTaskIndex] = useState(null);
   const [showValidationToast, setShowValidationToast] = useState(false);
   const validationToastTimerRef = useRef(null);
@@ -1693,6 +1695,33 @@ export default function SolutionPage ({ projects = [] })
     }
   };
 
+  const handleDeleteWithUndo = i =>
+  {
+    const deleted = tasks[i];
+    handleDelete(i);
+    setUndoDeleteState({ task: deleted, index: i });
+  };
+
+  const handleRestoreTask = () =>
+  {
+    if (!undoDeleteState) return;
+    const { task, index } = undoDeleteState;
+    setTasks(ts => [...ts.slice(0, index), task, ...ts.slice(index)]);
+    setCollapsedStates(prev =>
+    {
+      const newStates = {};
+      Object.keys(prev).forEach(key =>
+      {
+        const intKey = parseInt(key, 10);
+        if (intKey < index) newStates[intKey] = prev[key];
+        else if (intKey >= index) newStates[intKey + 1] = prev[key];
+      });
+      return newStates;
+    });
+    setSelectedTaskIndex(index);
+    setUndoDeleteState(null);
+  };
+
   const handleUpdate = (i, upd) =>
   {
     if (forceValidationForTaskIndex === i) setForceValidationForTaskIndex(null);
@@ -2298,7 +2327,7 @@ export default function SolutionPage ({ projects = [] })
                   index={ selectedTaskIndex }
                   task={ tasks[selectedTaskIndex] }
                   onUpdate={ handleUpdate }
-                  onDelete={ handleDelete }
+                  onDelete={ handleDeleteWithUndo }
                   fieldOptions={ fieldOptions }
                   loadDefectOptions={ loadDefectOptions }
                   allureProject={ allureProject }
@@ -2487,6 +2516,12 @@ export default function SolutionPage ({ projects = [] })
             </div>
           </div>
         ) }
+        <UndoDeleteToast
+          visible={ !!undoDeleteState }
+          taskName={ undoDeleteState?.task?.summary }
+          onRestore={ handleRestoreTask }
+          onDismiss={ () => setUndoDeleteState(null) }
+        />
         { showValidationToast && (
           <div className="validation-toast" role="alert">
             Не заполнены обязательные поля

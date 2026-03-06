@@ -23,6 +23,7 @@ import { createHandleChange, createHandlePaste } from './utils/taskFieldHelpers'
 import ArrowUpIcon from './components/ArrowUpIcon';
 import AttachmentsField from './components/AttachmentsField';
 import TaskSidebar from './components/TaskSidebar';
+import UndoDeleteToast from './components/UndoDeleteToast';
 
 const formatLastSaved = (ts) =>
 {
@@ -547,7 +548,7 @@ export default function CodeErrorPage ({ projects })
     const [results, setResults] = useState([]);
     const [modalOpen, setModalOpen] = useState(false);
     const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-    const [deleteSingleModalIndex, setDeleteSingleModalIndex] = useState(null);
+    const [undoDeleteState, setUndoDeleteState] = useState(null);
     const [aiLoading, setAiLoading] = useState({});
     const [requestLinkOption, setRequestLinkOption] = usePersistentState('codeErrorReqLink', null);
     const [aiFillAllLoading, setAiFillAllLoading] = useState(false);
@@ -752,15 +753,13 @@ export default function CodeErrorPage ({ projects })
                 setSelectedDefectIds(new Set());
             } else if (deleteModalOpen) {
                 setDeleteModalOpen(false);
-            } else if (deleteSingleModalIndex !== null) {
-                setDeleteSingleModalIndex(null);
             } else if (modalOpen) {
                 setModalOpen(false);
             }
         };
         document.addEventListener('keydown', handleKeyDown);
         return () => document.removeEventListener('keydown', handleKeyDown);
-    }, [launchDefectsModalOpen, deleteModalOpen, deleteSingleModalIndex, modalOpen]);
+    }, [launchDefectsModalOpen, deleteModalOpen, modalOpen]);
     useEffect(() =>
     {
         if (fieldOptions.ProdBug?.length && !defaultProdBug) {
@@ -1247,6 +1246,22 @@ export default function CodeErrorPage ({ projects })
                 setTasks(ts => ts.map(t => t.groupId === deleted.groupId ? { ...t, groupId: undefined } : t));
             }
         }
+    };
+
+    const handleDeleteWithUndo = i =>
+    {
+        const deleted = tasks[i];
+        handleDelete(i);
+        setUndoDeleteState({ task: deleted, index: i });
+    };
+
+    const handleRestoreTask = () =>
+    {
+        if (!undoDeleteState) return;
+        const { task, index } = undoDeleteState;
+        setTasks(ts => [...ts.slice(0, index), task, ...ts.slice(index)]);
+        setSelectedTaskIndex(index);
+        setUndoDeleteState(null);
     };
 
     const handleUpdate = (i, upd) =>
@@ -1754,8 +1769,7 @@ ${t.expected}
                                 index={ selectedTaskIndex }
                                 task={ tasks[selectedTaskIndex] }
                                 onUpdate={ handleUpdate }
-                                onDelete={ handleDelete }
-                                onDeleteClick={ i => setDeleteSingleModalIndex(i) }
+                                onDelete={ handleDeleteWithUndo }
                                 fieldOptions={ fieldOptions }
                                 loadDefectOptions={ loadDefectOptions }
                                 loadUserOptions={ loadUserOptions }
@@ -1906,35 +1920,12 @@ ${t.expected}
                 </div>
             ) }
 
-            { deleteSingleModalIndex !== null && deleteSingleModalIndex < tasks.length && (
-                <div
-                    className="modal"
-                    onClick={ e => { if (e.target === e.currentTarget) setDeleteSingleModalIndex(null); } }
-                >
-                    <div className="modal-content" onClick={ e => e.stopPropagation() }>
-                        <h1>Удалить задачу?</h1>
-                        <p className="delete-modal-task-name">{ tasks[deleteSingleModalIndex].summary || 'Без темы' }</p>
-                        <div className="buttons" style={ { display: 'flex', justifyContent: 'space-between', gap: '12px', marginTop: 16 } }>
-                            <button
-                                className="btn btn-secondary"
-                                onClick={ () =>
-                                {
-                                    handleDelete(deleteSingleModalIndex);
-                                    setDeleteSingleModalIndex(null);
-                                } }
-                            >
-                                Да, удалить
-                            </button>
-                            <button
-                                className="btn btn-primary"
-                                onClick={ () => setDeleteSingleModalIndex(null) }
-                            >
-                                Нет
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            ) }
+            <UndoDeleteToast
+                visible={ !!undoDeleteState }
+                taskName={ undoDeleteState?.task?.summary }
+                onRestore={ handleRestoreTask }
+                onDismiss={ () => setUndoDeleteState(null) }
+            />
 
             {
                 modalOpen && (

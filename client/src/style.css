@@ -926,6 +926,10 @@ button:disabled {
     color: var(--text-secondary) !important;
 }
 
+.analysis-form .select__control {
+    min-height: 44px !important;
+}
+
 /* общие стили для страниц тестирования требований / создания баг-репортов (CodeErrorPage, SolutionPage) */
 .task-details {
     flex: 1;
