@@ -1992,7 +1992,7 @@ export default function SolutionPage ({ projects = [] })
             </div>
           </div>
           <div className="settings-grid">
-            <div className="field full-width">
+            <div className="field">
               <label>Project Key (Jira)</label>
               <input type="text" value={ jiraProject } onChange={ e => setJiraProject(e.target.value.toUpperCase()) } required placeholder="PROJ" />
             </div>

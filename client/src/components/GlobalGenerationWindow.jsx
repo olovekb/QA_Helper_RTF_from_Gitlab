@@ -622,7 +622,7 @@ const GlobalGenerationWindow = ({
             onClick={handleOpenReviewModal}
             className="btn btn-primary"
           >
-            📋 Просмотреть тест-кейсы ({testCasesCount})
+            Просмотреть тест-кейсы ({testCasesCount})
           </button>
           <button
             onClick={onClearTestCases}
@@ -634,7 +634,7 @@ const GlobalGenerationWindow = ({
             }}
             title="Удалить все сгенерированные тест-кейсы"
           >
-            🗑️ Очистить тест-кейсы
+            Очистить тест-кейсы
           </button>
         </div>
       )}

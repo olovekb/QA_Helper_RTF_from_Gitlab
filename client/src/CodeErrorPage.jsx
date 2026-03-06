@@ -1795,7 +1795,20 @@ ${t.expected}
                             setLaunchDefectsList([]);
                             setSelectedDefectIds(new Set());
                         } }>×</button>
-                        <h2>{ selectedLaunchForDefects?.label || '' }</h2>
+                        <h2>
+                            { selectedLaunchForDefects?.value ? (
+                                <a
+                                    href={ `${config.url}/launch/${selectedLaunchForDefects.value}` }
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="launch-defects-modal-title-link"
+                                >
+                                    { selectedLaunchForDefects?.label || '' }
+                                </a>
+                            ) : (
+                                selectedLaunchForDefects?.label || ''
+                            ) }
+                        </h2>
                         { launchDefectsLoading ? (
                             <p className="status-message loading">Загрузка дефектов…</p>
                         ) : launchDefectsList.length === 0 ? (
