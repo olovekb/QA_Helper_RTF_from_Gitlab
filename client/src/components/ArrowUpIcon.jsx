@@ -12,7 +12,6 @@ export default function ArrowUpIcon({ className, size = 20 }) {
       strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
-      aria-hidden
     >
       <path d="M12 19V5M5 12l7-7 7 7" />
     </svg>

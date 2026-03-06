@@ -29,6 +29,7 @@ import ArrowUpIcon from './components/ArrowUpIcon';
 import JiraMarkdownField from './components/JiraMarkdownField';
 import AttachmentsField from './components/AttachmentsField';
 import TaskSidebar from './components/TaskSidebar';
+import TaskActionsMenu from './components/TaskActionsMenu';
 import PhraseLoader from './components/PhraseLoader';
 import UndoDeleteToast from './components/UndoDeleteToast';
 
@@ -2268,37 +2269,43 @@ export default function SolutionPage ({ projects = [] })
               </div>
               <div className={ `task-controls-wrapper${selectedTasksCount > 0 ? ' expanded' : ''}` }>
                 <div className="task-controls">
-                  <button
-                    className="btn btn-primary"
-                    disabled={ !ready }
-                    onClick={ () =>
-                    {
-                      if (selectedTasksCount === 0) return;
-                      const firstInvalidIdx = tasks.findIndex((t, i) => t.selected && getFirstInvalidFieldId(t, i));
-                      if (firstInvalidIdx >= 0) {
-                        const firstInvalidId = getFirstInvalidFieldId(tasks[firstInvalidIdx], firstInvalidIdx);
-                        showValidationFailedToast();
-                        setForceValidationForTaskIndex(firstInvalidIdx);
-                        setSelectedTaskIndex(firstInvalidIdx);
-                        requestAnimationFrame(() =>
+                  <TaskActionsMenu
+                    primaryButton={
+                      <button
+                        className="btn btn-primary"
+                        disabled={ !ready }
+                        onClick={ () =>
                         {
-                          const el = document.getElementById(firstInvalidId);
-                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        });
-                        return;
-                      }
-                      setResults([]);
-                      setModalOpen(true);
-                    } }
+                          if (selectedTasksCount === 0) return;
+                          const firstInvalidIdx = tasks.findIndex((t, i) => t.selected && getFirstInvalidFieldId(t, i));
+                          if (firstInvalidIdx >= 0) {
+                            const firstInvalidId = getFirstInvalidFieldId(tasks[firstInvalidIdx], firstInvalidIdx);
+                            showValidationFailedToast();
+                            setForceValidationForTaskIndex(firstInvalidIdx);
+                            setSelectedTaskIndex(firstInvalidIdx);
+                            requestAnimationFrame(() =>
+                            {
+                              const el = document.getElementById(firstInvalidId);
+                              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            });
+                            return;
+                          }
+                          setResults([]);
+                          setModalOpen(true);
+                        } }
+                      >
+                        Создать в Jira ({ selectedTasksCount })
+                      </button>
+                    }
                   >
-                    Создать в Jira ({ selectedTasksCount })
-                  </button>
-                  <button
-                    className="btn btn-secondary"
-                    onClick={ () => setDeleteModalOpen(true) }
-                  >
-                    Удалить
-                  </button>
+                    <button
+                      type="button"
+                      className="task-actions-dropdown-item"
+                      onClick={ () => setDeleteModalOpen(true) }
+                    >
+                      Удалить
+                    </button>
+                  </TaskActionsMenu>
                 </div>
               </div>
               <TaskSidebar
@@ -2534,8 +2541,6 @@ export default function SolutionPage ({ projects = [] })
               type="button"
               className="btn btn-secondary btn-top"
               onClick={ () => window.scrollTo({ top: 0, behavior: 'smooth' }) }
-              title="Вверх"
-              aria-label="Вверх"
             >
               <ArrowUpIcon />
             </button>

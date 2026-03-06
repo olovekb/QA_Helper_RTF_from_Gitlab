@@ -490,3 +490,7 @@
   min-width: 0;
   max-width: none;
 }
+
+.solution-page .task-controls {
+  width: 100%;
+}

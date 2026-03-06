@@ -23,6 +23,7 @@ import { createHandleChange, createHandlePaste } from './utils/taskFieldHelpers'
 import ArrowUpIcon from './components/ArrowUpIcon';
 import AttachmentsField from './components/AttachmentsField';
 import TaskSidebar from './components/TaskSidebar';
+import TaskActionsMenu from './components/TaskActionsMenu';
 import UndoDeleteToast from './components/UndoDeleteToast';
 
 const formatLastSaved = (ts) =>
@@ -552,6 +553,9 @@ export default function CodeErrorPage ({ projects })
     const [aiLoading, setAiLoading] = useState({});
     const [requestLinkOption, setRequestLinkOption] = usePersistentState('codeErrorReqLink', null);
     const [aiFillAllLoading, setAiFillAllLoading] = useState(false);
+    const [fillCommonModalOpen, setFillCommonModalOpen] = useState(false);
+    const [fillCommonPlatform, setFillCommonPlatform] = useState([]);
+    const [fillCommonAssignee, setFillCommonAssignee] = useState(null);
     const [aiFillLoading, setAiFillLoading] = useState({});
     const [linkTypes, setLinkTypes] = useState([]);
     const [requestLinkType, setRequestLinkType] = usePersistentState('codeErrorReqLinkType', null);
@@ -751,6 +755,8 @@ export default function CodeErrorPage ({ projects })
                 setSelectedLaunchForDefects(null);
                 setLaunchDefectsList([]);
                 setSelectedDefectIds(new Set());
+            } else if (fillCommonModalOpen) {
+                setFillCommonModalOpen(false);
             } else if (deleteModalOpen) {
                 setDeleteModalOpen(false);
             } else if (modalOpen) {
@@ -759,7 +765,15 @@ export default function CodeErrorPage ({ projects })
         };
         document.addEventListener('keydown', handleKeyDown);
         return () => document.removeEventListener('keydown', handleKeyDown);
-    }, [launchDefectsModalOpen, deleteModalOpen, modalOpen]);
+    }, [launchDefectsModalOpen, fillCommonModalOpen, deleteModalOpen, modalOpen]);
+    useEffect(() =>
+    {
+        if (fillCommonModalOpen) {
+            const first = tasks.find(t => t.selected);
+            setFillCommonPlatform(first?.platform || []);
+            setFillCommonAssignee(first?.assignee || null);
+        }
+    }, [fillCommonModalOpen, tasks]);
     useEffect(() =>
     {
         if (fieldOptions.ProdBug?.length && !defaultProdBug) {
@@ -1471,6 +1485,7 @@ ${t.expected}
 
     const ready = !isMetaLoading && !metaError && Object.keys(fieldOptions).length > 0;
     const selectedTasksCount = tasks.filter(t => t.selected).length;
+    const fillCommonToOptions = createToOptions(fieldOptions);
     const navigate = useNavigate();
     const showScrollTop = useShowScrollTop();
     const filteredLinkTypes = linkTypes.filter(o =>
@@ -1701,43 +1716,57 @@ ${t.expected}
                         </div>
                         <div className={ `task-controls-wrapper${selectedTasksCount > 0 ? ' expanded' : ''}` }>
                             <div className="task-controls">
-                                <button
-                                    className="btn btn-primary"
-                                    disabled={ !ready }
-                                    onClick={ () =>
-                                    {
-                                        const firstInvalidIdx = tasks.findIndex((t, i) => t.selected && getFirstInvalidFieldId(t, i));
-                                        if (firstInvalidIdx >= 0) {
-                                            const firstInvalidId = getFirstInvalidFieldId(tasks[firstInvalidIdx], firstInvalidIdx);
-                                            showValidationFailedToast();
-                                            setForceValidationForTaskIndex(firstInvalidIdx);
-                                            setSelectedTaskIndex(firstInvalidIdx);
-                                            requestAnimationFrame(() =>
+                                <TaskActionsMenu
+                                    primaryButton={
+                                        <button
+                                            className="btn btn-primary"
+                                            disabled={ !ready }
+                                            onClick={ () =>
                                             {
-                                                const el = document.getElementById(firstInvalidId);
-                                                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                            });
-                                            return;
-                                        }
-                                        setResults([]);
-                                        setModalOpen(true);
-                                    } }
+                                                const firstInvalidIdx = tasks.findIndex((t, i) => t.selected && getFirstInvalidFieldId(t, i));
+                                                if (firstInvalidIdx >= 0) {
+                                                    const firstInvalidId = getFirstInvalidFieldId(tasks[firstInvalidIdx], firstInvalidIdx);
+                                                    showValidationFailedToast();
+                                                    setForceValidationForTaskIndex(firstInvalidIdx);
+                                                    setSelectedTaskIndex(firstInvalidIdx);
+                                                    requestAnimationFrame(() =>
+                                                    {
+                                                        const el = document.getElementById(firstInvalidId);
+                                                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                                    });
+                                                    return;
+                                                }
+                                                setResults([]);
+                                                setModalOpen(true);
+                                            } }
+                                        >
+                                            Создать в Jira ({ selectedTasksCount })
+                                        </button>
+                                    }
                                 >
-                                    Создать в Jira ({ selectedTasksCount })
-                                </button>
-                                <button
-                                    className="btn btn-secondary"
-                                    onClick={ handleFillAllWithAI }
-                                    disabled={ aiFillAllLoading }
-                                >
-                                    { aiFillAllLoading ? 'Заполнение…' : 'Заполнить метаданные (AI)' }
-                                </button>
-                                <button
-                                    className="btn btn-secondary"
-                                    onClick={ () => setDeleteModalOpen(true) }
-                                >
-                                    Удалить
-                                </button>
+                                    <button
+                                        type="button"
+                                        className="task-actions-dropdown-item"
+                                        onClick={ handleFillAllWithAI }
+                                        disabled={ aiFillAllLoading }
+                                    >
+                                        { aiFillAllLoading ? 'Заполнение…' : 'Заполнить метаданные (AI)' }
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="task-actions-dropdown-item"
+                                        onClick={ () => setFillCommonModalOpen(true) }
+                                    >
+                                        Заполнить общие поля
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="task-actions-dropdown-item"
+                                        onClick={ () => setDeleteModalOpen(true) }
+                                    >
+                                        Удалить
+                                    </button>
+                                </TaskActionsMenu>
                             </div>
                         </div>
                         <TaskSidebar
@@ -1886,6 +1915,71 @@ ${t.expected}
                                 </div>
                             </>
                         ) }
+                    </div>
+                </div>
+            ) }
+
+            { fillCommonModalOpen && (
+                <div
+                    className="modal"
+                    onClick={ e => { if (e.target === e.currentTarget) setFillCommonModalOpen(false); } }
+                >
+                    <div className="modal-content" onClick={ e => e.stopPropagation() }>
+                        <button className="modal-close-btn" onClick={ () => setFillCommonModalOpen(false) }>×</button>
+                        <h2>Заполнить общие поля</h2>
+                        <div className="field-group" style={ { marginTop: 16 } }>
+                            <div className="field field-row full-width">
+                                <label>Исполнитель</label>
+                                <AsyncSelect
+                                    classNamePrefix="select"
+                                    cacheOptions
+                                    defaultOptions
+                                    loadOptions={ loadUserOptions }
+                                    placeholder="Начните вводить имя…"
+                                    value={ fillCommonAssignee }
+                                    onChange={ opt => setFillCommonAssignee(opt) }
+                                    noOptionsMessage={ () => 'Нет совпадений' }
+                                    isClearable
+                                    menuPortalTarget={ document.body }
+                                    styles={ { menuPortal: base => ({ ...base, zIndex: 9999 }) } }
+                                />
+                            </div>
+                            <div className="field field-row full-width">
+                                <label>Платформа</label>
+                                <Select
+                                    menuPortalTarget={ document.body }
+                                    menuPosition="fixed"
+                                    menuPlacement="auto"
+                                    styles={ { menuPortal: base => ({ ...base, zIndex: 9999 }) } }
+                                    classNamePrefix="select"
+                                    isMulti
+                                    closeMenuOnSelect={ false }
+                                    placeholder="Выберите..."
+                                    options={ fillCommonToOptions('Platform') }
+                                    value={ fillCommonToOptions('Platform').filter(o => fillCommonPlatform.includes(o.value)) }
+                                    onChange={ opts => setFillCommonPlatform(opts.map(o => o.value)) }
+                                />
+                            </div>
+                        </div>
+                        <div className="buttons" style={ { marginTop: 24 } }>
+                            <button
+                                className="btn btn-primary"
+                                disabled={ !fillCommonPlatform?.length && !fillCommonAssignee }
+                                onClick={ () =>
+                                {
+                                    if (fillCommonPlatform?.length || fillCommonAssignee) {
+                                        setTasks(ts => ts.map(t => t.selected ? {
+                                            ...t,
+                                            ...(fillCommonPlatform?.length && { platform: fillCommonPlatform }),
+                                            ...(fillCommonAssignee && { assignee: fillCommonAssignee })
+                                        } : t));
+                                        setFillCommonModalOpen(false);
+                                    }
+                                } }
+                            >
+                                Применить
+                            </button>
+                        </div>
                     </div>
                 </div>
             ) }
@@ -2105,8 +2199,6 @@ ${t.expected}
                         type="button"
                         className="btn btn-secondary btn-top"
                         onClick={ () => window.scrollTo({ top: 0, behavior: 'smooth' }) }
-                        title="Вверх"
-                        aria-label="Вверх"
                     >
                         <ArrowUpIcon />
                     </button>

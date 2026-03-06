@@ -930,6 +930,10 @@ button:disabled {
     min-height: 44px !important;
 }
 
+.analysis-form button {
+    min-height: 44px !important;
+}
+
 /* общие стили для страниц тестирования требований / создания баг-репортов (CodeErrorPage, SolutionPage) */
 .task-details {
     flex: 1;
@@ -1298,6 +1302,10 @@ button:disabled {
     margin: 12px 0 16px 0;
     color: var(--text-primary);
     font-weight: 500;
+}
+
+.modal .field.field-row.full-width:not(:last-child) {
+    margin-bottom: 12px;
 }
 
 /* страницы задач и общий UI */

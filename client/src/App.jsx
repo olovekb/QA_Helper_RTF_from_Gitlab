@@ -854,8 +854,6 @@ const App = ({ projects }) =>
                   type="button"
                   className="btn btn-secondary btn-top"
                   onClick={ () => window.scrollTo({ top: 0, behavior: 'smooth' }) }
-                  title="Вверх"
-                  aria-label="Вверх"
                 >
                   <ArrowUpIcon />
                 </button>
