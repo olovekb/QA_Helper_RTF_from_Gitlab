@@ -29,6 +29,7 @@ import ArrowUpIcon from './components/ArrowUpIcon';
 import JiraMarkdownField from './components/JiraMarkdownField';
 import AttachmentsField from './components/AttachmentsField';
 import TaskSidebar from './components/TaskSidebar';
+import PhraseLoader from './components/PhraseLoader';
 
 // CSS для анимаций прогресс-бара
 const progressBarStyles = `
@@ -1715,7 +1716,8 @@ export default function SolutionPage ({ projects = [] })
     setCollapsedStates(prev =>
     {
       const next = {};
-      keptIndices.forEach((oldIdx, newIdx) => {
+      keptIndices.forEach((oldIdx, newIdx) =>
+      {
         if (prev[oldIdx] !== undefined) next[newIdx] = prev[oldIdx];
       });
       return next;
@@ -2128,7 +2130,7 @@ export default function SolutionPage ({ projects = [] })
           </button>
         </div>
 
-        { loading && <div className="loader">Анализ в процессе...</div> }
+        { loading && <PhraseLoader /> }
         { analysisResult?.error && <div className="error-message">Ошибка: { analysisResult.error }</div> }
 
         {/* Глобальное окно генерации */ }

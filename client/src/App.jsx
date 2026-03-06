@@ -1,5 +1,5 @@
 // src/App.jsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useShowScrollTop } from './hooks/useShowScrollTop';
 import axios from 'axios';
 import Select from 'react-select';
@@ -425,7 +425,7 @@ const App = ({ projects }) =>
         }
         const iframeWrapper = document.createElement('div');
         iframeWrapper.className = 'feedback-iframe-wrapper';
-        iframeWrapper.style.cssText = 'margin-top: 20px; padding-top: 20px; border-top: 1px solid #4b5563;';
+        iframeWrapper.style.cssText = 'margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border-color);';
         const svgChevronDown = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3l3 4 3-4"/></svg>';
         const svgChevronRight = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2l4 3-4 3"/></svg>';
         iframeWrapper.innerHTML = `
@@ -521,9 +521,9 @@ const App = ({ projects }) =>
     };
   }, [showRulesModal, showCleanupModal, projectId, htmlReport, loading]);
 
-  const downloadHtml = () =>
+  const downloadHtml = useCallback(() =>
   {
-    const htmlContent = sessionStorage.getItem('htmlReport');
+    let htmlContent = sessionStorage.getItem('htmlReport');
     const savedProjectId = sessionStorage.getItem('projectId');
     const savedJiraIssue = sessionStorage.getItem('jiraIssue');
     if (!htmlContent) {
@@ -534,13 +534,36 @@ const App = ({ projects }) =>
       console.error('Данные projectId или jiraIssue отсутствуют в sessionStorage');
       return;
     }
+    // удаление кнопки AI-рекомендаций, замена iframe на ссылку
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlContent, 'text/html');
+    doc.querySelectorAll('.ai-recommendations').forEach(el => el.remove());
+    doc.querySelectorAll('.allure-iframe-wrapper').forEach(wrapper => {
+      const fallbackLink = wrapper.querySelector('.allure-iframe-fallback a[href]');
+      const iframe = wrapper.querySelector('iframe');
+      const href = fallbackLink?.getAttribute('href') || iframe?.getAttribute('src') || '#';
+      const a = doc.createElement('a');
+      a.href = href;
+      a.target = '_blank';
+      a.textContent = 'Открыть в новой вкладке';
+      wrapper.innerHTML = '';
+      wrapper.appendChild(a);
+    });
+    htmlContent = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
     const fileName = `Результат ревью тест-кейсов ${savedJiraIssue}.html`;
     const blob = new Blob([htmlContent], { type: 'text/html' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = fileName;
     link.click();
-  };
+  }, []);
+
+  useEffect(() =>
+  {
+    const handler = () => downloadHtml();
+    window.addEventListener('downloadReport', handler);
+    return () => window.removeEventListener('downloadReport', handler);
+  }, [downloadHtml]);
 
   const toggleFixStatus = () =>
   {
@@ -822,50 +845,19 @@ const App = ({ projects }) =>
                 { loading ? 'Анализ запущен...' : !projectId ? 'Выберите проект' : 'Запустить анализ' }
               </button>
             </form>
-            { htmlReport && !loading && (
-              <>
-                { showScrollTop && (
-                <div className="floating-buttons analysis-floating">
-                  <span />
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-top"
-                    onClick={ () => window.scrollTo({ top: 0, behavior: 'smooth' }) }
-                    title="Вверх"
-                    aria-label="Вверх"
-                  >
-                    <ArrowUpIcon />
-                  </button>
-                </div>
-                ) }
-                <div style={ { marginBottom: '32px', textAlign: 'center' } }>
-                  <button
-                    onClick={ downloadHtml }
-                    style={ {
-                      padding: '12px 24px',
-                      fontSize: '15px',
-                      fontWeight: '500',
-                      color: 'var(--text-primary)',
-                      backgroundColor: 'var(--success)',
-                      border: 'none',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s',
-                      boxShadow: '0 2px 4px rgba(16, 185, 129, 0.3)'
-                    } }
-                    onMouseEnter={ (e) =>
-                    {
-                      e.target.style.backgroundColor = '#059669'; /* success hover */
-                    } }
-                    onMouseLeave={ (e) =>
-                    {
-                      e.target.style.backgroundColor = 'var(--success)';
-                    } }
-                  >
-                    Скачать отчёт
-                  </button>
-                </div>
-              </>
+            { htmlReport && !loading && showScrollTop && (
+              <div className="floating-buttons analysis-floating">
+                <span />
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-top"
+                  onClick={ () => window.scrollTo({ top: 0, behavior: 'smooth' }) }
+                  title="Вверх"
+                  aria-label="Вверх"
+                >
+                  <ArrowUpIcon />
+                </button>
+              </div>
             ) }
             <div ref={ reportContainerRef } style={ {
               backgroundColor: 'var(--bg-content)',

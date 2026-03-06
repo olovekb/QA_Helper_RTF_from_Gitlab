@@ -367,7 +367,7 @@ ${formattedStepsForPrompt || 'не указаны'}
             { role: "system", content: systemContentSingle }
         ];
         if (developerContent) {
-            messages.push({ role: "developer", content: developerContent });
+            messages.push({ role: "system", content: developerContent });
         }
         messages.push({ role: "user", content: userContentSingle });
 
@@ -1010,8 +1010,8 @@ ${STYLE_GUIDE}
 - other — прочее (потенциальные улучшения)
 
 # ФОРМАТ ОТВЕТА:
-Верни СТРОГО JSON. Ключи — числовые ID без префиксов.
-Все строковые значения (title, recommendation, severity, category) ОБЯЗАТЕЛЬНО в двойных кавычках.
+Верни JSON. Ключи — числовые ID тест-кейсов без префиксов.
+Значения — массивы рекомендаций (или [], если рекомендаций нет)
 {
   "171010": [
     {
@@ -1067,9 +1067,36 @@ ${casesForPrompt}`;
         { role: "system", content: systemContent }
     ];
     if (developerContent) {
-        messages.push({ role: "developer", content: developerContent });
+        messages.push({ role: "system", content: developerContent });
     }
     messages.push({ role: "user", content: userContent });
+
+    const response_format = {
+        type: 'json_schema',
+        json_schema: {
+            name: 'test_case_recommendations',
+            description: 'Объект: ключи — ID тест-кейсов, значения — массивы рекомендаций',
+            strict: true,
+            schema: {
+                type: 'object',
+                description: 'Объект: ключи — ID тест-кейсов , значения — массивы рекомендаций',
+                additionalProperties: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            title: { type: 'string', description: 'Краткое название проблемы (2-5 слов)' },
+                            recommendation: { type: 'string', description: 'Конкретная рекомендация по исправлению' },
+                            severity: { type: 'string', enum: ['error', 'warning', 'improvement'], description: 'Уровень критичности' },
+                            category: { type: 'string', enum: ['required_fields', 'naming', 'expected_result', 'steps', 'parameters', 'test_scope', 'other'], description: 'Категория нарушения' }
+                        },
+                        required: ['title', 'recommendation', 'severity', 'category'],
+                        additionalProperties: false
+                    }
+                }
+            }
+        }
+    };
 
     const data = await callWithCloudRuFallback(
         URL,
@@ -1078,7 +1105,9 @@ ${casesForPrompt}`;
         {
             max_tokens: 16000,
             temperature: 0.25,
-            reduceTokensOn400: true
+            reduceTokensOn400: true,
+            response_format,
+            useResponseFormatForCloudRu: true
         }
     );
 

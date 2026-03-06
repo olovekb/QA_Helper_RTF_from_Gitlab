@@ -305,6 +305,7 @@ export default function TaskSidebar ({
                       className="task-sidebar-group-name-input"
                       value={ editingName }
                       onChange={ e => setEditingName(e.target.value) }
+                      onFocus={ e => e.target.select() }
                       onBlur={ saveGroupName }
                       onKeyDown={ e =>
                       {

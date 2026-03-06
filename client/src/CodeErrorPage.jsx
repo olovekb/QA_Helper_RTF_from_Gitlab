@@ -774,7 +774,8 @@ export default function CodeErrorPage ({ projects })
     {
         if (!fieldOptions.Platform?.length) return;
         const validIds = new Set(fieldOptions.Platform.map(o => o.id));
-        setTasks(ts => ts.map(t => {
+        setTasks(ts => ts.map(t =>
+        {
             const filtered = (t.platform || []).filter(id => validIds.has(id));
             if (filtered.length !== (t.platform || []).length) {
                 return { ...t, platform: filtered };
