@@ -1,6 +1,7 @@
 // src/App.jsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useShowScrollTop } from './hooks/useShowScrollTop';
+import { useDebounce } from './hooks/useDebounce';
 import axios from 'axios';
 import Select from 'react-select';
 import './style.css';
@@ -12,6 +13,7 @@ import GlobalBackgroundProgress from './components/GlobalBackgroundProgress';
 import ErrorBoundary from './components/ErrorBoundary';
 import RulesModal from './components/RulesModal';
 import ArrowUpIcon from './components/ArrowUpIcon';
+import { HiOutlineQuestionMarkCircle } from 'react-icons/hi';
 import { trackEvent } from './analytics';
 
 const App = ({ projects }) =>
@@ -29,10 +31,14 @@ const App = ({ projects }) =>
   const [cleanupLoading, setCleanupLoading] = useState(false);
   const [cleanupResult, setCleanupResult] = useState(null);
   const [showRulesModal, setShowRulesModal] = useState(false);
+  const [lastReviewInfo, setLastReviewInfo] = useState(null);
 
+  const debouncedJiraIssue = useDebounce(jiraIssue.trim(), 400);
   const navigate = useNavigate();
   const reportContainerRef = useRef(null);
   const showScrollTop = useShowScrollTop();
+  const tooltipShownAtRef = useRef(0);
+  const tooltipHideTimeoutRef = useRef(null);
 
   // Функция для преобразования Markdown-текста в HTML
   const parseMarkdown = (markdownText) =>
@@ -51,6 +57,27 @@ const App = ({ projects }) =>
       setHtmlReport(savedReport);
     }
   }, []);
+
+  useEffect(() =>
+  {
+    if (!debouncedJiraIssue) {
+      setLastReviewInfo(null);
+      return;
+    }
+    let cancelled = false;
+    axios.get(`${config.serverUrl}/analyze/status`, { params: { jiraIssue: debouncedJiraIssue } })
+      .then((res) =>
+      {
+        if (cancelled) return;
+        if (res.data?.hasReview && res.data?.createdAt) {
+          setLastReviewInfo({ createdAt: res.data.createdAt });
+        } else {
+          setLastReviewInfo(null);
+        }
+      })
+      .catch(() => { if (!cancelled) setLastReviewInfo(null); });
+    return () => { cancelled = true; };
+  }, [debouncedJiraIssue]);
 
   const syncProjectFromJiraPrefix = (value) =>
   {
@@ -538,7 +565,8 @@ const App = ({ projects }) =>
     const parser = new DOMParser();
     const doc = parser.parseFromString(htmlContent, 'text/html');
     doc.querySelectorAll('.ai-recommendations').forEach(el => el.remove());
-    doc.querySelectorAll('.allure-iframe-wrapper').forEach(wrapper => {
+    doc.querySelectorAll('.allure-iframe-wrapper').forEach(wrapper =>
+    {
       const fallbackLink = wrapper.querySelector('.allure-iframe-fallback a[href]');
       const iframe = wrapper.querySelector('iframe');
       const href = fallbackLink?.getAttribute('href') || iframe?.getAttribute('src') || '#';
@@ -589,6 +617,7 @@ const App = ({ projects }) =>
       sessionStorage.setItem('htmlReport', newReport);
       sessionStorage.setItem('projectId', projectId);
       sessionStorage.setItem('jiraIssue', jiraIssue);
+      setLastReviewInfo({ createdAt: new Date().toISOString() });
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -757,17 +786,91 @@ const App = ({ projects }) =>
                     styles={ { menuPortal: base => ({ ...base, zIndex: 9999 }) } }
                   />
                 </div>
-                <div style={ { flex: '1', minWidth: '200px' } }>
-                  <label style={ {
-                    display: 'block',
-                    marginBottom: '8px',
-                    fontSize: '14px',
-                    fontWeight: '600',
-                    color: 'var(--text-secondary)'
-                  } }>
-                    Номер задачи из Jira:
-                  </label>
+                <div className="jira-issue-field">
+                  <div className="jira-issue-header">
+                    <label htmlFor="jira-issue-input">Номер задачи из Jira:</label>
+                    { lastReviewInfo && (
+                      <span
+                        className="jira-review-trigger"
+                        onMouseEnter={ (e) =>
+                        {
+                          if (tooltipHideTimeoutRef.current) {
+                            clearTimeout(tooltipHideTimeoutRef.current);
+                            tooltipHideTimeoutRef.current = null;
+                          }
+                          tooltipShownAtRef.current = Date.now();
+                          const tt = e.currentTarget.querySelector('.jira-review-tooltip');
+                          if (tt) tt.style.visibility = 'visible';
+                        } }
+                        onMouseLeave={ (e) =>
+                        {
+                          const tt = e.currentTarget.querySelector('.jira-review-tooltip');
+                          if (tt) {
+                            tooltipHideTimeoutRef.current = setTimeout(() =>
+                            {
+                              tt.style.visibility = 'hidden';
+                              tooltipHideTimeoutRef.current = null;
+                            }, 150);
+                          }
+                        } }
+                      >
+                        <HiOutlineQuestionMarkCircle size={ 16 } />
+                        <span
+                          className="jira-review-tooltip"
+                          onMouseEnter={ (e) =>
+                          {
+                            if (tooltipHideTimeoutRef.current) {
+                              clearTimeout(tooltipHideTimeoutRef.current);
+                              tooltipHideTimeoutRef.current = null;
+                            }
+                            e.currentTarget.style.visibility = 'visible';
+                          } }
+                          onMouseLeave={ (e) =>
+                          {
+                            const el = e.currentTarget;
+                            tooltipHideTimeoutRef.current = setTimeout(() =>
+                            {
+                              el.style.visibility = 'hidden';
+                              tooltipHideTimeoutRef.current = null;
+                            }, 150);
+                          } }
+                        >
+                          <span>
+                            Есть результат ревью от { new Date(lastReviewInfo.createdAt).toLocaleString('ru-RU', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            }) }
+                          </span>
+                          <button
+                            type="button"
+                            className="btn-link jira-review-tooltip-btn"
+                            onClick={ async (e) =>
+                            {
+                              e.stopPropagation();
+                              if (Date.now() - tooltipShownAtRef.current < 300) return;
+                              const confirmed = window.confirm(
+                                'Результаты ревью будут удалены без возможности восстановления. Продолжить?'
+                              );
+                              if (!confirmed) return;
+                              try {
+                                await axios.delete(`${config.serverUrl}/analyze/status`, { params: { jiraIssue: jiraIssue.trim() } });
+                                setLastReviewInfo(null);
+                              } catch (err) {
+                                console.error('Ошибка очистки результатов:', err);
+                              }
+                            } }
+                          >
+                            Очистить результат
+                          </button>
+                        </span>
+                      </span>
+                    ) }
+                  </div>
                   <input
+                    id="jira-issue-input"
                     type="text"
                     value={ jiraIssue }
                     onChange={ (e) =>

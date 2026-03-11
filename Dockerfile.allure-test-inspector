@@ -14,6 +14,8 @@ RUN chmod +x ./node_modules/.bin/react-scripts && npm run build
 FROM node:18-alpine AS backend-builder
 WORKDIR /usr/src/app
 
+RUN apk add --no-cache postgresql-client
+
 # Копируем package.json, устанавливаем зависимости
 COPY package*.json ./
 RUN npm install --legacy-peer-deps --production
@@ -27,8 +29,10 @@ COPY --from=frontend-builder /usr/src/app/client/build ./client/build
 # Устанавливаем пакет serve для обслуживания статики клиента
 RUN npm install -g serve
 
+RUN chmod +x server/scripts/setup-db.sh 2>/dev/null || true
+
 # Expose порты
 EXPOSE 3000 5000
 
-# Запуск как сервера API, так и клиента через serve
-CMD ["sh", "-c", "node server/server.js & serve -s client/build -l 3000"]
+# Миграции БД, затем запуск сервера и клиента
+CMD ["sh", "-c", "server/scripts/setup-db.sh 2>/dev/null || true; node server/server.js & serve -s client/build -l 3000"]

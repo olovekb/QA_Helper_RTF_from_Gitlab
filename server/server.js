@@ -206,7 +206,8 @@ import
 } from './validation-engine.mjs';
 import { writeValidationRulesMarkdown } from './scripts/generate-validation-rules-md.mjs';
 import { exportStructureAllure, exportStructureAllureNocode } from './xmind-parce/export-structure-allure.mjs';
-import { analyzeTestCaseWithAI, analyzeBulkTestCasesWithAI, extractExpectedResult } from './ai-testcase.mjs';
+import { analyzeTestCaseWithAI, analyzeBulkTestCasesWithAI, analyzeRecheckWithAI, extractExpectedResult } from './ai-testcase.mjs';
+import { getLatestIssuesByJiraIssue, getLatestRunInfo, saveAnalysisResults, deleteAnalysisResultsByJiraIssue } from './static-analysis-db.mjs';
 import { fetchConfluencePage } from './confluenceFetcher.mjs';
 import { analyzeRequirementWithAI } from './analyzeRequirementWithAI.mjs';
 import { Buffer } from 'buffer';
@@ -260,6 +261,7 @@ import
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import knexfile from './db/knexfile.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1148,7 +1150,7 @@ app.use(compression({
 
 const db = knex({
     client: 'pg',
-    connection: process.env.DATABASE_URL,
+    connection: knexfile.connection,
     pool: {
         min: 2,
         max: 50
@@ -2541,6 +2543,43 @@ async function filterCases (allCases, jiraIssue, projectId)
     return filteredCases.filter(caseItem => caseItem !== undefined);
 }
 
+// Статус последнего ревью задачи для хинта
+app.get('/api/analyze/status', async (req, res) =>
+{
+    const jiraIssue = req.query.jiraIssue?.trim();
+    if (!jiraIssue) {
+        return res.json({ hasReview: false });
+    }
+    try {
+        const info = await getLatestRunInfo(jiraIssue);
+        if (!info) {
+            return res.json({ hasReview: false });
+        }
+        return res.json({
+            hasReview: true,
+            createdAt: info.createdAt
+        });
+    } catch (err) {
+        console.error(`[analyze/status] ${err.message}`);
+        return res.json({ hasReview: false });
+    }
+});
+
+app.delete('/api/analyze/status', async (req, res) =>
+{
+    const jiraIssue = req.query.jiraIssue?.trim();
+    if (!jiraIssue) {
+        return res.status(400).json({ error: 'jiraIssue обязателен' });
+    }
+    try {
+        await deleteAnalysisResultsByJiraIssue(jiraIssue);
+        return res.json({ ok: true });
+    } catch (err) {
+        console.error(`[analyze/status DELETE] ${err.message}`);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
 // API для анализа тест-кейсов
 app.post('/api/analyze', async (req, res) =>
 {
@@ -2576,18 +2615,44 @@ app.post('/api/analyze', async (req, res) =>
         // Вывод краткой информации
         console.log(`Обработано тест-кейсов для анализа: ${jsonResult.length}`);
 
-        let aiRecommendations = null;
+        let aiRecommendations = {};
         try {
             spinnerInterval = spinningLoader('Анализ тест-кейсов с помощью AI...');
             const apiKey = req.headers['x-openrouter-key'] || null;
 
-            console.log(`\nЗАПУСК МАССОВОГО AI-АНАЛИЗА:`);
-            console.log(`Проект: ${projectId}`);
-            console.log(`Jira Issue: ${jiraIssue}`);
-            console.log(`Количество тест-кейсов: ${filteredCases.length}`);
-            console.log(`API ключ: ${apiKey ? 'Предоставлен пользователем' : 'Используется системный'}`);
+            let previousIssues = null;
+            try {
+                previousIssues = await getLatestIssuesByJiraIssue(jiraIssue);
+            } catch (dbErr) {
+                console.log(`[analyze] БД недоступна для проверки истории: ${dbErr.message}`);
+            }
 
-            aiRecommendations = await analyzeBulkTestCasesWithAI(filteredCases, apiKey, jiraIssue, projectId);
+            const subsetA = [];
+            const subsetB = [];
+            if (previousIssues?.idsWithIssues?.size > 0) {
+                console.log(`[analyze] Задача ${jiraIssue} уже была проанализирована ранее, используем промпт для проверки`);
+                for (const tc of filteredCases) {
+                    const tcId = String(tc.id);
+                    if (previousIssues.idsWithIssues.has(tcId)) {
+                        subsetA.push(tc);
+                    } else {
+                        subsetB.push(tc);
+                    }
+                }
+                console.log(`[analyze] Повторный анализ: ${subsetA.length} тест-кейсов с замечаниями`);
+            } else {
+                subsetB.push(...filteredCases);
+            }
+
+            if (subsetA.length > 0) {
+                const recheckRecs = await analyzeRecheckWithAI(subsetA, previousIssues.issuesByTestCase, apiKey, jiraIssue);
+                Object.assign(aiRecommendations, recheckRecs);
+            }
+            if (subsetB.length > 0) {
+                const fullRecs = await analyzeBulkTestCasesWithAI(subsetB, apiKey, jiraIssue, projectId);
+                Object.assign(aiRecommendations, fullRecs);
+            }
+
             clearInterval(spinnerInterval);
 
             console.log(`\nAI-АНАЛИЗ ЗАВЕРШЕН УСПЕШНО:`);
@@ -2611,11 +2676,20 @@ app.post('/api/analyze', async (req, res) =>
             console.error(`\nОшибка AI-анализа: ${aiError.message}`);
             console.error(`Проект: ${projectId}, Jira: ${jiraIssue}`);
             console.log(`Продолжаем с результатами статического анализа`);
+            aiRecommendations = null;
         }
 
-        const htmlReport = await staticAnalysis(jsonResult, projectId, aiRecommendations);
+        const analysisResult = await staticAnalysis(jsonResult, projectId, aiRecommendations);
+        const { html: htmlReport, metadata } = analysisResult;
 
-        // Возвращаем форматированный результат в ответе
+        try {
+            if (metadata?.testCasesWithIssues?.length > 0) {
+                await saveAnalysisResults(projectId, jiraIssue, metadata);
+            }
+        } catch (saveErr) {
+            console.error(`[analyze] Ошибка сохранения в БД: ${saveErr.message}`);
+        }
+
         res.json(htmlReport);
 
     } catch (error) {
@@ -3187,7 +3261,8 @@ app.post('/api/jira/meta', async (req, res) =>
                         fieldIds.Platform = platformField.fieldId;
                         options.Platform = (platformField.allowedValues || [])
                             .filter(o => !o.disabled)
-                            .map(o => {
+                            .map(o =>
+                            {
                                 const name = o.value ?? o.name;
                                 return { id: String(o.id), name, prefix: getPlatformPrefix(name) };
                             });
@@ -3206,7 +3281,8 @@ app.post('/api/jira/meta', async (req, res) =>
                 fieldIds.Platform = pfId;
                 options.Platform = (pfMeta.allowedValues || [])
                     .filter(o => !o.disabled)
-                    .map(o => {
+                    .map(o =>
+                    {
                         const name = o.value ?? o.name;
                         return { id: String(o.id), name, prefix: getPlatformPrefix(name) };
                     });
