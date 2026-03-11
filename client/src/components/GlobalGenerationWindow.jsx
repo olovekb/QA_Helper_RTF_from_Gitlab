@@ -356,7 +356,8 @@ const GlobalGenerationWindow = ({
               color: 'white',
               cursor: (hasActiveGeneration && bddStatus !== 'completed') ? 'not-allowed' : 'pointer',
               opacity: (hasActiveGeneration && bddStatus !== 'completed') ? 0.6 : 1,
-              minWidth: '180px'
+              minWidth: '180px',
+              visibility:'hidden' // TODO: вернуть отображение, когда решится судьба генерации BDD
             }}
             title={bddStatus === 'completed' ? 'Открыть превью BDD тестов' : 'Создать BDD тесты (Gherkin) с дедупликацией шагов из требований'}
           >

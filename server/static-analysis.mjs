@@ -146,6 +146,7 @@ export async function staticAnalysis (testCases, projectId, aiRecommendations = 
     const failedTests = [];
     const warningTests = [];
     const testsByCategory = new Map();
+    const testCasesWithIssues = [];
 
     // Получение настроек проекта
     const projectSettings = getProjectSettings(projectId);
@@ -184,6 +185,20 @@ export async function staticAnalysis (testCases, projectId, aiRecommendations = 
         for (const cat of issueCategories) {
             if (!testsByCategory.has(cat)) testsByCategory.set(cat, []);
             testsByCategory.get(cat).push(testCase);
+        }
+
+        const isErrorFallback = (msg) =>
+            !msg || /^Произошла ошибка при AI-анализе|^Ошибка парсинга AI ответа/i.test(String(msg));
+        const realIssues = aiRecsArray
+            .filter(r => r && (r.recommendation || r.message) && !isErrorFallback(r.recommendation || r.message))
+            .map(r => ({
+                title: r.title || null,
+                message: r.recommendation || r.message || '',
+                severity: r.severity || 'warning',
+                category: r.category || 'other'
+            }));
+        if (realIssues.length > 0) {
+            testCasesWithIssues.push({ testCaseId: testCase.id, issues: realIssues });
         }
     }
 
@@ -391,7 +406,7 @@ export async function staticAnalysis (testCases, projectId, aiRecommendations = 
     writeFileSync(fileName, htmlReport, 'utf8');
 
     console.log(`Отчет сохранен в файл: ${fileName}`);
-    return htmlReport;
+    return { html: htmlReport, metadata: { testCasesWithIssues } };
 }
 
 async function generateTestCaseReport (testCase, projectId, aiRecommendations = [], issueKey = '')
@@ -405,24 +420,7 @@ async function generateTestCaseReport (testCase, projectId, aiRecommendations = 
     const validation = validateTestCase(testCase, projectId);
     let output = '';
 
-    // Вывод ID и названия тест-кейса
-    const statusClass = validation.hasErrors ? 'status-error' :
-        validation.hasWarnings ? 'status-warning' : 'status-success';
-
-    output += `<h1 class="test-case-title ${statusClass}"><span class="test-case-id">#${testCase.id}</span> ${testCase.name}</h1>`;
-
-    const allurePageUrl = `${config.url}/project/${projectId}/test-cases/${testCase.id}`;
-    const allureIframeUrl = issueKey
-        ? `${config.url}/iframe/issue-tracker-testcase/${testCase.id}?integrationId=${config.defaultJiraIntegrationId}&issueKey=${encodeURIComponent(issueKey)}`
-        : allurePageUrl;
-    output += `<details class="test-case-details" open><summary>Информация о тест-кейсе</summary>`;
-    output += `<div class="allure-iframe-wrapper">`;
-    output += `<iframe src="${allureIframeUrl}" class="allure-iframe" loading="lazy"></iframe>`;
-    output += `<div class="allure-iframe-fallback">Не удалось загрузить. <a href="${allurePageUrl}" target="_blank">Открыть в новой вкладке</a></div>`;
-    output += `</div>`;
-    output += `</details>`;
-
-    // Конвертация ответа AI в формат, совместимый со статанализом
+    // Конвертация ответа AI в формат, совместимый со статанализом (нужно до statusClass)
     const aiErrors = aiRecommendations
         .filter(r => r && r.severity === 'error')
         .map(r => ({
@@ -443,14 +441,34 @@ async function generateTestCaseReport (testCase, projectId, aiRecommendations = 
     const allErrors = [...validation.errors, ...aiErrors];
     const allWarnings = [...validation.warnings, ...aiWarnings];
 
-    const flattenIssues = (issues) => {
+    // Вывод ID и названия тест-кейса (статус — по всем замечаниям: статика + AI)
+    const statusClass = allErrors.length > 0 ? 'status-error' :
+        allWarnings.length > 0 ? 'status-warning' : 'status-success';
+
+    output += `<h1 class="test-case-title ${statusClass}"><span class="test-case-id">#${testCase.id}</span> ${testCase.name}</h1>`;
+
+    const allurePageUrl = `${config.url}/project/${projectId}/test-cases/${testCase.id}`;
+    const allureIframeUrl = issueKey
+        ? `${config.url}/iframe/issue-tracker-testcase/${testCase.id}?integrationId=${config.defaultJiraIntegrationId}&issueKey=${encodeURIComponent(issueKey)}`
+        : allurePageUrl;
+    output += `<details class="test-case-details" open><summary>Информация о тест-кейсе</summary>`;
+    output += `<div class="allure-iframe-wrapper">`;
+    output += `<iframe src="${allureIframeUrl}" class="allure-iframe" loading="lazy"></iframe>`;
+    output += `<div class="allure-iframe-fallback">Не удалось загрузить. <a href="${allurePageUrl}" target="_blank">Открыть в новой вкладке</a></div>`;
+    output += `</div>`;
+    output += `</details>`;
+
+    const flattenIssues = (issues) =>
+    {
         const flat = [];
         const byCategory = groupByCategory(issues);
         for (const [category, items] of Object.entries(byCategory)) {
             const catName = getCategoryName(category);
-            items.forEach(item => {
+            items.forEach(item =>
+            {
                 if (item.stepErrors && item.stepErrors.length > 0) {
-                    item.stepErrors.forEach(se => {
+                    item.stepErrors.forEach(se =>
+                    {
                         const step = testCase.steps?.[se.stepIndex - 1];
                         const stepName = step?.description ? String(step.description).trim() : null;
                         const label = stepName
@@ -466,13 +484,16 @@ async function generateTestCaseReport (testCase, projectId, aiRecommendations = 
         return flat;
     };
 
-    const renderIssuesList = (items, type) => {
+    const renderIssuesList = (items, type) =>
+    {
         let html = `<div class="issues-section ${type}-section">`;
-        const title = type === 'errors' ? 'Ошибки' : 'Предупреждения';
+        const titles = { errors: 'Ошибки', warnings: 'Предупреждения' /* , improvements: 'Улучшения' */ };
+        const title = titles[type] || type;
         html += `<div class="issues-header"><span class="issues-title">${title}</span><span class="issues-count ${type}-count">${items.length}</span></div>`;
         html += `<div class="issues-body">`;
-        items.forEach(item => {
-            const itemClass = type === 'errors' ? 'error-item' : 'warning-item';
+        items.forEach(item =>
+        {
+            const itemClass = type === 'errors' ? 'error-item' : 'warning-item'; /* type === 'improvements' ? 'improvement-item' */
             const stepPart = item.stepLabel ? ` <span class="issue-step">${item.stepLabel}</span>` : '';
             html += `<span class="issue-category" title="${item.category}">${item.category}</span>`;
             html += `<span class="issue-text ${itemClass}"><span class="rule-name">${item.rule}</span>${stepPart}: ${item.message}</span>`;
@@ -484,9 +505,11 @@ async function generateTestCaseReport (testCase, projectId, aiRecommendations = 
 
     const flatErrors = flattenIssues(allErrors);
     const flatWarnings = flattenIssues(allWarnings);
+    // const flatImprovements = flattenIssues(allImprovements);
 
     if (flatErrors.length > 0) output += renderIssuesList(flatErrors, 'errors');
     if (flatWarnings.length > 0) output += renderIssuesList(flatWarnings, 'warnings');
+    // if (flatImprovements.length > 0) output += renderIssuesList(flatImprovements, 'improvements');
 
     if (flatErrors.length === 0 && flatWarnings.length === 0) {
         output += `<div class="passed">Тест-кейс прошёл статический анализ</div>`;
@@ -495,7 +518,7 @@ async function generateTestCaseReport (testCase, projectId, aiRecommendations = 
     // Запрос детального AI-анализа
     output += `<div class="ai-recommendations"><button class="ai-recommend-btn" data-test-id="${testCase.id}">Запросить рекомендации от AI</button><p id="ai-rec-text-${testCase.id}"></p></div>`;
 
-    const allIssues = [...allErrors, ...allWarnings];
+    const allIssues = [...allErrors, ...allWarnings /* , ...allImprovements */];
     const issueCategories = [...new Set(allIssues.map(i => i.category || 'other'))];
 
     return {

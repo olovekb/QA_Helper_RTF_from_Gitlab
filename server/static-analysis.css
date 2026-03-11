@@ -15,6 +15,8 @@
     --error-bg: #fef2f2;
     --warning: #d97706;
     --warning-bg: #fffbeb;
+    /* --info: #2563eb; */
+    /* --info-bg: #eff6ff; */
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
     --shadow-md: 0 1px 3px rgb(0 0 0 / 0.1);
 }
@@ -507,6 +509,10 @@ ul .tree-children {
     border-left: 3px solid var(--warning);
 }
 
+/* .improvements-section {
+    border-left: 3px solid var(--info);
+} */
+
 .issues-header {
     display: flex;
     align-items: center;
@@ -538,6 +544,10 @@ ul .tree-children {
 .warnings-count {
     background-color: var(--warning);
 }
+
+/* .improvements-count {
+    background-color: var(--info);
+} */
 
 .issues-body {
     display: grid;
@@ -599,6 +609,11 @@ ul .tree-children {
     color: var(--warning);
     font-weight: 600;
 }
+
+/* .improvement-item .rule-name {
+    color: var(--info);
+    font-weight: 600;
+} */
 
 .rule-name {
     font-weight: 600;
