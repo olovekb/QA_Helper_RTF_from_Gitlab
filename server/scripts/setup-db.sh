@@ -15,9 +15,9 @@ fi
     DB_PASSWORD="${DB_PASSWORD:-password}"
     export PGPASSWORD="$DB_PASSWORD"
 
-    # Используем DB_USER (создан postgres-контейнером) — он суперпользователь
-    psql -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d postgres -c "CREATE DATABASE \"$DB_NAME\";" 2>/dev/null || true
-    psql -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d postgres -c "GRANT ALL PRIVILEGES ON DATABASE \"$DB_NAME\" TO \"$DB_USER\";" 2>/dev/null || true
+    # Используем tia_mapping_db и DB_USER
+    psql -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d tia_mapping_db -c "CREATE DATABASE \"$DB_NAME\";" 2>/dev/null || true
+    psql -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d tia_mapping_db -c "GRANT ALL PRIVILEGES ON DATABASE \"$DB_NAME\" TO \"$DB_USER\";" 2>/dev/null || true
     psql -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";" 2>/dev/null || true
 }
 

@@ -13,6 +13,7 @@ services:
       - DB_NAME=allure_inspector_db
       - DB_USER=${DB_USER:-tia_user}
       - DB_PASSWORD=${DB_PASSWORD:-password}
+      - DATABASE_URL=postgresql://${DB_USER:-tia_user}:${DB_PASSWORD:-password}@postgresql:5432/allure_inspector_db
     ports:
       - 3000:3000
       - 5000:5000

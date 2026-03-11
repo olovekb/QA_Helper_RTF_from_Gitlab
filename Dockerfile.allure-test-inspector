@@ -37,4 +37,4 @@ RUN sed -i 's/\r//' server/scripts/setup-db.sh 2>/dev/null || true
 EXPOSE 3000 5000
 
 # Миграции БД, затем запуск сервера и клиента
-CMD ["sh", "-c", "server/scripts/setup-db.sh && node server/server.js & serve -s client/build -l 3000"]
+CMD ["sh", "-c", "server/scripts/setup-db.sh || echo 'WARN: setup-db завершился с ошибкой'; node server/server.js & serve -s client/build -l 3000"]
