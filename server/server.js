@@ -1189,6 +1189,18 @@ app.use(express.json({ limit: '200mb' }));
 app.options('*', cors(corsOptions));
 const limit = pLimit(100);
 
+app.get('/health/db', async (req, res) =>
+{
+    try {
+        const { default: pool } = await import('./db/pool.js');
+        await pool.raw('SELECT 1');
+        return res.json({ status: 'ok', db: 'connected' });
+    } catch (err) {
+        console.error('[health/db]', err.message);
+        return res.status(503).json({ status: 'error', db: err.message });
+    }
+});
+
 // ============================================================================
 // DEBUG API (автоматическое тестирование и улучшение агента)
 // ============================================================================
@@ -2685,9 +2697,12 @@ app.post('/api/analyze', async (req, res) =>
         try {
             if (metadata?.testCasesWithIssues?.length > 0) {
                 await saveAnalysisResults(projectId, jiraIssue, metadata);
+            } else {
+                console.log(`[analyze] Пропуск сохранения: нет AI-замечаний (testCasesWithIssues: ${metadata?.testCasesWithIssues?.length ?? 0})`);
             }
         } catch (saveErr) {
-            console.error(`[analyze] Ошибка сохранения в БД: ${saveErr.message}`);
+            console.error(`[analyze] Ошибка сохранения в БД:`, saveErr.message);
+            console.error(`[analyze] Stack:`, saveErr.stack);
         }
 
         res.json(htmlReport);

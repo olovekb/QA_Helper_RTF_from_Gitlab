@@ -30,9 +30,11 @@ COPY --from=frontend-builder /usr/src/app/client/build ./client/build
 RUN npm install -g serve
 
 RUN chmod +x server/scripts/setup-db.sh 2>/dev/null || true
+# Исправление CRLF
+RUN sed -i 's/\r//' server/scripts/setup-db.sh 2>/dev/null || true
 
 # Expose порты
 EXPOSE 3000 5000
 
 # Миграции БД, затем запуск сервера и клиента
-CMD ["sh", "-c", "server/scripts/setup-db.sh 2>/dev/null || true; node server/server.js & serve -s client/build -l 3000"]
+CMD ["sh", "-c", "server/scripts/setup-db.sh && node server/server.js & serve -s client/build -l 3000"]
