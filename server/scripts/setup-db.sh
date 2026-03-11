@@ -19,6 +19,7 @@ fi
     psql -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d tia_mapping_db -c "CREATE DATABASE \"$DB_NAME\";" 2>/dev/null || true
     psql -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d tia_mapping_db -c "GRANT ALL PRIVILEGES ON DATABASE \"$DB_NAME\" TO \"$DB_USER\";" 2>/dev/null || true
     psql -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";" 2>/dev/null || true
+    psql -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS \"pgcrypto\";" 2>/dev/null || true
 }
 
 # Миграции с retry

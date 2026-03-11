@@ -11,6 +11,6 @@ export default {
   connection,
   migrations: {
     directory: './migrations',
-    tableName: 'knex_migrations'
+    tableName: 'knex_migrations_inspector'
   }
 };
