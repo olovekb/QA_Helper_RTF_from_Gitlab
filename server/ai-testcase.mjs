@@ -11,6 +11,9 @@ const AI_LOGS_DIR = './ai-logs';
 /** Максимальное количество тест-кейсов в одном запросе к AI */
 export const BATCH_SIZE = 20;
 
+// Максимальная длина ответа модели в символах для обрезки до парсинга
+const MAX_RESPONSE_LENGTH = 100000;
+
 /** JSON Schema для ответа AI */
 const RECOMMENDATION_RESPONSE_SCHEMA = {
     type: 'object',
@@ -41,9 +44,9 @@ function ensureAILogsDir ()
 }
 
 /**
- * Заменяет кавычки " на ', чтобы при цитировании в JSON модель не ломала строку
+ * Замена " на ' в тест-кейсах
  */
-function sanitizeQuotesForJsonSafePrompt (text)
+function sanitizeDataForPrompt (text)
 {
     if (!text || typeof text !== 'string') return text;
     return text.replace(/"/g, "'");
@@ -60,8 +63,6 @@ const EXAMPLES_MD_DIR = path.join('./server/config/examples', 'test-cases');
 
 /**
  * Парсит содержимое .md-файла в массив блоков примеров (разделители: --- или ## Пример)
- * @param content - содержимое .md-файла
- * @returns {string[]} массив markdown-блоков примеров
  */
 function parseMdExamples (content)
 {
@@ -75,7 +76,6 @@ function parseMdExamples (content)
 
 /**
  * Загрузка примеров тест-кейсов для конкретного слоя из MD-файлов
- * @param layer - название слоя ("Integration frontend Tests")
  */
 function getExamplesForLayer (layer)
 {
@@ -95,8 +95,7 @@ function getExamplesForLayer (layer)
 }
 
 /**
- * Загружает все примеры тест-кейсов из .md-файлов в server/config/examples/test-cases/
- * @returns объект с примерами, сгруппированными по слоям
+ * Загружает все примеры тест-кейсов из .md-файлов
  */
 function loadAllExamples ()
 {
@@ -123,13 +122,10 @@ function loadAllExamples ()
 
 /**
  * Объединить примеры для промпта
- * @param examples - массив markdown-строк или объект { layer: string[] }
  */
 function prepareExamplesForPrompt (examples)
 {
-    if (!examples) {
-        return 'Примеры отсутствуют';
-    }
+    if (!examples) return 'Примеры отсутствуют';
 
     if (Array.isArray(examples)) {
         if (examples.length === 0) return 'Примеры отсутствуют';
@@ -157,16 +153,13 @@ function prepareExamplesForPrompt (examples)
 
 /**
  * Создать сообщение для роли developer с примерами
- * @param examples - примеры тест-кейсов
  */
 function createDeveloperContent (examples)
 {
     const hasExamples = (Array.isArray(examples) && examples.length > 0) ||
         (typeof examples === 'object' && Object.keys(examples).length > 0);
 
-    if (!hasExamples) {
-        return null;
-    }
+    if (!hasExamples) return null;
 
     return `Вот примеры эталонных тест-кейсов из нашего проекта, которые полностью соответствуют стайлгайду:
 
@@ -194,11 +187,9 @@ function generateStyleGuide (projectId)
         console.log(`[generateStyleGuide] Получено правил: ${aiRules?.length || 0}`);
 
         if (aiRules && aiRules.length > 0) {
-            // Добавляем все AI-правила из yaml с нумерацией
             aiRules.forEach((rule, index) =>
             {
-                const ruleNumber = index + 1;
-                styleGuide += `\n${ruleNumber}. ${rule.ai_prompt}`;
+                styleGuide += `\n${index + 1}. ${rule.ai_prompt}`;
             });
             console.log(`[generateStyleGuide] Добавлено ${aiRules.length} правил`);
         } else {
@@ -211,54 +202,42 @@ function generateStyleGuide (projectId)
     return styleGuide;
 }
 
-
 export function extractStepText (step)
 {
-    if (typeof step === 'string') {
-        return step.trim();
-    }
+    if (typeof step === 'string') return step.trim();
 
-    if (step.body && typeof step.body === 'string') {
-        return step.body.trim();
-    }
-    if (step.description && typeof step.description === 'string') {
-        return step.description.trim();
-    }
+    if (step.body && typeof step.body === 'string') return step.body.trim();
+    if (step.description && typeof step.description === 'string') return step.description.trim();
     if (step.bodyJson && typeof step.bodyJson === 'object') {
         if (step.bodyJson.content && Array.isArray(step.bodyJson.content)) {
             return step.bodyJson.content
                 .map(paragraph =>
                 {
                     if (paragraph.content && Array.isArray(paragraph.content)) {
-                        return paragraph.content.map(item => item.text || "").join(" ");
+                        return paragraph.content.map(item => item.text || '').join(' ');
                     }
-                    return "";
+                    return '';
                 })
-                .join(" ");
+                .join(' ');
         }
     }
-    return "";
+    return '';
 }
 
 export async function analyzeTestCaseWithAI (testCase, apiKey = null, jiraIssue = null, projectId = null)
 {
     try {
-        const testName = testCase.name ? testCase.name : "Неизвестно";
+        const testName = testCase.name ? testCase.name : 'Неизвестно';
 
-        // Форматируем шаги тест-кейса
-        // Используем stepsRaw (исходная структура Allure) если доступна, иначе steps (преобразованный формат)
         const stepsToFormat = testCase.stepsRaw || testCase.steps;
         const formattedStepsForPrompt = formatStepsForPrompt(stepsToFormat);
 
         const STYLE_GUIDE = generateStyleGuide(projectId);
 
-        // Загрузка примеров для слоя тест-кейса
         const layerName = testCase.layer && testCase.layer.name ? testCase.layer.name : null;
         const examples = layerName ? getExamplesForLayer(layerName) : [];
-
         const developerContent = createDeveloperContent(examples);
 
-        // Вставляем отформатированные шаги в промпт
         const systemContentSingle = `Ты — ведущий QA-инженер и наставник в нашей команде. Твоя задача — провести ревью тест-кейса, написанного моим коллегой, и дать ему конструктивную обратную связь.
 
 Проанализируй тест-кейс, основываясь на нашем стайлгайде:
@@ -288,54 +267,35 @@ ${formattedStepsForPrompt || 'не указаны'}
 ----------------------------------------------------------`;
 
         console.log('SYSTEM:', systemContentSingle);
-        if (developerContent) {
-            console.log('DEVELOPER:', developerContent);
-        } else {
-            console.log('DEVELOPER: не передается (примеры отсутствуют)');
-        }
+        console.log(developerContent ? 'DEVELOPER:' + developerContent : 'DEVELOPER: не передается (примеры отсутствуют)');
         console.log('USER:', userContentSingle);
 
-        // Сохранение промпта в файл до запроса
         ensureAILogsDir();
         const jiraPrefix = jiraIssue ? `${jiraIssue}-` : '';
         const promptFile = path.join(AI_LOGS_DIR, `ai-prompt-single-${jiraPrefix}last.txt`);
         let fullPromptSingleForLog = `=== SYSTEM ===\n${systemContentSingle}`;
-        if (developerContent) {
-            fullPromptSingleForLog += `\n\n=== DEVELOPER ===\n${developerContent}`;
-        }
+        if (developerContent) fullPromptSingleForLog += `\n\n=== DEVELOPER ===\n${developerContent}`;
         fullPromptSingleForLog += `\n\n=== USER ===\n${userContentSingle}`;
         fs.writeFileSync(promptFile, `${new Date().toISOString()}\n\n${fullPromptSingleForLog}`, 'utf8');
         console.log(`Промпт сохранён в ${promptFile}`);
 
         const API_TOKEN = config.openRouterAiKey;
-        if (!API_TOKEN) {
-            throw new Error("Не найден OPENROUTER_API_KEY. Проверьте ваш .env файл.");
-        }
+        if (!API_TOKEN) throw new Error('Не найден OPENROUTER_API_KEY. Проверьте ваш .env файл.');
 
         const URL = 'https://openrouter.ai/api/v1/chat/completions';
 
-        // Формирование массива сообщений
-        const messages = [
-            { role: "system", content: systemContentSingle }
-        ];
-        if (developerContent) {
-            messages.push({ role: "system", content: developerContent });
-        }
-        messages.push({ role: "user", content: userContentSingle });
+        const messages = [{ role: 'system', content: systemContentSingle }];
+        if (developerContent) messages.push({ role: 'system', content: developerContent });
+        messages.push({ role: 'user', content: userContentSingle });
 
-        const data = await callWithCloudRuFallback(
-            URL,
-            messages,
-            apiKey || API_TOKEN, // используем пользовательский ключ или дефолтный
-            {
-                max_tokens: 16000,
-                temperature: 0.1,
-                reduceTokensOn400: true // большой запрос: понижаем токены при 400-м статус-коде
-            }
-        );
+        const data = await callWithCloudRuFallback(URL, messages, apiKey || API_TOKEN, {
+            max_tokens: 16000,
+            temperature: 0.1,
+            reduceTokensOn400: true
+        });
 
-        let responseText = "";
-        if (data.choices && data.choices.length > 0 && data.choices[0].message && data.choices[0].message.content) {
+        let responseText = '';
+        if (data.choices?.[0]?.message?.content) {
             responseText = data.choices[0].message.content.trim();
         } else if (data.text) {
             responseText = data.text.trim();
@@ -351,7 +311,6 @@ ${formattedStepsForPrompt || 'не указаны'}
         }
     } catch (error) {
         console.error('Ошибка в функции analyzeTestCaseWithAI:', error.message);
-        // Возвращаем сообщение об ошибке, чтобы его можно было показать в интерфейсе
         return `Произошла ошибка при анализе: ${error.message}`;
     }
 }
@@ -359,51 +318,82 @@ ${formattedStepsForPrompt || 'не указаны'}
 function removeTextBeforeSuggestion (inputText)
 {
     const regex = /.*(Предложи улучшения для теста\.)/s;
-    const result = inputText.replace(regex, '$1').trim();
-    return result;
+    return inputText.replace(regex, '$1').trim();
 }
 
 /**
- * Исправить пропущенную открывающую кавычку у строкового значения в ответе AI
- * @param jsonText - сырой JSON
+ * Исправить ошибки в JSONе (md, LaTeX-теги) или обрезать ответ модели при наличии петли
  */
 export function repairJsonCommonErrors (jsonText)
 {
     if (!jsonText || typeof jsonText !== 'string') return jsonText;
-    // паттерн: "key": UnquotedValue"
-    let result = jsonText.replace(
-        /"((?:title|recommendation|severity|category))":\s+([^"\s][^"]*?)"\s*([,}\]])/g,
-        (_, key, value, suffix) => `"${key}": "${value}"${suffix}`
-    );
-    // AI иногда экранирует {{}} в JSON и обрезает строку
+
+    let result = jsonText;
+
+    const mdMatch = result.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (mdMatch) result = mdMatch[1];
+
+    try {
+        JSON.parse(result);
+        return result;
+    } catch { /* продолжаем */ }
+
+    // LaTeX-артефакты: \textbraceleft, \textbackslash
     result = result.replace(
-        /"recommendation":\s*"([^"]*?)(\\+)"\s*,\s*"severity":\s*"([^"]*)"([,}\]])/g,
-        (_, prefix, backslashes, severityVal, suffix) =>
-        {
-            const fix = prefix + (backslashes.length >= 2 ? '{{параметр из таблицы}}' : '{{параметр}}');
-            return `"recommendation": "${fix}", "severity": "${severityVal}"${suffix}`;
-        }
+        /"(title|recommendation|severity|category)":\s*"([^"]{0,300})((?:\\text\w+|\\?\{)+){10,}[^"]*"/g,
+        (_, key, truncated) => `"${key}": "${truncated}[обрезано]"`
     );
+
+    // пробелы/табы
+    result = result.replace(
+        /"(title|recommendation|severity|category)":\s*"([^"]{0,300})([\t ]{50,})[^"]*"/g,
+        (_, key, truncated) => `"${key}": "${truncated}[обрезано]"`
+    );
+
+    // контроль длины поля, до 500 символов
+    result = result.replace(
+        /"(title|recommendation|severity|category)":\s*"([^"]{0,500})[^"]{500,}"/g,
+        (_, key, truncated) => `"${key}": "${truncated}[обрезано]"`
+    );
+
+    try {
+        JSON.parse(result);
+        return result;
+    } catch { /* продолжаем */ }
+
+    // поиск последнего полного объекта
+    const lastValidClose = result.lastIndexOf(']}');
+    if (lastValidClose !== -1) {
+        const candidate = result.slice(0, lastValidClose + 2);
+        try {
+            JSON.parse(candidate);
+            return candidate;
+        } catch { /* продолжаем */ }
+    }
+
+    // восстановление структуры
+    const aggressive = result
+        .replace(/,\s*$/, '')
+        .replace(/"[^"]*$/, '"[обрезано]"')
+        + ']}}'.repeat(3);
+
+    for (let i = aggressive.length; i > result.length / 2; i--) {
+        try {
+            JSON.parse(aggressive.slice(0, i));
+            return aggressive.slice(0, i);
+        } catch { /* продолжаем */ }
+    }
+
     return result;
 }
 
 /**
- * Восстановить recommendation после парсинга: убрать лишнее экранирование {{}}
- * TODO попробовать убрать, посмотреть, будут ли возникать ошибки парсинга
+ * Восстановить экранирование {{ и }} в тексте рекомендации после парсинга JSON
  */
 function fixRecommendationText (text)
 {
     if (!text || typeof text !== 'string') return text;
-    let s = text
-        .replace(/\\\{\\{/g, '{{')
-        .replace(/\\\}\}/g, '}}')
-        .replace(/\\\\\{\\\{/g, '{{')
-        .replace(/\\\\\}\\\}/g, '}}');
-    // Обрезанный текст: заканчивается на "на \\" или "на \\\\" — дополняем
-    if (/на\s+\\+$/.test(s)) {
-        s = s.replace(/\s*\\+$/, ' {{параметр из таблицы параметров}}');
-    }
-    return s;
+    return text.replace(/\\+([{}])/g, '$1');
 }
 
 /**
@@ -411,71 +401,48 @@ function fixRecommendationText (text)
  */
 function extractJSON (responseText)
 {
-    // Пробуем найти JSON в markdown блоке
     const markdownMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    if (markdownMatch) {
-        return markdownMatch[1];
-    }
+    if (markdownMatch) return markdownMatch[1];
 
-    // Пробуем найти JSON объект в тексте
     const jsonMatch = responseText.match(/(\{[\s\S]*\})/);
-    if (jsonMatch) {
-        return jsonMatch[1];
-    }
+    if (jsonMatch) return jsonMatch[1];
 
-    // Возвращаем как есть
     return responseText;
 }
 
 /**
  * Нормализует рекомендации AI к ожидаемому формату
- * Преобразует различные варианты ключей (строковые, числовые, с префиксами) к единому виду
  */
 function normalizeRecommendations (rawRecommendations, testCases)
 {
-    // Нормализуем: AI может вернуть массив или один объект на тест-кейс
     const rawByKey = {};
     for (const [id, rec] of Object.entries(rawRecommendations)) {
         const arr = Array.isArray(rec) ? rec : (rec && rec.recommendation ? [rec] : []);
         arr.forEach(r =>
         {
-            if (r && r.recommendation) {
-                r.recommendation = fixRecommendationText(r.recommendation);
-            }
+            if (r?.recommendation) r.recommendation = fixRecommendationText(r.recommendation);
         });
         rawByKey[id] = arr;
     }
 
-    // Функция для поиска рекомендаций по ID с учетом различных форматов
     const findRecommendations = (tcId) =>
     {
         const idStr = String(tcId);
-        // Проверяем различные варианты ключей:
-        // - точное совпадение с числом
-        // - точное совпадение со строкой
-        // - с префиксом "ID" + число
-        // - с префиксом "ID " + число (с пробелом)
-        return rawByKey[tcId] ??
-            rawByKey[idStr] ??
-            rawByKey[`ID${idStr}`] ??
-            rawByKey[`ID ${idStr}`];
+        return rawByKey[tcId] ?? rawByKey[idStr] ?? rawByKey[`ID${idStr}`] ?? rawByKey[`ID ${idStr}`];
     };
 
-    // Строим итоговый объект с ключами = ID тест-кейсов
     const recommendations = {};
     testCases.forEach(tc =>
     {
         const recs = findRecommendations(tc.id);
-        if (recs && recs.length > 0) {
-            recommendations[tc.id] = recs;
-        }
+        if (recs && recs.length > 0) recommendations[tc.id] = recs;
     });
 
     return { recommendations, rawByKey };
 }
 
 /**
- * Извлечение ожидаемог результата из структуры шагов
+ * Извлечение ожидаемого результата из структуры шагов
  */
 export function extractExpectedResult (expectedResultId, scenarioSteps)
 {
@@ -488,11 +455,7 @@ export function extractExpectedResult (expectedResultId, scenarioSteps)
 
     if (expectedResultContainer.children && expectedResultContainer.children.length > 0) {
         const expectedResultTexts = expectedResultContainer.children
-            .map(childId =>
-            {
-                const childStep = scenarioSteps[childId];
-                return extractStepText(childStep);
-            })
+            .map(childId => extractStepText(scenarioSteps[childId]))
             .filter(text => text.trim().length > 0);
         expectedResultText = expectedResultTexts.join('\n');
     } else {
@@ -517,7 +480,6 @@ function normalizePreconditionForPrompt (precondition)
 
 /**
  * Отформатировать параметры тест-кейса в md
- * @param tc - тест-кейс с полями parameters
  */
 export function formatParametersForPrompt (tc)
 {
@@ -526,7 +488,6 @@ export function formatParametersForPrompt (tc)
 
     if (!params.length) return '';
 
-    // если есть examples — строим таблицу строк (самый информативный формат)
     if (Array.isArray(examples) && examples.length > 0) {
         const paramNames = params.map(p => (p.name || p.parameter || '?').trim()).filter(Boolean);
         if (paramNames.length === 0) return '';
@@ -547,12 +508,7 @@ export function formatParametersForPrompt (tc)
         return `${header}\n${separator}\n${body}`;
     }
 
-    // parameters с values == таблица "Параметр | Значения"
-    const withValues = params.filter(p =>
-    {
-        const vals = p.values;
-        return Array.isArray(vals) && vals.length > 0;
-    });
+    const withValues = params.filter(p => Array.isArray(p.values) && p.values.length > 0);
     if (withValues.length > 0) {
         const lines = withValues.map(p =>
         {
@@ -563,15 +519,12 @@ export function formatParametersForPrompt (tc)
         return 'Параметр | Значения\n--- | ---\n' + lines.join('\n');
     }
 
-    // только имена параметров
     const names = params.map(p => (p.name || p.parameter || '?').trim()).filter(Boolean);
     return names.length ? `Параметры: ${names.join(', ')}` : '';
 }
 
 /**
  * Разбить testCases на батчи и вызвать processBatch для каждого.
- * @param testCases - массив тест-кейсов
- * @param processBatch - function(batch, batchIndex, totalBatches)
  */
 async function runBatchedAnalysis (testCases, processBatch, logPrefix = 'BATCHING')
 {
@@ -619,7 +572,6 @@ export async function analyzeBulkTestCasesWithAI (testCases, apiKey = null, jira
         console.error(`\nОШИБКА В AI-АНАЛИЗЕ:`);
         console.error(`Детали: ${error.message}`);
         console.error(`Стек: ${error.stack}`);
-        console.error(`\nКонтекст ошибки:`);
         console.error(`- Количество тест-кейсов: ${testCases?.length ?? 0}`);
         console.error(`- API ключ предоставлен: ${apiKey ? 'Да' : 'Нет'}`);
         console.error(`- Время ошибки: ${new Date().toISOString()}`);
@@ -640,14 +592,10 @@ export async function analyzeBulkTestCasesWithAI (testCases, apiKey = null, jira
 
 /**
  * Анализ тест-кейсов с проверкой исправления предыдущих замечаний
- * @param testCases - тест-кейсы для проверки
- * @param issuesByTestCase - маппинг testCaseId на массив [{ title, message, severity, category }]
  */
 export async function analyzeRecheckWithAI (testCases, issuesByTestCase, apiKey = null, jiraIssue = null)
 {
-    if (!Array.isArray(testCases) || testCases.length === 0) {
-        return {};
-    }
+    if (!Array.isArray(testCases) || testCases.length === 0) return {};
 
     console.log(`\n[AI-recheck] Запуск проверки исправлений для ${testCases.length} тест-кейсов`);
 
@@ -667,7 +615,7 @@ async function processRecheckBatch (batch, issuesByTestCase, apiKey, jiraIssue =
     const casesForPrompt = batch.map(tc =>
     {
         const stepsToFormat = tc.stepsRaw || tc.steps;
-        const paramsBlock = formatParametersForPrompt(tc);
+        const paramsBlock = sanitizeDataForPrompt(formatParametersForPrompt(tc));
         const issues = issuesByTestCase.get(String(tc.id)) || [];
         const issuesBlock = issues.length > 0
             ? issues.map((iss, idx) => `${idx + 1}. **${iss.title || 'Замечание'}**: ${iss.message}`).join('\n')
@@ -678,32 +626,30 @@ async function processRecheckBatch (batch, issuesByTestCase, apiKey, jiraIssue =
 
 ### Текущее содержимое
 ID: ${tc.id}
-Название: ${tc.name || 'не указано'}
+Название: ${sanitizeDataForPrompt(tc.name || 'не указано')}
 Слой: ${tc.layer?.name || 'не указан'}
 ${paramsBlock ? `### Параметры\n${paramsBlock}\n` : ''}### Предусловия
-${normalizePreconditionForPrompt(tc.precondition) || 'не указаны'}
+${sanitizeDataForPrompt(normalizePreconditionForPrompt(tc.precondition) || 'не указаны')}
 ### Шаги
-${formatStepsForPrompt(stepsToFormat)}
+${sanitizeDataForPrompt(formatStepsForPrompt(stepsToFormat))}
 
 ### Ожидаемый результат
-${tc.expectedResult || 'не указан'}
+${sanitizeDataForPrompt(tc.expectedResult || 'не указан')}
 
 ### Ранее выданные замечания
 ${issuesBlock}
 ---`;
     }).join('\n');
 
-    const casesForPromptSafe = sanitizeQuotesForJsonSafePrompt(casesForPrompt);
-
     const systemContent = `Ты — ведущий QA-инженер. Тебе передали исправленные тест-кейсы и ранее выданные замечания.
 
 # ЗАДАЧА
-Для каждого пункта из блока "Ранее выданные замечания" определи: исправлено / не исправлено / частично исправлено.
+Для каждого пункта из блока 'Ранее выданные замечания' определи: исправлено / не исправлено / частично исправлено.
 - Исправлено — не включай в ответ.
 - Не исправлено или частично — создай рекомендацию с тем же title и уточнённой формулировкой.
-Если все замечания к тест-кейсу исправлены —  верни пустой массив для этого ID.
+Если все замечания к тест-кейсу исправлены — верни пустой массив для этого ID.
 
-Работай ТОЛЬКО с замечаниями из списка. Не анализируй другие части тест-кейса. Не добавляй новые проблемы. Если все замечания исправлены — верни пустой массив [] для этого ID.
+Работай ТОЛЬКО с замечаниями из списка. Не анализируй другие части тест-кейса. Не добавляй новые проблемы.
 
 # ФОРМАТ ОТВЕТА
 JSON. Ключи — ID тест-кейсов. Значения — массивы рекомендаций (или []).
@@ -714,26 +660,21 @@ JSON. Ключи — ID тест-кейсов. Значения — массив
   "171012": []
 }`;
 
-    const userContent = `Тест-кейсы для проверки исправлений:
+    const userContent = `Тест-кейсы для проверки исправлений:\n\n${casesForPrompt}`;
 
-${casesForPromptSafe}`;
-
-    console.log(`\n[AI-recheck] Промпт проверки исправлений:`);
-    console.log(`SYSTEM:\n${systemContent}`);
+    console.log(`\n[AI-recheck] SYSTEM:\n${systemContent}`);
     console.log(`USER:\n${userContent}`);
     console.log(`Отправляем запрос...`);
 
     ensureAILogsDir();
     const jiraPrefix = jiraIssue ? `${jiraIssue}-` : '';
-    const promptFile = path.join(AI_LOGS_DIR, `ai-prompt-recheck-${jiraPrefix}${totalBatches > 1 ? `batch-${batchIndex + 1}` : 'last'}.txt`);
-    const fullPromptForLog = `=== SYSTEM ===\n${systemContent}\n\n=== USER ===\n${userContent}`;
-    fs.writeFileSync(promptFile, `${new Date().toISOString()}\n\n${fullPromptForLog}`, 'utf8');
+    const batchLabel = totalBatches > 1 ? `batch-${batchIndex + 1}` : 'last';
+    const promptFile = path.join(AI_LOGS_DIR, `ai-prompt-recheck-${jiraPrefix}${batchLabel}.txt`);
+    fs.writeFileSync(promptFile, `${new Date().toISOString()}\n\n=== SYSTEM ===\n${systemContent}\n\n=== USER ===\n${userContent}`, 'utf8');
     console.log(`Промпт сохранён в ${promptFile}`);
 
     const API_TOKEN = config.openRouterAiKey;
-    if (!API_TOKEN) {
-        throw new Error('Не найден OPENROUTER_API_KEY');
-    }
+    if (!API_TOKEN) throw new Error('Не найден OPENROUTER_API_KEY');
 
     const URL = 'https://openrouter.ai/api/v1/chat/completions';
     const messages = [
@@ -766,11 +707,14 @@ ${casesForPromptSafe}`;
         responseText = data.text.trim();
     }
 
-    if (!responseText) {
-        throw new Error('Ответ от модели пустой');
+    if (!responseText) throw new Error('Ответ от модели пустой');
+
+    if (responseText.length > MAX_RESPONSE_LENGTH) {
+        console.warn(`[AI-recheck] Длина ответа превышает ${MAX_RESPONSE_LENGTH} (${responseText.length} симв.), обрезаем`);
+        responseText = responseText.slice(0, MAX_RESPONSE_LENGTH);
     }
 
-    const responseFile = path.join(AI_LOGS_DIR, `ai-response-recheck-${jiraPrefix}${totalBatches > 1 ? `batch-${batchIndex + 1}` : 'last'}.txt`);
+    const responseFile = path.join(AI_LOGS_DIR, `ai-response-recheck-${jiraPrefix}${batchLabel}.txt`);
     fs.writeFileSync(responseFile, `${new Date().toISOString()}\n\n${responseText}`, 'utf8');
     console.log(`Ответ сохранён в ${responseFile}`);
 
@@ -793,56 +737,48 @@ ${casesForPromptSafe}`;
 }
 
 /**
- * Строит общий контекст для нескольких батчей (style guide, примеры).
+ * Строит общий контекст для нескольких батчей
  * Вызывается один раз при totalBatches > 1.
  */
 function buildBulkSharedContext (projectId)
 {
-    const styleGuide = generateStyleGuide(projectId);
-    const allExamples = loadAllExamples();
     return {
-        styleGuide,
-        developerContent: createDeveloperContent(allExamples)
+        styleGuide: generateStyleGuide(projectId),
+        developerContent: createDeveloperContent(loadAllExamples())
     };
 }
 
 /**
  * Обрабатывает один батч тест-кейсов (до BATCH_SIZE штук).
- * @param {Object[]} batch - массив тест-кейсов
- * @param {string|null} apiKey - API ключ
- * @param {string|null} jiraIssue - Jira issue
- * @param {string|null} projectId - ID проекта
- * @param {number} batchIndex - индекс батча (0-based), для логирования
- * @param {number} totalBatches - всего батчей
- * @param {Object|null} sharedContext - предзагруженный контекст при totalBatches > 1
- * @returns {Promise<Object>} рекомендации { [tc.id]: [...] }
  */
 async function processBulkBatch (batch, apiKey, jiraIssue, projectId, batchIndex = 0, totalBatches = 1, sharedContext = null)
 {
     const STYLE_GUIDE = sharedContext ? sharedContext.styleGuide : generateStyleGuide(projectId);
     const developerContent = sharedContext ? sharedContext.developerContent : createDeveloperContent(loadAllExamples());
-
     const casesForPrompt = batch.map(tc =>
     {
         const stepsToFormat = tc.stepsRaw || tc.steps;
-        const paramsBlock = formatParametersForPrompt(tc);
+        const paramsBlock = sanitizeDataForPrompt(formatParametersForPrompt(tc));
+        const safeName = sanitizeDataForPrompt(tc.name || 'не указано');
+        const safePrecondition = sanitizeDataForPrompt(normalizePreconditionForPrompt(tc.precondition) || 'не указаны');
+        const safeSteps = sanitizeDataForPrompt(formatStepsForPrompt(stepsToFormat));
+        const safeExpectedResult = sanitizeDataForPrompt(tc.expectedResult || 'не указан');
+
         return `
 ID: ${tc.id}
-Название: ${tc.name || 'не указано'}
+Название: ${safeName}
 Слой: ${tc.layer?.name || 'не указан'}
 ${paramsBlock ? `### Параметры\n${paramsBlock}\n` : ''}### Предусловия
-${normalizePreconditionForPrompt(tc.precondition) || 'не указаны'}
+${safePrecondition}
 ### Шаги
-${formatStepsForPrompt(stepsToFormat)}
+${safeSteps}
 
 ### Ожидаемый результат
-${tc.expectedResult || 'не указан'}
+${safeExpectedResult}
 ---`;
     }).join('\n');
 
-    const casesForPromptSafe = sanitizeQuotesForJsonSafePrompt(casesForPrompt);
-
-    const systemContent = `Ты — ведущий QA-инженер. Проведи ревью тест-кейсов на соответствие стайлгайду и best practices тест-дизайна.
+    const systemContent = `Ты — ведущий QA-инженер. Проведи ревью тест-кейсов.
 
 # ФОРМАТ ВХОДНЫХ ДАННЫХ
 Шаги тест-кейса отформатированы по следующим правилам:
@@ -928,51 +864,33 @@ ${STYLE_GUIDE}
 }
 `;
 
-    const userContent = `Тест-кейсы для анализа:
-
-${casesForPromptSafe}`;
+    const userContent = `Тест-кейсы для анализа:\n\n${casesForPrompt}`;
 
     const batchSuffix = totalBatches > 1 ? `-batch-${batchIndex + 1}` : '';
     console.log(`\nМАССОВЫЙ AI-АНАЛИЗ${batchSuffix ? ` (батч ${batchIndex + 1}/${totalBatches})` : ''}:`);
     console.log(`Количество тест-кейсов: ${batch.length}`);
-    console.log(`\nДАННЫЕ ДЛЯ AI:`);
-    console.log(casesForPrompt);
-    console.log(`\nSYSTEM:`);
-    console.log(systemContent);
-    console.log(`\nDEVELOPER:`);
-    if (developerContent) {
-        console.log(developerContent);
-    } else {
-        console.log('не передается (примеры отсутствуют)');
-    }
-    console.log(`\nUSER:`);
-    console.log(userContent);
-    console.log(`\nОтправляем запрос...`);
+    console.log(`\nДАННЫЕ ДЛЯ AI:\n${casesForPrompt}`);
+    console.log(`\nSYSTEM:\n${systemContent}`);
+    console.log(developerContent ? `\nDEVELOPER:\n${developerContent}` : '\nDEVELOPER: не передается (примеры отсутствуют)');
+    console.log(`\nUSER:\n${userContent}\n\nОтправляем запрос...`);
 
     ensureAILogsDir();
     const jiraPrefix = jiraIssue ? `${jiraIssue}-` : '';
-    const promptFile = path.join(AI_LOGS_DIR, `ai-prompt-bulk-${jiraPrefix}${totalBatches > 1 ? `batch-${batchIndex + 1}` : 'last'}.txt`);
+    const batchLabel = totalBatches > 1 ? `batch-${batchIndex + 1}` : 'last';
+    const promptFile = path.join(AI_LOGS_DIR, `ai-prompt-bulk-${jiraPrefix}${batchLabel}.txt`);
     let fullPromptForLog = `=== SYSTEM ===\n${systemContent}`;
-    if (developerContent) {
-        fullPromptForLog += `\n\n=== DEVELOPER ===\n${developerContent}`;
-    }
+    if (developerContent) fullPromptForLog += `\n\n=== DEVELOPER ===\n${developerContent}`;
     fullPromptForLog += `\n\n=== USER ===\n${userContent}`;
     fs.writeFileSync(promptFile, `${new Date().toISOString()}\n\n${fullPromptForLog}`, 'utf8');
     console.log(`Промпт сохранён в ${promptFile}`);
 
     const API_TOKEN = config.openRouterAiKey;
-    if (!API_TOKEN) {
-        throw new Error("Не найден OPENROUTER_API_KEY");
-    }
+    if (!API_TOKEN) throw new Error('Не найден OPENROUTER_API_KEY');
 
     const URL = 'https://openrouter.ai/api/v1/chat/completions';
-    const messages = [
-        { role: "system", content: systemContent }
-    ];
-    if (developerContent) {
-        messages.push({ role: "system", content: developerContent });
-    }
-    messages.push({ role: "user", content: userContent });
+    const messages = [{ role: 'system', content: systemContent }];
+    if (developerContent) messages.push({ role: 'system', content: developerContent });
+    messages.push({ role: 'user', content: userContent });
 
     const response_format = {
         type: 'json_schema',
@@ -984,36 +902,31 @@ ${casesForPromptSafe}`;
         }
     };
 
-    const data = await callWithCloudRuFallback(
-        URL,
-        messages,
-        apiKey || API_TOKEN,
-        {
-            max_tokens: 16000,
-            temperature: 0.25,
-            reduceTokensOn400: true,
-            response_format,
-            useResponseFormatForCloudRu: true
-        }
-    );
+    const data = await callWithCloudRuFallback(URL, messages, apiKey || API_TOKEN, {
+        max_tokens: 16000,
+        temperature: 0.25,
+        reduceTokensOn400: true,
+        response_format,
+        useResponseFormatForCloudRu: true
+    });
 
-    let responseText = "";
-    if (data.choices && data.choices.length > 0 && data.choices[0].message && data.choices[0].message.content) {
+    let responseText = '';
+    if (data.choices?.[0]?.message?.content) {
         responseText = data.choices[0].message.content.trim();
     } else if (data.text) {
         responseText = data.text.trim();
     }
 
-    if (!responseText) {
-        throw new Error('Ответ от модели пустой');
+    if (!responseText) throw new Error('Ответ от модели пустой');
+
+    if (responseText.length > MAX_RESPONSE_LENGTH) {
+        console.warn(`[AI-батчинг] Длина ответа превышает ${MAX_RESPONSE_LENGTH} (${responseText.length} симв.), обрезаем`);
+        responseText = responseText.slice(0, MAX_RESPONSE_LENGTH);
     }
 
-    const responseFile = path.join(AI_LOGS_DIR, `ai-response-bulk-${jiraPrefix}${totalBatches > 1 ? `batch-${batchIndex + 1}` : 'last'}.txt`);
+    const responseFile = path.join(AI_LOGS_DIR, `ai-response-bulk-${jiraPrefix}${batchLabel}.txt`);
     fs.writeFileSync(responseFile, `${new Date().toISOString()}\n\n${responseText}`, 'utf8');
-    console.log(`Ответ сохранён в ${responseFile}`);
-
-    console.log(`\nОтвет AI:`);
-    console.log(responseText);
+    console.log(`Ответ сохранён в ${responseFile}\n\nОтвет AI:\n${responseText}`);
 
     try {
         let jsonText = extractJSON(responseText);
@@ -1032,12 +945,11 @@ ${casesForPromptSafe}`;
 
         console.log(`\nУспешно получены AI-рекомендации для ${Object.keys(recommendations).length} тест-кейсов`);
         console.log(`Ключи в ответе AI: ${Object.keys(rawByKey).map(k => `"${k}" (${typeof k})`).join(', ')}`);
-        console.log(`Рекомендации по тест-кейсам:`);
         Object.entries(recommendations).forEach(([id, recs]) =>
         {
             recs.forEach((r, i) =>
             {
-                const sev = r.severity === 'error' ? '[ERROR]' : r.severity === 'warning' ? '[WARN]' : '[OK]';
+                const sev = r.severity === 'error' ? '[ERROR]' : '[WARN]';
                 console.log(`  ${id}[${i}]: ${sev} ${(r.recommendation || '').substring(0, 80)}...`);
             });
         });
@@ -1046,9 +958,9 @@ ${casesForPromptSafe}`;
         batch.forEach(tc =>
         {
             const tcIdStr = String(tc.id);
-            const hasRecommendation = recommendations.hasOwnProperty(tcIdStr) || recommendations.hasOwnProperty(tc.id);
-            console.log(`   Тест-кейс "${tcIdStr}" -> Рекомендация: ${hasRecommendation ? '✅' : '❌'}`);
-            if (!hasRecommendation) {
+            const hasRec = recommendations.hasOwnProperty(tcIdStr) || recommendations.hasOwnProperty(tc.id);
+            console.log(`   Тест-кейс "${tcIdStr}" -> Рекомендация: ${hasRec ? '✅' : '❌'}`);
+            if (!hasRec) {
                 console.log(`      Возможные варианты: ${Object.keys(rawByKey).filter(k => String(k).includes(tcIdStr) || tcIdStr.includes(String(k).replace(/^ID\s*/i, ''))).join(', ')}`);
             }
         });
@@ -1056,10 +968,8 @@ ${casesForPromptSafe}`;
         return recommendations;
 
     } catch (parseError) {
-        console.error(`\nОшибка парсинга JSON:`);
-        console.error(`Детали: ${parseError.message}`);
-        console.log(`\nИсходный ответ от AI:`);
-        console.log(responseText);
+        console.error(`\nОшибка парсинга JSON: ${parseError.message}`);
+        console.log(`Исходный ответ от AI:\n${responseText}`);
 
         const errorResponse = {};
         batch.forEach(tc =>
