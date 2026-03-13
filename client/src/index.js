@@ -17,20 +17,14 @@ import './theme.css';
 suppressResizeObserverErrors();
 
 
-// Список проектов (можно вынести в отдельный файл, если он нужен в нескольких местах)
 const projects = [
-  { id: 1, name: 'Nocode' },
   { id: 2, name: 'NPP' },
   { id: 3, name: 'DBO-X' },
   { id: 4, name: 'SBK' },
   { id: 5, name: 'KCBFL' },
   { id: 6, name: 'KCB' },
-  { id: 7, name: 'РНКБ' },
   { id: 34, name: 'USB' },
-  { id: 67, name: 'РНКБ ЛК' },
   { id: 166, name: 'Test - JMT' },
-  { id: 302, name: 'Nopaper 2.0' },
-  { id: 133, name: 'Дизайн система' },
   { id: 305, name: 'АФБ' },
   { id: 308, name: 'LKPFL' },
   { id: 309, name: 'ККБ-ЮЛ 2.0' },
