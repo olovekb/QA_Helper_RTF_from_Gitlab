@@ -52,6 +52,7 @@ export default function AttachmentsField({
   attachmentsMap = {},
   commonOnly = true,
   label = 'Вложения',
+  enableGlobalDrop = false,
 }) {
   const [previewImage, setPreviewImage] = useState(null);
 
@@ -100,6 +101,34 @@ export default function AttachmentsField({
       },
     }));
   }, [task, index, onUpdate, setAttachmentsMap]);
+
+  useEffect(() => {
+    if (!enableGlobalDrop) return;
+
+    const handleWindowDragOver = (e) => {
+      if (e.dataTransfer?.types?.includes?.('Files')) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+
+    const handleWindowDrop = (e) => {
+      if (e.dataTransfer?.files?.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        const droppedFiles = Array.from(e.dataTransfer.files || []);
+        if (droppedFiles.length) addFiles(droppedFiles);
+      }
+    };
+
+    window.addEventListener('dragover', handleWindowDragOver);
+    window.addEventListener('drop', handleWindowDrop);
+
+    return () => {
+      window.removeEventListener('dragover', handleWindowDragOver);
+      window.removeEventListener('drop', handleWindowDrop);
+    };
+  }, [enableGlobalDrop, addFiles]);
 
   const handleDrop = useCallback(async (e) => {
     e.preventDefault();

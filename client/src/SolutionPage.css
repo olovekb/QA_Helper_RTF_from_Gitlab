@@ -119,7 +119,7 @@
   width: 100%;
   box-sizing: border-box;
   padding: 10px;
-  background-color: var(--bg-main);
+  background-color: var(--bg-input);
   border: 1px solid var(--border-color);
   border-radius: 6px;
   color: var(--text-primary);
@@ -413,6 +413,10 @@
 .collapse-toggle .collapse-toggle-icon {
   flex-shrink: 0;
   transition: transform 0.25s ease;
+}
+
+.collapse-toggle .collapse-toggle-icon.collapsed {
+  transform: rotate(-90deg);
 }
 
 .defaults-panel {

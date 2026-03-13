@@ -56,6 +56,7 @@
 
 .task-actions-dropdown-item:not(:last-child) {
     border-bottom: 1px solid var(--border-color);
+    border-radius: unset;
 }
 
 button.task-actions-dropdown-item {

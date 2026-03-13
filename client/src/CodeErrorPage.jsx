@@ -476,6 +476,7 @@ export const CodeErrorCard = ({
                     attachmentsMap={ attachmentsMap }
                     commonOnly={ false }
                     label="Вложения"
+                    enableGlobalDrop
                 />
                 {/* AI‑кнопка */ }
                 <div className="ai-controls">

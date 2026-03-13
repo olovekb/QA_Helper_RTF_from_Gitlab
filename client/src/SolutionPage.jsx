@@ -311,7 +311,6 @@ export const SolutionCard = ({
         ) }
 
         {/* Общие вложения */ }
-        {/* Общие вложения */ }
         <AttachmentsField
           task={ task }
           index={ index }
@@ -320,6 +319,7 @@ export const SolutionCard = ({
           attachmentsMap={ attachmentsMap }
           commonOnly
           label="Прикрепить файлы"
+          enableGlobalDrop
         />
 
         {/* Дополнительная информация */ }

@@ -20,6 +20,7 @@ export default function TaskSidebar ({
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [editingName, setEditingName] = useState('');
   const nameRef = useRef(null);
+  const didDropRef = useRef(false);
 
   const groupMap = useMemo(
     () => new Map(groups.map(g => [g.id, g])),
@@ -53,19 +54,37 @@ export default function TaskSidebar ({
 
   const onDragStart = useCallback((e, idx) =>
   {
+    didDropRef.current = false;
     setDragIdx(idx);
     e.dataTransfer.effectAllowed = 'move';
   }, []);
 
   const onDragEnd = useCallback(() =>
   {
+    if (dragIdx !== null && !didDropRef.current)
+    {
+      const gid = tasks[dragIdx]?.groupId;
+      if (gid)
+      {
+        const memberCount = tasks.filter(t => t.groupId === gid).length;
+
+        if (memberCount <= 2) {
+          setGroups(gs => gs.filter(g => g.id !== gid));
+          setTasks(ts => ts.map(t => t.groupId === gid ? { ...t, groupId: undefined } : t));
+        } else {
+          setTasks(ts => ts.map((t, i) => i === dragIdx ? { ...t, groupId: undefined } : t));
+        }
+      }
+    }
+
     setDragIdx(null);
     setDropTarget(null);
-  }, []);
+  }, [dragIdx, tasks, setTasks, setGroups]);
 
   const dropOnTask = useCallback(targetIdx =>
   {
     if (dragIdx === null || dragIdx === targetIdx) { onDragEnd(); return; }
+    didDropRef.current = true;
     const dragged = tasks[dragIdx];
     const target = tasks[targetIdx];
     const oldGid = dragged.groupId && groupMap.has(dragged.groupId) ? dragged.groupId : null;
@@ -106,6 +125,7 @@ export default function TaskSidebar ({
   const dropOnGroup = useCallback(gid =>
   {
     if (dragIdx === null) { onDragEnd(); return; }
+    didDropRef.current = true;
     if (tasks[dragIdx].groupId === gid) { onDragEnd(); return; }
 
     const oldGid = tasks[dragIdx].groupId && groupMap.has(tasks[dragIdx].groupId)
@@ -179,6 +199,7 @@ export default function TaskSidebar ({
     e.preventDefault();
     e.stopPropagation();
     if (dragIdx !== null && tasks[dragIdx]?.groupId) {
+      didDropRef.current = true;
       removeFromGroup(dragIdx);
       onDragEnd();
     }
@@ -288,7 +309,7 @@ export default function TaskSidebar ({
                     />
                   </label>
                   <button
-                    className="task-sidebar-group-toggle"
+                    className="collapse-toggle task-sidebar-group-toggle"
                     onClick={ () => toggleGroupCollapse(group.id) }
                   >
                     <svg
