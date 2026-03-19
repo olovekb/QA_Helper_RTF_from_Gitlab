@@ -18,7 +18,7 @@ export const parseXmindFile = async (file, projectId) => {
         const parsedData = JSON.parse(jsonData);
 
 
-        if (projectId === '307') {
+        if (String(projectId) === '307') {
             return extractAllureJSONStructureNocode(parsedData);
         } else {
             return extractAllureJSONStructure(parsedData)

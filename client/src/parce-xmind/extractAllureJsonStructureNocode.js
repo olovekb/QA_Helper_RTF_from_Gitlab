@@ -28,6 +28,7 @@ export function extractAllureJSONStructureNocode(xmindData) {
 
     blocks = level1Blocks.map(level1 => {
         const blockTitle = level1.title?.trim() || 'Не указано';
+        console.log('Block', blockTitle);
         const level2SubBlocks = level1.children?.attached || [];
 
         if (!level2SubBlocks.length) {
@@ -41,6 +42,7 @@ export function extractAllureJSONStructureNocode(xmindData) {
 
         return level2SubBlocks.map(level2 => {
             const subBlockTitle = level2.title?.trim() || 'Не указано';
+            console.log('SubBlock', subBlockTitle);
             const featuresLevel = level2.children?.attached || [];
             const features = convertTopicToAllureFormat(featuresLevel);
 
@@ -60,6 +62,7 @@ function convertTopicToAllureFormat(features) {
     const result = [];
 
     features.forEach(featureTopic => {
+        console.log('Feature', featureTopic.title || 'Не указано');
         const feature = {
             feature: featureTopic.title || 'Не указано',
             stories: featureTopic.children && featureTopic.children.attached
