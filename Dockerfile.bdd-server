@@ -18,6 +18,10 @@ WORKDIR /app
 COPY server/cloudruClient.mjs server/cloudruClient.mjs
 COPY server/config.json server/config.json
 
+# Копируем node_modules в родительскую директорию для доступа из server/
+WORKDIR /app/bdd-server
+RUN cp -r node_modules /app/
+
 # Возвращаемся в рабочую директорию bdd-server
 WORKDIR /app/bdd-server
 
