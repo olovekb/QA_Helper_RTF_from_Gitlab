@@ -6,6 +6,7 @@ import config from '../config';
 import TestModelGeneratorModal from './test-model/TestModelGeneratorModal';
 import TestModelReviewModal from './test-model/TestModelReviewModal';
 import BDDReviewModal from './bdd/BDDReviewModal';
+import { trackEvent } from '../analytics';
 
 // CSS для анимаций
 const animationStyles = `
@@ -139,6 +140,7 @@ const GlobalGenerationWindow = ({
 
   // Обработчик генерации тест-кейсов
   const handleGenerateCases = async (modelStructure, includeBackendTests = true) => {
+    trackEvent('generate_test_cases', { page: location.pathname, projectId: allureProject?.id });
     console.log('GlobalGenerationWindow: получена структура тестовой модели для генерации тест-кейсов:', modelStructure);
     console.log('GlobalGenerationWindow: количество features в структуре:', modelStructure?.length);
     console.log('GlobalGenerationWindow: includeBackendTests:', includeBackendTests);
@@ -184,6 +186,7 @@ const GlobalGenerationWindow = ({
 
   // Обработчик открытия модального окна тестовой модели
   const handleOpenModelModal = () => {
+    trackEvent('open_generation_modal', { page: location.pathname, projectId: allureProject?.id });
     setIsGenModalOpen(true);
   };
 
@@ -268,6 +271,7 @@ const GlobalGenerationWindow = ({
 
   // Обработчик открытия модального окна просмотра тест-кейсов
   const handleOpenReviewModal = () => {
+    trackEvent('open_test_cases_review', { page: location.pathname, projectId: allureProject?.id });
     setReviewModalOpen(true);
     // Обновляем счетчик при открытии модалки
     setTimeout(() => {
@@ -300,18 +304,18 @@ const GlobalGenerationWindow = ({
           className="btn btn-secondary"
           disabled={hasActiveGeneration}
           style={{
-            backgroundColor: hasAnyGeneration ? '#238636' : '',
-            borderColor: hasAnyGeneration ? '#2ea043' : '',
+            backgroundColor: hasAnyGeneration ? 'var(--success-bg)' : '',
+            borderColor: hasAnyGeneration ? 'var(--success)' : '',
             color: hasAnyGeneration ? 'white' : '',
-            cursor: hasActiveGeneration ? 'not-allowed' : 'pointer',
+            cursor: hasActiveGeneration ? 'default' : 'pointer',
             opacity: hasActiveGeneration ? 0.6 : 1
           }}
         >
           {hasActiveGeneration
-            ? '🔄 Генерация...'
+            ? 'Генерация...'
             : hasCompletedGeneration
-              ? '✅ Окно генерации тест кейсов и тестовой модели'
-              : '🧱 Окно генерации тест кейсов и тестовой модели'
+              ? 'Окно генерации тест кейсов и тестовой модели'
+              : 'Окно генерации тест кейсов и тестовой модели'
           }
         </button>
 
@@ -321,13 +325,13 @@ const GlobalGenerationWindow = ({
             onClick={onClearTestModel}
             className="btn btn-secondary"
             style={{
-              backgroundColor: '#da3633',
-              borderColor: '#f85149',
+              backgroundColor: 'var(--error-bg)',
+              borderColor: 'var(--error)',
               color: 'white'
             }}
             title="Удалить сгенерированную тестовую модель"
           >
-            🗑️ Очистить модель
+            Очистить модель
           </button>
         )}
 
@@ -347,21 +351,21 @@ const GlobalGenerationWindow = ({
             className="btn btn-secondary"
             disabled={hasActiveGeneration && bddStatus !== 'completed'}
             style={{
-              backgroundColor: bddStatus === 'completed' ? '#238636' : bddStatus === 'processing' ? '#58a6ff' : '#a371f7',
+              backgroundColor: bddStatus === 'completed' ? '#238636' : bddStatus === 'processing' ? 'var(--text-muted)' : 'var(--primary-accent)',
               borderColor: bddStatus === 'completed' ? '#2ea043' : bddStatus === 'processing' ? '#58a6ff' : '#a371f7',
               color: 'white',
               cursor: (hasActiveGeneration && bddStatus !== 'completed') ? 'not-allowed' : 'pointer',
               opacity: (hasActiveGeneration && bddStatus !== 'completed') ? 0.6 : 1,
-              fontWeight: 500,
-              minWidth: '180px'
+              minWidth: '180px',
+              visibility:'hidden' // TODO: вернуть отображение, когда решится судьба генерации BDD
             }}
             title={bddStatus === 'completed' ? 'Открыть превью BDD тестов' : 'Создать BDD тесты (Gherkin) с дедупликацией шагов из требований'}
           >
             {bddStatus === 'processing'
-              ? `🔄 BDD генерация... ${bddProgress || 0}%`
+              ? `BDD генерация... ${bddProgress || 0}%`
               : bddStatus === 'completed'
-                ? '✅ BDD тесты созданы'
-                : '📝 Создать BDD тесты'
+                ? 'BDD тесты созданы'
+                : 'Создать BDD тесты'
             }
           </button>
         )}
@@ -619,7 +623,7 @@ const GlobalGenerationWindow = ({
             onClick={handleOpenReviewModal}
             className="btn btn-primary"
           >
-            📋 Просмотреть тест-кейсы ({testCasesCount})
+            Просмотреть тест-кейсы ({testCasesCount})
           </button>
           <button
             onClick={onClearTestCases}
@@ -631,7 +635,7 @@ const GlobalGenerationWindow = ({
             }}
             title="Удалить все сгенерированные тест-кейсы"
           >
-            🗑️ Очистить тест-кейсы
+            Очистить тест-кейсы
           </button>
         </div>
       )}

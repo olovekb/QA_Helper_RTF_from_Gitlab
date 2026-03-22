@@ -1,6 +1,6 @@
 import axios from 'axios';
 import config from '../config.json' assert { type: 'json' };
-import { getJwtToken } from '../http-service.mjs';
+import { getJwtToken, linkIssueToTestCase } from '../http-service.mjs';
 import {customProjectField, projectTestCaseLayers} from "./customProjectField.js";
 
 // Конфигурация
@@ -420,15 +420,17 @@ async function addCustomFieldsToTestCase(testCaseId, customFields) {
  * Экспорт XMIND в Allure для Ноукода
  * @param parsedJson - распарсенный json
  * @param projectId - projectId
+ * @param jiraIssue - jira issue key (optional)
  * @returns {Promise<void>}
  */
-export async function exportStructureAllureNocode(parsedJson, projectId) {
+export async function exportStructureAllureNocode(parsedJson, projectId, jiraIssue) {
     try {
         console.log('ЗАШЛИ В ЭКСПОРТ')
         // Получаем список слоев один раз для маппинга названий в ID
         const layerListResp = await getTestLayerListRequest();
         const E2E_LAYER_ID = getLayerIdByName(layerListResp, projectTestCaseLayers.e2eTests);
         const INTEGRATION_FRONT_LAYER_ID = getLayerIdByName(layerListResp, projectTestCaseLayers.integrationFrontendTests);
+        const INTEGRATION_BACK_LAYER_ID = getLayerIdByName(layerListResp, projectTestCaseLayers.integrationBackendTests);
 
         const featureFieldId = await getProjectCustomFieldIdRequest(customProjectField.feature, projectId);
         const storyFieldId = await getProjectCustomFieldIdRequest(customProjectField.story, projectId);
@@ -483,6 +485,15 @@ export async function exportStructureAllureNocode(parsedJson, projectId) {
                                 if (E2E_LAYER_ID !== undefined) {
                                     await changeTestCaseLayerRequest(e2eId, E2E_LAYER_ID);
                                 }
+                                
+                                if (jiraIssue && config.defaultJiraIntegrationId) {
+                                    try {
+                                        await linkIssueToTestCase(e2eId, config.defaultJiraIntegrationId, jiraIssue);
+                                        console.log(`[exportStructureAllureNocode] Успешно привязан E2E тест-кейс ${e2eId} к задаче ${jiraIssue}`);
+                                    } catch (err) {
+                                        console.error(`[exportStructureAllureNocode] Не удалось привязать E2E тест-кейс ${e2eId} к задаче ${jiraIssue}:`, err.message);
+                                    }
+                                }
                             }
                         }
                     }
@@ -526,6 +537,15 @@ export async function exportStructureAllureNocode(parsedJson, projectId) {
                             if (E2E_LAYER_ID !== undefined) {
                                 await changeTestCaseLayerRequest(testCaseId, E2E_LAYER_ID);
                             }
+                            
+                            if (jiraIssue && config.defaultJiraIntegrationId) {
+                                try {
+                                    await linkIssueToTestCase(testCaseId, config.defaultJiraIntegrationId, jiraIssue);
+                                    console.log(`[exportStructureAllureNocode] Успешно привязан сценарий ${testCaseId} к задаче ${jiraIssue}`);
+                                } catch (err) {
+                                    console.error(`[exportStructureAllureNocode] Не удалось привязать сценарий ${testCaseId} к задаче ${jiraIssue}:`, err.message);
+                                }
+                            }
 
                             console.log(`Создан тест-кейс "${scenario}" с шагами: ${JSON.stringify(scenarioObj.steps)}`);
                         } else if (scenarioObj.isIntegration) {
@@ -553,8 +573,19 @@ export async function exportStructureAllureNocode(parsedJson, projectId) {
 
                                     await addCustomFieldsToTestCase(integrationTestCaseId, customFields);
 
-                                    if (INTEGRATION_FRONT_LAYER_ID !== undefined) {
+                                    if (ic.integrationType === 'backend' && INTEGRATION_BACK_LAYER_ID !== undefined) {
+                                        await changeTestCaseLayerRequest(integrationTestCaseId, INTEGRATION_BACK_LAYER_ID);
+                                    } else if (ic.integrationType !== 'backend' && INTEGRATION_FRONT_LAYER_ID !== undefined) {
                                         await changeTestCaseLayerRequest(integrationTestCaseId, INTEGRATION_FRONT_LAYER_ID);
+                                    }
+                                    
+                                    if (jiraIssue && config.defaultJiraIntegrationId) {
+                                        try {
+                                            await linkIssueToTestCase(integrationTestCaseId, config.defaultJiraIntegrationId, jiraIssue);
+                                            console.log(`[exportStructureAllureNocode] Успешно привязан интеграционный тест-кейс ${integrationTestCaseId} к задаче ${jiraIssue}`);
+                                        } catch (err) {
+                                            console.error(`[exportStructureAllureNocode] Не удалось привязать интеграционный тест-кейс ${integrationTestCaseId} к задаче ${jiraIssue}:`, err.message);
+                                        }
                                     }
 
                                     console.log(`Создан интеграционный тест-кейс "${ic.name}" c шагами: ${JSON.stringify(ic.steps)}`);
@@ -595,6 +626,15 @@ export async function exportStructureAllureNocode(parsedJson, projectId) {
                                     if (INTEGRATION_FRONT_LAYER_ID !== undefined) {
                                         await changeTestCaseLayerRequest(codeTestCaseId, INTEGRATION_FRONT_LAYER_ID);
                                     }
+                                    
+                                    if (jiraIssue && config.defaultJiraIntegrationId) {
+                                        try {
+                                            await linkIssueToTestCase(codeTestCaseId, config.defaultJiraIntegrationId, jiraIssue);
+                                            console.log(`[exportStructureAllureNocode] Успешно привязан тест-кейс уровня кода ${codeTestCaseId} к задаче ${jiraIssue}`);
+                                        } catch (err) {
+                                            console.error(`[exportStructureAllureNocode] Не удалось привязать тест-кейс уровня кода ${codeTestCaseId} к задаче ${jiraIssue}:`, err.message);
+                                        }
+                                    }
 
                                     console.log(`Создан тест-кейс уровня code "${code.code}" внутри сценария "${scenario}"`);
                                 }
@@ -627,6 +667,16 @@ export async function exportStructureAllureNocode(parsedJson, projectId) {
                                         continue;
                                     }
                                     await addCustomFieldsToTestCase(testCaseId, codeCustomFields);
+                                    
+                                    if (jiraIssue && config.defaultJiraIntegrationId) {
+                                        try {
+                                            await linkIssueToTestCase(testCaseId, config.defaultJiraIntegrationId, jiraIssue);
+                                            console.log(`[exportStructureAllureNocode] Успешно привязан тест-кейс уровня кода ${testCaseId} к задаче ${jiraIssue}`);
+                                        } catch (err) {
+                                            console.error(`[exportStructureAllureNocode] Не удалось привязать тест-кейс уровня кода ${testCaseId} к задаче ${jiraIssue}:`, err.message);
+                                        }
+                                    }
+                                    
                                     console.log(`Создан тест-кейс для code "${code.code}"`);
                                 }
                             } else {
@@ -649,6 +699,16 @@ export async function exportStructureAllureNocode(parsedJson, projectId) {
                                     continue;
                                 }
                                 await addCustomFieldsToTestCase(testCaseId, customFields);
+                                
+                                if (jiraIssue && config.defaultJiraIntegrationId) {
+                                    try {
+                                        await linkIssueToTestCase(testCaseId, config.defaultJiraIntegrationId, jiraIssue);
+                                        console.log(`[exportStructureAllureNocode] Успешно привязан тест-кейс без шагов ${testCaseId} к задаче ${jiraIssue}`);
+                                    } catch (err) {
+                                        console.error(`[exportStructureAllureNocode] Не удалось привязать тест-кейс без шагов ${testCaseId} к задаче ${jiraIssue}:`, err.message);
+                                    }
+                                }
+                                
                                 console.log(`Создан тест-кейс "${scenario}" без шагов`);
                             }
                         }
@@ -667,9 +727,10 @@ export async function exportStructureAllureNocode(parsedJson, projectId) {
  * Экспорт XMIND в Allure для обычных проектов для обратной совместимости
  * @param parsedJson
  * @param projectId
+ * @param jiraIssue - jira issue key (optional)
  * @returns {Promise<void>}
  */
-export async function exportStructureAllure(parsedJson, projectId) {
+export async function exportStructureAllure(parsedJson, projectId, jiraIssue) {
     try {
         const featureFieldId = await getProjectCustomFieldIdRequest(customProjectField.feature, projectId);
         const storyFieldId = await getProjectCustomFieldIdRequest(customProjectField.story, projectId);
@@ -738,6 +799,15 @@ export async function exportStructureAllure(parsedJson, projectId) {
 
                             // Добавляем кастомные поля в тест-кейс
                             await addCustomFieldsToTestCase(testCaseId, customFields);
+                            
+                            if (jiraIssue && config.defaultJiraIntegrationId) {
+                                try {
+                                    await linkIssueToTestCase(testCaseId, config.defaultJiraIntegrationId, jiraIssue);
+                                    console.log(`[exportStructureAllure] Успешно привязан тест-кейс ${testCaseId} к задаче ${jiraIssue}`);
+                                } catch (err) {
+                                    console.error(`[exportStructureAllure] Не удалось привязать тест-кейс ${testCaseId} к задаче ${jiraIssue}:`, err.message);
+                                }
+                            }
 
                             console.log(`Кастомные поля добавлены в тест-кейс ${testCaseId}`);
                         }
@@ -759,6 +829,15 @@ export async function exportStructureAllure(parsedJson, projectId) {
 
                         // Добавляем кастомные поля в тест-кейс
                         await addCustomFieldsToTestCase(testCaseId, customFields);
+                        
+                        if (jiraIssue && config.defaultJiraIntegrationId) {
+                            try {
+                                await linkIssueToTestCase(testCaseId, config.defaultJiraIntegrationId, jiraIssue);
+                                console.log(`[exportStructureAllure] Успешно привязан тест-кейс сценария ${testCaseId} к задаче ${jiraIssue}`);
+                            } catch (err) {
+                                console.error(`[exportStructureAllure] Не удалось привязать тест-кейс сценария ${testCaseId} к задаче ${jiraIssue}:`, err.message);
+                            }
+                        }
 
                         console.log(`Кастомные поля добавлены в тест-кейс ${testCaseId}`);
                     }

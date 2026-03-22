@@ -1,20 +1,47 @@
-/* General Page Style */
-body {
-  background-color: #0d1117;
-  color: #c9d1d9;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+/* кнопка "Назад" */
+.page-nav-back {
+  position: fixed;
+  top: 16px;
+  left: 24px;
+  z-index: 2000;
+}
+
+/* контейнер для кнопки "Вверх" */
+.floating-buttons.floating-buttons--top-only {
+  position: fixed;
+  bottom: 70px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 24px;
+  pointer-events: none;
+  z-index: 2000;
+}
+
+.floating-buttons .btn {
+  pointer-events: all;
+}
+
+.floating-buttons .btn-top {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  min-width: 40px;
+  min-height: 40px;
 }
 
 .solution-page {
-  max-width: 900px;
-  margin: 20px auto;
-  padding: 20px;
+  padding: 24px;
+  padding-top: 52px;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
-h1,
-h2 {
-  color: #58a6ff;
-  border-bottom: 1px solid #30363d;
+.solution-page h1,
+.solution-page h2 {
+  color: var(--text-primary);
   padding-bottom: 10px;
 }
 
@@ -30,42 +57,35 @@ h2 {
 }
 
 .id-chip {
-  background: #1f2937;
-  /* тёмный фон */
-  border: 1px solid #374151;
-  /* тонкая граница */
-  color: #e5e7eb;
+  background: var(--bg-content);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
   padding: 2px 8px;
   border-radius: 9999px;
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-/* Широкий селект доп. контекста */
 .confluence-inputs .ctx-select {
   min-width: 420px;
-  /* видно длинные ID */
   width: 100%;
 }
 
-/* если блок confluence-inputs — grid, расширим среднюю колонку */
 @media (min-width: 1024px) {
   .confluence-inputs {
     grid-template-columns: 1fr 2fr 2fr;
-    /* было равными — стало больше места для селекта */
     gap: 12px;
   }
 }
 
-/* аккуратнее чипы с цифрами */
 .confluence-inputs .select__multi-value__label {
   font-variant-numeric: tabular-nums;
 }
 
 /* Input Area */
 .input-area {
-  background-color: #161b22;
-  border: 1px solid #30363d;
+  background-color: var(--bg-content);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 20px;
   margin-bottom: 30px;
@@ -73,7 +93,7 @@ h2 {
 
 .input-tabs {
   display: flex;
-  border-bottom: 1px solid #30363d;
+  border-bottom: 1px solid var(--border-color);
   margin-bottom: 15px;
 }
 
@@ -81,17 +101,16 @@ h2 {
   padding: 10px 20px;
   border: none;
   background: none;
-  color: #8b949e;
+  color: var(--text-placeholder);
   cursor: pointer;
   font-size: 16px;
   border-bottom: 3px solid transparent;
   margin-bottom: -1px;
-  /* Overlap the container border */
 }
 
 .input-tabs button.active {
-  color: #f0f6fc;
-  border-bottom-color: #f78166;
+  color: var(--text-primary);
+  border-bottom-color: var(--primary-accent);
   font-weight: 600;
 }
 
@@ -100,10 +119,10 @@ h2 {
   width: 100%;
   box-sizing: border-box;
   padding: 10px;
-  background-color: #0d1117;
-  border: 1px solid #30363d;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
-  color: #c9d1d9;
+  color: var(--text-primary);
   font-size: 14px;
   margin-bottom: 10px;
 }
@@ -119,21 +138,21 @@ h2 {
   font-size: 16px;
   font-weight: 600;
   color: white;
-  background-color: #238636;
-  border: 1px solid rgba(240, 246, 252, 0.1);
+  background-color: var(--primary-accent);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 15%, transparent);
   border-radius: 6px;
   cursor: pointer;
   transition: background-color 0.2s;
 }
 
 .analyze-button:hover:not(:disabled) {
-  background-color: #2ea043;
+  background-color: var(--primary-hover);
 }
 
 .analyze-button:disabled {
-  background-color: #555;
-  cursor: not-allowed;
+  background-color: var(--border-color);
   opacity: 0.7;
+  cursor: default;
 }
 
 /* Task Workspace */
@@ -151,41 +170,37 @@ h2 {
   padding: 10px 15px;
   font-size: 14px;
   font-weight: 500;
-  border: 1px solid #30363d;
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s;
+  margin: 0px;
 }
 
 .add-task-btn {
-  background-color: #21262d;
-  color: #c9d1d9;
+  background-color: var(--bg-input);
+  color: var(--text-secondary);
 }
 
 .add-task-btn:hover {
-  background-color: #30363d;
+  background-color: var(--border-color);
 }
 
 .create-jira-btn {
-  background-color: #1f6feb;
+  background-color: var(--primary-accent);
   color: white;
 }
 
 .create-jira-btn:hover {
-  background-color: #388bfd;
+  background-color: var(--primary-hover);
 }
 
 /* Task Card */
-.task-card {
-  background-color: #161b22;
-  border: 1px solid #30363d;
+.solution-page .task-card {
+  background-color: var(--bg-content);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
-  margin-bottom: 15px;
   padding: 15px;
-}
-
-.task-card.new-task {
-  border-left: 3px solid #f78166;
 }
 
 .task-header {
@@ -204,8 +219,8 @@ h2 {
   flex-grow: 1;
   background: none;
   border: none;
-  border-bottom: 1px dashed #444;
-  color: #f0f6fc;
+  border-bottom: 1px dashed var(--border-color);
+  color: var(--text-primary);
   font-size: 18px;
   font-weight: 600;
   padding: 5px;
@@ -213,7 +228,7 @@ h2 {
 
 .task-summary-input:focus {
   outline: none;
-  border-bottom-color: #58a6ff;
+  border-bottom-color: var(--primary-accent);
 }
 
 .delete-task-btn {
@@ -234,16 +249,15 @@ h2 {
   width: 100%;
   box-sizing: border-box;
   margin-bottom: 8px;
-  background-color: #21262d;
-  border: 1px solid #30363d;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   padding: 8px;
-  color: #c9d1d9;
+  color: var(--text-primary);
 }
 
-
 /* Modal */
-.modal {
+.solution-page .modal {
   position: fixed;
   top: 0;
   left: 0;
@@ -253,33 +267,33 @@ h2 {
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 1000;
+  z-index: 3000;
 }
 
-.modal-content {
-  background-color: #161b22;
+.solution-page .modal-content {
+  background-color: var(--bg-content);
   padding: 30px;
   border-radius: 8px;
   width: 90%;
   max-width: 600px;
   max-height: 90vh;
   overflow-y: auto;
-  border: 1px solid #30363d;
+  border: 1px solid var(--border-color);
 }
 
-.modal .field {
+.solution-page .modal .field {
   display: flex;
   flex-direction: column;
-  margin-bottom: 1rem;
+
 }
 
-.modal .field label {
+.solution-page .modal .field label {
   margin-bottom: 0.5rem;
   font-weight: 500;
-  color: #8b949e;
+  color: var(--text-placeholder);
 }
 
-.modal .buttons {
+.solution-page .modal .buttons {
   display: flex;
   gap: 1rem;
   margin-top: 1rem;
@@ -297,49 +311,36 @@ h2 {
 }
 
 .jira-result li.error {
-  color: #f85149;
+  color: var(--error);
 }
 
 .jira-result li.success {
-  color: #3fb950;
+  color: var(--success);
 }
 
 .jira-result a {
-  color: #58a6ff;
+  color: var(--primary-accent);
 }
 
-/* Делаем фон выпавших “успешных” элементов тёмно-зелёным,
-   а текст — светлым */
 .jira-result li.success {
-  background-color: #213f20;
-  /* тёмно-зелёный фон */
-  color: #c9d1d9;
-  /* светло-серый текст */
+  background-color: var(--success-bg);
+  color: var(--text-primary);
   padding: 8px 12px;
-  /* отступы для читабельности */
   border-radius: 4px;
-  /* скруглённые углы */
   margin-bottom: 6px;
-  /* расстояние между строк */
 }
 
-/* Аналогично сделаем фон “ошибочных” элементов тёмно-красным */
 .jira-result li.error {
-  background-color: #3f1f1f;
-  /* тёмно-красный фон */
-  color: #f85149;
-  /* ярко-красный текст */
+  background-color: var(--error-bg);
+  color: var(--error);
   padding: 8px 12px;
   border-radius: 4px;
   margin-bottom: 6px;
 }
 
-/* Чтобы ссылки внутри списка тоже были контрастнее */
 .jira-result li a {
-  color: #58a6ff;
-  /* остатим ярко-синий, но на тёмном фоне читается */
+  color: var(--primary-accent);
   text-decoration: underline;
-  /* подчёркивание для наглядности */
 }
 
 .split {
@@ -352,6 +353,148 @@ h2 {
   max-height: 420px;
   overflow: auto;
   padding: 12px;
-  border: 1px solid #333;
+  border: 1px solid var(--border-color);
   border-radius: 8px;
+}
+
+.page-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.page-section-header h2 {
+  margin: 0;
+}
+
+.page-section-header-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.page-section {
+  background-color: var(--bg-content);
+  padding: 24px;
+  border-radius: 12px;
+  margin-bottom: 24px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.settings-grid .field.full-width {
+  grid-column: 1 / -1;
+}
+
+.collapse-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 4px;
+  margin: 0;
+  border-radius: 4px;
+  line-height: 1;
+  transition: color 0.25s ease, background-color 0.25s ease;
+}
+
+.collapse-toggle .collapse-toggle-icon {
+  flex-shrink: 0;
+  transition: transform 0.25s ease;
+}
+
+.collapse-toggle .collapse-toggle-icon.collapsed {
+  transform: rotate(-90deg);
+}
+
+.defaults-panel {
+  background: var(--bg-content);
+  padding: 16px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  max-height: 1200px;
+  opacity: 1;
+  transition: max-height 0.4s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.3s ease, margin 0.4s cubic-bezier(0.22, 1, 0.36, 1), padding 0.4s ease;
+}
+
+.defaults-panel.collapsed {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  pointer-events: none;
+}
+
+/* Sticky панель слева (как на CodeErrorPage) */
+.solution-page .bug-report-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  margin-top: 24px;
+  margin-bottom: 30px;
+}
+
+.solution-page .task-area-left {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 0 0 280px;
+  min-width: 220px;
+  max-width: 400px;
+  position: sticky;
+  top: 24px;
+  align-self: flex-start;
+}
+
+.solution-page .task-area-left .task-controls-wrapper {
+  margin: 0;
+  flex-shrink: 0;
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.35s cubic-bezier(0.22, 1, 0.36, 1), margin 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.solution-page .task-area-left .task-controls-wrapper.expanded {
+  max-height: 250px;
+  margin: 0;
+  overflow: visible;
+}
+
+.solution-page .task-area-left .task-controls {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.solution-page .task-area-left .collapse-toggle {
+  align-self: flex-start;
+  flex-shrink: 0;
+}
+
+.solution-page .task-area-left .defaults-panel {
+  flex-shrink: 0;
+}
+
+.solution-page .task-area-left .task-sidebar {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: none;
+}
+
+.solution-page .task-controls {
+  width: 100%;
 }

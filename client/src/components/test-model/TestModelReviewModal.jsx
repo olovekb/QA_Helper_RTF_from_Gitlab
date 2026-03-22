@@ -3,6 +3,7 @@ import Modal from 'react-modal';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import config from '../../config';
 import axios from 'axios';
+import { trackEvent } from '../../analytics';
 import AsyncSelect from 'react-select/async';
 import { StyleInjector, LoaderOverlay } from './TestModelGeneratorModal';
 import JSZip from 'jszip';
@@ -3499,6 +3500,7 @@ export default function TestModelReviewModal({
     }, []);
 
     const handleGenerateXmind = async () => {
+        trackEvent('export_xmind_review', { page: '/solution', projectId });
         setIsGenerating(true);
 
         const STYLE_IDS = {
@@ -4121,6 +4123,7 @@ export default function TestModelReviewModal({
     };
 
     const handleFixTestCases = async () => {
+        trackEvent('fix_test_cases', { page: '/solution', projectId });
         if (!fixPrompt.trim()) {
             alert('Введите описание доработок');
             return;
@@ -4309,6 +4312,7 @@ export default function TestModelReviewModal({
     
     // Функция для принятия всех изменений
     const handleApproveAll = () => {
+        trackEvent('approve_all_cases', { page: '/solution', projectId });
         if (pendingApprovals.size === 0) {
             alert('Нет непринятых изменений');
             return;
@@ -4325,6 +4329,7 @@ export default function TestModelReviewModal({
 
     // Функция для сохранения тест-кейсов как идеальных примеров
     const handleSavePerfectExamples = async () => {
+        trackEvent('save_perfect_examples', { page: '/solution', projectId });
         const rawCases = flattenTreeToCases(treeData);
         
         if (rawCases.length === 0) {
@@ -4358,6 +4363,7 @@ export default function TestModelReviewModal({
     };
 
     const handleConfirm = async () => {
+        trackEvent('confirm_send_to_allure', { page: '/solution', projectId, extra: { casesCount: flattenTreeToCases(treeData).length } });
         const rawCases = flattenTreeToCases(treeData);
         const cases = rawCases.map(c => ({
             feature: c.feature,

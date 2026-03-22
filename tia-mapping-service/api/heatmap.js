@@ -58,7 +58,7 @@ export async function getHeatmapData(req, res) {
             .select(
                 'components.component_name',
                 databasePool.raw('COUNT(component_defects.id) as defect_count'),
-                databasePool.raw('COUNT(DISTINCT COALESCE(component_defects.issue_key, component_defects.id::text)) as unique_incident_count'),
+                databasePool.raw('COUNT(DISTINCT component_defects.issue_key) as unique_incident_count'),
                 databasePool.raw('ARRAY_AGG(DISTINCT component_defects.issue_key) FILTER (WHERE component_defects.issue_key IS NOT NULL) as issue_keys')
             )
             .groupBy('components.component_name');
@@ -342,17 +342,36 @@ export async function getTestCoverageData(req, res) {
         logInfo(`Получение данных Test Coverage для проекта ${projectId}, isBugFix=${parsedIsBugFix}, releaseVersions=${parsedReleaseVersions?.join(',') || 'all'}`);
 
         // Строим запрос: для каждого функционального блока суммируем дефекты всех связанных компонентов
+        // Стратегия связывания:
+        //   1. Прямой маппинг: FB напрямую связан с компонентом
+        //   2. FB -> Page -> дочерние компоненты: если FB замаплен на Page,
+        //      берём все дочерние компоненты этой Page (у них есть реальные дефекты)
+        const relevantComponents = databasePool('component_functional_blocks as cfb')
+            .select('cfb.functional_block_id', 'cfb.component_id')
+            .union(function () {
+                // FB -> Page -> Child Code Components
+                // Если FB замаплен на компонент типа Page, находим все дочерние компоненты этой Page
+                this.select('cfb.functional_block_id', 'pcd.component_id')
+                    .from('component_functional_blocks as cfb')
+                    .join('components as c', 'cfb.component_id', 'c.id')
+                    .join('page_component_dependencies as pcd', function () {
+                        this.on('pcd.page_name', '=', 'c.component_name')
+                            .andOn('pcd.project_id', '=', 'c.project_id');
+                    })
+                    .where('c.component_type', 'page');
+            });
+
         let query = databasePool('functional_blocks as fb')
-            .join('component_functional_blocks as cfb', 'fb.id', 'cfb.functional_block_id')
-            .join('components as c', 'cfb.component_id', 'c.id')
+            .join(relevantComponents.as('rc'), 'fb.id', 'rc.functional_block_id')
+            .join('components as c', 'rc.component_id', 'c.id')
             .leftJoin('component_defects as cd', 'cd.component_id', 'c.id')
             .where({ 'fb.project_id': projectId });
 
-        if (componentType) {
-            query = query.where('c.component_type', componentType);
-        }
+        // НЕ фильтруем по componentType здесь!
+        // Функциональный блок должен собирать дефекты от ВСЕХ связанных компонентов
+        // (включая Pages), чтобы приоритизация была полной.
 
-        // Применяем фильтры к дефектам
+        // Применяем фильтры к дефектам (ВСЕ фильтры ДО select/groupBy)
         if (startDate && endDate) {
             query = query.whereBetween('cd.change_date', [startDate, endDate]);
         } else if (startDate) {
@@ -365,6 +384,10 @@ export async function getTestCoverageData(req, res) {
             query = query.whereIn('cd.release_version', parsedReleaseVersions);
         }
 
+        if (parsedIsBugFix !== undefined) {
+            query = query.where('cd.is_bug_fix', parsedIsBugFix);
+        }
+
         query = query
             .select(
                 'fb.id as functional_block_id',
@@ -372,41 +395,62 @@ export async function getTestCoverageData(req, res) {
                 'fb.name as functional_block_name',
                 'fb.custom_field_name as functional_block_custom_field_name',
                 databasePool.raw('COUNT(DISTINCT cd.id) as total_defects'),
-                databasePool.raw('COUNT(DISTINCT COALESCE(cd.issue_key, cd.id::text)) as unique_incidents'),
+                databasePool.raw('COUNT(DISTINCT cd.issue_key) as unique_incidents'),
                 databasePool.raw('ARRAY_AGG(DISTINCT cd.issue_key) FILTER (WHERE cd.issue_key IS NOT NULL) as issue_keys')
             )
             .groupBy('fb.id', 'fb.allure_id', 'fb.name', 'fb.custom_field_name')
-            .having(databasePool.raw('COUNT(DISTINCT cd.id)'), '>', 0)
-        if (parsedIsBugFix !== undefined) {
-            query = query.where('cd.is_bug_fix', parsedIsBugFix);
-        }
+            .having(databasePool.raw('COUNT(DISTINCT cd.id)'), '>', 0);
 
         const results = await query;
 
-        // Считаем общее количество дефектов
-        let totalDefects = 0;
+        // Глобальные итоги: считаем ВСЕ дефекты проекта (как Code tab),
+        // чтобы касания/инциденты/время совпадали между вкладками,
+        // а проценты показывали долю каждого блока от ВСЕХ дефектов.
+        let subQueryForTotal = databasePool('component_defects as cd')
+            .join('components as c', 'cd.component_id', 'c.id')
+            .where({ 'c.project_id': projectId });
+        if (parsedIsBugFix !== undefined) {
+            subQueryForTotal = subQueryForTotal.where('cd.is_bug_fix', parsedIsBugFix);
+        }
+        if (startDate && endDate) {
+            subQueryForTotal = subQueryForTotal.whereBetween('cd.change_date', [startDate, endDate]);
+        } else if (startDate) {
+            subQueryForTotal = subQueryForTotal.where('cd.change_date', '>=', startDate);
+        } else if (endDate) {
+            subQueryForTotal = subQueryForTotal.where('cd.change_date', '<=', endDate);
+        }
+        if (parsedReleaseVersions && parsedReleaseVersions.length > 0) {
+            subQueryForTotal = subQueryForTotal.whereIn('cd.release_version', parsedReleaseVersions);
+        }
+
+        const [globalStats] = await subQueryForTotal.select(
+            databasePool.raw('COUNT(cd.id) as total_defects'),
+            databasePool.raw('COUNT(DISTINCT cd.issue_key) as unique_incidents'),
+            databasePool.raw('ARRAY_AGG(DISTINCT cd.issue_key) FILTER (WHERE cd.issue_key IS NOT NULL) as all_issue_keys')
+        );
+
+        const totalDefectsGlobal = parseInt(globalStats.total_defects, 10) || 0;
+        const uniqueTotalIssuesCountGlobal = parseInt(globalStats.unique_incidents, 10) || 0;
+        const allIssueKeysGlobal = globalStats.all_issue_keys || [];
+
         const functionalBlocksMap = new Map();
-
         results.forEach(row => {
-            const defectCount = parseInt(row.total_defects, 10);
-            totalDefects += defectCount;
-
             functionalBlocksMap.set(row.functional_block_id, {
                 functionalBlockId: row.functional_block_id,
                 functionalBlockAllureId: row.functional_block_allure_id,
                 functionalBlockName: row.functional_block_name,
                 functionalBlockCustomFieldName: row.functional_block_custom_field_name,
-                defectCount: defectCount,
+                defectCount: parseInt(row.total_defects, 10),
                 uniqueIncidentCount: parseInt(row.unique_incidents, 10) || 0,
                 issueKeys: row.issue_keys || []
             });
         });
 
-        // Преобразуем в массив с процентами
+        // Преобразуем в массив с процентами от ГЛОБАЛЬНОГО итога
         const functionalBlocksData = Array.from(functionalBlocksMap.values())
             .map(fb => ({
                 ...fb,
-                percentage: totalDefects > 0 ? ((fb.defectCount / totalDefects) * 100).toFixed(1) : '0.0',
+                percentage: totalDefectsGlobal > 0 ? ((fb.defectCount / totalDefectsGlobal) * 100).toFixed(1) : '0.0',
             }))
             .sort((a, b) => b.defectCount - a.defectCount);
 
@@ -518,11 +562,27 @@ export async function getTestCoverageData(req, res) {
         // Если хотим "Test Coverage" pie chart, то сумма должна быть 100%. Значит дефект должен принадлежать ОДНОЙ категории.
         // Для роутов мы делали MIN(page_route). Сделаем так же для страниц, чтобы сумма сходилась.
 
-        const pagesResults = await defectPageQuery
+        // 3. Для каждого дефекта находим ПЕРВУЮ страницу (чтобы не дублировать дефект в общем итоге)
+        const defectToPageSubquery = databasePool('component_defects as cd')
+            .join('components as c', 'cd.component_id', 'c.id')
+            .join('page_component_dependencies as pcd', 'pcd.component_id', 'c.id')
+            .where({ 'c.project_id': projectId })
+            .select('cd.id as defect_id')
+            .min('pcd.page_name as primary_page')
+            .groupBy('cd.id');
+
+        const pagesResults = await databasePool
+            .from(defectToPageSubquery.as('dp'))
+            .join('component_defects as cd', 'dp.defect_id', 'cd.id')
+            .join('components as c', 'cd.component_id', 'c.id')
+            .join('page_component_dependencies as pcd', function () {
+                this.on('pcd.page_name', '=', 'dp.primary_page')
+                    .andOn('pcd.component_id', '=', 'c.id');
+            })
             .select(
                 'pcd.page_name as page_name',
                 'pcd.page_route as page_route',
-                databasePool.raw('COUNT(DISTINCT COALESCE(cd.issue_key, cd.id::text)) as unique_incidents'),
+                databasePool.raw('COUNT(DISTINCT cd.issue_key) as unique_incidents'),
                 databasePool.raw('ARRAY_AGG(DISTINCT cd.issue_key) FILTER (WHERE cd.issue_key IS NOT NULL) as issue_keys')
             )
             .count('cd.id as total_defects')
@@ -553,17 +613,14 @@ export async function getTestCoverageData(req, res) {
                 percentage: totalPagesDefects > 0 ? ((page.defectCount / totalPagesDefects) * 100).toFixed(1) : '0.0',
             }))
             .sort((a, b) => b.defectCount - a.defectCount);
-
-
-        logInfo(`Получено ${functionalBlocksData.length} функц. блоков, ${routesData.length} роутов и ${pagesData.length} страниц. Всего дефектов: ${totalDefects}`);
+        logInfo(`Получено ${functionalBlocksData.length} функц. блоков и ${pagesData.length} страниц. Всего уникальных дефектов: ${totalDefectsGlobal}`);
 
         res.status(200).json({
-            totalDefects,
             functionalBlocks: functionalBlocksData,
-            routes: routesData,
-            pages: pagesData, // New data
-            totalRoutesDefects,
-            totalPagesDefects, // New metric
+            pages: pagesData,
+            totalDefects: totalDefectsGlobal,
+            uniqueTotalIssuesCount: uniqueTotalIssuesCountGlobal,
+            allIssueKeys: allIssueKeysGlobal,
             filters: {
                 projectId,
                 startDate: startDate || null,
@@ -710,12 +767,20 @@ export async function bulkImportHistory(req, res) {
                 const chunkSize = 500;
                 for (let i = 0; i < defectInserts.length; i += chunkSize) {
                     const chunk = defectInserts.slice(i, i + chunkSize);
-                    // Используем onConflict для дедупликации - индекс idx_component_defects_unique_v3
-                    // включает: component_id, change_date, issue_key, mr_iid, release_version
+                    // Используем onConflict для дедупликации и UPSERT - индекс idx_component_defects_unique_v4
+                    // включает: component_id, change_date, issue_key, mr_iid
                     await trx('component_defects')
                         .insert(chunk)
-                        .onConflict(['component_id', 'change_date', 'issue_key', 'mr_iid', 'release_version'])
-                        .ignore();
+                        .onConflict(['component_id', 'change_date', 'issue_key', 'mr_iid'])
+                        .merge([
+                            'release_version',
+                            'is_bug_fix',
+                            'mr_title',
+                            'source_branch',
+                            'target_branch',
+                            'merged_at',
+                            'web_url'
+                        ]);
                 }
             }
 

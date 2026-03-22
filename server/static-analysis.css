@@ -1,20 +1,24 @@
-:root {
-    --font-main: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    --bg-main: #111827;
-    --bg-content: #1f2937;
-    --bg-input: #374151;
-    --border-color: #4b5563;
-    --border-focus: #6366f1;
-    --text-primary: #f9fafb;
-    --text-secondary: #d1d5db;
-    --text-placeholder: #9ca3af;
+:root:not([data-theme]) {
+    --font-main: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --bg-main: #ffffff;
+    --bg-content: #ffffff;
+    --bg-input: #f8fafc;
+    --border-color: #e2e8f0;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-placeholder: #94a3b8;
     --primary-accent: #6366f1;
     --primary-hover: #4f46e5;
-    --success: #22c55e;
-    --error: #ef4444;
-    --warning: #f59e0b;
-    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.15);
-    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.2);
+    --success: #16a34a;
+    --success-bg: #dcfce7;
+    --error: #dc2626;
+    --error-bg: #fef2f2;
+    --warning: #d97706;
+    --warning-bg: #fffbeb;
+    /* --info: #2563eb; */
+    /* --info-bg: #eff6ff; */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md: 0 1px 3px rgb(0 0 0 / 0.1);
 }
 
 /* Базовые стили страницы */
@@ -36,153 +40,146 @@ body {
 
 /* Заголовки */
 .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
     background-color: var(--bg-content);
-    padding: 0px 32px;
+    padding: 12px 24px;
     border-radius: 12px;
-    box-shadow: var(--shadow-md);
-    margin-bottom: 24px;
-    text-align: center;
+    border: 1px solid var(--border-color);
+    margin-bottom: 12px;
 }
 
-.header h1 {
-    color: var(--text-primary);
-    margin-bottom: 8px;
-    font-weight: 600;
-    font-size: 2rem;
-}
-
-.header h2 {
+.header-left h2 {
     color: var(--text-secondary);
-    font-size: 1.125rem;
-    font-weight: 400;
+    font-size: 1rem;
+    font-weight: 500;
+    margin: 0;
 }
 
-.header h2 a {
+.header-left h2 a {
     color: var(--primary-accent);
     text-decoration: none;
+    font-weight: 600;
 }
 
-.header h2 a:hover {
+.header-left h2 a:hover {
     color: var(--primary-hover);
     border-bottom: 2px solid var(--primary-hover);
 }
 
-/* Результаты статанализа */
-.resolution-success {
-    background-color: color-mix(in srgb, var(--success) 20%, var(--bg-content));
-    color: var(--success);
-    padding: 16px 24px;
-    border-radius: 12px;
-    border-left: 4px solid var(--success);
-    font-size: 1.125rem;
+.header-right {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.header-download-btn {
+    padding: 8px 16px;
+    margin: 0px !important;
+    font-size: 0.875rem;
     font-weight: 600;
-    margin-bottom: 24px;
-    text-align: center;
+    color: white;
+    background-color: var(--primary-accent);
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    white-space: nowrap;
+}
+
+.header-download-btn:hover {
+    background-color: var(--primary-hover);
+}
+
+/* Результаты статанализа */
+.resolution-success,
+.resolution-failed {
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    white-space: nowrap;
+    margin: 0;
+}
+
+.resolution-success {
+    background-color: color-mix(in srgb, var(--success) 15%, var(--bg-content));
+    color: var(--success);
+    border: 1px solid var(--success);
 }
 
 .resolution-failed {
-    background-color: color-mix(in srgb, var(--error) 20%, var(--bg-content));
+    background-color: color-mix(in srgb, var(--error) 15%, var(--bg-content));
     color: var(--error);
-    padding: 16px 24px;
-    border-radius: 12px;
-    border-left: 4px solid var(--error);
-    font-size: 1.125rem;
-    font-weight: 600;
-    margin-bottom: 24px;
-    text-align: center;
+    border: 1px solid var(--error);
 }
 
 /* Панель статистики */
-.statistics-panel {
+.stats-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 14px;
     background-color: var(--bg-content);
-    padding: 24px;
-    border-radius: 12px;
-    box-shadow: var(--shadow-md);
-    margin-bottom: 24px;
-}
-
-.statistics-panel h2 {
-    color: var(--text-primary);
-    margin-bottom: 20px;
-    font-weight: 600;
-    font-size: 1.5rem;
-    border-bottom: 1px solid var(--border-color);
-    padding-bottom: 8px;
-}
-
-.stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 15px;
-    margin-bottom: 30px;
-}
-
-.stat-card {
-    background-color: var(--bg-input);
-    padding: 20px;
-    border-radius: 8px;
-    text-align: center;
     border: 1px solid var(--border-color);
-    transition: all 0.2s ease;
-}
-
-.stat-card.stat-total {
-    border-color: var(--border-color);
-}
-
-.stat-card.stat-passed {
-    background-color: color-mix(in srgb, var(--success) 10%, var(--bg-input));
-    border-left: 3px solid var(--success);
-}
-
-.stat-card.stat-warnings {
-    background-color: color-mix(in srgb, var(--warning) 10%, var(--bg-input));
-    border-left: 3px solid var(--warning);
-}
-
-.stat-card.stat-errors {
-    background-color: color-mix(in srgb, var(--error) 10%, var(--bg-input));
-    border-left: 3px solid var(--error);
-}
-
-.stat-value {
-    font-size: 2.5rem;
-    font-weight: 700;
-    margin-bottom: 4px;
-    color: var(--text-primary);
-}
-
-.stat-label {
-    font-size: 0.875rem;
-    color: var(--text-secondary);
-    font-weight: 500;
-}
-
-.stat-percentage {
-    font-size: 1.125rem;
-    font-weight: 600;
-    margin-top: 8px;
-    color: var(--text-primary);
-}
-
-.thresholds-info {
-    background-color: var(--bg-input);
-    padding: 20px;
-    border-radius: 8px;
-    border-left: 3px solid var(--text-placeholder);
-    margin-bottom: 20px;
-}
-
-.thresholds-info h3 {
-    color: var(--text-primary);
+    padding: 10px 20px;
+    border-radius: 10px;
     margin-bottom: 12px;
-    font-weight: 600;
-    font-size: 1.125rem;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
 }
 
-.thresholds-info p {
-    color: var(--text-secondary);
-    margin-bottom: 5px;
+.stats-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.stats-item strong {
+    color: var(--text-primary);
+    font-size: 1rem;
+}
+
+.stats-err strong {
+    color: var(--error);
+}
+
+.stats-warn strong {
+    color: var(--warning);
+}
+
+.stats-pct {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.stats-err.over-threshold .stats-pct {
+    color: var(--error);
+}
+
+.stats-warn.over-threshold .stats-pct {
+    color: var(--warning);
+}
+
+.stats-threshold {
+    color: var(--text-placeholder);
+    font-size: 0.75rem;
+}
+
+.stats-divider {
+    width: 1px;
+    height: 16px;
+    background-color: var(--border-color);
+}
+
+.stats-project {
+    margin-left: auto;
+    font-size: 0.8rem;
+    color: var(--text-placeholder);
+    font-weight: 500;
 }
 
 /* Список тест-кейсов */
@@ -195,9 +192,12 @@ body {
 
 .test-list-section {
     background-color: var(--bg-content);
-    padding: 12px 16px;
+    padding: 12px 16px 4px;
     border-radius: 12px;
     border: 1px solid var(--border-color);
+    overflow: hidden;
+    min-width: 0;
+    text-align: left;
 }
 
 .test-list-section h2 {
@@ -210,6 +210,8 @@ body {
     line-height: 1.3;
     -ms-overflow-style: none;
     scrollbar-width: none;
+    overflow: hidden;
+    min-width: 0;
 }
 
 .scrollable-list::-webkit-scrollbar {
@@ -225,27 +227,30 @@ body {
     list-style: none;
     padding-left: 0;
     margin: 0;
+    overflow: hidden;
 }
 
 .tree-node {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
+    display: block;
+    min-width: 0;
 }
 
-.tree-node > .tree-row {
-    display: inline-flex;
+.tree-node>.tree-row {
+    display: flex;
     align-items: center;
     gap: 4px;
     cursor: pointer;
     line-height: 1.35;
     padding: 1px 0;
-    width: fit-content;
-    max-width: 100%;
+    min-width: 0;
 }
 
-.tree-node > .tree-row .tree-checkbox {
+.tree-node>.tree-row .tree-checkbox {
     cursor: default;
+}
+
+.fix-checkbox {
+    accent-color: var(--primary-accent);
 }
 
 .tree-toggle {
@@ -258,9 +263,13 @@ body {
 }
 
 .tree-label {
-    flex: 0 1 auto;
+    flex: 1 1 0;
+    min-width: 0;
     color: var(--text-primary);
     font-size: 0.85em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .tree-field-prefix {
@@ -282,10 +291,20 @@ body {
     list-style: none;
     padding-left: 14px;
     margin-top: 0;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .tree-children.collapsed {
     display: none;
+}
+
+li ul .tree-children {
+    margin-bottom: 0px;
+}
+
+ul .tree-children {
+    margin-bottom: 0px;
 }
 
 .tree-leaf {
@@ -294,11 +313,17 @@ body {
     align-items: center;
     gap: 6px;
     font-size: 0.85em;
+    min-width: 0;
 }
 
 .tree-leaf a {
     text-decoration: none;
     cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1;
 }
 
 .tree-leaf a:hover {
@@ -337,39 +362,31 @@ body {
 /* Статусы тест-кейсов */
 .passed-text {
     color: var(--success);
-    text-decoration: none;
-    flex: 1;
 }
 
 .success-text {
     color: var(--text-primary);
-    text-decoration: none;
-    flex: 1;
 }
 
 .warning-text {
     color: var(--warning);
-    text-decoration: none;
-    flex: 1;
 }
 
 .failed-text {
     color: var(--error);
-    text-decoration: none;
-    flex: 1;
 }
 
 /* Детали тест-кейса */
 .test-cases-details {
     background-color: var(--bg-content);
-    padding: 30px;
+    padding: 12px;
     border-radius: 12px;
+    border: 1px solid var(--border-color);
 }
 
 .test-case {
     border-bottom: 1px solid var(--border-color);
-    padding: 30px;
-    margin-bottom: 30px;
+    padding: 12px;
     color: var(--text-primary);
     border-radius: 12px;
 }
@@ -390,36 +407,30 @@ body {
     color: var(--success);
 }
 
-/* Ссылки */
-.allure-link {
-    display: inline-block;
-    background-color: var(--primary-accent);
-    color: white;
-    padding: 8px 16px;
-    border-radius: 8px;
-    text-decoration: none;
-    margin: 10px 0;
-    font-size: 0.875rem;
+/* Заголовок тест-кейса */
+.test-case-title {
+    font-size: 1rem;
+    text-align: left;
+    margin: 0 0 8px 0;
     font-weight: 600;
-    transition: all 0.2s ease;
+    line-height: 1.4;
 }
 
-.allure-link:hover {
-    background-color: var(--primary-hover);
+.test-case-id {
+    font-size: 0.8em;
+    color: var(--text-secondary);
+    font-weight: 500;
 }
 
 /* Дропдаун "Информация о тест-кейсе" */
 .test-case-details {
-    margin: 16px 0;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    background-color: var(--bg-input);
+    background-color: transparent;
+    font-size: 0.8rem;
 }
 
 .test-case-details summary {
-    padding: 12px 16px;
     cursor: pointer;
-    color: var(--text-primary);
+    color: var(--text-secondary);
     font-weight: 600;
     list-style: none;
     user-select: none;
@@ -446,240 +457,178 @@ body {
     transform: rotate(90deg);
 }
 
-.test-case-details > .test-info,
-.test-case-details > h3,
-.test-case-details > .steps-list {
-    margin-left: 16px;
-    margin-right: 16px;
-}
-
-.test-case-details > .steps-list {
-    margin-bottom: 16px;
-}
-
-.test-info {
-    padding: 0px 16px;
-    margin: 0px 16px;
-    margin-bottom: 16px;
-}
-
-.test-info p {
-    margin-bottom: 8px;
-    color: var(--text-secondary);
-}
-
-.test-case-details > h3 + p.test-info {
-    margin-left: 16px;
-    margin-right: 16px;
-}
-
-.test-info strong {
-    color: var(--text-primary);
-    font-weight: 600;
-}
-
-/* Таблица параметров */
-.parameters-table {
-    width: 100%;
-    max-width: 600px;
-    border-collapse: collapse;
-    margin-bottom: 12px;
-    font-size: 0.9em;
-}
-
-.parameters-table th,
-.parameters-table td {
-    padding: 8px 12px;
-    text-align: left;
-    border: 1px solid var(--border-color);
-}
-
-.parameters-table th {
-    background-color: var(--bg-input);
-    color: var(--text-primary);
-    font-weight: 600;
-}
-
-.parameters-table td {
-    color: var(--text-secondary);
-}
-
-/* Шаги тест-кейса */
-.steps-list {
-    margin: 15px 0;
-    padding-left: 0;
-    list-style: none;
-}
-
-.steps-list li {
-    margin-bottom: 12px;
-    padding: 14px 16px;
-    background-color: var(--bg-input);
-    border-radius: 8px;
-    color: var(--text-secondary);
-    border-left: 3px solid transparent;
-    transition: all 0.2s ease;
-}
-
-.step-header {
-    color: var(--text-secondary);
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-
-.step-header strong {
-    color: var(--text-primary);
-}
-
-.shared-step-badge {
-    display: inline-block;
-    padding: 2px 8px;
-    font-size: 0.75em;
-    font-weight: 600;
-    color: var(--primary-accent);
-    background-color: color-mix(in srgb, var(--primary-accent) 15%, var(--bg-input));
-    border: 1px solid color-mix(in srgb, var(--primary-accent) 30%, var(--bg-input));
-    border-radius: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.step-expected {
-    margin-top: 10px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    background-color: color-mix(in srgb, var(--bg-content) 65%, var(--bg-input));
-    border: 1px solid var(--border-color);
-}
-
-.step-expected-label {
-    font-weight: 600;
-    color: var(--text-primary);
-    margin-bottom: 6px;
-}
-
-.step-expected-text {
-    color: var(--text-secondary);
-    line-height: 1.5;
-}
-
-.shared-step-children {
-    list-style: none;
-    padding-left: 0;
-    margin: 8px 0 0 0;
-}
-
-.shared-step-children li {
-    padding: 8px 0 8px 8px;
-    color: var(--text-secondary);
-    line-height: 1.5;
-    border-bottom: 1px solid color-mix(in srgb, var(--border-color) 30%, transparent);
-}
-
-.shared-step-children li:last-child {
-    border-bottom: none;
-}
-
-.shared-child-step {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.child-step-description {
-    color: var(--text-secondary);
-}
-
-.child-step-expected {
-    padding: 6px 10px;
-    background-color: color-mix(in srgb, var(--bg-content) 50%, var(--bg-input));
+.allure-iframe-wrapper {
+    position: relative;
+    margin: 12px 16px;
     border-radius: 6px;
-    font-size: 0.9em;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+    background: var(--bg-input);
+}
+
+.allure-iframe {
+    width: 100%;
+    height: 400px;
+    border: none;
+    display: block;
+}
+
+.allure-iframe-fallback {
+    display: none;
+    padding: 12px 16px;
+    font-size: 0.82rem;
     color: var(--text-secondary);
-    border-left: 2px solid color-mix(in srgb, var(--warning) 50%, transparent);
+    text-align: center;
 }
 
-.child-expected-label {
+.allure-iframe-fallback a {
+    color: var(--primary-accent);
+    text-decoration: none;
     font-weight: 600;
-    color: var(--text-primary);
-    font-size: 0.85em;
 }
 
-.step-error {
-    border-left: 3px solid var(--error) !important;
+.allure-iframe-fallback a:hover {
+    color: var(--primary-hover);
 }
 
-.step-warning {
-    border-left: 3px solid var(--warning) !important;
-}
 
-.step-issues {
-    margin-top: 10px;
-    padding-left: 20px;
-    list-style: none;
-}
 
 /* Блоки "Ошибки" и "Предупреждения" */
 .issues-section {
-    margin: 20px 0;
-    padding: 20px;
+    margin: 12px 0;
     border-radius: 8px;
+    border: 1px solid var(--border-color);
+    overflow: hidden;
 }
 
 .errors-section {
-    background-color: color-mix(in srgb, var(--error) 15%, var(--bg-content));
-    border-left: 4px solid var(--error);
-    border-radius: 8px;
+    border-left: 3px solid var(--error);
 }
 
 .warnings-section {
-    background-color: color-mix(in srgb, var(--warning) 15%, var(--bg-content));
-    border-left: 4px solid var(--warning);
-    border-radius: 8px;
+    border-left: 3px solid var(--warning);
 }
 
-.issues-list {
-    list-style: none;
-    padding-left: 0;
+/* .improvements-section {
+    border-left: 3px solid var(--info);
+} */
+
+.issues-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background-color: var(--bg-input);
+    border-bottom: 1px solid var(--border-color);
 }
 
-.category-group {
-    margin-bottom: 15px;
+.issues-title {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--text-primary);
 }
 
-.category-group > strong {
-    display: block;
-    margin-bottom: 8px;
-    font-size: 1.1em;
+.issues-count {
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 10px;
+    color: #fff;
+    line-height: 1.4;
 }
 
-.category-group ul {
-    padding-left: 20px;
+.errors-count {
+    background-color: var(--error);
 }
 
-.error-item {
+.warnings-count {
+    background-color: var(--warning);
+}
+
+/* .improvements-count {
+    background-color: var(--info);
+} */
+
+.issues-body {
+    display: grid;
+    grid-template-columns: var(--issues-cat-width, max-content) 1fr;
+    align-items: baseline;
+    font-size: 0.82rem;
+    line-height: 1.4;
+}
+
+.issues-body>span {
+    padding-top: 5px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
+}
+
+.issues-body>span:nth-last-child(-n+2) {
+    border-bottom: none;
+}
+
+.issues-body>.issue-text {
+    padding-right: 12px;
+    margin-left: 4px;
+}
+
+.issue-category {
+    font-size: 0.7rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 160px;
+    width: fit-content;
+    color: var(--text-secondary);
+    background-color: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 2px 8px !important;
+    margin: 4px 0 4px 10px;
+    align-self: center;
+    justify-self: start;
+}
+
+.issue-text {
+    min-width: 0;
+    color: var(--text-secondary);
+}
+
+.issue-step {
+    color: var(--text-placeholder);
+    font-size: 0.9em;
+}
+
+.error-item .rule-name {
     color: var(--error);
-    margin-bottom: 5px;
+    font-weight: 600;
 }
 
-.warning-item {
+.warning-item .rule-name {
     color: var(--warning);
-    margin-bottom: 5px;
+    font-weight: 600;
 }
+
+/* .improvement-item .rule-name {
+    color: var(--info);
+    font-weight: 600;
+} */
 
 .rule-name {
-    font-weight: bold;
+    font-weight: 600;
 }
 
 .passed {
     color: var(--success);
-    padding: 16px;
-    background-color: color-mix(in srgb, var(--success) 15%, var(--bg-content));
+    padding: 10px 14px;
+    background-color: color-mix(in srgb, var(--success) 10%, var(--bg-content));
     border-radius: 8px;
     border-left: 3px solid var(--success);
     text-align: center;
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin: 12px 0;
 }
 
 /* Рекомендации AI */
@@ -689,7 +638,7 @@ body {
 
 .ai-recommend-btn {
     background-color: var(--primary-accent);
-    color: white;
+    color: #fff;
     padding: 10px 20px;
     border: none;
     border-radius: 8px;
@@ -702,6 +651,11 @@ body {
     background-color: var(--primary-hover);
 }
 
+.ai-recommend-btn:disabled {
+    background-color: transparent !important;
+    cursor: default;
+}
+
 .ai-bulk-recommendation {
     margin: 15px 0;
     padding: 15px;
@@ -710,18 +664,18 @@ body {
 }
 
 .ai-bulk-recommendation.ai-error {
-    background-color: rgba(239, 68, 68, 0.1);
-    border-left-color: #ef4444;
+    background-color: var(--error-bg);
+    border-left-color: var(--error);
 }
 
 .ai-bulk-recommendation.ai-warning {
-    background-color: rgba(245, 158, 11, 0.1);
-    border-left-color: #f59e0b;
+    background-color: var(--warning-bg);
+    border-left-color: var(--warning);
 }
 
 .ai-bulk-recommendation.ai-ok {
-    background-color: rgba(34, 197, 94, 0.1);
-    border-left-color: #22c55e;
+    background-color: var(--success-bg);
+    border-left-color: var(--success);
 }
 
 .ai-bulk-recommendation h3 {
@@ -741,7 +695,7 @@ body {
     font-size: 0.85em;
     padding: 2px 6px;
     border-radius: 4px;
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: color-mix(in srgb, var(--text-primary) 15%, transparent);
 }
 
 .ai-text {

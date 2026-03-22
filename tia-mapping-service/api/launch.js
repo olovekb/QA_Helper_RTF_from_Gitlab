@@ -8,7 +8,8 @@ import databasePool from '../db/pool.js'; // Импорт пула соедин�
 // Глобальный кэш для хранения результатов запросов
 const cache = new Map();
 
-async function logResponse(response, url, requestBody = null) {
+async function logResponse (response, url, requestBody = null)
+{
     // Клонируем response, чтобы сохранить оригинальный поток
     const clonedResponse = response.clone();
     let responseText = '';
@@ -27,16 +28,18 @@ async function logResponse(response, url, requestBody = null) {
 
 /**
  * Рекурсивное получение всех листовых тест-кейсов (testCaseId) для группы
- * @param {string} projectId 
- * @param {string} treeId 
- * @param {string} parentNodeId 
+ * @param {string} projectId
+ * @param {string} treeId
+ * @param {string} parentNodeId
  * @param {string} mode - 'FULL' (рекурсия) или 'SELECTIVE' (только прямые тесты)
  * @returns {Promise<Array<number>>}
  */
-async function fetchLeafTestCasesRecursive(projectId, treeId, parentNodeId, mode = 'FULL') {
+async function fetchLeafTestCasesRecursive (projectId, treeId, parentNodeId, mode = 'FULL')
+{
     const allTestCaseIds = [];
 
-    async function collect(nodeId, isInitial = false) {
+    async function collect (nodeId, isInitial = false)
+    {
         try {
             const url = `${config.allureBaseUrl}/api/v2/project/${projectId}/test-case/tree/tree-node?treeId=${treeId}&parentNodeId=${nodeId}&page=0&size=1000`;
             const res = await fetchWithAuth(url, { headers: authHeaders });
@@ -53,7 +56,7 @@ async function fetchLeafTestCasesRecursive(projectId, treeId, parentNodeId, mode
                     allTestCaseIds.push(child.testCaseId);
                 } else if (child.type === 'GROUP') {
                     // Если режим FULL — заходим рекурсивно всегда.
-                    // Если режим SELECTIVE — заходим только если мы НЕ на верхнем уровне (чтобы собрать тесты внутри вложенных групп, если они листовые?) 
+                    // Если режим SELECTIVE — заходим только если мы НЕ на верхнем уровне (чтобы собрать тесты внутри вложенных групп, если они листовые?)
                     // НЕТ, для Story логика: только прямо вложенные тесты. В другие GROUP (Scenario) НЕ заходим.
                     if (mode === 'FULL') {
                         await collect(child.id);
@@ -81,7 +84,8 @@ async function fetchLeafTestCasesRecursive(projectId, treeId, parentNodeId, mode
  * @param {string} projectId - Идентификатор проекта
  * @returns {Promise<number>} - treeId проекта
  */
-async function getTreeId(projectId) {
+async function getTreeId (projectId)
+{
     try {
         logInfo(`Получаем treeId для проекта ${projectId} (проверяем кэш)`); // Логирование шага
         const treeCacheKey = `tree_${projectId}`;
@@ -150,7 +154,8 @@ async function getTreeId(projectId) {
  * @param {string} projectId - Идентификатор проекта
  * @returns {Promise<number>} - jobId проекта
  */
-async function getJobId(projectId) {
+async function getJobId (projectId)
+{
     try {
         const jobSuggestUrl = `${config.allureBaseUrl}/api/job/suggest?projectId=${projectId}&size=20`;
         logInfo(`Отправляем запрос на ${jobSuggestUrl} для получения jobId`);
@@ -190,7 +195,8 @@ async function getJobId(projectId) {
  * @param {number} jobId - Идентификатор джобы
  * @returns {Promise<void>}
  */
-async function setJobsMapping(projectId, treeId, jobId) {
+async function setJobsMapping (projectId, treeId, jobId)
+{
     try {
         const statsUrl = `${config.allureBaseUrl}/api/v2/test-case/bulk/job/stats`;
         const requestBody = {
@@ -242,7 +248,7 @@ async function setJobsMapping(projectId, treeId, jobId) {
  * @param {Object} req - Объект запроса Express с данными для тест-плана
  * @param {Object} res - Объект ответа Express
  * @returns {void}
- * 
+ *
  * Поддерживаемые параметры body:
  * - projectId (обязательный)
  * - componentMappings (обязательный, если не передан groupsInclude)
@@ -251,7 +257,8 @@ async function setJobsMapping(projectId, treeId, jobId) {
  * - launchName (опциональный) - кастомное название запуска
  * - groupsInclude (опциональный) - явный список ID групп (для split-режима)
  */
-export async function createTestPlan(req, res) {
+export async function createTestPlan (req, res)
+{
     const {
         projectId,
         jiraLink,
@@ -304,7 +311,8 @@ export async function createTestPlan(req, res) {
                 const typeMap = new Map();
                 fbMetaData.forEach(fb => typeMap.set(fb.allure_id, fb.custom_field_name));
 
-                const leafPromises = groupsInclude.map(async (groupId) => {
+                const leafPromises = groupsInclude.map(async (groupId) =>
+                {
                     const type = typeMap.get(groupId.toString());
                     // Правила режима:
                     // FULL: Feature, Code, Block, Scenario
@@ -330,7 +338,8 @@ export async function createTestPlan(req, res) {
         } else {
             // Legacy-режим: вычисляем из componentMappings
             const allFolderIds = new Set();
-            Object.values(componentMappings).forEach(folderIds => {
+            Object.values(componentMappings).forEach(folderIds =>
+            {
                 if (Array.isArray(folderIds)) {
                     folderIds.forEach(id => allFolderIds.add(parseInt(id, 10)));
                 }
@@ -351,7 +360,8 @@ export async function createTestPlan(req, res) {
                 const typeMap = new Map();
                 fbMetaData.forEach(fb => typeMap.set(fb.allure_id, fb.custom_field_name));
 
-                const leafPromises = groupsInclude.map(groupId => {
+                const leafPromises = groupsInclude.map(groupId =>
+                {
                     const type = typeMap.get(groupId.toString());
                     const isFull = !type || ['Feature', 'Code', 'Block', 'Scenario', 'Сценарий'].includes(type);
                     const mode = isFull ? 'FULL' : 'SELECTIVE';
@@ -377,15 +387,13 @@ export async function createTestPlan(req, res) {
 
         // 2. Параллельно получаем TreeID, IntegrationID и JobID (Экономим время и запросы)
         let jobId = null;
-        // ОТКЛЮЧЕНО ПО ТРЕБОВАНИЮ: по дефолту создаем запуск без привязки к джобе.
-        /*
+        // Включено: по дефолту создаем запуск с привязкой к джобе
         try {
             jobId = await getJobId(projectId);
             logInfo(`Предварительно получен JobId: ${jobId}`);
         } catch (e) {
             logWarn(`Не удалось получить JobId заранее: ${e.message}. Попробуем без него.`);
         }
-        */
 
         // b) Получаем Tree ID
         const treeId = await getTreeId(projectId);
@@ -562,7 +570,8 @@ export async function createTestPlan(req, res) {
                     // Нужно проверить каждую группу, является ли она пустой (с точки зрения Allure)
                     // Это может занять время, но это fallback.
                     try {
-                        const checkPromises = allGroupIds.map(async groupId => {
+                        const checkPromises = allGroupIds.map(async groupId =>
+                        {
                             // Получаем имя группы из БД для красивой ошибки (опционально)
                             let groupName = `Group ${groupId}`;
                             try {
@@ -591,7 +600,8 @@ export async function createTestPlan(req, res) {
 
                 // Если список пустых групп все еще пуст, но Allure выдал "nothing-to-run",
                 // значит мы не смогли точно определить виновника. В таком случае возвращаем все группы с именами.
-                const finalEmptyGroups = emptyGroups.length > 0 ? emptyGroups : await Promise.all(allGroupIds.map(async id => {
+                const finalEmptyGroups = emptyGroups.length > 0 ? emptyGroups : await Promise.all(allGroupIds.map(async id =>
+                {
                     let groupName = `Группа #${id}`;
                     try {
                         const dbRes = await databasePool('functional_blocks')
@@ -637,7 +647,7 @@ export async function createTestPlan(req, res) {
 
         // 8. Сохраняем связи (асинхронно, не блокируем ответ, но логируем ошибку если что)
         if (pageDependencies && pageDependencies.length > 0) {
-            // Запускаем без await, чтобы быстрее отдать ответ клиенту? 
+            // Запускаем без await, чтобы быстрее отдать ответ клиенту?
             // Нет, лучше подождать, чтобы гарантировать консистентность, но обернуть в try
             try {
                 await savePageComponentDependencies(projectId, pageDependencies);
@@ -653,4 +663,3 @@ export async function createTestPlan(req, res) {
         res.status(500).json({ error: 'Ошибка создания тест-плана', details: error.message });
     }
 }
-

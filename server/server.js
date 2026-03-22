@@ -149,57 +149,60 @@ async function makeDirectOpenRouterCall(messages, apiKey, opts) {
 }
 
 import {
-    getAllureDefectById,
-    getSharedStepsList,
-    getStepsForDefect,
-    analyzeBugWithAI,
-    getAllureDefects,
-    linkIssueToAllureDefect,
-    getAllTestCases,
-    getTestCaseOverview,
-    getTestCaseExpectedResult,
-    getTestCaseLayer,
-    getCaseIssue,
-    getCaseTags,
-    getTestCasePrecondition,
-    getTestCaseStatus,
-    getTestCaseSteps,
-    getTestCaseCustomFields,
-    createTestCaseAllure,
-    setTestCaseCustomFieldValues,
-    updateTestCase,
-    deleteTestCase,
-    addStepToTestCase,
-    addExpectedResultToStep,
-    linkIssueToTestCase,
-    setTestCaseLayer,
-    suggestTestLayers,
-    getProjectCustomFieldSchema,
-    fetchWithAuth,
-    suggestTags,
-    createTag,
-    addParameterToTestCase,
-    createTestCaseExamples,
-    generatePairwiseExamples,
-    createSharedStep,
-    addStepToSharedStep,
-    getSharedStepDetails
+getAllureDefectById,
+getSharedStepsList,
+getStepsForDefect,
+analyzeBugWithAI,
+getAllureDefects,
+getAllureLaunches,
+getLaunchDefects,
+linkIssueToAllureDefect,
+getAllTestCases,
+getTestCaseOverview,
+getTestCaseExpectedResult,
+getTestCaseLayer,
+getCaseIssue,
+getCaseTags,
+getTestCasePrecondition,
+getTestCaseStatus,
+getTestCaseSteps,
+getTestCaseCustomFields,
+createTestCaseAllure,
+setTestCaseCustomFieldValues,
+updateTestCase,
+deleteTestCase,
+addStepToTestCase,
+addExpectedResultToStep,
+linkIssueToTestCase,
+setTestCaseLayer,
+suggestTestLayers,
+getProjectCustomFieldSchema,
+fetchWithAuth,
+suggestTags,
+createTag,
+addParameterToTestCase,
+createTestCaseExamples,
+generatePairwiseExamples,
+createSharedStep,
+addStepToSharedStep,
+getSharedStepDetails
 } from './http-service.mjs';
 import { spinningLoader } from './spinning-loader.mjs';
 import pLimit from 'p-limit';
 import { formatTestCaseAsJson } from './generate-json.mjs';
 import { staticAnalysis } from './static-analysis.mjs';
 import {
-    getAllRulesDocumentation,
-    getAllRulesForDocumentation,
-    getAllProjects,
-    getProjectSettings,
-    getBaseRulesDocumentation,
-    getProjectRulesDocumentation
+getAllRulesDocumentation,
+getAllRulesForDocumentation,
+getAllProjects,
+getProjectSettings,
+getBaseRulesDocumentation,
+getProjectRulesDocumentation
 } from './validation-engine.mjs';
 import { writeValidationRulesMarkdown } from './scripts/generate-validation-rules-md.mjs';
 import { exportStructureAllure, exportStructureAllureNocode } from './xmind-parce/export-structure-allure.mjs';
-import { analyzeTestCaseWithAI, analyzeBulkTestCasesWithAI, extractExpectedResult } from './ai-testcase.mjs';
+import { analyzeTestCaseWithAI, analyzeBulkTestCasesWithAI, analyzeRecheckWithAI, extractExpectedResult } from './ai-testcase.mjs';
+import { getLatestIssuesByJiraIssue, getLatestRunInfo, saveAnalysisResults, deleteAnalysisResultsByJiraIssue } from './static-analysis-db.mjs';
 import { fetchConfluencePage } from './confluenceFetcher.mjs';
 import { analyzeRequirementWithAI } from './analyzeRequirementWithAI.mjs';
 import { Buffer } from 'buffer';
@@ -221,34 +224,35 @@ import { validateAndFixTestCases, validateE2ECoverage } from './post-processors/
 import { aggregateToParametrized } from './post-processors/aggregate-to-parametrized.js';
 import { validateUntilClean } from './agents/post-generation-validator.mjs';
 import {
-    savePerfectExamples,
-    getPerfectExamples,
-    getAllPerfectExamplesByLayer,
-    getPerfectExamplesStats,
-    deletePerfectExample
+savePerfectExamples,
+getPerfectExamples,
+getAllPerfectExamplesByLayer,
+getPerfectExamplesStats,
+deletePerfectExample
 } from './perfect-examples.mjs';
 import {
-    getConversationContext,
-    createConversationContext,
-    addMessageToContext,
-    addErrorToContext,
-    clearErrors,
-    saveStateSnapshot,
-    rollbackToSnapshot,
-    getStateSnapshots,
-    deleteConversationContext
+getConversationContext,
+createConversationContext,
+addMessageToContext,
+addErrorToContext,
+clearErrors,
+saveStateSnapshot,
+rollbackToSnapshot,
+getStateSnapshots,
+deleteConversationContext
 } from './conversation-context.mjs';
 import {
-    buildSystemPrompt,
-    addPerfectExamplesAsFewShot
+buildSystemPrompt,
+addPerfectExamplesAsFewShot
 } from './prompt-composer.mjs';
 import {
-    runTestCaseLLMWithContext,
-    validateFixedCases
+runTestCaseLLMWithContext,
+validateFixedCases
 } from './llm-with-context.mjs';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import knexfile from './db/knexfile.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1128,7 +1132,7 @@ app.use(compression({
 
 const db = knex({
     client: 'pg',
-    connection: process.env.DATABASE_URL,
+    connection: knexfile.connection,
     pool: {
         min: 2,
         max: 50
@@ -1156,22 +1160,69 @@ const corsOptions = {
         return callback(new Error('Не разрешено конфигурацией CORS'));
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-OpenRouter-Key'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-OpenRouter-Key', 'X-Atlassian-Token'],
     credentials: true,
 };
 
 app.use(cors(corsOptions));
 
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '200mb' }));
 app.options('*', cors(corsOptions));
 const limit = pLimit(100);
+
+app.get('/health/db', async (req, res) => {
+    try {
+        const { default: pool } = await import('./db/pool.js');
+        await pool.raw('SELECT 1');
+        return res.json({ status: 'ok', db: 'connected' });
+    } catch (err) {
+        console.error('[health/db]', err.message);
+        return res.status(503).json({ status: 'error', db: err.message });
+    }
+});
 
 // ============================================================================
 // DEBUG API (автоматическое тестирование и улучшение агента)
 // ============================================================================
 registerDebugRoutes(app);
 
+// Отправка событий в google-таблицу
+app.post('/api/analytics/event', async (req, res) => {
+    const webhookUrl = config.analyticsWebhookUrl;
+    if (!webhookUrl) {
+        return res.status(200).json({ ok: true });
+    }
 
+    const { action, page, clientId, projectId, taskId, extra } = req.body || {};
+    const origin = req.headers.origin || req.headers.referer || '';
+    const isLocal = origin && /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?(\/|$)/i.test(origin);
+
+    const payload = {
+        action: action || '',
+        page: page || '',
+        timestamp: new Date().toISOString(),
+        clientId: isLocal ? 'dev' : (clientId || ''),
+        projectId: projectId || '',
+        taskId: taskId || '',
+        extra: extra ? JSON.stringify(extra) : ''
+    };
+
+    res.status(200).json({ ok: true });
+
+    try {
+        const whRes = await fetch(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!whRes.ok) {
+            const text = await whRes.text().catch(() => '');
+            console.warn('[analytics] Webhook non-OK:', whRes.status, text?.slice(0, 200));
+        }
+    } catch (err) {
+        console.warn('[analytics] Webhook error:', err?.message || err);
+    }
+});
 
 // Универсальный рефайнер требований: подтягивает Confluence, сжимает глоссарий/контекст через prepareContextWithAI,
 // возвращает совместимый интерфейс: { refinedArray, refinedText }
@@ -2029,10 +2080,12 @@ function extractRelevantSections(markdown, mentionText, { maxSections = 6, maxCh
 }
 
 
-async function fetchJiraMeta(pat, projectKey) {
+async function fetchJiraMeta(pat, projectKey, issueTypeId) {
+    const body = { pat, projectKey };
+    if (issueTypeId) body.issueTypeId = issueTypeId;
     const { data } = await axios.post(
         `${config.serverUrl}/api/jira/meta`,
-        { pat, projectKey }
+        body
     );
     // data.options = { Severity: [...], Platform: [...], Symptom: [...] }
     return data.options;
@@ -2103,10 +2156,22 @@ function detectPlatforms(summary, env) {
     return ['D'];
 }
 
-function buildFillJiraFieldsTool({ sevOptions, platOptions, sympOptions }) {
+function buildFillJiraFieldsTool({ sevOptions, platOptions, sympOptions, prioOptions = [] }) {
     const sevEnum = sevOptions.map(o => o.name);
     const platEnum = platOptions.map(o => o.name);
     const sympEnum = sympOptions.map(o => o.name);
+    const prioEnum = prioOptions.map(o => o.name);
+
+    const properties = {
+        actual: { type: "string", description: "Фактический результат (лаконично, по сути)" },
+        expected: { type: "string", description: "Ожидаемый результат (лаконично, по сути)" },
+        severity: { type: "string", enum: sevEnum },
+        platform: { type: "array", items: { type: "string", enum: platEnum } },
+        symptom: { type: "array", items: { type: "string", enum: sympEnum } }
+    };
+    if (prioEnum.length) {
+        properties.priority = { type: "string", enum: prioEnum, description: "Приоритет задачи (опционально)" };
+    }
 
     return {
         type: "function",
@@ -2115,13 +2180,7 @@ function buildFillJiraFieldsTool({ sevOptions, platOptions, sympOptions }) {
             description: "Верни подобранные значения и тексты для баг-репорта",
             parameters: {
                 type: "object",
-                properties: {
-                    actual: { type: "string", description: "Фактический результат (лаконично, по сути)" },
-                    expected: { type: "string", description: "Ожидаемый результат (лаконично, по сути)" },
-                    severity: { type: "string", enum: sevEnum },
-                    platform: { type: "array", items: { type: "string", enum: platEnum } },
-                    symptom: { type: "array", items: { type: "string", enum: sympEnum } }
-                },
+                properties,
                 required: ["actual", "expected", "severity", "platform", "symptom"],
                 additionalProperties: false
             }
@@ -2256,6 +2315,28 @@ function buildPlatformMap(platOptions) {
     return m;
 }
 
+// префикс платформы для поля Тема
+function getPlatformPrefix(name) {
+    if (!name || typeof name !== 'string') return null;
+    const n = name.toLowerCase().replace(/\s+/g, '-').trim();
+    const map = {
+        'backend': 'S',
+        'devops': 'DV',
+        'desktop': 'D',
+        'adaptive': 'A',
+        'mobile': 'M',
+        'native-android': 'AND',
+        'native-ios': 'IOS',
+        'pwa': 'PWA',
+        '1c': '1C'
+    };
+    if (map[n]) return map[n];
+    if (n.includes('web')) return 'D';
+    if (n.includes('android')) return 'AND';
+    if (n.includes('ios')) return 'IOS';
+    return null;
+}
+
 /**
  * Преобразует структуру шагов из Allure (с expectedResultId) в наш формат (с action/expectedResult)
  * @param {Object} stepsRaw - Структура шагов из Allure API
@@ -2302,7 +2383,7 @@ function convertAllureStepsToFormat(stepsRaw, layer) {
         // Если у шага есть expectedResultId, извлекаем ожидаемый результат
         if (step.expectedResultId) {
             const expectedResultText = extractExpectedResult(step.expectedResultId, scenarioSteps);
-            
+
             if (expectedResultText) {
                 if (isE2E) {
                     // Для E2E сохраняем как объект
@@ -2405,6 +2486,41 @@ async function filterCases(allCases, jiraIssue, projectId) {
     return filteredCases.filter(caseItem => caseItem !== undefined);
 }
 
+// Статус последнего ревью задачи для хинта
+app.get('/api/analyze/status', async (req, res) => {
+    const jiraIssue = req.query.jiraIssue?.trim();
+    if (!jiraIssue) {
+        return res.json({ hasReview: false });
+    }
+    try {
+        const info = await getLatestRunInfo(jiraIssue);
+        if (!info) {
+            return res.json({ hasReview: false });
+        }
+        return res.json({
+            hasReview: true,
+            createdAt: info.createdAt
+        });
+    } catch (err) {
+        console.error(`[analyze/status] ${err.message}`);
+        return res.json({ hasReview: false });
+    }
+});
+
+app.delete('/api/analyze/status', async (req, res) => {
+    const jiraIssue = req.query.jiraIssue?.trim();
+    if (!jiraIssue) {
+        return res.status(400).json({ error: 'jiraIssue обязателен' });
+    }
+    try {
+        await deleteAnalysisResultsByJiraIssue(jiraIssue);
+        return res.json({ ok: true });
+    } catch (err) {
+        console.error(`[analyze/status DELETE] ${err.message}`);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
 // API для анализа тест-кейсов
 app.post('/api/analyze', async (req, res) => {
     const { projectId, jiraIssue } = req.body;
@@ -2438,25 +2554,50 @@ app.post('/api/analyze', async (req, res) => {
 
         // Вывод краткой информации
         console.log(`Обработано тест-кейсов для анализа: ${jsonResult.length}`);
-        
-        let aiRecommendations = null;
+
+        let aiRecommendations = {};
         try {
             spinnerInterval = spinningLoader('Анализ тест-кейсов с помощью AI...');
             const apiKey = req.headers['x-openrouter-key'] || null;
-            
-            console.log(`\nЗАПУСК МАССОВОГО AI-АНАЛИЗА:`);
-            console.log(`Проект: ${projectId}`);
-            console.log(`Jira Issue: ${jiraIssue}`);
-            console.log(`Количество тест-кейсов: ${filteredCases.length}`);
-            console.log(`API ключ: ${apiKey ? 'Предоставлен пользователем' : 'Используется системный'}`);
-            
-            aiRecommendations = await analyzeBulkTestCasesWithAI(filteredCases, apiKey, jiraIssue, projectId);
+
+            let previousIssues = null;
+            try {
+                previousIssues = await getLatestIssuesByJiraIssue(jiraIssue);
+            } catch (dbErr) {
+                console.log(`[analyze] БД недоступна для проверки истории: ${dbErr.message}`);
+            }
+
+            const subsetA = [];
+            const subsetB = [];
+            if (previousIssues?.idsWithIssues?.size > 0) {
+                console.log(`[analyze] Задача ${jiraIssue} уже была проанализирована ранее, используем промпт для проверки`);
+                for (const tc of filteredCases) {
+                    const tcId = String(tc.id);
+                    if (previousIssues.idsWithIssues.has(tcId)) {
+                        subsetA.push(tc);
+                    } else {
+                        subsetB.push(tc);
+                    }
+                }
+                console.log(`[analyze] Повторный анализ: ${subsetA.length} тест-кейсов с замечаниями`);
+            } else {
+                subsetB.push(...filteredCases);
+            }
+
+            if (subsetA.length > 0) {
+                const recheckRecs = await analyzeRecheckWithAI(subsetA, previousIssues.issuesByTestCase, apiKey, jiraIssue);
+                Object.assign(aiRecommendations, recheckRecs);
+            }
+            if (subsetB.length > 0) {
+                const fullRecs = await analyzeBulkTestCasesWithAI(subsetB, apiKey, jiraIssue, projectId);
+                Object.assign(aiRecommendations, fullRecs);
+            }
+
             clearInterval(spinnerInterval);
-            
+
             console.log(`\nAI-АНАЛИЗ ЗАВЕРШЕН УСПЕШНО:`);
             console.log(`Получено рекомендаций: ${Object.keys(aiRecommendations).length}`);
-            
-            // Статистика по severity
+
             const severityStats = {};
             Object.values(aiRecommendations).forEach(recs => {
                 const arr = Array.isArray(recs) ? recs : (recs && recs.recommendation ? [recs] : []);
@@ -2467,18 +2608,29 @@ app.post('/api/analyze', async (req, res) => {
                 });
             });
             console.log(`Статистика: ${JSON.stringify(severityStats)}`);
-            
+
         } catch (aiError) {
             clearInterval(spinnerInterval);
-            console.error(`\nОшибка :`);
-            console.error(`Детали: ${aiError.message}`);
+            console.error(`\nОшибка AI-анализа: ${aiError.message}`);
             console.error(`Проект: ${projectId}, Jira: ${jiraIssue}`);
             console.log(`Продолжаем с результатами статического анализа`);
+            aiRecommendations = null;
         }
-      
-        const htmlReport = await staticAnalysis(jsonResult, projectId, aiRecommendations);
 
-        // Возвращаем форматированный результат в ответе
+        const analysisResult = await staticAnalysis(jsonResult, projectId, aiRecommendations);
+        const { html: htmlReport, metadata } = analysisResult;
+
+        try {
+            if (metadata?.testCasesWithIssues?.length > 0) {
+                await saveAnalysisResults(projectId, jiraIssue, metadata);
+            } else {
+                console.log(`[analyze] Пропуск сохранения: нет AI-замечаний (testCasesWithIssues: ${metadata?.testCasesWithIssues?.length ?? 0})`);
+            }
+        } catch (saveErr) {
+            console.error(`[analyze] Ошибка сохранения в БД:`, saveErr.message);
+            console.error(`[analyze] Stack:`, saveErr.stack);
+        }
+
         res.json(htmlReport);
 
     } catch (error) {
@@ -2490,9 +2642,9 @@ app.post('/api/analyze', async (req, res) => {
 // Запрос на экспорт тестовой модели
 app.post('/api/export', async (req, res) => {
     console.log('Вошли в експорт')
-    const { allureData, projectId } = req.body; // Получаем JSON с клиента
+    const { allureData, projectId, jiraIssue } = req.body;
 
-    console.log({ allureData, projectId })
+    console.log({ allureData, projectId, jiraIssue })
 
     if (!allureData || !projectId) {
         return res.status(400).send('Отсутствуют данные для экспорта. Или Id проекта');
@@ -2503,10 +2655,10 @@ app.post('/api/export', async (req, res) => {
         const nocodeProjectIds = ['1', '307'];
         if (nocodeProjectIds.includes(String(projectId))) {
             console.log('Экспортируем по новой структуре для НОУКОДА')
-            await exportStructureAllureNocode(allureData, projectId);
+            await exportStructureAllureNocode(allureData, projectId, jiraIssue);
         } else {
             console.log('Экспортируем НЕ для НОУКОДА')
-            await exportStructureAllure(allureData, projectId);
+            await exportStructureAllure(allureData, projectId, jiraIssue);
         }
 
         res.status(200).send('Экспорт успешно завершён.');
@@ -2962,7 +3114,6 @@ app.post('/api/jira/create-issue', async (req, res) => {
 // Эндпоинт для получения метаданных проекта (поля, пользователи, версии)
 app.post('/api/jira/meta', async (req, res) => {
     const jiraBase = 'https://jira.abanking.ru';
-    const issueKey = 'SBK-33974';               // берём из вашего CURL
     const { pat, projectKey } = req.body;     // передаёте с фронта
 
     if (!pat || !projectKey) {
@@ -2975,9 +3126,11 @@ app.post('/api/jira/meta', async (req, res) => {
     };
 
     try {
-        // 1) Получаем метаданные полей для указанного issueKey
+        const FIXED_ISSUE_KEY = 'SBK-33974';
+
+        // 1) Метаданные из FIXED_ISSUE_KEY ("Серьезность", "Баг с прода", "Симптом" etc)
         const editRes = await fetch(
-            `${jiraBase}/rest/api/2/issue/${encodeURIComponent(issueKey)}/editmeta`,
+            `${jiraBase}/rest/api/2/issue/${encodeURIComponent(FIXED_ISSUE_KEY)}/editmeta`,
             { headers }
         );
         if (!editRes.ok) {
@@ -2988,6 +3141,7 @@ app.post('/api/jira/meta', async (req, res) => {
         // сопоставление UI-ключа → имя поля в Jira
         const customFieldNames = {
             Severity: 'Серьезность ошибки',
+            Priority: 'Приоритет',
             Symptom: 'Симптом',
             Platform: 'Платформа',
             ProdBug: 'Баг с прода',
@@ -3000,36 +3154,9 @@ app.post('/api/jira/meta', async (req, res) => {
         const options = {};
         const fieldIds = {};
 
-        // 2) Извлекаем id полей и их опции
+        // 2) Извлекаем id полей и их опции (кроме Platform)
         for (const [key, jiraName] of Object.entries(customFieldNames)) {
-            // Хардкод для Platform с правильными ID
-            if (key === 'Platform') {
-                const entry = Object.entries(fields)
-                    .find(([_, meta]) => meta.name === jiraName);
-
-                if (entry) {
-                    const [fieldId] = entry;
-                    fieldIds[key] = fieldId;
-                } else {
-                    console.warn(`[META] Поле "${jiraName}" не найдено в editmeta`);
-                }
-
-                // Хардкод правильных ID для Platform
-                options[key] = [
-                    { id: '12721', name: 'Backend' },
-                    { id: '12722', name: 'Devops' },
-                    { id: '12681', name: 'Desktop' },
-                    { id: '12682', name: 'Adaptive' },
-                    { id: '12680', name: 'Mobile' },
-                    { id: '12678', name: 'Native (disabled)' },
-                    { id: '14425', name: 'Native-Android' },
-                    { id: '14426', name: 'Native-IOS' },
-                    { id: '14427', name: 'PWA' },
-                    { id: '14428', name: '1C' },
-                    { id: '-1', name: '' }
-                ];
-                continue;
-            }
+            if (key === 'Platform') continue; // динамическое получение из проекта пользователя
 
             const entry = Object.entries(fields)
                 .find(([_, meta]) => meta.name === jiraName);
@@ -3042,10 +3169,55 @@ app.post('/api/jira/meta', async (req, res) => {
 
             const [fieldId, meta] = entry;
             fieldIds[key] = fieldId;
-            options[key] = (meta.allowedValues || []).map(o => ({
-                id: String(o.id),
-                name: o.value ?? o.name
-            }));
+            options[key] = (meta.allowedValues || [])
+                .filter(o => !o.disabled)
+                .map(o => ({
+                    id: String(o.id),
+                    name: o.value ?? o.name
+                }));
+        }
+
+        // Platform через createmeta (актуальные allowed values для создания задач)
+        const { issueTypeId } = req.body;
+        if (issueTypeId) {
+            try {
+                const cmUrl = `${jiraBase}/rest/api/2/issue/createmeta` +
+                    `/${encodeURIComponent(projectKey)}/issuetypes/${encodeURIComponent(issueTypeId)}` +
+                    `?maxResults=200`;
+                const cmRes = await fetch(cmUrl, { headers });
+                if (cmRes.ok) {
+                    const cmData = await cmRes.json();
+                    const platformField = (cmData.values || []).find(f => f.name === 'Платформа');
+                    if (platformField) {
+                        fieldIds.Platform = platformField.fieldId;
+                        options.Platform = (platformField.allowedValues || [])
+                            .filter(o => !o.disabled)
+                            .map(o => {
+                                const name = o.value ?? o.name;
+                                return { id: String(o.id), name, prefix: getPlatformPrefix(name) };
+                            });
+                    }
+                }
+            } catch (e) {
+                console.warn('[META] ошибка выполнения createmeta для Platform:', e.message);
+            }
+        }
+
+        if (!options.Platform) {
+            // фоллбэк на значения Platform из FIXED_ISSUE_KEY
+            const platformEntry = Object.entries(fields).find(([_, meta]) => meta.name === 'Платформа');
+            if (platformEntry) {
+                const [pfId, pfMeta] = platformEntry;
+                fieldIds.Platform = pfId;
+                options.Platform = (pfMeta.allowedValues || [])
+                    .filter(o => !o.disabled)
+                    .map(o => {
+                        const name = o.value ?? o.name;
+                        return { id: String(o.id), name, prefix: getPlatformPrefix(name) };
+                    });
+            } else {
+                options.Platform = [];
+            }
         }
         // return res.json({ options, fieldIds, users, versions });
         return res.json({ options, fieldIds })
@@ -3175,6 +3347,31 @@ app.get('/api/allure/defects', async (req, res) => {
     try {
         const { projectId, query, page, size } = req.query;
         const defects = await getAllureDefects(projectId, query, page, size);
+        res.json(defects);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET /allure/launches
+app.get('/api/allure/launches', async (req, res) => {
+    try {
+        const { projectId, query, page, size } = req.query;
+        const launches = await getAllureLaunches(projectId, query, page, size);
+        res.json(launches);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET /allure/launch/:launchId/defect
+app.get('/api/allure/launch/:launchId/defect', async (req, res) => {
+    try {
+        const { launchId } = req.params;
+        const { page, size } = req.query;
+        const defects = await getLaunchDefects(launchId, page, size);
         res.json(defects);
     } catch (err) {
         console.error(err);
@@ -3428,11 +3625,10 @@ app.put('/api/jira/issue/:issueKey', async (req, res) => {
 
 app.post('/api/jira/ai-fill-fields', async (req, res) => {
     try {
-        const { summary, description, steps, stand, env, pat, projectKey } = req.body;
+        const { summary, description, steps, stand, env, pat, projectKey, issueTypeId } = req.body;
         if (!pat || !projectKey) {
             return res.status(400).json({ error: 'pat и projectKey обязательны' });
         }
-        // ✅ Исправляем обработку steps: извлекаем текст из объектов
         const stepsStr = Array.isArray(steps)
             ? steps.map(s => {
                 if (typeof s === 'string') return s;
@@ -3443,8 +3639,8 @@ app.post('/api/jira/ai-fill-fields', async (req, res) => {
             }).filter(Boolean).join('\n- ')
             : (steps ?? '');
         // 1) Метаданные JIRA
-        const options = await fetchJiraMeta(pat, projectKey);
-        const { Severity: sevOptions, Platform: platOptions, Symptom: sympOptions } = options;
+        const options = await fetchJiraMeta(pat, projectKey, issueTypeId);
+        const { Severity: sevOptions, Platform: platOptions, Symptom: sympOptions, Priority: prioOptions } = options;
 
         // 2) Хелперы маппинга → id
         const nameToId = (arr, name) =>
@@ -3482,6 +3678,7 @@ app.post('/api/jira/ai-fill-fields', async (req, res) => {
 
 Критерии:
 - severity: оцени реальное влияние (см. справку ниже), выбирай один вариант.
+- priority: приоритет задачи (опционально), выбирай из справочника.
 - platform/symptom: выбери 1..N из справочника, если применимо.
 - actual/expected: лаконично, без воды, по сути — 1–3 предложения.
 
@@ -3493,6 +3690,7 @@ app.post('/api/jira/ai-fill-fields', async (req, res) => {
 
 Доступные значения:
 - severity: ${sevOptions.map(x => x.name).join(', ')}
+- priority: ${(prioOptions || []).length ? prioOptions.map(x => x.name).join(', ') : '(не задано)'}
 - platform: ${platOptions.map(x => x.name).join(', ')}
 - symptom: ${sympOptions.map(x => x.name).join(', ')}
 
@@ -3505,7 +3703,7 @@ ENV: ${env}
 `.trim();
 
         // 5) Вызов модели с tool-calling
-        const tools = [buildFillJiraFieldsTool({ sevOptions, platOptions, sympOptions })];
+        const tools = [buildFillJiraFieldsTool({ sevOptions, platOptions, sympOptions, prioOptions: prioOptions || [] })];
         const ai = await callWithCloudRuFallback(
             OPENROUTER_URL,
             [
@@ -3533,6 +3731,7 @@ ENV: ${env}
 
         // 7) Приводим к ID
         const severityId = nameToId(sevOptions, args.severity);
+        const priorityId = (prioOptions?.length && args.priority) ? nameToId(prioOptions, args.priority) : null;
         const platformIdsByName = namesToIds(platOptions, args.platform);
         const symptomIds = namesToIds(sympOptions, args.symptom);
 
@@ -3540,13 +3739,15 @@ ENV: ${env}
         const platform = platformIdsByName.length ? platformIdsByName : detectedPlatformIds;
 
         // 9) Ответ
-        return res.json({
+        const result = {
             actual: args.actual,
             expected: args.expected,
             severity: severityId,  // одно значение (id)
             platform,              // массив id
             symptom: symptomIds    // массив id
-        });
+        };
+        if (priorityId) result.priority = priorityId;
+        return res.json(result);
 
     } catch (e) {
         console.error('AI fill error:', e);

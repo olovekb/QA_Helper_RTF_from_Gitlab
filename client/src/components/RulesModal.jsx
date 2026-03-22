@@ -390,7 +390,6 @@ const RulesModal = ({ isOpen, onClose, projectId, projects }) => {
                             <button
                                 onClick={toggleAllSections}
                                 className="rules-modal-toggle-btn"
-                                title={allExpanded ? 'Свернуть все секции' : 'Развернуть все секции'}
                             >
                                 <span dangerouslySetInnerHTML={{
                                     __html: allExpanded 
@@ -402,8 +401,6 @@ const RulesModal = ({ isOpen, onClose, projectId, projects }) => {
                         <button
                             onClick={onClose}
                             className="rules-modal-close-btn"
-                            title="Закрыть"
-                            aria-label="Закрыть"
                         >
                             ×
                         </button>

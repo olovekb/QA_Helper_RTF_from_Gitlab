@@ -1,0 +1,56 @@
+.undo-delete-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.3));
+  animation: undo-delete-toast-in 0.25s ease-out;
+}
+
+@keyframes undo-delete-toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 20px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.undo-delete-toast__message {
+  flex: 1;
+}
+
+.undo-delete-toast__restore {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--text-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.undo-delete-toast__restore:hover {
+  color: var(--text-primary);
+  border: 1px solid var(--text-primary);
+  background: transparent;
+}
+
+.undo-delete-toast button {
+  margin: 0px;
+}

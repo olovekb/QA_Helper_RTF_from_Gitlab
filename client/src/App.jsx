@@ -1,42 +1,20 @@
 // src/App.jsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useShowScrollTop } from './hooks/useShowScrollTop';
+import { useDebounce } from './hooks/useDebounce';
 import axios from 'axios';
+import Select from 'react-select';
 import './style.css';
 import config from './config';
 import { parseXmindFile } from './parce-xmind/parce.xmind.mjs';
 import { useNavigate } from 'react-router-dom';
 import { marked } from 'marked'; // Импорт библиотеки marked
-import { get as idbGet, set as idbSet } from 'idb-keyval';
 import GlobalBackgroundProgress from './components/GlobalBackgroundProgress';
 import ErrorBoundary from './components/ErrorBoundary';
 import RulesModal from './components/RulesModal';
-
-function usePersistentState(key, defaultValue) {
-  const [state, setState] = useState(defaultValue);
-  const isFirstMount = useRef(true);
-
-  useEffect(() => {
-    idbGet(key)
-      .then(stored => {
-        if (stored !== undefined) {
-          setState(stored);
-        } else {
-          idbSet(key, defaultValue).catch(console.warn);
-        }
-      })
-      .catch(console.warn);
-  }, [key]);
-
-  useEffect(() => {
-    if (isFirstMount.current) {
-      isFirstMount.current = false;
-      return;
-    }
-    idbSet(key, state).catch(console.warn);
-  }, [key, state]);
-
-  return [state, setState];
-}
+import ArrowUpIcon from './components/ArrowUpIcon';
+import { HiOutlineQuestionMarkCircle } from 'react-icons/hi';
+import { trackEvent } from './analytics';
 
 const App = ({ projects }) => {
   const [projectId, setProjectId] = useState(config.projectId || '');
@@ -52,9 +30,14 @@ const App = ({ projects }) => {
   const [cleanupLoading, setCleanupLoading] = useState(false);
   const [cleanupResult, setCleanupResult] = useState(null);
   const [showRulesModal, setShowRulesModal] = useState(false);
+  const [lastReviewInfo, setLastReviewInfo] = useState(null);
 
+  const debouncedJiraIssue = useDebounce(jiraIssue.trim(), 400);
   const navigate = useNavigate();
   const reportContainerRef = useRef(null);
+  const showScrollTop = useShowScrollTop();
+  const tooltipShownAtRef = useRef(0);
+  const tooltipHideTimeoutRef = useRef(null);
 
   // Функция для преобразования Markdown-текста в HTML
   const parseMarkdown = (markdownText) => {
@@ -72,14 +55,33 @@ const App = ({ projects }) => {
     }
   }, []);
 
+  useEffect(() => {
+    if (!debouncedJiraIssue) {
+      setLastReviewInfo(null);
+      return;
+    }
+    let cancelled = false;
+    axios.get(`${config.serverUrl}/analyze/status`, { params: { jiraIssue: debouncedJiraIssue } })
+      .then((res) => {
+        if (cancelled) return;
+        if (res.data?.hasReview && res.data?.createdAt) {
+          setLastReviewInfo({ createdAt: res.data.createdAt });
+        } else {
+          setLastReviewInfo(null);
+        }
+      })
+      .catch(() => { if (!cancelled) setLastReviewInfo(null); });
+    return () => { cancelled = true; };
+  }, [debouncedJiraIssue]);
+
   const syncProjectFromJiraPrefix = (value) => {
     const prefix = value.split('-')[0]?.trim().toUpperCase();
     if (!prefix) return;
-    const matched = projects.find(
-      (p) => String(p.name).trim().toUpperCase() === prefix
+    const matched = projects?.find(
+      (p) => String(p?.name ?? '').trim().toUpperCase() === prefix
     );
     if (matched) {
-      const id = String(matched.id);
+      const id = matched.id;
       setProjectId((prev) => (prev === id ? prev : id));
     }
   };
@@ -192,24 +194,24 @@ const App = ({ projects }) => {
       if (!ul) return;
       const treeRow = btn.closest('.tree-row');
       if (!treeRow) return;
-      
+
       const toggleNode = () => {
         ul.classList.toggle('collapsed');
         setToggleIcon(btn, !ul.classList.contains('collapsed'));
       };
-      
+
       // Клик на иконку
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         toggleNode();
       });
-      
+
       // Клик на всю строку
       treeRow.addEventListener('click', (e) => {
         if (e.target.closest('.tree-checkbox') || e.target.closest('.fix-checkbox') || e.target.closest('a')) return;
         toggleNode();
       });
-      
+
       const isRoot = !!btn.closest('[data-depth="0"]');
       if (isRoot) {
         ul.classList.remove('collapsed');
@@ -244,29 +246,29 @@ const App = ({ projects }) => {
           gap: 20px !important;
           margin-bottom: 0 !important;
         }
-        
+
         .test-cases-details {
           flex: 1 !important;
           min-height: 400px !important;
         }
-        
+
         .test-lists .scrollable-list {
           max-height: none !important;
           overflow: visible !important;
         }
-        
+
         .test-case {
           display: none !important;
           border-bottom: none !important;
         }
-        
+
         .test-case.active {
           display: block !important;
         }
-        
+
         .tree-leaf a.active-link {
           font-weight: 600 !important;
-          background-color: #374151 !important;
+          background-color: var(--bg-input) !important;
           padding: 2px 6px !important;
           border-radius: 4px !important;
           text-decoration: none !important;
@@ -278,31 +280,31 @@ const App = ({ projects }) => {
     // Модифицируем структуру DOM
     const testLists = container.querySelector('.test-lists');
     const testDetails = container.querySelector('.test-cases-details');
-    
+
     if (testLists && testDetails && !container.querySelector('.main-layout')) {
       // Создаем новую структуру
       const mainLayout = document.createElement('div');
       mainLayout.className = 'main-layout';
       mainLayout.id = 'main-layout';
       mainLayout.style.cssText = 'display: flex; gap: 0; margin-bottom: 30px; align-items: stretch;';
-      
+
       const resizerElement = document.createElement('div');
       resizerElement.className = 'resizer';
       resizerElement.id = 'resizer';
-      resizerElement.style.cssText = 'flex: 0 0 4px; background: #4b5563; cursor: col-resize; position: relative; transition: background-color 0.2s; margin: 0 8px;';
-      
+      resizerElement.style.cssText = 'flex: 0 0 4px; background: var(--border-color); cursor: col-resize; position: relative; transition: background-color 0.2s; margin: 0 8px;';
+
       resizerElement.addEventListener('mouseenter', () => {
-        resizerElement.style.background = '#6366f1';
+        resizerElement.style.background = 'var(--border-focus)';
       });
       resizerElement.addEventListener('mouseleave', () => {
-        resizerElement.style.background = '#4b5563';
+        resizerElement.style.background = 'var(--border-color)';
       });
-      
+
       const emptyStateElement = document.createElement('div');
       emptyStateElement.className = 'empty-state';
       emptyStateElement.style.cssText = 'display: flex; align-items: center; justify-content: center; min-height: 400px; color: #d1d5db; font-size: 1.1rem; text-align: center;';
       emptyStateElement.innerHTML = '<p>Выберите тест-кейс для просмотра деталей</p>';
-      
+
       // перемещение элементов
       const parent = testLists.parentElement;
       parent.insertBefore(mainLayout, testLists);
@@ -319,16 +321,16 @@ const App = ({ projects }) => {
 
     const showTestCase = (testId) => {
       if (emptyState) emptyState.style.display = 'none';
-      
+
       testCases.forEach((tc) => {
         tc.classList.remove('active');
       });
-      
+
       const targetCase = document.getElementById(testId);
-      
+
       if (targetCase) {
         targetCase.classList.add('active');
-        
+
         treeLinks.forEach((link) => {
           link.classList.remove('active-link');
         });
@@ -352,7 +354,7 @@ const App = ({ projects }) => {
     // ресайз колонок
     const resizer = container.querySelector('#resizer');
     const leftPanel = container.querySelector('#test-lists');
-    
+
     let cleanupResize = null;
 
     if (resizer && leftPanel) {
@@ -400,7 +402,7 @@ const App = ({ projects }) => {
         document.removeEventListener('mouseup', handleMouseUp);
       };
     }
-    // TODO: убрать после завершения сбора ОС 
+    // TODO: убрать после завершения сбора ОС
     // Дропдаун с формой обратной связи (состояние в localStorage)
     const feedbackIframeId = 'feedback-form-iframe';
     const feedbackStorageKey = 'feedbackFormExpanded';
@@ -418,7 +420,7 @@ const App = ({ projects }) => {
         }
         const iframeWrapper = document.createElement('div');
         iframeWrapper.className = 'feedback-iframe-wrapper';
-        iframeWrapper.style.cssText = 'margin-top: 20px; padding-top: 20px; border-top: 1px solid #4b5563;';
+        iframeWrapper.style.cssText = 'margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border-color);';
         const svgChevronDown = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3l3 4 3-4"/></svg>';
         const svgChevronRight = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2l4 3-4 3"/></svg>';
         iframeWrapper.innerHTML = `
@@ -509,8 +511,8 @@ const App = ({ projects }) => {
     };
   }, [showRulesModal, showCleanupModal, projectId, htmlReport, loading]);
 
-  const downloadHtml = () => {
-    const htmlContent = sessionStorage.getItem('htmlReport');
+  const downloadHtml = useCallback(() => {
+    let htmlContent = sessionStorage.getItem('htmlReport');
     const savedProjectId = sessionStorage.getItem('projectId');
     const savedJiraIssue = sessionStorage.getItem('jiraIssue');
     if (!htmlContent) {
@@ -521,13 +523,35 @@ const App = ({ projects }) => {
       console.error('Данные projectId или jiraIssue отсутствуют в sessionStorage');
       return;
     }
+    // удаление кнопки AI-рекомендаций, замена iframe на ссылку
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlContent, 'text/html');
+    doc.querySelectorAll('.ai-recommendations').forEach(el => el.remove());
+    doc.querySelectorAll('.allure-iframe-wrapper').forEach(wrapper => {
+      const fallbackLink = wrapper.querySelector('.allure-iframe-fallback a[href]');
+      const iframe = wrapper.querySelector('iframe');
+      const href = fallbackLink?.getAttribute('href') || iframe?.getAttribute('src') || '#';
+      const a = doc.createElement('a');
+      a.href = href;
+      a.target = '_blank';
+      a.textContent = 'Открыть в новой вкладке';
+      wrapper.innerHTML = '';
+      wrapper.appendChild(a);
+    });
+    htmlContent = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
     const fileName = `Результат ревью тест-кейсов ${savedJiraIssue}.html`;
     const blob = new Blob([htmlContent], { type: 'text/html' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = fileName;
     link.click();
-  };
+  }, []);
+
+  useEffect(() => {
+    const handler = () => downloadHtml();
+    window.addEventListener('downloadReport', handler);
+    return () => window.removeEventListener('downloadReport', handler);
+  }, [downloadHtml]);
 
   const toggleFixStatus = () => {
     const newFixStatus = !fixStatus;
@@ -537,6 +561,7 @@ const App = ({ projects }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    trackEvent('static_analysis', { page: '/', projectId, taskId: jiraIssue });
     setLoading(true);
     setHtmlReport('');
 
@@ -550,6 +575,7 @@ const App = ({ projects }) => {
       sessionStorage.setItem('htmlReport', newReport);
       sessionStorage.setItem('projectId', projectId);
       sessionStorage.setItem('jiraIssue', jiraIssue);
+      setLastReviewInfo({ createdAt: new Date().toISOString() });
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -565,6 +591,7 @@ const App = ({ projects }) => {
   };
 
   const handleExportClick = async () => {
+    trackEvent('export_xmind_to_allure', { page: '/', projectId });
     setLoading(true);
     if (!xmindFile) {
       setExportMessage('Пожалуйста, загрузите файл XMind.');
@@ -580,6 +607,7 @@ const App = ({ projects }) => {
       const response = await axios.post(`${config.serverUrl}/export`, {
         allureData,
         projectId,
+        jiraIssue: jiraIssue.trim(),
       });
       if (response.status === 200) {
         const allureLink = `https://abanking.qatools.cloud/project/${projectId}/test-cases`;
@@ -615,6 +643,7 @@ const App = ({ projects }) => {
       alert('Пожалуйста, выберите проект.');
       return;
     }
+    trackEvent('cleanup_duplicates', { page: '/', projectId });
 
     setCleanupLoading(true);
     setCleanupResult(null);
@@ -649,859 +678,841 @@ const App = ({ projects }) => {
       <div className="App">
         {/* Глобальный фоновый прогресс-бар */}
         <GlobalBackgroundProgress />
-      
-      <div className="header-wrapper">
-        <h1>QA-helper</h1>
-        <div className="header-buttons">
-          <button onClick={handleTIAClick} className="tia-button">
-            Test impact analysis
+
+        <div className="header-wrapper">
+          <h1>QA-helper</h1>
+          <div className="header-buttons">
+            <button onClick={handleTIAClick} className="tia-button">
+              Test impact analysis
+            </button>
+            <button onClick={handleSolutionClick} className="tia-button">
+              Тестирование требований
+            </button>
+            <button onClick={() => navigate('/code-error')} className="tia-button">
+              Завести набор ошибок кода на эпик
+            </button>
+          </div>
+        </div>
+
+        <div className="tabs">
+          <button onClick={() => handleTabChange('analysis')} className={activeTab === 'analysis' ? 'active' : ''}>
+            Анализ тестов
           </button>
-          <button onClick={handleSolutionClick} className="tia-button">
-            Тестирование требований
-          </button>
-          <button onClick={() => navigate('/code-error')} className="tia-button">
-            Завести набор ошибок кода на эпик
+          <button onClick={() => handleTabChange('export')} className={activeTab === 'export' ? 'active' : ''}>
+            Экспорт Xmind в Allure
           </button>
         </div>
-      </div>
-      
-      <div className="tabs">
-        <button onClick={() => handleTabChange('analysis')} className={activeTab === 'analysis' ? 'active' : ''}>
-          Анализ тестов
-        </button>
-        <button onClick={() => handleTabChange('export')} className={activeTab === 'export' ? 'active' : ''}>
-          Экспорт Xmind в Allure
-        </button>
-      </div>
-      {activeTab === 'analysis' && (
-        <div style={{
-          maxWidth: '90vw',
-          margin: '0 auto',
-          padding: '40px 20px'
-        }}>
-          <form onSubmit={handleSubmit} style={{
-            backgroundColor: '#1f2937',
-            padding: '32px',
-            borderRadius: '12px',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
-            marginBottom: '32px'
+        {activeTab === 'analysis' && (
+          <div style={{
+            maxWidth: '90vw',
+            margin: '0 auto',
+            padding: '40px 20px'
           }}>
-            <div style={{ marginBottom: '24px' }}>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                fontSize: '14px',
-                fontWeight: '600',
-                color: '#d1d5db'
-              }}>
-                Выберите проект:
-              </label>
-              <select 
-                value={projectId} 
-                onChange={(e) => setProjectId(e.target.value)}
+            <form className="analysis-form" onSubmit={handleSubmit} style={{
+              backgroundColor: 'var(--bg-content)',
+              padding: '32px',
+              borderRadius: '12px',
+              border: '1px solid var(--border-color)',
+              marginBottom: '32px',
+              boxShadow: 'none'
+            }}>
+              <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
+                <div style={{ flex: '1', minWidth: '200px' }}>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '8px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    color: 'var(--text-secondary)'
+                  }}>
+                    Выберите проект:
+                  </label>
+                  <Select
+                    classNamePrefix="select"
+                    placeholder="Выберите проект"
+                    options={projects.map(p => ({ value: p.id, label: p.name }))}
+                    value={(() => { const p = projects.find(pr => pr.id === projectId); return p ? { value: p.id, label: p.name } : null; })()}
+                    onChange={opt => setProjectId(opt?.value ?? '')}
+                    menuPortalTarget={document.body}
+                    menuPosition="fixed"
+                    menuPlacement="auto"
+                    styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
+                  />
+                </div>
+                <div className="jira-issue-field">
+                  <div className="jira-issue-header">
+                    <label htmlFor="jira-issue-input">Номер задачи из Jira:</label>
+                    {lastReviewInfo && (
+                      <span
+                        className="jira-review-trigger"
+                        onMouseEnter={(e) => {
+                          if (tooltipHideTimeoutRef.current) {
+                            clearTimeout(tooltipHideTimeoutRef.current);
+                            tooltipHideTimeoutRef.current = null;
+                          }
+                          tooltipShownAtRef.current = Date.now();
+                          const tt = e.currentTarget.querySelector('.jira-review-tooltip');
+                          if (tt) tt.style.visibility = 'visible';
+                        }}
+                        onMouseLeave={(e) => {
+                          const tt = e.currentTarget.querySelector('.jira-review-tooltip');
+                          if (tt) {
+                            tooltipHideTimeoutRef.current = setTimeout(() => {
+                              tt.style.visibility = 'hidden';
+                              tooltipHideTimeoutRef.current = null;
+                            }, 150);
+                          }
+                        }}
+                      >
+                        <HiOutlineQuestionMarkCircle size={16} />
+                        <span
+                          className="jira-review-tooltip"
+                          onMouseEnter={(e) => {
+                            if (tooltipHideTimeoutRef.current) {
+                              clearTimeout(tooltipHideTimeoutRef.current);
+                              tooltipHideTimeoutRef.current = null;
+                            }
+                            e.currentTarget.style.visibility = 'visible';
+                          }}
+                          onMouseLeave={(e) => {
+                            const el = e.currentTarget;
+                            tooltipHideTimeoutRef.current = setTimeout(() => {
+                              el.style.visibility = 'hidden';
+                              tooltipHideTimeoutRef.current = null;
+                            }, 150);
+                          }}
+                        >
+                          <span>
+                            Есть результат ревью от {new Date(lastReviewInfo.createdAt).toLocaleString('ru-RU', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </span>
+                          <button
+                            type="button"
+                            className="btn-link jira-review-tooltip-btn"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (Date.now() - tooltipShownAtRef.current < 300) return;
+                              const confirmed = window.confirm(
+                                'Результаты ревью будут удалены без возможности восстановления. Продолжить?'
+                              );
+                              if (!confirmed) return;
+                              try {
+                                await axios.delete(`${config.serverUrl}/analyze/status`, { params: { jiraIssue: jiraIssue.trim() } });
+                                setLastReviewInfo(null);
+                              } catch (err) {
+                                console.error('Ошибка очистки результатов:', err);
+                              }
+                            }}
+                          >
+                            Очистить результат
+                          </button>
+                        </span>
+                      </span>
+                    )}
+                  </div>
+                  <input
+                    id="jira-issue-input"
+                    type="text"
+                    value={jiraIssue}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setJiraIssue(v);
+                      syncProjectFromJiraPrefix(v);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      fontSize: '15px',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      backgroundColor: 'var(--bg-input)',
+                      color: 'var(--text-primary)',
+                      outline: 'none',
+                      transition: 'all 0.2s',
+                      boxSizing: 'border-box'
+                    }}
+                    onFocus={(e) => e.target.style.borderColor = 'var(--border-focus)'}
+                    onBlur={(e) => e.target.style.borderColor = 'var(--border-color)'}
+                  />
+                </div>
+              </div>
+              {/* Кнопка просмотра правил */}
+              {projectId && (
+                <button
+                  type="button"
+                  onClick={() => setShowRulesModal(true)}
+                  style={{
+                    width: '100%',
+                    padding: '12px 24px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    color: 'var(--primary-accent)',
+                    backgroundColor: 'transparent',
+                    border: '2px solid var(--primary-accent)',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    margin: '0px'
+                  }}
+                >
+                  Правила статанализа
+                </button>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading || !projectId || !jiraIssue.trim()}
                 style={{
                   width: '100%',
-                  padding: '12px 16px',
-                  fontSize: '15px',
-                  border: '1px solid #4b5563',
-                  borderRadius: '8px',
-                  backgroundColor: '#374151',
-                  color: '#f9fafb',
-                  cursor: 'pointer',
+                  padding: '14px 24px',
+
+                  fontSize: '16px',
+                  fontWeight: '600',
+                  color: 'white',
+                  backgroundColor: (loading || !projectId || !jiraIssue.trim()) ? 'var(--border-color)' : 'var(--primary-accent)',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: (loading || !projectId || !jiraIssue.trim()) ? 'default' : 'pointer',
                   transition: 'all 0.2s',
-                  outline: 'none'
                 }}
-                onFocus={(e) => e.target.style.borderColor = '#6366f1'}
-                onBlur={(e) => e.target.style.borderColor = '#4b5563'}
+                onMouseEnter={(e) => {
+                  if (!loading && projectId && jiraIssue.trim()) {
+                    e.target.style.backgroundColor = 'var(--primary-hover)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!loading && projectId && jiraIssue.trim()) {
+                    e.target.style.backgroundColor = 'var(--primary-accent)';
+                  }
+                }}
               >
-                <option value="">Выберите проект</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
+                {loading ? 'Анализ запущен...' : !projectId ? 'Выберите проект' : !jiraIssue.trim() ? 'Введите номер задачи' : 'Запустить анализ'}
+              </button>
+            </form>
+            {htmlReport && !loading && showScrollTop && (
+              <div className="floating-buttons analysis-floating">
+                <span />
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-top"
+                  onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+                >
+                  <ArrowUpIcon />
+                </button>
+              </div>
+            )}
+            <div ref={reportContainerRef} style={{
+              backgroundColor: 'var(--bg-content)',
+              padding: '32px',
+              borderRadius: '12px',
+              border: '1px solid var(--border-color)',
+              minHeight: '200px'
+            }}>
+              {loading ? (
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  padding: '60px 20px'
+                }}>
+                  <div className="spinner"></div>
+                </div>
+              ) : htmlReport ? (
+                <div dangerouslySetInnerHTML={{ __html: htmlReport }} />
+              ) : (
+                <p style={{
+                  textAlign: 'center',
+                  color: 'var(--text-muted)',
+                  fontSize: '16px',
+                  padding: '40px 20px'
+                }}>
+                  Не найдено тест-кейсов для анализа
+                </p>
+              )}
             </div>
-            <div style={{ marginBottom: '24px' }}>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                fontSize: '14px',
-                fontWeight: '600',
-                color: '#d1d5db'
-              }}>
-                Номер задачи из Jira:
-              </label>
-              <input 
-                type="text" 
-                value={jiraIssue} 
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setJiraIssue(v);
-                  syncProjectFromJiraPrefix(v);
-                }}
-                style={{
-                  width: '100%',
-                  padding: '12px 16px',
-                  fontSize: '15px',
-                  border: '1px solid #4b5563',
-                  borderRadius: '8px',
-                  backgroundColor: '#374151',
-                  color: '#f9fafb',
-                  outline: 'none',
-                  transition: 'all 0.2s',
-                  boxSizing: 'border-box'
-                }}
-                onFocus={(e) => e.target.style.borderColor = '#3b82f6'}
-                onBlur={(e) => e.target.style.borderColor = '#d1d5db'}
-              />
-            </div>
-            {/* Кнопка просмотра правил */}
-            {projectId && (
-              <button 
-                type="button"
-                onClick={() => setShowRulesModal(true)}
-                style={{
-                  width: '100%',
-                  padding: '12px 24px',
+          </div>
+        )}
+        {activeTab === 'export' && (
+          <div style={{
+            maxWidth: '800px',
+            margin: '0 auto',
+            padding: '40px 20px'
+          }}>
+            <h2 style={{
+              fontSize: '28px',
+              fontWeight: '600',
+              color: 'var(--text-primary)',
+              marginBottom: '32px',
+              textAlign: 'center'
+            }}>
+              Экспорт XMind в Allure
+            </h2>
+            <div style={{
+              backgroundColor: 'var(--bg-content)',
+              padding: '32px',
+              borderRadius: '12px',
+              boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.2)',
+              marginBottom: '24px'
+            }}>
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '8px',
                   fontSize: '14px',
                   fontWeight: '600',
-                  color: '#3b82f6',
-                  backgroundColor: 'transparent',
-                  border: '2px solid #3b82f6',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  margin: '0px'
-                }}
-              >
-                Правила статанализа
-              </button>
-            )}
-            
-            <button 
-              type="submit" 
-              disabled={loading || !projectId}
-              style={{
-                width: '100%',
-                padding: '14px 24px',
-                fontSize: '16px',
-                fontWeight: '600',
-                color: '#ffffff',
-                backgroundColor: (loading || !projectId) ? '#9ca3af' : '#3b82f6',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: (loading || !projectId) ? 'not-allowed' : 'pointer',
-                transition: 'all 0.2s',
-                boxShadow: (loading || !projectId) ? 'none' : '0 2px 4px rgba(59, 130, 246, 0.3)'
-              }}
-              onMouseEnter={(e) => {
-                if (!loading && projectId) {
-                  e.target.style.backgroundColor = '#2563eb';
-                  e.target.style.boxShadow = '0 4px 8px rgba(59, 130, 246, 0.4)';
-                  e.target.style.transform = 'translateY(-1px)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!loading && projectId) {
-                  e.target.style.backgroundColor = '#3b82f6';
-                  e.target.style.boxShadow = '0 2px 4px rgba(59, 130, 246, 0.3)';
-                  e.target.style.transform = 'translateY(0)';
-                }
-              }}
-            >
-              {loading ? 'Анализ запущен...' : !projectId ? 'Выберите проект' : 'Запустить анализ'}
-            </button>
-          </form>
-          {htmlReport && !loading && (
-            <>
-            <div style={{ marginBottom: '32px', textAlign: 'center' }}>
-              <button 
-                onClick={downloadHtml} 
-                style={{
-                  padding: '12px 24px',
-                  fontSize: '15px',
-                  fontWeight: '500',
-                  color: '#ffffff',
-                  backgroundColor: '#10b981',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s',
-                  boxShadow: '0 2px 4px rgba(16, 185, 129, 0.3)'
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.backgroundColor = '#059669';
-                  e.target.style.boxShadow = '0 4px 8px rgba(16, 185, 129, 0.4)';
-                  e.target.style.transform = 'translateY(-1px)';
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.backgroundColor = '#10b981';
-                  e.target.style.boxShadow = '0 2px 4px rgba(16, 185, 129, 0.3)';
-                  e.target.style.transform = 'translateY(0)';
-                }}
-              >
-                Скачать отчёт
-              </button>
-            </div>
-            <div className="floating-buttons analysis-floating">
-              <span />
-              <button
-                type="button"
-                className="btn btn-secondary btn-top"
-                onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-              >
-                ↑ Вверх
-              </button>
-            </div>
-            </>
-          )}
-          <div ref={reportContainerRef} style={{
-            backgroundColor: '#1f2937',
-            padding: '32px',
-            borderRadius: '12px',
-            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.2)',
-            minHeight: '200px'
-          }}>
-            {loading ? (
-              <div style={{
-                display: 'flex',
-                justifyContent: 'center',
-                alignItems: 'center',
-                padding: '60px 20px'
-              }}>
-                <div className="spinner"></div>
+                  color: 'var(--text-secondary)'
+                }}>
+                  Выберите проект:
+                </label>
+                <Select
+                  classNamePrefix="select"
+                  placeholder="Выберите проект"
+                  options={projects.map(p => ({ value: p.id, label: p.name }))}
+                  value={(() => { const p = projects.find(pr => pr.id === projectId); return p ? { value: p.id, label: p.name } : null; })()}
+                  onChange={opt => setProjectId(opt?.value ?? '')}
+                  menuPortalTarget={document.body}
+                  menuPosition="fixed"
+                  menuPlacement="auto"
+                  styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
+                />
               </div>
-            ) : htmlReport ? (
-              <div dangerouslySetInnerHTML={{ __html: htmlReport }} />
-            ) : (
-              <p style={{
-                textAlign: 'center',
-                color: '#6b7280',
-                fontSize: '16px',
-                padding: '40px 20px'
-              }}>
-                Не найдено тест-кейсов для анализа
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-      {activeTab === 'export' && (
-        <div style={{
-          maxWidth: '800px',
-          margin: '0 auto',
-          padding: '40px 20px'
-        }}>
-          <h2 style={{
-            fontSize: '28px',
-            fontWeight: '600',
-            color: '#ffffff',
-            marginBottom: '32px',
-            textAlign: 'center'
-          }}>
-            Экспорт XMind в Allure
-          </h2>
-          <div style={{
-            backgroundColor: '#1f2937',
-            padding: '32px',
-            borderRadius: '12px',
-            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.2)',
-            marginBottom: '24px'
-          }}>
-            <div style={{ marginBottom: '24px' }}>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                fontSize: '14px',
-                fontWeight: '600',
-                color: '#d1d5db'
-              }}>
-                Выберите проект:
-              </label>
-              <select 
-                value={projectId} 
-                onChange={(e) => setProjectId(e.target.value)}
+              <div style={{ marginBottom: '32px' }}>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: 'var(--text-secondary)'
+                }}>
+                  Номер задачи из Jira (опционально):
+                </label>
+                <input
+                  type="text"
+                  value={jiraIssue}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setJiraIssue(v);
+                    syncProjectFromJiraPrefix(v);
+                  }}
+                  placeholder="JMT-1234"
+                  style={{ width: '100%', boxSizing: 'border-box', marginBottom: '24px' }}
+                />
+
+                <label style={{
+                  display: 'block',
+                  marginBottom: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: 'var(--text-secondary)'
+                }}>
+                  Загрузить XMind файл:
+                </label>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  flexWrap: 'wrap'
+                }}>
+                  <label style={{
+                    padding: '12px 24px',
+                    fontSize: '15px',
+                    fontWeight: '500',
+                    color: 'white',
+                    backgroundColor: 'var(--primary-accent)',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    display: 'inline-block'
+                  }}
+                    onMouseEnter={(e) => {
+                      e.target.style.backgroundColor = 'var(--primary-hover)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.backgroundColor = 'var(--primary-accent)';
+                    }}
+                  >
+                    Выберите файл
+                    <input
+                      type="file"
+                      accept=".xmind"
+                      onChange={handleXmindFileChange}
+                      style={{ display: 'none' }}
+                    />
+                  </label>
+                  <span style={{
+                    fontSize: '14px',
+                    color: xmindFile ? 'var(--success)' : 'var(--error)',
+                    fontWeight: xmindFile ? '500' : '400'
+                  }}>
+                    {xmindFile ? xmindFile.name : 'Файл не выбран'}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={handleExportClick}
+                disabled={loading || !xmindFile}
                 style={{
                   width: '100%',
-                  padding: '12px 16px',
-                  fontSize: '15px',
-                  border: '1px solid #4b5563',
-                  borderRadius: '8px',
-                  backgroundColor: '#374151',
-                  color: '#f9fafb',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s',
-                  outline: 'none',
-                  boxSizing: 'border-box'
-                }}
-                onFocus={(e) => e.target.style.borderColor = '#6366f1'}
-                onBlur={(e) => e.target.style.borderColor = '#4b5563'}
-              >
-                <option value="">Выберите проект</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div style={{ marginBottom: '32px' }}>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                fontSize: '14px',
-                fontWeight: '600',
-                color: '#d1d5db'
-              }}>
-                Загрузить XMind файл:
-              </label>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                flexWrap: 'wrap'
-              }}>
-                <label style={{
-                  padding: '12px 24px',
-                  fontSize: '15px',
-                  fontWeight: '500',
-                  color: '#ffffff',
-                  backgroundColor: '#3b82f6',
+                  padding: '14px 24px',
+                  fontSize: '16px',
+                  fontWeight: '600',
+                  color: 'var(--text-primary)',
+                  backgroundColor: (loading || !xmindFile) ? 'var(--border-color)' : 'var(--success)',
                   border: 'none',
                   borderRadius: '8px',
-                  cursor: 'pointer',
+                  cursor: (loading || !xmindFile) ? 'default' : 'pointer',
                   transition: 'all 0.2s',
-                  boxShadow: '0 2px 4px rgba(59, 130, 246, 0.3)',
-                  display: 'inline-block'
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.backgroundColor = '#2563eb';
-                  e.target.style.boxShadow = '0 4px 8px rgba(59, 130, 246, 0.4)';
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.backgroundColor = '#3b82f6';
-                  e.target.style.boxShadow = '0 2px 4px rgba(59, 130, 246, 0.3)';
-                }}
-                >
-                  Выберите файл
-                  <input 
-                    type="file" 
-                    accept=".xmind" 
-                    onChange={handleXmindFileChange}
-                    style={{ display: 'none' }}
-                  />
-                </label>
-                <span style={{
-                  fontSize: '14px',
-                  color: xmindFile ? '#10b981' : '#6b7280',
-                  fontWeight: xmindFile ? '500' : '400'
-                }}>
-                  {xmindFile ? xmindFile.name : 'Файл не выбран'}
-                </span>
-              </div>
-            </div>
-            <button 
-              onClick={handleExportClick} 
-              disabled={loading || !xmindFile}
-              style={{
-                width: '100%',
-                padding: '14px 24px',
-                fontSize: '16px',
-                fontWeight: '600',
-                color: '#ffffff',
-                backgroundColor: (loading || !xmindFile) ? '#9ca3af' : '#10b981',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: (loading || !xmindFile) ? 'not-allowed' : 'pointer',
-                transition: 'all 0.2s',
-                boxShadow: (loading || !xmindFile) ? 'none' : '0 2px 4px rgba(16, 185, 129, 0.3)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '10px'
-              }}
-              onMouseEnter={(e) => {
-                if (!loading && xmindFile) {
-                  e.target.style.backgroundColor = '#059669';
-                  e.target.style.boxShadow = '0 4px 8px rgba(16, 185, 129, 0.4)';
-                  e.target.style.transform = 'translateY(-1px)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!loading && xmindFile) {
-                  e.target.style.backgroundColor = '#10b981';
-                  e.target.style.boxShadow = '0 2px 4px rgba(16, 185, 129, 0.3)';
-                  e.target.style.transform = 'translateY(0)';
-                }
-              }}
-            >
-              {loading ? (
-                <>
-                  <div className="spinner" style={{
-                    width: '18px',
-                    height: '18px',
-                    border: '2px solid rgba(255,255,255,0.3)',
-                    borderTop: '2px solid white',
-                    borderRadius: '50%',
-                    animation: 'spin 0.8s linear infinite'
-                  }}></div>
-                  Экспорт...
-                </>
-              ) : (
-                'Экспорт'
-              )}
-            </button>
-          </div>
-          
-          {exportMessage && (
-            <div style={{
-              backgroundColor: '#eff6ff',
-              border: '1px solid #bfdbfe',
-              borderRadius: '8px',
-              padding: '16px 20px',
-              marginBottom: '24px'
-            }}>
-              <p style={{
-                margin: 0,
-                fontSize: '15px',
-                color: '#1e40af',
-                lineHeight: '1.5'
-              }}>
-                {exportMessage}
-              </p>
-            </div>
-          )}
-          
-          {exportResult && (
-            <div style={{
-              textAlign: 'center',
-              marginBottom: '24px'
-            }}>
-              <a 
-                href={exportResult} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                style={{
-                  display: 'inline-block',
-                  padding: '12px 24px',
-                  fontSize: '15px',
-                  fontWeight: '500',
-                  color: '#ffffff',
-                  backgroundColor: '#10b981',
-                  textDecoration: 'none',
-                  borderRadius: '8px',
-                  transition: 'all 0.2s',
-                  boxShadow: '0 2px 4px rgba(16, 185, 129, 0.3)'
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.backgroundColor = '#059669';
-                  e.target.style.boxShadow = '0 4px 8px rgba(16, 185, 129, 0.4)';
-                  e.target.style.transform = 'translateY(-1px)';
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.backgroundColor = '#10b981';
-                  e.target.style.boxShadow = '0 2px 4px rgba(16, 185, 129, 0.3)';
-                  e.target.style.transform = 'translateY(0)';
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '10px'
                 }}
               >
-                Открыть проект в Allure
-              </a>
+                {loading ? (
+                  <>
+                    <div className="spinner" style={{
+                      width: '18px',
+                      height: '18px',
+                      border: '2px solid rgba(255,255,255,0.3)',
+                      borderTop: '2px solid white',
+                      borderRadius: '50%',
+                      animation: 'spin 0.8s linear infinite'
+                    }}></div>
+                    Экспорт...
+                  </>
+                ) : (
+                  'Экспорт'
+                )}
+              </button>
             </div>
-          )}
-          
-          <div style={{
-            textAlign: 'center',
-            marginTop: '32px'
-          }}>
-            <button 
-              onClick={() => setShowCleanupModal(true)} 
-              disabled={loading || !projectId}
-              style={{
-                padding: '12px 24px',
-                fontSize: '15px',
-                fontWeight: '500',
-                color: '#ffffff',
-                backgroundColor: (loading || !projectId) ? '#9ca3af' : '#dc3545',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: (loading || !projectId) ? 'not-allowed' : 'pointer',
-                transition: 'all 0.2s',
-                boxShadow: (loading || !projectId) ? 'none' : '0 2px 4px rgba(220, 53, 69, 0.3)'
-              }}
-              onMouseEnter={(e) => {
-                if (!loading && projectId) {
-                  e.target.style.backgroundColor = '#c82333';
-                  e.target.style.boxShadow = '0 4px 8px rgba(220, 53, 69, 0.4)';
-                  e.target.style.transform = 'translateY(-1px)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!loading && projectId) {
-                  e.target.style.backgroundColor = '#dc3545';
-                  e.target.style.boxShadow = '0 2px 4px rgba(220, 53, 69, 0.3)';
-                  e.target.style.transform = 'translateY(0)';
-                }
-              }}
-            >
-              Очистить дубли тест-кейсов
-            </button>
-          </div>
-        </div>
-      )}
-      {showCleanupModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.6)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000,
-          backdropFilter: 'blur(2px)'
-        }}>
-          <div style={{
-            backgroundColor: '#1f2937',
-            padding: '40px',
-            borderRadius: '16px',
-            maxWidth: '600px',
-            width: '90%',
-            maxHeight: '90vh',
-            overflowY: 'auto',
-            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.2)',
-            position: 'relative'
-          }}>
-            <h2 style={{ 
-              marginTop: 0, 
-              marginBottom: '28px',
-              fontSize: '26px',
-              fontWeight: '600',
-              color: '#1a1a1a',
-              letterSpacing: '-0.5px'
-            }}>
-              Подтверждение очистки дублей
-            </h2>
-            
-            {!cleanupResult && (
-              <>
-                <p style={{ 
-                  marginBottom: '16px', 
-                  fontSize: '15px',
-                  color: '#4a4a4a',
-                  lineHeight: '1.5'
-                }}>
-                  Вы уверены, что хотите удалить дубли тест-кейсов в проекте <strong style={{ color: '#1a1a1a' }}>
-                    {projects.find(p => String(p.id) === String(projectId))?.name || projectId}
-                  </strong>?
-                </p>
-                <div style={{ 
-                  marginBottom: '24px', 
-                  padding: '18px',
-                  backgroundColor: '#fff8e1',
-                  border: '1px solid #ffc107',
-                  borderRadius: '8px',
-                  borderLeft: '4px solid #ff9800'
-                }}>
-                  <p style={{ 
-                    margin: 0, 
-                    color: '#856404', 
-                    fontWeight: '500',
-                    fontSize: '14px',
-                    lineHeight: '1.6'
-                  }}>
-                    Внимание: Будут удалены тест-кейсы с одинаковыми названиями и тегами, оставлены будут только самые полные по содержанию.
-                  </p>
-                </div>
-                <div style={{
-                  marginBottom: '32px',
-                  padding: '14px 18px',
-                  backgroundColor: '#fee',
-                  border: '1px solid #fcc',
-                  borderRadius: '8px'
-                }}>
-                  <p style={{ 
-                    margin: 0, 
-                    fontSize: '14px', 
-                    color: '#c53030',
-                    fontWeight: '500'
-                  }}>
-                    Это действие нельзя отменить
-                  </p>
-                </div>
-              </>
-            )}
 
-            {cleanupLoading && (
+            {exportMessage && (
               <div style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '40px 20px',
-                gap: '16px'
-              }}>
-                <div className="spinner" style={{
-                  width: '48px',
-                  height: '48px',
-                  border: '4px solid #f3f3f3',
-                  borderTop: '4px solid #dc3545',
-                  borderRadius: '50%',
-                  animation: 'spin 1s linear infinite'
-                }}></div>
-                <p style={{
-                  margin: 0,
-                  color: '#666',
-                  fontSize: '15px',
-                  fontWeight: '500'
-                }}>
-                  Выполняется очистка дублей...
-                </p>
-                <p style={{
-                  margin: 0,
-                  color: '#999',
-                  fontSize: '13px'
-                }}>
-                  Пожалуйста, подождите
-                </p>
-              </div>
-            )}
-
-            {cleanupResult && !cleanupLoading && (
-              <div style={{ 
+                backgroundColor: 'var(--success-bg)',
+                border: '1px solid var(--border-color)',
+                borderRadius: '8px',
+                padding: '16px 20px',
                 marginBottom: '24px'
               }}>
-                {cleanupResult.success ? (
-                  <div>
-                    <div style={{
-                      marginBottom: '20px',
-                      paddingBottom: '16px',
-                      borderBottom: '1px solid #e0e0e0'
-                    }}>
-                      <h3 style={{
-                        margin: 0,
-                        fontSize: '18px',
-                        fontWeight: '600',
-                        color: '#1a1a1a'
-                      }}>
-                        Очистка завершена
-                      </h3>
-                    </div>
-                    <div style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr 1fr',
-                      gap: '16px'
-                    }}>
-                      <div style={{
-                        padding: '16px',
-                        backgroundColor: '#f8f9fa',
-                        borderRadius: '8px',
-                        border: '1px solid #e9ecef'
-                      }}>
-                        <div style={{ 
-                          fontSize: '13px', 
-                          color: '#6c757d', 
-                          marginBottom: '8px',
-                          fontWeight: '500'
-                        }}>
-                          Всего тест-кейсов
-                        </div>
-                        <div style={{ 
-                          fontSize: '28px', 
-                          fontWeight: '700', 
-                          color: '#212529',
-                          lineHeight: '1.2'
-                        }}>
-                          {cleanupResult.totalCases}
-                        </div>
-                      </div>
-                      <div style={{
-                        padding: '16px',
-                        backgroundColor: '#f8f9fa',
-                        borderRadius: '8px',
-                        border: '1px solid #e9ecef'
-                      }}>
-                        <div style={{ 
-                          fontSize: '13px', 
-                          color: '#6c757d', 
-                          marginBottom: '8px',
-                          fontWeight: '500'
-                        }}>
-                          Групп дублей
-                        </div>
-                        <div style={{ 
-                          fontSize: '28px', 
-                          fontWeight: '700', 
-                          color: '#212529',
-                          lineHeight: '1.2'
-                        }}>
-                          {cleanupResult.duplicatesFound}
-                        </div>
-                      </div>
-                      <div style={{
-                        padding: '16px',
-                        backgroundColor: '#fff5f5',
-                        borderRadius: '8px',
-                        border: '1px solid #fed7d7'
-                      }}>
-                        <div style={{ 
-                          fontSize: '13px', 
-                          color: '#6c757d', 
-                          marginBottom: '8px',
-                          fontWeight: '500'
-                        }}>
-                          Удалено дублей
-                        </div>
-                        <div style={{ 
-                          fontSize: '28px', 
-                          fontWeight: '700', 
-                          color: '#c53030',
-                          lineHeight: '1.2'
-                        }}>
-                          {cleanupResult.deleted}
-                        </div>
-                      </div>
-                      <div style={{
-                        padding: '16px',
-                        backgroundColor: '#f0fff4',
-                        borderRadius: '8px',
-                        border: '1px solid #c6f6d5'
-                      }}>
-                        <div style={{ 
-                          fontSize: '13px', 
-                          color: '#6c757d', 
-                          marginBottom: '8px',
-                          fontWeight: '500'
-                        }}>
-                          Оставлено
-                        </div>
-                        <div style={{ 
-                          fontSize: '28px', 
-                          fontWeight: '700', 
-                          color: '#22543d',
-                          lineHeight: '1.2'
-                        }}>
-                          {cleanupResult.kept}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{
-                    padding: '20px',
-                    backgroundColor: '#fff5f5',
-                    border: '1px solid #fed7d7',
-                    borderRadius: '8px'
-                  }}>
-                    <h3 style={{
-                      margin: '0 0 12px 0',
-                      fontSize: '18px',
-                      fontWeight: '600',
-                      color: '#c53030'
-                    }}>
-                      Ошибка
-                    </h3>
-                    <p style={{ 
-                      margin: 0, 
-                      fontSize: '14px',
-                      color: '#742a2a',
-                      lineHeight: '1.5'
-                    }}>
-                      {cleanupResult.error || 'Неизвестная ошибка'}
-                    </p>
-                  </div>
-                )}
+                <p style={{
+                  margin: 0,
+                  fontSize: '15px',
+                  color: 'var(--primary-accent)',
+                  lineHeight: '1.5'
+                }}>
+                  {exportMessage}
+                </p>
               </div>
             )}
 
-            <div style={{ 
-              display: 'flex', 
-              gap: '12px', 
-              justifyContent: 'flex-end',
-              marginTop: '32px',
-              paddingTop: '24px',
-              borderTop: '1px solid #e9ecef'
+            {exportResult && (
+              <div style={{
+                textAlign: 'center',
+                marginBottom: '24px'
+              }}>
+                <a
+                  href={exportResult}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'inline-block',
+                    padding: '12px 24px',
+                    fontSize: '15px',
+                    fontWeight: '500',
+                    color: 'var(--text-primary)',
+                    backgroundColor: 'var(--success)',
+                    textDecoration: 'none',
+                    borderRadius: '8px',
+                    transition: 'all 0.2s',
+                    boxShadow: '0 2px 4px rgba(16, 185, 129, 0.3)'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.backgroundColor = '#059669'; /* success hover */
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.backgroundColor = 'var(--success)';
+                  }}
+                >
+                  Открыть проект в Allure
+                </a>
+              </div>
+            )}
+
+            <div style={{
+              textAlign: 'center',
+              marginTop: '32px'
             }}>
               <button
-                onClick={() => {
-                  setShowCleanupModal(false);
-                  setCleanupResult(null);
-                }}
-                disabled={cleanupLoading}
+                onClick={() => setShowCleanupModal(true)}
+                disabled={loading || !projectId}
                 style={{
-                  minWidth: '120px',
                   padding: '12px 24px',
-                  backgroundColor: cleanupLoading ? '#e9ecef' : '#6c757d',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: cleanupLoading ? 'not-allowed' : 'pointer',
                   fontSize: '15px',
                   fontWeight: '500',
-                  transition: 'all 0.2s ease',
-                  opacity: cleanupLoading ? 0.6 : 1,
-                  boxShadow: cleanupLoading ? 'none' : '0 2px 4px rgba(0,0,0,0.1)'
+                  color: 'white',
+                  backgroundColor: (loading || !projectId) ? 'var(--border-color)' : 'var(--error)',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: (loading || !projectId) ? 'default' : 'pointer',
+                  transition: 'all 0.2s',
                 }}
                 onMouseEnter={(e) => {
-                  if (!cleanupLoading && !cleanupResult) {
-                    e.target.style.backgroundColor = '#5a6268';
-                    e.target.style.boxShadow = '0 4px 8px rgba(0,0,0,0.15)';
+                  if (!loading && projectId) {
+                    e.target.style.backgroundColor = '#c82333';
                   }
                 }}
                 onMouseLeave={(e) => {
-                  if (!cleanupLoading) {
-                    e.target.style.backgroundColor = cleanupResult ? '#6c757d' : '#6c757d';
-                    e.target.style.boxShadow = cleanupResult ? '0 2px 4px rgba(0,0,0,0.1)' : '0 2px 4px rgba(0,0,0,0.1)';
+                  if (!loading && projectId) {
+                    e.target.style.backgroundColor = '#dc3545';
                   }
                 }}
               >
-                {cleanupResult ? 'Закрыть' : 'Отмена'}
+                Очистить дубли тест-кейсов
               </button>
+            </div>
+          </div>
+        )}
+        {showCleanupModal && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            backdropFilter: 'blur(2px)'
+          }}>
+            <div style={{
+              backgroundColor: 'var(--bg-content)',
+              padding: '40px',
+              borderRadius: '16px',
+              maxWidth: '600px',
+              width: '90%',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.2)',
+              position: 'relative'
+            }}>
+              <h2 style={{
+                marginTop: 0,
+                marginBottom: '28px',
+                fontSize: '26px',
+                fontWeight: '600',
+                color: 'var(--text-primary)',
+                letterSpacing: '-0.5px'
+              }}>
+                Подтверждение очистки дублей
+              </h2>
+
               {!cleanupResult && (
+                <>
+                  <p style={{
+                    marginBottom: '16px',
+                    fontSize: '15px',
+                    color: 'var(--text-secondary)',
+                    lineHeight: '1.5'
+                  }}>
+                    Вы уверены, что хотите удалить дубли тест-кейсов в проекте <strong style={{ color: 'var(--text-primary)' }}>
+                      {projects.find(p => String(p.id) === String(projectId))?.name || projectId}
+                    </strong>?
+                  </p>
+                  <div style={{
+                    marginBottom: '24px',
+                    padding: '18px',
+                    color: 'var(--error)',
+                    fontWeight: '500',
+                    backgroundColor: 'var(--error-bg)',
+                    border: '1px solid var(--error)',
+                    borderRadius: '8px'
+                  }}>
+                    <p style={{
+                      margin: 0,
+                      fontSize: '14px',
+                      lineHeight: '1.6'
+                    }}>
+                      Тест-кейсы с одинаковыми названиями и тегами будут удалены, останутся только самые полные по содержанию.
+                    </p>
+                    <p style={{
+                      margin: 0,
+                      fontSize: '18px',
+                      lineHeight: '1.6'
+                    }}>Это действие нельзя отменить</p>
+                  </div>
+                </>
+              )}
+
+              {cleanupLoading && (
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '40px 20px',
+                  gap: '16px'
+                }}>
+                  <div className="spinner" style={{
+                    width: '48px',
+                    height: '48px',
+                    border: '4px solid #f3f3f3',
+                    borderTop: '4px solid #dc3545',
+                    borderRadius: '50%',
+                    animation: 'spin 1s linear infinite'
+                  }}></div>
+                  <p style={{
+                    margin: 0,
+                    color: '#666',
+                    fontSize: '15px',
+                    fontWeight: '500'
+                  }}>
+                    Выполняется очистка дублей...
+                  </p>
+                  <p style={{
+                    margin: 0,
+                    color: '#999',
+                    fontSize: '13px'
+                  }}>
+                    Пожалуйста, подождите
+                  </p>
+                </div>
+              )}
+
+              {cleanupResult && !cleanupLoading && (
+                <div style={{
+                  marginBottom: '24px'
+                }}>
+                  {cleanupResult.success ? (
+                    <div>
+                      <div style={{
+                        marginBottom: '20px',
+                        paddingBottom: '16px',
+                        borderBottom: '1px solid #e0e0e0'
+                      }}>
+                        <h3 style={{
+                          margin: 0,
+                          fontSize: '18px',
+                          fontWeight: '600',
+                          color: 'var(--text-primary)'
+                        }}>
+                          Очистка завершена
+                        </h3>
+                      </div>
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: '16px'
+                      }}>
+                        <div style={{
+                          padding: '16px',
+                          backgroundColor: '#f8f9fa',
+                          borderRadius: '8px',
+                          border: '1px solid #e9ecef'
+                        }}>
+                          <div style={{
+                            fontSize: '13px',
+                            color: '#6c757d',
+                            marginBottom: '8px',
+                            fontWeight: '500'
+                          }}>
+                            Всего тест-кейсов
+                          </div>
+                          <div style={{
+                            fontSize: '28px',
+                            fontWeight: '700',
+                            color: '#212529',
+                            lineHeight: '1.2'
+                          }}>
+                            {cleanupResult.totalCases}
+                          </div>
+                        </div>
+                        <div style={{
+                          padding: '16px',
+                          backgroundColor: '#f8f9fa',
+                          borderRadius: '8px',
+                          border: '1px solid #e9ecef'
+                        }}>
+                          <div style={{
+                            fontSize: '13px',
+                            color: '#6c757d',
+                            marginBottom: '8px',
+                            fontWeight: '500'
+                          }}>
+                            Групп дублей
+                          </div>
+                          <div style={{
+                            fontSize: '28px',
+                            fontWeight: '700',
+                            color: '#212529',
+                            lineHeight: '1.2'
+                          }}>
+                            {cleanupResult.duplicatesFound}
+                          </div>
+                        </div>
+                        <div style={{
+                          padding: '16px',
+                          backgroundColor: '#fff5f5',
+                          borderRadius: '8px',
+                          border: '1px solid #fed7d7'
+                        }}>
+                          <div style={{
+                            fontSize: '13px',
+                            color: '#6c757d',
+                            marginBottom: '8px',
+                            fontWeight: '500'
+                          }}>
+                            Удалено дублей
+                          </div>
+                          <div style={{
+                            fontSize: '28px',
+                            fontWeight: '700',
+                            color: '#c53030',
+                            lineHeight: '1.2'
+                          }}>
+                            {cleanupResult.deleted}
+                          </div>
+                        </div>
+                        <div style={{
+                          padding: '16px',
+                          backgroundColor: '#f0fff4',
+                          borderRadius: '8px',
+                          border: '1px solid #c6f6d5'
+                        }}>
+                          <div style={{
+                            fontSize: '13px',
+                            color: '#6c757d',
+                            marginBottom: '8px',
+                            fontWeight: '500'
+                          }}>
+                            Оставлено
+                          </div>
+                          <div style={{
+                            fontSize: '28px',
+                            fontWeight: '700',
+                            color: '#22543d',
+                            lineHeight: '1.2'
+                          }}>
+                            {cleanupResult.kept}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{
+                      padding: '20px',
+                      backgroundColor: 'var(--error-bg)',
+                      border: '1px solid var(--error)',
+                      borderRadius: '8px'
+                    }}>
+                      <h3 style={{
+                        margin: '0 0 12px 0',
+                        fontSize: '18px',
+                        fontWeight: '600',
+                        color: 'var(--error)'
+                      }}>
+                        Ошибка
+                      </h3>
+                      <p style={{
+                        margin: 0,
+                        fontSize: '14px',
+                        color: 'var(--text-primary)',
+                        lineHeight: '1.5'
+                      }}>
+                        {cleanupResult.error || 'Неизвестная ошибка'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div style={{
+                display: 'flex',
+                gap: '12px',
+                justifyContent: 'flex-end',
+                marginTop: '32px',
+                paddingTop: '24px',
+                borderTop: '1px solid #e9ecef'
+              }}>
                 <button
-                  onClick={handleCleanupDuplicates}
+                  onClick={() => {
+                    setShowCleanupModal(false);
+                    setCleanupResult(null);
+                  }}
                   disabled={cleanupLoading}
                   style={{
-                    minWidth: '180px',
+                    minWidth: '120px',
                     padding: '12px 24px',
-                    backgroundColor: cleanupLoading ? '#c82333' : '#dc3545',
+                    backgroundColor: cleanupLoading ? '#e9ecef' : '#6c757d',
                     color: 'white',
                     border: 'none',
                     borderRadius: '8px',
-                    cursor: cleanupLoading ? 'not-allowed' : 'pointer',
+                    cursor: cleanupLoading ? 'default' : 'pointer',
                     fontSize: '15px',
                     fontWeight: '500',
                     transition: 'all 0.2s ease',
-                    opacity: cleanupLoading ? 0.7 : 1,
-                    boxShadow: cleanupLoading ? 'none' : '0 2px 4px rgba(220,53,69,0.3)'
+                    opacity: cleanupLoading ? 0.6 : 1,
+                    boxShadow: cleanupLoading ? 'none' : '0 2px 4px rgba(0,0,0,0.1)'
                   }}
                   onMouseEnter={(e) => {
-                    if (!cleanupLoading) {
-                      e.target.style.backgroundColor = '#c82333';
-                      e.target.style.boxShadow = '0 4px 8px rgba(220,53,69,0.4)';
-                      e.target.style.transform = 'translateY(-1px)';
+                    if (!cleanupLoading && !cleanupResult) {
+                      e.target.style.backgroundColor = '#5a6268';
                     }
                   }}
                   onMouseLeave={(e) => {
                     if (!cleanupLoading) {
-                      e.target.style.backgroundColor = '#dc3545';
-                      e.target.style.boxShadow = '0 2px 4px rgba(220,53,69,0.3)';
-                      e.target.style.transform = 'translateY(0)';
+                      e.target.style.backgroundColor = cleanupResult ? '#6c757d' : '#6c757d';
                     }
                   }}
                 >
-                  {cleanupLoading ? 'Очистка...' : 'Подтвердить удаление'}
+                  {cleanupResult ? 'Закрыть' : 'Отмена'}
                 </button>
-              )}
+                {!cleanupResult && (
+                  <button
+                    onClick={handleCleanupDuplicates}
+                    disabled={cleanupLoading}
+                    style={{
+                      minWidth: '180px',
+                      padding: '12px 24px',
+                      backgroundColor: cleanupLoading ? '#c82333' : '#dc3545',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: cleanupLoading ? 'not-allowed' : 'pointer',
+                      fontSize: '15px',
+                      fontWeight: '500',
+                      transition: 'all 0.2s ease',
+                      opacity: cleanupLoading ? 0.7 : 1,
+                      boxShadow: cleanupLoading ? 'none' : '0 2px 4px rgba(220,53,69,0.3)'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!cleanupLoading) {
+                        e.target.style.backgroundColor = '#c82333';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!cleanupLoading) {
+                        e.target.style.backgroundColor = '#dc3545';
+                      }
+                    }}
+                  >
+                    {cleanupLoading ? 'Очистка...' : 'Подтвердить удаление'}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
       </div>
-      
+
       {/* Модалка с правилами валидации */}
-      <RulesModal 
+      <RulesModal
         isOpen={showRulesModal}
         onClose={() => setShowRulesModal(false)}
         projectId={projectId}
