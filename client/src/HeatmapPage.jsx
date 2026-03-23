@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { BarChart, Bar, XAxis, YAxis, PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, Label } from 'recharts';
 import Select from 'react-select';
@@ -1163,8 +1163,43 @@ const HeatmapPage = ({ projects }) => {
     };
 
 
+    const processedPagesData = useMemo(() => {
+        if (!testCoverageData?.pages) return [];
+        if (side !== 'backend') return testCoverageData.pages;
+
+        const map = new Map();
+        testCoverageData.pages.forEach(page => {
+            const controllerName = page.pageName || 'Unknown Controller';
+            if (!map.has(controllerName)) {
+                map.set(controllerName, {
+                    pageName: controllerName,
+                    pageRoute: '', // Пустой роут чтобы рендерилось имя контроллера
+                    defectCount: 0,
+                    uniqueIncidentCount: 0,
+                    issueKeys: []
+                });
+            }
+            const group = map.get(controllerName);
+            group.defectCount += (page.defectCount || 0);
+            
+            const allIssues = new Set([...group.issueKeys, ...(page.issueKeys || [])]);
+            group.issueKeys = Array.from(allIssues);
+            group.uniqueIncidentCount = group.issueKeys.length;
+        });
+
+        const totalDefects = Array.from(map.values()).reduce((sum, item) => sum + item.defectCount, 0);
+
+        return Array.from(map.values())
+            .map(item => ({
+                ...item,
+                percentage: totalDefects > 0 ? ((item.defectCount / totalDefects) * 100).toFixed(1) : '0.0'
+            }))
+            .sort((a, b) => b.defectCount - a.defectCount);
+            
+    }, [testCoverageData?.pages, side]);
+
     const codeChartData = prepareParetoData(heatmapData?.components, getTotalMetricValue(heatmapData?.components), showAllCode);
-    const pagesChartData = prepareParetoData(testCoverageData?.pages, getTotalMetricValue(testCoverageData?.pages), showAllPages);
+    const pagesChartData = prepareParetoData(processedPagesData, getTotalMetricValue(processedPagesData), showAllPages);
     const fbChartData = prepareParetoData(testCoverageData?.functionalBlocks, getTotalMetricValue(testCoverageData?.functionalBlocks), showAllFb);
 
     return (
@@ -1606,9 +1641,10 @@ const HeatmapPage = ({ projects }) => {
                     </div>
 
 
-                    <div style={{ height: showAllCode ? `${Math.max(400, codeChartData.length * 30)}px` : '400px', width: '100%', marginBottom: '32px', transition: 'height 0.3s ease' }}>
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart
+                    <div style={{ maxHeight: showAllCode ? '600px' : 'none', overflowY: showAllCode ? 'auto' : 'visible', marginBottom: '32px', paddingRight: showAllCode ? '4px' : '0' }}>
+                        <div style={{ height: showAllCode ? `${Math.max(400, codeChartData.length * 30)}px` : '400px', width: '100%', transition: 'height 0.3s ease' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart
                                 data={codeChartData}
                                 layout="vertical"
                                 margin={{ top: 5, right: 30, left: 10, bottom: 5 }}
@@ -1638,13 +1674,15 @@ const HeatmapPage = ({ projects }) => {
                                 </Bar>
                             </BarChart>
                         </ResponsiveContainer>
+                        </div>
                     </div>
 
-                    <div style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-                        gap: '12px'
-                    }}>
+                    <div style={{ maxHeight: showAllCode ? '600px' : 'none', overflowY: showAllCode ? 'auto' : 'visible', paddingRight: showAllCode ? '8px' : '0' }}>
+                        <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                            gap: '12px'
+                        }}>
                         {codeChartData.map((item, index) => (
                             <div
                                 key={item.name}
@@ -1673,6 +1711,7 @@ const HeatmapPage = ({ projects }) => {
                                 </div>
                             </div>
                         ))}
+                        </div>
                     </div>
                     {heatmapData?.components?.length > 15 && (
                         <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'center' }}>
@@ -1815,7 +1854,7 @@ const HeatmapPage = ({ projects }) => {
                                 ))}
                             </div>
                         </div>
-                        {testCoverageData?.pages?.length > 15 && (
+                        {processedPagesData?.length > 15 && (
                             <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'center' }}>
                                 <button
                                     onClick={() => setShowAllPages(!showAllPages)}
@@ -1869,8 +1908,9 @@ const HeatmapPage = ({ projects }) => {
 
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
                                 {/* Pareto Chart for FB - Now Full Width like Code Coverage */}
-                                <div style={{ height: showAllFb ? `${Math.max(400, fbChartData.length * 30)}px` : '400px', width: '100%', transition: 'height 0.3s ease' }}>
-                                    <ResponsiveContainer width="100%" height="100%">
+                                <div style={{ maxHeight: showAllFb ? '600px' : 'none', overflowY: showAllFb ? 'auto' : 'visible', paddingRight: showAllFb ? '4px' : '0' }}>
+                                    <div style={{ height: showAllFb ? `${Math.max(400, fbChartData.length * 30)}px` : '400px', width: '100%', transition: 'height 0.3s ease' }}>
+                                        <ResponsiveContainer width="100%" height="100%">
                                         <BarChart
                                             data={fbChartData}
                                             layout="vertical"
@@ -1896,14 +1936,16 @@ const HeatmapPage = ({ projects }) => {
                                             </Bar>
                                         </BarChart>
                                     </ResponsiveContainer>
+                                    </div>
                                 </div>
 
                                 {/* Priority List - Now as a Grid of Cards like Code Coverage */}
-                                <div style={{
-                                    display: 'grid',
-                                    gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-                                    gap: '12px'
-                                }}>
+                                <div style={{ maxHeight: showAllFb ? '600px' : 'none', overflowY: showAllFb ? 'auto' : 'visible', paddingRight: showAllFb ? '8px' : '0' }}>
+                                    <div style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                                        gap: '12px'
+                                    }}>
                                     {[...(testCoverageData?.functionalBlocks || [])]
                                         .map(fb => ({ ...fb, priorityScore: calculatePriorityScore(fb) }))
                                         .sort((a, b) => b.priorityScore - a.priorityScore)
@@ -1949,6 +1991,7 @@ const HeatmapPage = ({ projects }) => {
                                                 </div>
                                             );
                                         })}
+                                    </div>
                                 </div>
                                 {testCoverageData?.functionalBlocks?.length > 20 && (
                                     <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'center' }}>
