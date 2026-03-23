@@ -15,8 +15,7 @@ const COLORS = [
     '#e74c3c', '#3498db', '#2ecc71', '#9b59b6', '#1abc9c', '#34495e',
 ];
 
-const HeatmapPage = ({ projects }) =>
-{
+const HeatmapPage = ({ projects }) => {
     const navigate = useNavigate(); // Hook for navigation
     const [projectId, setProjectId] = useState('');
     const [startDate, setStartDate] = useState('');
@@ -62,16 +61,14 @@ const HeatmapPage = ({ projects }) =>
     const [expandedPageLists, setExpandedPageLists] = useState({});
 
     // Загрузка доступных версий при изменении проекта или дат
-    useEffect(() =>
-    {
+    useEffect(() => {
         if (projectId) {
             loadAvailableVersions();
         }
     }, [projectId, startDate, endDate]);
 
     // Загрузка данных тепловой карты при изменении фильтров
-    useEffect(() =>
-    {
+    useEffect(() => {
         if (projectId) {
             if (activeTab === 'code') {
                 // Fetch both because Code Tab now includes Page Impact from testCoverageData
@@ -84,8 +81,7 @@ const HeatmapPage = ({ projects }) =>
     }, [projectId, startDate, endDate, selectedVersions, isBugFix, activeTab, side]);
 
     // Синхронизация данных о времени из Jira
-    useEffect(() =>
-    {
+    useEffect(() => {
         const allKeys = new Set();
         if (heatmapData?.components) {
             heatmapData.components.forEach(c => c.issueKeys?.forEach(k => allKeys.add(k)));
@@ -104,16 +100,14 @@ const HeatmapPage = ({ projects }) =>
     }, [heatmapData, testCoverageData, jiraPat]);
 
     // Загрузка структуры Allure при изменении проекта
-    useEffect(() =>
-    {
+    useEffect(() => {
         if (projectId) {
             fetchFolders();
         }
     }, [projectId]);
 
 
-    const loadAvailableVersions = async () =>
-    {
+    const loadAvailableVersions = async () => {
         try {
             const params = new URLSearchParams({ projectId });
             if (startDate) params.append('startDate', startDate);
@@ -126,8 +120,7 @@ const HeatmapPage = ({ projects }) =>
         }
     };
 
-    const fetchJiraTimeTracking = async (issueKeys) =>
-    {
+    const fetchJiraTimeTracking = async (issueKeys) => {
         if (!jiraPat || !issueKeys.length) return;
         setSyncingJira(true);
 
@@ -149,8 +142,7 @@ const HeatmapPage = ({ projects }) =>
                 });
 
                 if (response.data?.issues) {
-                    response.data.issues.forEach(issue =>
-                    {
+                    response.data.issues.forEach(issue => {
                         newTimeMap[issue.key] = issue.fields?.timetracking?.timeSpentSeconds || 0;
                     });
                 }
@@ -163,8 +155,7 @@ const HeatmapPage = ({ projects }) =>
         }
     };
 
-    const formatSeconds = (seconds) =>
-    {
+    const formatSeconds = (seconds) => {
         if (!seconds || seconds <= 0) return '0h';
         const hours = Math.floor(seconds / 3600);
         const minutes = Math.floor((seconds % 3600) / 60);
@@ -174,14 +165,12 @@ const HeatmapPage = ({ projects }) =>
         return `${minutes}m`;
     };
 
-    const calculateTimeSpent = (issueKeys) =>
-    {
+    const calculateTimeSpent = (issueKeys) => {
         if (!issueKeys || !issueKeys.length) return 0;
         return issueKeys.reduce((acc, key) => acc + (issueTimeMap[key] || 0), 0);
     };
 
-    const loadHeatmapData = async () =>
-    {
+    const loadHeatmapData = async () => {
         setLoading(true);
         setError('');
         try {
@@ -208,8 +197,7 @@ const HeatmapPage = ({ projects }) =>
         }
     };
 
-    const loadTestCoverageData = async () =>
-    {
+    const loadTestCoverageData = async () => {
         setLoading(true);
         setError('');
         try {
@@ -236,14 +224,12 @@ const HeatmapPage = ({ projects }) =>
         }
     };
 
-    const handleVersionChange = (selectedOptions) =>
-    {
+    const handleVersionChange = (selectedOptions) => {
         setSelectedVersions(selectedOptions ? selectedOptions.map(opt => opt.value) : []);
     };
 
     // Глобальные агрегаты на основе загруженных данных и Jira-времени
-    const stats = React.useMemo(() =>
-    {
+    const stats = React.useMemo(() => {
         const currentData = activeTab === 'code' ? heatmapData : testCoverageData;
         if (!currentData) return { totalTouches: 0, totalIncidents: 0, totalTime: 0 };
 
@@ -271,8 +257,7 @@ const HeatmapPage = ({ projects }) =>
     const versionOptions = availableVersions.map(v => ({ value: v, label: v }));
 
     // Загрузка функциональных блоков из БД для маппинга
-    const fetchFolders = async () =>
-    {
+    const fetchFolders = async () => {
         if (!projectId) return;
         setLoading(true); // Using existing loading state or structureLoading if preferred
         try {
@@ -286,10 +271,8 @@ const HeatmapPage = ({ projects }) =>
 
             // Populate folderNamesCache from structure
             const newNamesCache = {};
-            const flatten = (items) =>
-            {
-                items.forEach(item =>
-                {
+            const flatten = (items) => {
+                items.forEach(item => {
                     newNamesCache[item.id.toString()] = item.customFieldName ? `${item.customFieldName} - ${item.name}` : item.name;
                     if (item.children) flatten(item.children);
                 });
@@ -304,8 +287,7 @@ const HeatmapPage = ({ projects }) =>
         }
     };
 
-    const handleProcessFiles = async () =>
-    {
+    const handleProcessFiles = async () => {
         if (importFiles.length === 0) return;
         trackEvent('heatmap_process_files', { page: '/heatmap', projectId });
 
@@ -322,7 +304,6 @@ const HeatmapPage = ({ projects }) =>
                 const text = await file.text();
                 const json = JSON.parse(text);
 
-                // Извлекаем данные из нового формата JSON
                 const item = {
                     change_date: json.change_date || json.merged_at,
                     is_bug_fix: json.is_bug_fix !== undefined ? json.is_bug_fix : true,
@@ -335,8 +316,8 @@ const HeatmapPage = ({ projects }) =>
                     web_url: json.web_url,
                     release_version: json.project_version || json.release_version,
                     affected_components: [],
-                    pages: json.pages || [], // Required for Page Statistics
-                    component_details: {} // New: Store rich metadata
+                    pages: json.pages || [],
+                    component_details: {}
                 };
 
                 let componentsToProcess = [];
@@ -345,17 +326,18 @@ const HeatmapPage = ({ projects }) =>
                 if (json.unique_affected_components) {
                     componentsToProcess = Object.keys(json.unique_affected_components);
                 } else if (json.global_risks && Array.isArray(json.global_risks)) {
-                    // Поддержка формата с global_risks
                     componentsToProcess = json.global_risks
                         .map(risk => risk.source)
                         .filter(source => source);
                 }
 
-                componentsToProcess.forEach(compName =>
-                {
+                componentsToProcess.forEach(compName => {
                     // Определяем тип компонента
                     let type = 'frontend'; // По умолчанию фронтенд
-                    if (json.Controllers && json.Controllers[compName]) {
+                    const detail = uniqueMap[compName] || {};
+                    if (json.type === 'backend' || detail.type === 'backend') {
+                        type = 'backend';
+                    } else if (json.Controllers && json.Controllers[compName]) {
                         type = 'backend';
                     }
 
@@ -363,12 +345,11 @@ const HeatmapPage = ({ projects }) =>
                     uniqueComponentsSet.add(compName);
 
                     // Собираем детали для компонента
-                    const detail = uniqueMap[compName] || {};
                     item.component_details[compName] = {
                         risk: detail.risk_level || 'LOW',
                         file_path: detail.file_path || '',
                         change_source: detail.change_source || '',
-                        type, // Сохраняем тип в деталях
+                        type,
                         pages_count: (json.pages || []).filter(p => (p.depends_on_components || []).includes(compName)).length,
                         pages: (json.pages || [])
                             .filter(p => (p.depends_on_components || []).includes(compName))
@@ -397,16 +378,14 @@ const HeatmapPage = ({ projects }) =>
             const unmapped = [];
             const namesCache = {}; // Локальный кэш для этой партии
 
-            componentNames.forEach(name =>
-            {
+            componentNames.forEach(name => {
                 const found = existingMappings.filter(m => m.component_name === name);
                 if (found.length > 0) {
                     // Используем Set для того чтобы не дублировать ID
                     const blockIds = [...new Set(found.map(m => m.functional_block_id))];
                     mappingsMap[name] = blockIds;
                     // Кэшируем названия функциональных блоков
-                    found.forEach(m =>
-                    {
+                    found.forEach(m => {
                         if (m.functional_block_id && m.functional_block_name) {
                             namesCache[m.functional_block_id] = m.functional_block_name;
                         }
@@ -438,12 +417,10 @@ const HeatmapPage = ({ projects }) =>
     // --- Новая логика маппинга (Split View) ---
 
     // Рекурсивно собирает все ID узла и его дочерних элементов
-    const getAllDescendantIds = (folder) =>
-    {
+    const getAllDescendantIds = (folder) => {
         const ids = [folder.id.toString()];
         if (folder.children && folder.children.length > 0) {
-            folder.children.forEach(child =>
-            {
+            folder.children.forEach(child => {
                 ids.push(...getAllDescendantIds(child));
             });
         }
@@ -451,8 +428,7 @@ const HeatmapPage = ({ projects }) =>
     };
 
     // Рекурсивно проверяет, выбраны ли все дочерние элементы узла
-    const areAllDescendantsSelected = (folder, mappings) =>
-    {
+    const areAllDescendantsSelected = (folder, mappings) => {
         const folderId = folder.id.toString();
         // Если сам узел выбран, считаем что все дочерние тоже выбраны (так как при выборе родителя выбираются все дети)
         if (mappings.includes(folderId)) return true;
@@ -467,14 +443,12 @@ const HeatmapPage = ({ projects }) =>
     };
 
     // Фильтрация дерева фич по поисковому запросу
-    const filterFolders = (folders, searchTerm) =>
-    {
+    const filterFolders = (folders, searchTerm) => {
         if (!searchTerm) return folders;
         const lowerSearch = searchTerm.toLowerCase();
 
         // Используем reduce для построения нового массива с учетом логики "родитель подошел -> берем всех детей"
-        return folders.reduce((acc, folder) =>
-        {
+        return folders.reduce((acc, folder) => {
             const matches = folder.name.toLowerCase().includes(lowerSearch) ||
                 (folder.customFieldName && folder.customFieldName.toLowerCase().includes(lowerSearch));
 
@@ -497,8 +471,7 @@ const HeatmapPage = ({ projects }) =>
     };
 
     // Форматирование customFieldName для отображения (для проекта 307 показываем Block/SubBlock вместо Feature)
-    const formatCustomFieldName = (folder, level = 0) =>
-    {
+    const formatCustomFieldName = (folder, level = 0) => {
         if (folder.customFieldName) {
             return `${folder.customFieldName} - ${folder.name}`;
         }
@@ -506,16 +479,14 @@ const HeatmapPage = ({ projects }) =>
     };
 
     // Фильтрация папок для NoCode проектов (ID 1 и 307)
-    const filterFoldersForProject = (folders, isRoot = true) =>
-    {
+    const filterFoldersForProject = (folders, isRoot = true) => {
         const nocodeProjectIds = ['1', '307'];
         if (!nocodeProjectIds.includes(String(projectId))) {
             return folders;
         }
 
         const result = [];
-        folders.forEach(folder =>
-        {
+        folders.forEach(folder => {
             const isBlockOrSubBlock = folder.customFieldName === 'Block' || folder.customFieldName === 'SubBlock';
 
             if (isRoot) {
@@ -552,17 +523,15 @@ const HeatmapPage = ({ projects }) =>
     };
 
     // Рендер дерева фич для маппинга с возможностью выбора
-    const renderFolderTreeForMapping = (folders, componentId, level = 0) =>
-    {
+    const renderFolderTreeForMapping = (folders, componentId, level = 0) => {
         if (!folders || folders.length === 0) {
             if (level === 0) {
-                return <div style={ { color: 'var(--text-muted)', fontSize: '14px', padding: '20px', textAlign: 'center' } }>Нет доступных фич, измените параметры поиска</div>;
+                return <div style={{ color: 'var(--text-muted)', fontSize: '14px', padding: '20px', textAlign: 'center' }}>Нет доступных фич, измените параметры поиска</div>;
             }
             return null;
         }
 
-        return folders.map((folder) =>
-        {
+        return folders.map((folder) => {
             // Проверяем, выбран ли узел или все его дочерние элементы
             const folderId = folder.id.toString();
             const mappings = componentId ? (componentMappings[componentId] || []) : [];
@@ -599,9 +568,9 @@ const HeatmapPage = ({ projects }) =>
 
 
             return (
-                <div key={ folder.id } style={ { marginBottom: '8px' } }>
+                <div key={folder.id} style={{ marginBottom: '8px' }}>
                     <div
-                        style={ {
+                        style={{
                             display: 'flex',
                             alignItems: 'center',
                             padding: '8px 12px',
@@ -612,9 +581,8 @@ const HeatmapPage = ({ projects }) =>
                             marginLeft: `${level * 20}px`,
                             border: `2px solid ${borderColor}`,
                             ':hover': { backgroundColor: 'var(--bg-input)' }
-                        } }
-                        onClick={ (e) =>
-                        {
+                        }}
+                        onClick={(e) => {
                             e.stopPropagation();
                             if (!componentId) return;
 
@@ -632,9 +600,8 @@ const HeatmapPage = ({ projects }) =>
                                     [componentId]: [...mappings, folderId]
                                 }));
                             }
-                        } }
-                        onDoubleClick={ (e) =>
-                        {
+                        }}
+                        onDoubleClick={(e) => {
                             e.stopPropagation();
                             if (!componentId) return;
 
@@ -662,27 +629,24 @@ const HeatmapPage = ({ projects }) =>
                                     [componentId]: Array.from(newMappingsSet)
                                 }));
                             }
-                        } }
-                        onMouseEnter={ (e) =>
-                        {
+                        }}
+                        onMouseEnter={(e) => {
                             e.currentTarget.style.backgroundColor = isFullSelected ? 'color-mix(in srgb, var(--success) 30%, var(--bg-content))' : isPartiallySelected ? 'color-mix(in srgb, var(--warning) 30%, var(--bg-content))' : 'var(--bg-input)';
-                        } }
-                        onMouseLeave={ (e) =>
-                        {
+                        }}
+                        onMouseLeave={(e) => {
                             e.currentTarget.style.backgroundColor = bgColor;
-                        } }
+                        }}
                     >
-                        { hasChildren && (
+                        {hasChildren && (
                             <div
-                                onClick={ (e) =>
-                                {
+                                onClick={(e) => {
                                     e.stopPropagation();
                                     setExpandedFolders(prev => ({
                                         ...prev,
                                         [folder.id]: !prev[folder.id]
                                     }));
-                                } }
-                                style={ {
+                                }}
+                                style={{
                                     marginRight: '8px',
                                     cursor: 'pointer',
                                     fontSize: '12px',
@@ -695,50 +659,50 @@ const HeatmapPage = ({ projects }) =>
                                     justifyContent: 'center',
                                     borderRadius: '4px',
                                     flexShrink: 0
-                                } }
-                                onMouseEnter={ (e) => e.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.05)' }
-                                onMouseLeave={ (e) => e.currentTarget.style.backgroundColor = 'transparent' }
+                                }}
+                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.05)'}
+                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                             >
-                                { isExpanded ? '▼' : '►' }
+                                {isExpanded ? '▼' : '►'}
                             </div>
-                        ) }
-                        { !hasChildren && <span style={ { width: '32px', display: 'inline-block', flexShrink: 0 } } /> }
-                        <span style={ {
+                        )}
+                        {!hasChildren && <span style={{ width: '32px', display: 'inline-block', flexShrink: 0 }} />}
+                        <span style={{
                             fontSize: level === 0 ? '15px' : '14px',
                             fontWeight: level === 0 ? 600 : 400,
                             color: 'var(--text-primary)',
                             flex: 1
-                        } }>
-                            { formatCustomFieldName(folder, level) }
+                        }}>
+                            {formatCustomFieldName(folder, level)}
                         </span>
-                        { isSelected && (
+                        {isSelected && (
                             <>
-                                <span style={ {
+                                <span style={{
                                     marginLeft: '8px',
                                     color: 'var(--success)',
                                     fontSize: '16px',
                                     fontWeight: 'bold'
-                                } }>
+                                }}>
                                     ✓
                                 </span>
-                                { hasChildren && allDescendantsSelected && !isDirectlySelected && (
-                                    <span style={ {
+                                {hasChildren && allDescendantsSelected && !isDirectlySelected && (
+                                    <span style={{
                                         marginLeft: '4px',
                                         color: 'var(--success)',
                                         fontSize: '11px',
                                         fontStyle: 'italic',
                                         opacity: 0.8
-                                    } }>
+                                    }}>
                                         (все дочерние)
                                     </span>
-                                ) }
+                                )}
                             </>
-                        ) }
+                        )}
                     </div>
                     {
                         hasChildren && isExpanded && (
-                            <div style={ { marginTop: '4px' } }>
-                                { renderFolderTreeForMapping(folder.children, componentId, level + 1) }
+                            <div style={{ marginTop: '4px' }}>
+                                {renderFolderTreeForMapping(folder.children, componentId, level + 1)}
                             </div>
                         )
                     }
@@ -747,11 +711,9 @@ const HeatmapPage = ({ projects }) =>
         });
     };
 
-    const buildComponentTree = (components) =>
-    {
+    const buildComponentTree = (components) => {
         const root = { name: 'Root', children: {}, items: [] };
-        components.forEach(name =>
-        {
+        components.forEach(name => {
             const parts = name.split('/');
             if (parts.length === 1) {
                 root.items.push(name);
@@ -770,8 +732,7 @@ const HeatmapPage = ({ projects }) =>
         return root;
     };
 
-    const renderComponentItem = (compName, level = 0) =>
-    {
+    const renderComponentItem = (compName, level = 0) => {
         const isSelected = selectedComponentForMapping === compName;
         const hasMapping = componentMappings[compName] && componentMappings[compName].length > 0;
 
@@ -791,9 +752,9 @@ const HeatmapPage = ({ projects }) =>
 
         return (
             <div
-                key={ compName }
-                onClick={ () => setSelectedComponentForMapping(compName) }
-                style={ {
+                key={compName}
+                onClick={() => setSelectedComponentForMapping(compName)}
+                style={{
                     padding: '12px',
                     marginBottom: '8px',
                     marginLeft: `${level * 16}px`,
@@ -804,18 +765,18 @@ const HeatmapPage = ({ projects }) =>
                     transition: 'all 0.2s',
                     borderLeft: isSelected ? '4px solid var(--primary-accent)' : '1px solid var(--border-color)',
                     boxShadow: isSelected ? '0 4px 6px -1px rgba(59, 130, 246, 0.1)' : 'none'
-                } }
+                }}
             >
-                <div style={ { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' } }>
-                    <div style={ { fontWeight: 700, fontSize: '13px', color: 'var(--text-primary)', wordBreak: 'break-all', flex: 1, display: 'flex', flexDirection: 'column', gap: '2px' } }>
-                        <span>{ compName.split('/').pop() }</span>
-                        { compName.includes('/') && (
-                            <span style={ { fontSize: '10px', color: 'var(--text-placeholder)', fontWeight: 500 } }>
-                                { compName.substring(0, compName.lastIndexOf('/')) }
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text-primary)', wordBreak: 'break-all', flex: 1, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <span>{compName.split('/').pop()}</span>
+                        {compName.includes('/') && (
+                            <span style={{ fontSize: '10px', color: 'var(--text-placeholder)', fontWeight: 500 }}>
+                                {compName.substring(0, compName.lastIndexOf('/'))}
                             </span>
-                        ) }
+                        )}
                     </div>
-                    <div style={ {
+                    <div style={{
                         padding: '2px 8px',
                         borderRadius: '4px',
                         backgroundColor: riskColor,
@@ -824,37 +785,36 @@ const HeatmapPage = ({ projects }) =>
                         fontWeight: 800,
                         marginLeft: '8px',
                         flexShrink: 0
-                    } }>
-                        { maxRisk }
+                    }}>
+                        {maxRisk}
                     </div>
                 </div>
 
-                { firstFilePath && (
-                    <div style={ { fontSize: '10px', color: 'var(--text-muted)', marginBottom: '6px', fontFamily: 'monospace', wordBreak: 'break-all', opacity: 0.8 } }>
-                        { firstFilePath.split('/').pop() }
+                {firstFilePath && (
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '6px', fontFamily: 'monospace', wordBreak: 'break-all', opacity: 0.8 }}>
+                        {firstFilePath.split('/').pop()}
                     </div>
-                ) }
+                )}
 
-                <div style={ { display: 'flex', flexDirection: 'column', gap: '4px' } }>
-                    <div style={ { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } }>
-                        <div style={ { fontSize: '10px', color: hasMapping ? 'var(--success)' : 'var(--error)', display: 'flex', flexDirection: 'column', gap: '4px', fontWeight: 600 } }>
-                            <div style={ { display: 'flex', alignItems: 'center', gap: '4px' } }>
-                                { hasMapping ? '✓ Связан' : '⚠️ Не связан' }
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div style={{ fontSize: '10px', color: hasMapping ? 'var(--success)' : 'var(--error)', display: 'flex', flexDirection: 'column', gap: '4px', fontWeight: 600 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                {hasMapping ? '✓ Связан' : '⚠️ Не связан'}
                             </div>
-                            { hasMapping && (
-                                <div style={ { fontSize: '9px', color: 'var(--text-muted)', fontWeight: 500, paddingLeft: '14px' } }>
-                                    { (componentMappings[compName] || []).map(id => folderNamesCache[id] || id).join(', ') }
+                            {hasMapping && (
+                                <div style={{ fontSize: '9px', color: 'var(--text-muted)', fontWeight: 500, paddingLeft: '14px' }}>
+                                    {(componentMappings[compName] || []).map(id => folderNamesCache[id] || id).join(', ')}
                                 </div>
-                            ) }
+                            )}
                         </div>
-                        { totalPages > 0 && (
+                        {totalPages > 0 && (
                             <button
-                                onClick={ (e) =>
-                                {
+                                onClick={(e) => {
                                     e.stopPropagation();
                                     setExpandedPageLists(prev => ({ ...prev, [compName]: !prev[compName] }));
-                                } }
-                                style={ {
+                                }}
+                                style={{
                                     background: 'none',
                                     border: 'none',
                                     color: 'var(--primary-accent)',
@@ -862,15 +822,15 @@ const HeatmapPage = ({ projects }) =>
                                     fontWeight: 600,
                                     cursor: 'pointer',
                                     padding: 0
-                                } }
+                                }}
                             >
-                                Pages: { totalPages } { expandedPageLists[compName] ? '▲' : '▼' }
+                                Pages: {totalPages} {expandedPageLists[compName] ? '▲' : '▼'}
                             </button>
-                        ) }
+                        )}
                     </div>
 
-                    { expandedPageLists[compName] && (
-                        <div style={ {
+                    {expandedPageLists[compName] && (
+                        <div style={{
                             marginTop: '8px',
                             display: 'flex',
                             flexWrap: 'wrap',
@@ -881,45 +841,43 @@ const HeatmapPage = ({ projects }) =>
                             border: '1px solid var(--border-color)',
                             maxHeight: '150px',
                             overflowY: 'auto'
-                        } }>
-                            { Array.from(new Set(details.flatMap(d => d.pages || []))).sort().map((pageName, pidx) => (
+                        }}>
+                            {Array.from(new Set(details.flatMap(d => d.pages || []))).sort().map((pageName, pidx) => (
                                 <span
-                                    key={ `${compName}-page-${pidx}` }
-                                    style={ {
+                                    key={`${compName}-page-${pidx}`}
+                                    style={{
                                         padding: '2px 6px',
                                         backgroundColor: 'var(--border-color)',
                                         color: 'var(--text-secondary)',
                                         borderRadius: '4px',
                                         fontSize: '9px',
                                         fontWeight: 600
-                                    } }
+                                    }}
                                 >
-                                    { pageName }
+                                    {pageName}
                                 </span>
-                            )) }
+                            ))}
                         </div>
-                    ) }
+                    )}
                 </div>
             </div>
         );
     };
 
-    const renderComponentTree = (node, level = 0, path = '') =>
-    {
+    const renderComponentTree = (node, level = 0, path = '') => {
         const sortedChildren = Object.keys(node.children).sort();
         const sortedItems = node.items.sort();
 
         return (
-            <div key={ path || 'root' }>
-                { sortedChildren.map(childName =>
-                {
+            <div key={path || 'root'}>
+                {sortedChildren.map(childName => {
                     const childPath = path ? `${path}/${childName}` : childName;
                     const isExpanded = expandedComponentFolders[childPath];
                     return (
-                        <div key={ childPath } style={ { marginBottom: '4px' } }>
+                        <div key={childPath} style={{ marginBottom: '4px' }}>
                             <div
-                                onClick={ () => setExpandedComponentFolders(prev => ({ ...prev, [childPath]: !prev[childPath] })) }
-                                style={ {
+                                onClick={() => setExpandedComponentFolders(prev => ({ ...prev, [childPath]: !prev[childPath] }))}
+                                style={{
                                     padding: '8px 12px',
                                     paddingLeft: `${level * 16 + 12}px`,
                                     fontSize: '12px',
@@ -934,29 +892,28 @@ const HeatmapPage = ({ projects }) =>
                                     userSelect: 'none',
                                     border: '1px solid var(--border-color)',
                                     transition: 'all 0.2s'
-                                } }
-                                onMouseOver={ (e) => e.currentTarget.style.backgroundColor = 'var(--border-color)' }
-                                onMouseOut={ (e) => e.currentTarget.style.backgroundColor = 'var(--bg-input)' }
+                                }}
+                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--border-color)'}
+                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-input)'}
                             >
-                                <span style={ { fontSize: '10px', color: 'var(--text-placeholder)' } }>{ isExpanded ? '▼' : '►' }</span>
-                                <span style={ { fontSize: '14px' } }>📁</span>
-                                { childName }
+                                <span style={{ fontSize: '10px', color: 'var(--text-placeholder)' }}>{isExpanded ? '▼' : '►'}</span>
+                                <span style={{ fontSize: '14px' }}>📁</span>
+                                {childName}
                             </div>
-                            { isExpanded && (
-                                <div style={ { marginTop: '4px' } }>
-                                    { renderComponentTree(node.children[childName], level + 1, childPath) }
+                            {isExpanded && (
+                                <div style={{ marginTop: '4px' }}>
+                                    {renderComponentTree(node.children[childName], level + 1, childPath)}
                                 </div>
-                            ) }
+                            )}
                         </div>
                     );
-                }) }
-                { sortedItems.map(compName => renderComponentItem(compName, level)) }
+                })}
+                {sortedItems.map(compName => renderComponentItem(compName, level))}
             </div>
         );
     };
 
-    const handleSaveBulkHistory = async (force = false) =>
-    {
+    const handleSaveBulkHistory = async (force = false) => {
         trackEvent('heatmap_save_history', { page: '/heatmap', projectId, extra: { force, count: parsedHistoryItems?.length } });
         // Валидация незамапленных компонентов
         if (!force) {
@@ -1036,33 +993,32 @@ const HeatmapPage = ({ projects }) =>
         });
     }
 
-    const CustomTooltip = ({ active, payload }) =>
-    {
+    const CustomTooltip = ({ active, payload }) => {
         if (active && payload && payload.length) {
             const data = payload[0].payload;
             return (
-                <div style={ {
+                <div style={{
                     backgroundColor: 'var(--bg-content)',
                     padding: '12px',
                     border: '1px solid var(--border-color)',
                     borderRadius: '12px',
                     boxShadow: 'var(--shadow-md)',
-                } }>
-                    <p style={ { margin: '0 0 8px 0', fontWeight: 700, color: 'var(--text-primary)', fontSize: '14px' } }>{ data.name }</p>
-                    <div style={ { display: 'flex', flexDirection: 'column', gap: '4px' } }>
-                        <p style={ { margin: 0, fontSize: '12px', color: 'var(--text-muted)' } }>
-                            Инциденты: <strong style={ { color: 'var(--text-primary)' } }>{ data.uniqueIncidentCount || 0 }</strong>
+                }}>
+                    <p style={{ margin: '0 0 8px 0', fontWeight: 700, color: 'var(--text-primary)', fontSize: '14px' }}>{data.name}</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>
+                            Инциденты: <strong style={{ color: 'var(--text-primary)' }}>{data.uniqueIncidentCount || 0}</strong>
                         </p>
-                        <p style={ { margin: 0, fontSize: '12px', color: 'var(--text-muted)' } }>
-                            Касания: <strong style={ { color: 'var(--text-primary)' } }>{ data.defectCount || data.value }</strong>
+                        <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>
+                            Касания: <strong style={{ color: 'var(--text-primary)' }}>{data.defectCount || data.value}</strong>
                         </p>
-                        { calculateTimeSpent(data.issueKeys) > 0 && (
-                            <p style={ { margin: 0, fontSize: '12px', color: 'var(--primary-accent)' } }>
-                                ⏱ Время: <strong>{ formatSeconds(calculateTimeSpent(data.issueKeys)) }</strong>
+                        {calculateTimeSpent(data.issueKeys) > 0 && (
+                            <p style={{ margin: 0, fontSize: '12px', color: 'var(--primary-accent)' }}>
+                                ⏱ Время: <strong>{formatSeconds(calculateTimeSpent(data.issueKeys))}</strong>
                             </p>
-                        ) }
-                        <p style={ { margin: '4px 0 0 0', fontSize: '12px', fontWeight: 700, color: 'var(--primary-accent)' } }>
-                            Доля: { data.percentage }%
+                        )}
+                        <p style={{ margin: '4px 0 0 0', fontSize: '12px', fontWeight: 700, color: 'var(--primary-accent)' }}>
+                            Доля: {data.percentage}%
                         </p>
                     </div>
                 </div>
@@ -1072,23 +1028,23 @@ const HeatmapPage = ({ projects }) =>
     };
 
     const MetricToggle = () => (
-        <div style={ {
+        <div style={{
             display: 'flex',
             backgroundColor: 'var(--bg-input)',
             padding: '4px',
             borderRadius: '12px',
             border: '1px solid var(--border-color)',
             width: 'fit-content'
-        } }>
-            { [
+        }}>
+            {[
                 { id: 'incidents', label: 'Инциденты' },
                 { id: 'touches', label: 'Касания' },
                 { id: 'time', label: 'Время' }
             ].map(m => (
                 <button
-                    key={ m.id }
-                    onClick={ () => setActiveMetric(m.id) }
-                    style={ {
+                    key={m.id}
+                    onClick={() => setActiveMetric(m.id)}
+                    style={{
                         padding: '8px 16px',
                         border: 'none',
                         borderRadius: '8px',
@@ -1099,29 +1055,26 @@ const HeatmapPage = ({ projects }) =>
                         cursor: 'pointer',
                         transition: 'all 0.2s',
                         boxShadow: activeMetric === m.id ? '0 2px 4px rgba(0,0,0,0.05)' : 'none',
-                    } }
+                    }}
                 >
-                    { m.label }
+                    {m.label}
                 </button>
-            )) }
+            ))}
         </div>
     );
 
-    const getMetricValue = (item) =>
-    {
+    const getMetricValue = (item) => {
         if (activeMetric === 'touches') return item.count || item.defectCount || 0;
         if (activeMetric === 'incidents') return item.uniqueIncidentCount || 0;
         if (activeMetric === 'time') return calculateTimeSpent(item.issueKeys);
         return 0;
     };
 
-    const getTotalMetricValue = (items) =>
-    {
+    const getTotalMetricValue = (items) => {
         if (!items) return 0;
         if (activeMetric === 'time' || activeMetric === 'incidents') {
             const allKeys = new Set();
-            items.forEach(item =>
-            {
+            items.forEach(item => {
                 if (item.issueKeys) item.issueKeys.forEach(k => allKeys.add(k));
             });
             return activeMetric === 'time' ? calculateTimeSpent(Array.from(allKeys)) : allKeys.size;
@@ -1129,8 +1082,7 @@ const HeatmapPage = ({ projects }) =>
         return items.reduce((sum, i) => sum + getMetricValue(i), 0);
     };
 
-    const calculatePriorityScore = (fb) =>
-    {
+    const calculatePriorityScore = (fb) => {
         const incidents = fb.uniqueIncidentCount || 0;
         const timeSpent = calculateTimeSpent(fb.issueKeys) / 3600; // hours
 
@@ -1141,8 +1093,7 @@ const HeatmapPage = ({ projects }) =>
     };
 
     // Подготовка данных для Pareto (Топ-15 + Прочие)
-    const prepareParetoData = (items, totalValue) =>
-    {
+    const prepareParetoData = (items, totalValue) => {
         if (!items) return [];
         const sorted = [...items].sort((a, b) => getMetricValue(b) - getMetricValue(a));
         const top = sorted.slice(0, 15);
@@ -1191,7 +1142,7 @@ const HeatmapPage = ({ projects }) =>
     const fbChartData = prepareParetoData(testCoverageData?.functionalBlocks, getTotalMetricValue(testCoverageData?.functionalBlocks));
 
     return (
-        <div style={ {
+        <div style={{
             padding: '40px',
             maxWidth: '1440px',
             margin: '0 auto',
@@ -1199,20 +1150,20 @@ const HeatmapPage = ({ projects }) =>
             color: 'var(--text-primary)',
             backgroundColor: 'var(--bg-main)',
             minHeight: '100vh'
-        } }>
-            <div style={ {
+        }}>
+            <div style={{
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 marginBottom: '40px'
-            } }>
-                <h1 style={ styles.title }>
+            }}>
+                <h1 style={styles.title}>
                     Тепловая карта дефектов
                 </h1>
-                <div style={ { display: 'flex', gap: '12px' } }>
+                <div style={{ display: 'flex', gap: '12px' }}>
                     <button
-                        onClick={ () => navigate(-1) }
-                        style={ {
+                        onClick={() => navigate(-1)}
+                        style={{
                             padding: '0 20px',
                             height: '52px',
                             backgroundColor: 'var(--bg-content)',
@@ -1227,16 +1178,16 @@ const HeatmapPage = ({ projects }) =>
                             gap: '8px',
                             transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
                             boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
-                        } }
-                        onMouseOver={ (e) => (e.currentTarget.style.borderColor = 'var(--border-focus)', e.currentTarget.style.color = 'var(--text-secondary)') }
-                        onMouseOut={ (e) => (e.currentTarget.style.borderColor = 'var(--border-color)', e.currentTarget.style.color = 'var(--text-muted)') }
+                        }}
+                        onMouseOver={(e) => (e.currentTarget.style.borderColor = 'var(--border-focus)', e.currentTarget.style.color = 'var(--text-secondary)')}
+                        onMouseOut={(e) => (e.currentTarget.style.borderColor = 'var(--border-color)', e.currentTarget.style.color = 'var(--text-muted)')}
                     >
                         Назад
                     </button>
                     <button
-                        onClick={ () => setShowImportModal(true) }
-                        disabled={ !projectId }
-                        style={ {
+                        onClick={() => setShowImportModal(true)}
+                        disabled={!projectId}
+                        style={{
                             padding: '0 28px',
                             height: '52px',
                             backgroundColor: 'var(--primary-accent)',
@@ -1252,17 +1203,17 @@ const HeatmapPage = ({ projects }) =>
                             transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
                             boxShadow: '0 4px 14px rgba(99, 102, 241, 0.3)',
                             opacity: !projectId ? 0.5 : 1,
-                        } }
-                        onMouseOver={ (e) => !projectId ? null : (e.currentTarget.style.backgroundColor = 'var(--primary-hover)') }
-                        onMouseOut={ (e) => !projectId ? null : (e.currentTarget.style.backgroundColor = 'var(--primary-accent)') }
+                        }}
+                        onMouseOver={(e) => !projectId ? null : (e.currentTarget.style.backgroundColor = 'var(--primary-hover)')}
+                        onMouseOut={(e) => !projectId ? null : (e.currentTarget.style.backgroundColor = 'var(--primary-accent)')}
                     >
                         Импорт истории TIA
                     </button>
                 </div>
             </div>
 
-            {/* Современные вкладки */ }
-            <div style={ {
+            {/* Современные вкладки */}
+            <div style={{
                 display: 'flex',
                 gap: '8px',
                 marginBottom: '32px',
@@ -1271,10 +1222,10 @@ const HeatmapPage = ({ projects }) =>
                 borderRadius: '16px',
                 width: 'fit-content',
                 border: '1px solid var(--border-color)'
-            } }>
+            }}>
                 <button
-                    onClick={ () => setActiveTab('code') }
-                    style={ {
+                    onClick={() => setActiveTab('code')}
+                    style={{
                         padding: '12px 28px',
                         border: 'none',
                         borderRadius: '12px',
@@ -1285,13 +1236,13 @@ const HeatmapPage = ({ projects }) =>
                         cursor: 'pointer',
                         transition: 'all 0.2s ease',
                         boxShadow: activeTab === 'code' ? '0 4px 12px rgba(0,0,0,0.08)' : 'none',
-                    } }
+                    }}
                 >
                     Code Coverage
                 </button>
                 <button
-                    onClick={ () => setActiveTab('test') }
-                    style={ {
+                    onClick={() => setActiveTab('test')}
+                    style={{
                         padding: '12px 28px',
                         border: 'none',
                         borderRadius: '12px',
@@ -1302,37 +1253,37 @@ const HeatmapPage = ({ projects }) =>
                         cursor: 'pointer',
                         transition: 'all 0.2s ease',
                         boxShadow: activeTab === 'test' ? '0 4px 12px rgba(0,0,0,0.08)' : 'none',
-                    } }
+                    }}
                 >
                     Test Coverage
                 </button>
             </div>
 
-            {/* Фильтры и действия */ }
-            {/* Контейнер фильтров */ }
-            <div style={ {
+            {/* Фильтры и действия */}
+            {/* Контейнер фильтров */}
+            <div style={{
                 backgroundColor: 'var(--bg-content)',
                 padding: '32px',
                 borderRadius: '24px',
                 marginBottom: '40px',
                 border: '1px solid var(--border-color)',
                 boxShadow: '0 4px 24px rgba(0,0,0,0.02)',
-            } }>
-                <div style={ {
+            }}>
+                <div style={{
                     display: 'grid',
                     gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
                     gap: '24px',
                     alignItems: 'end'
-                } }>
-                    {/* Поле Проекта */ }
-                    <div style={ { display: 'flex', flexDirection: 'column', gap: '12px' } }>
-                        <span style={ { fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' } }>
+                }}>
+                    {/* Поле Проекта */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                             Целевой проект
                         </span>
                         <select
-                            value={ projectId }
-                            onChange={ (e) => setProjectId(e.target.value) }
-                            style={ {
+                            value={projectId}
+                            onChange={(e) => setProjectId(e.target.value)}
+                            style={{
                                 width: '100%',
                                 padding: '0 20px',
                                 border: '1px solid var(--border-color)',
@@ -1343,25 +1294,25 @@ const HeatmapPage = ({ projects }) =>
                                 height: '52px',
                                 transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
                                 outline: 'none',
-                            } }
-                            onFocus={ (e) => (e.target.style.borderColor = 'var(--border-focus)', e.target.style.boxShadow = '0 0 0 4px color-mix(in srgb, var(--primary-accent) 20%, transparent)') }
-                            onBlur={ (e) => (e.target.style.borderColor = 'var(--border-color)', e.target.style.boxShadow = 'none') }
+                            }}
+                            onFocus={(e) => (e.target.style.borderColor = 'var(--border-focus)', e.target.style.boxShadow = '0 0 0 4px color-mix(in srgb, var(--primary-accent) 20%, transparent)')}
+                            onBlur={(e) => (e.target.style.borderColor = 'var(--border-color)', e.target.style.boxShadow = 'none')}
                         >
                             <option value="">Проект</option>
-                            { projects?.map(project => (
-                                <option key={ project.id } value={ project.id }>
-                                    { project.name }
+                            {projects?.map(project => (
+                                <option key={project.id} value={project.id}>
+                                    {project.name}
                                 </option>
-                            )) }
+                            ))}
                         </select>
                     </div>
 
-                    {/* Поле Периода */ }
-                    <div style={ { display: 'flex', flexDirection: 'column', gap: '12px' } }>
-                        <span style={ { fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' } }>
+                    {/* Поле Периода */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                             Период данных
                         </span>
-                        <div style={ {
+                        <div style={{
                             display: 'flex',
                             backgroundColor: 'var(--bg-input)',
                             border: '1px solid var(--border-color)',
@@ -1369,36 +1320,36 @@ const HeatmapPage = ({ projects }) =>
                             height: '52px',
                             overflow: 'hidden',
                             transition: 'all 0.2s ease'
-                        } }>
+                        }}>
                             <input
                                 type="date"
-                                value={ startDate }
-                                onChange={ (e) => setStartDate(e.target.value) }
-                                style={ { flex: 1, border: 'none', background: 'transparent', fontSize: '14px', color: 'var(--text-primary)', padding: '0 16px', outline: 'none' } }
+                                value={startDate}
+                                onChange={(e) => setStartDate(e.target.value)}
+                                style={{ flex: 1, border: 'none', background: 'transparent', fontSize: '14px', color: 'var(--text-primary)', padding: '0 16px', outline: 'none' }}
                             />
-                            <div style={ { width: '1px', height: '24px', backgroundColor: 'var(--border-color)', alignSelf: 'center' } } />
+                            <div style={{ width: '1px', height: '24px', backgroundColor: 'var(--border-color)', alignSelf: 'center' }} />
                             <input
                                 type="date"
-                                value={ endDate }
-                                onChange={ (e) => setEndDate(e.target.value) }
-                                style={ { flex: 1, border: 'none', background: 'transparent', fontSize: '14px', color: 'var(--text-primary)', padding: '0 16px', outline: 'none' } }
+                                value={endDate}
+                                onChange={(e) => setEndDate(e.target.value)}
+                                style={{ flex: 1, border: 'none', background: 'transparent', fontSize: '14px', color: 'var(--text-primary)', padding: '0 16px', outline: 'none' }}
                             />
                         </div>
                     </div>
 
-                    {/* Поле Релизов */ }
-                    <div style={ { display: 'flex', flexDirection: 'column', gap: '12px' } }>
-                        <span style={ { fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' } }>
+                    {/* Поле Релизов */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                             Версии продукта
                         </span>
                         <Select
                             isMulti
-                            options={ versionOptions }
-                            value={ selectedVersions.map(v => ({ value: v, label: v })) }
-                            onChange={ handleVersionChange }
+                            options={versionOptions}
+                            value={selectedVersions.map(v => ({ value: v, label: v }))}
+                            onChange={handleVersionChange}
                             placeholder="Любые версии"
                             isClearable
-                            styles={ {
+                            styles={{
                                 control: (base, state) => ({
                                     ...base,
                                     borderColor: state.isFocused ? 'var(--border-focus)' : 'var(--border-color)',
@@ -1436,23 +1387,22 @@ const HeatmapPage = ({ projects }) =>
                                 multiValueLabel: (base) => ({ ...base, color: 'var(--text-primary)', fontWeight: 600 }),
                                 placeholder: (base) => ({ ...base, color: 'var(--text-placeholder)' }),
                                 input: (base) => ({ ...base, color: 'var(--text-primary)' })
-                            } }
+                            }}
                         />
                     </div>
 
-                    {/* Поле Типа */ }
-                    <div style={ { display: 'flex', flexDirection: 'column', gap: '12px' } }>
-                        <span style={ { fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' } }>
+                    {/* Поле Типа */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                             Категория изменений
                         </span>
                         <select
-                            value={ isBugFix === null ? 'all' : isBugFix ? 'bugs' : 'general' }
-                            onChange={ (e) =>
-                            {
+                            value={isBugFix === null ? 'all' : isBugFix ? 'bugs' : 'general'}
+                            onChange={(e) => {
                                 const value = e.target.value;
                                 setIsBugFix(value === 'all' ? null : value === 'bugs');
-                            } }
-                            style={ {
+                            }}
+                            style={{
                                 width: '100%',
                                 padding: '0 20px',
                                 border: '1px solid var(--border-color)',
@@ -1464,9 +1414,9 @@ const HeatmapPage = ({ projects }) =>
                                 height: '52px',
                                 outline: 'none',
                                 transition: 'all 0.2s ease',
-                            } }
-                            onFocus={ (e) => (e.target.style.borderColor = 'var(--border-focus)', e.target.style.boxShadow = '0 0 0 4px color-mix(in srgb, var(--primary-accent) 20%, transparent)') }
-                            onBlur={ (e) => (e.target.style.borderColor = 'var(--border-color)', e.target.style.boxShadow = 'none') }
+                            }}
+                            onFocus={(e) => (e.target.style.borderColor = 'var(--border-focus)', e.target.style.boxShadow = '0 0 0 4px color-mix(in srgb, var(--primary-accent) 20%, transparent)')}
+                            onBlur={(e) => (e.target.style.borderColor = 'var(--border-color)', e.target.style.boxShadow = 'none')}
                         >
                             <option value="all">Все</option>
                             <option value="bugs">Только исправления багов</option>
@@ -1474,15 +1424,15 @@ const HeatmapPage = ({ projects }) =>
                         </select>
                     </div>
 
-                    {/* Поле Стороны (Front/Back) */ }
-                    <div style={ { display: 'flex', flexDirection: 'column', gap: '12px' } }>
-                        <span style={ { fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' } }>
+                    {/* Поле Стороны (Front/Back) */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                             Сторона системы
                         </span>
                         <select
-                            value={ side }
-                            onChange={ (e) => setSide(e.target.value) }
-                            style={ {
+                            value={side}
+                            onChange={(e) => setSide(e.target.value)}
+                            style={{
                                 width: '100%',
                                 padding: '0 20px',
                                 border: '1px solid var(--border-color)',
@@ -1494,37 +1444,36 @@ const HeatmapPage = ({ projects }) =>
                                 height: '52px',
                                 outline: 'none',
                                 transition: 'all 0.2s ease',
-                            } }
-                            onFocus={ (e) => (e.target.style.borderColor = 'var(--border-focus)', e.target.style.boxShadow = '0 0 0 4px color-mix(in srgb, var(--primary-accent) 20%, transparent)') }
-                            onBlur={ (e) => (e.target.style.borderColor = 'var(--border-color)', e.target.style.boxShadow = 'none') }
+                            }}
+                            onFocus={(e) => (e.target.style.borderColor = 'var(--border-focus)', e.target.style.boxShadow = '0 0 0 4px color-mix(in srgb, var(--primary-accent) 20%, transparent)')}
+                            onBlur={(e) => (e.target.style.borderColor = 'var(--border-color)', e.target.style.boxShadow = 'none')}
                         >
                             <option value="frontend">Frontend</option>
                             <option value="backend">Backend</option>
                         </select>
                     </div>
 
-                    {/* Поле Jira PAT */ }
-                    <div style={ { display: 'flex', flexDirection: 'column', gap: '12px' } }>
-                        <div style={ { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } }>
-                            <span style={ { fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' } }>
+                    {/* Поле Jira PAT */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                                 Jira PAT
                             </span>
-                            { syncingJira && (
-                                <span style={ { fontSize: '10px', color: 'var(--primary-accent)', fontWeight: 700, animation: 'pulse 1.5s infinite' } }>
+                            {syncingJira && (
+                                <span style={{ fontSize: '10px', color: 'var(--primary-accent)', fontWeight: 700, animation: 'pulse 1.5s infinite' }}>
                                     СИНХРОНИЗАЦИЯ...
                                 </span>
-                            ) }
+                            )}
                         </div>
                         <input
                             type="password"
-                            value={ jiraPat }
+                            value={jiraPat}
                             placeholder="Введите Jira PAT для загрузки времени"
-                            onChange={ (e) =>
-                            {
+                            onChange={(e) => {
                                 setJiraPat(e.target.value);
                                 localStorage.setItem('jiraPat', e.target.value);
-                            } }
-                            style={ {
+                            }}
+                            style={{
                                 width: '100%',
                                 padding: '0 20px',
                                 border: '1px solid var(--border-color)',
@@ -1535,24 +1484,24 @@ const HeatmapPage = ({ projects }) =>
                                 height: '52px',
                                 transition: 'all 0.2s ease',
                                 outline: 'none',
-                            } }
-                            onFocus={ (e) => (e.target.style.borderColor = 'var(--border-focus)', e.target.style.boxShadow = '0 0 0 4px color-mix(in srgb, var(--primary-accent) 20%, transparent)') }
-                            onBlur={ (e) => (e.target.style.borderColor = 'var(--border-color)', e.target.style.boxShadow = 'none') }
+                            }}
+                            onFocus={(e) => (e.target.style.borderColor = 'var(--border-focus)', e.target.style.boxShadow = '0 0 0 4px color-mix(in srgb, var(--primary-accent) 20%, transparent)')}
+                            onBlur={(e) => (e.target.style.borderColor = 'var(--border-color)', e.target.style.boxShadow = 'none')}
                         />
                     </div>
                 </div>
             </div>
 
-            {/* График и легенда */ }
-            { loading && (
-                <div style={ { textAlign: 'center', padding: '100px', color: 'var(--text-muted)' } }>
-                    <div style={ { width: '40px', height: '40px', border: '3px solid var(--bg-input)', borderTopColor: 'var(--primary-accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 16px' } } />
-                    <div style={ { fontWeight: 600 } }>Загрузка данных...</div>
+            {/* График и легенда */}
+            {loading && (
+                <div style={{ textAlign: 'center', padding: '100px', color: 'var(--text-muted)' }}>
+                    <div style={{ width: '40px', height: '40px', border: '3px solid var(--bg-input)', borderTopColor: 'var(--primary-accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 16px' }} />
+                    <div style={{ fontWeight: 600 }}>Загрузка данных...</div>
                 </div>
-            ) }
+            )}
 
-            { error && (
-                <div style={ {
+            {error && (
+                <div style={{
                     backgroundColor: 'var(--error-bg)',
                     border: '1px solid var(--error)',
                     borderRadius: '16px',
@@ -1562,68 +1511,68 @@ const HeatmapPage = ({ projects }) =>
                     display: 'flex',
                     alignItems: 'center',
                     gap: '12px'
-                } }>
-                    <span style={ { fontSize: '20px' } }>⚠️</span>
+                }}>
+                    <span style={{ fontSize: '20px' }}>⚠️</span>
                     <div>
-                        <div style={ { fontWeight: 700, marginBottom: '2px' } }>Ошибка загрузки</div>
-                        <div style={ { fontSize: '14px', opacity: 0.8 } }>{ error }</div>
+                        <div style={{ fontWeight: 700, marginBottom: '2px' }}>Ошибка загрузки</div>
+                        <div style={{ fontSize: '14px', opacity: 0.8 }}>{error}</div>
                     </div>
                 </div>
-            ) }
+            )}
 
-            { !loading && !error && (activeTab === 'code' ? heatmapData : testCoverageData) && (
-                <div style={ {
+            {!loading && !error && (activeTab === 'code' ? heatmapData : testCoverageData) && (
+                <div style={{
                     display: 'grid',
                     gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
                     gap: '20px',
                     marginBottom: '40px'
-                } }>
-                    { [
+                }}>
+                    {[
                         { label: 'Касания', value: stats.totalTouches, sub: 'Объем изменений - количество изменений в коде', color: 'var(--primary-accent)', description: 'Сколько раз трогали данную компоненту в коде' },
                         { label: 'Инциденты', value: stats.totalIncidents, sub: 'Уникальные баги - количество задач "Ошибка кода"', color: 'var(--error)', description: 'Крит. зоны для QA. Где чаще ломается — там нужнее автотесты.' },
                         { label: 'Время', value: formatSeconds(stats.totalTime), sub: 'Стоимость правок - время потраченное на тип задачи "Ошибка кода"', color: 'var(--primary-accent)', description: 'Оценка выгоды от автоматизации регрессии этих блоков.' }
                     ].map((stat, i) => (
-                        <div key={ i } style={ {
+                        <div key={i} style={{
                             backgroundColor: 'var(--bg-content)',
                             borderRadius: '16px',
                             padding: '20px',
                             border: '1px solid var(--border-color)',
                             boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
                             borderLeft: `4px solid ${stat.color}`
-                        } }>
-                            <div style={ { fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '8px' } }>{ stat.label }</div>
-                            <div style={ { fontSize: '28px', fontWeight: 800, color: stat.color, marginBottom: '4px' } }>{ stat.value }</div>
-                            <div style={ { fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 500, marginBottom: '12px' } }>{ stat.sub }</div>
-                            <div style={ {
+                        }}>
+                            <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '8px' }}>{stat.label}</div>
+                            <div style={{ fontSize: '28px', fontWeight: 800, color: stat.color, marginBottom: '4px' }}>{stat.value}</div>
+                            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 500, marginBottom: '12px' }}>{stat.sub}</div>
+                            <div style={{
                                 fontSize: '11px',
                                 color: 'var(--text-muted)',
                                 lineHeight: '1.4',
                                 padding: '10px',
                                 backgroundColor: 'var(--bg-input)',
                                 borderRadius: '8px'
-                            } }>
-                                <strong>Для автотестов:</strong> { stat.description }
+                            }}>
+                                <strong>Для автотестов:</strong> {stat.description}
                             </div>
                         </div>
-                    )) }
+                    ))}
                 </div>
-            ) }
+            )}
 
-            { !loading && !error && activeTab === 'code' && heatmapData && (
-                <div style={ {
+            {!loading && !error && activeTab === 'code' && heatmapData && (
+                <div style={{
                     backgroundColor: 'var(--bg-content)',
                     padding: '32px',
                     borderRadius: '24px',
                     border: '1px solid var(--border-color)',
                     boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
                     marginBottom: '40px'
-                } }>
-                    <div style={ { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' } }>
-                        <div style={ { display: 'flex', flexDirection: 'column' } }>
-                            <h2 style={ styles.subHeader }>
+                }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                            <h2 style={styles.subHeader}>
                                 Импакт-анализ компонентов
                             </h2>
-                            <p style={ { fontSize: '14px', color: 'var(--text-muted)', margin: '4px 0 0 0' } }>
+                            <p style={{ fontSize: '14px', color: 'var(--text-muted)', margin: '4px 0 0 0' }}>
                                 Распределение влияния по программным элементам
                             </p>
                         </div>
@@ -1631,50 +1580,50 @@ const HeatmapPage = ({ projects }) =>
                     </div>
 
 
-                    <div style={ { height: '400px', width: '100%', marginBottom: '32px' } }>
+                    <div style={{ height: '400px', width: '100%', marginBottom: '32px' }}>
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart
-                                data={ codeChartData }
+                                data={codeChartData}
                                 layout="vertical"
-                                margin={ { top: 5, right: 30, left: 10, bottom: 5 } }
+                                margin={{ top: 5, right: 30, left: 10, bottom: 5 }}
                             >
                                 <XAxis type="number" hide />
                                 <YAxis
                                     type="category"
                                     dataKey="name"
-                                    width={ 150 }
-                                    fontSize={ 11 }
-                                    tick={ { fill: 'var(--text-secondary)', fontWeight: 600 } }
-                                    tickFormatter={ (value) => value.length > 20 ? value.substring(0, 18) + '...' : value }
+                                    width={150}
+                                    fontSize={11}
+                                    tick={{ fill: 'var(--text-secondary)', fontWeight: 600 }}
+                                    tickFormatter={(value) => value.length > 20 ? value.substring(0, 18) + '...' : value}
                                 />
-                                <Tooltip content={ <CustomTooltip /> } cursor={ { fill: 'var(--bg-input)' } } />
+                                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'var(--bg-input)' }} />
                                 <Bar
                                     dataKey="value"
-                                    radius={ [0, 4, 4, 0] }
-                                    onClick={ (data) => setSelectedComponent(data.name) }
+                                    radius={[0, 4, 4, 0]}
+                                    onClick={(data) => setSelectedComponent(data.name)}
                                 >
-                                    { codeChartData.map((entry, index) => (
+                                    {codeChartData.map((entry, index) => (
                                         <Cell
-                                            key={ `cell-${index}` }
-                                            fill={ entry.color }
-                                            style={ { cursor: 'pointer', filter: selectedComponent === entry.name ? 'brightness(0.9) contrast(1.2)' : 'none' } }
+                                            key={`cell-${index}`}
+                                            fill={entry.color}
+                                            style={{ cursor: 'pointer', filter: selectedComponent === entry.name ? 'brightness(0.9) contrast(1.2)' : 'none' }}
                                         />
-                                    )) }
+                                    ))}
                                 </Bar>
                             </BarChart>
                         </ResponsiveContainer>
                     </div>
 
-                    <div style={ {
+                    <div style={{
                         display: 'grid',
                         gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
                         gap: '12px'
-                    } }>
-                        { codeChartData.map((item, index) => (
+                    }}>
+                        {codeChartData.map((item, index) => (
                             <div
-                                key={ item.name }
-                                onClick={ () => setSelectedComponent(item.name) }
-                                style={ {
+                                key={item.name}
+                                onClick={() => setSelectedComponent(item.name)}
+                                style={{
                                     padding: '12px 16px',
                                     borderRadius: '12px',
                                     border: `1px solid ${selectedComponent === item.name ? 'var(--primary-accent)' : 'var(--border-color)'}`,
@@ -1685,82 +1634,82 @@ const HeatmapPage = ({ projects }) =>
                                     flexDirection: 'column',
                                     gap: '2px',
                                     boxShadow: selectedComponent === item.name ? '0 4px 12px rgba(99, 102, 241, 0.08)' : 'none'
-                                } }
+                                }}
                             >
-                                <div style={ { display: 'flex', alignItems: 'center', gap: '8px' } }>
-                                    <div style={ { width: '8px', height: '8px', borderRadius: '50%', backgroundColor: item.color, flexShrink: 0 } } />
-                                    <span style={ { fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }>
-                                        { item.name }
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: item.color, flexShrink: 0 }} />
+                                    <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        {item.name}
                                     </span>
                                 </div>
-                                <div style={ { fontSize: '11px', color: 'var(--text-muted)', paddingLeft: '16px' } }>
-                                    { activeMetric === 'time' ? formatSeconds(item.value) : item.value } ({ item.percentage }%)
+                                <div style={{ fontSize: '11px', color: 'var(--text-muted)', paddingLeft: '16px' }}>
+                                    {activeMetric === 'time' ? formatSeconds(item.value) : item.value} ({item.percentage}%)
                                 </div>
                             </div>
-                        )) }
+                        ))}
                     </div>
                 </div>
-            ) }
+            )}
 
-            {/* Статистика по Страницам (Перенесено в блок Code Coverage) */ }
+            {/* Статистика по Страницам (Перенесено в блок Code Coverage) */}
             {
                 !loading && !error && activeTab === 'code' && testCoverageData?.pages && testCoverageData.pages.length > 0 && (
-                    <div style={ {
+                    <div style={{
                         backgroundColor: 'var(--bg-content)',
                         padding: '32px',
                         borderRadius: '24px',
                         border: '1px solid var(--border-color)',
                         boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
                         marginBottom: '40px'
-                    } }>
-                        <div style={ { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' } }>
-                            <div style={ { display: 'flex', flexDirection: 'column' } }>
-                                <h2 style={ styles.subHeader }>
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                <h2 style={styles.subHeader}>
                                     Влияние на страницы (Импакт)
                                 </h2>
-                                <p style={ { fontSize: '14px', color: 'var(--text-muted)', margin: '4px 0 0 0' } }>
+                                <p style={{ fontSize: '14px', color: 'var(--text-muted)', margin: '4px 0 0 0' }}>
                                     Распределение связей между компонентами и страницами приложения
                                 </p>
                             </div>
                         </div>
 
-                        <div style={ { display: 'flex', gap: '40px', alignItems: 'center' } }>
-                            {/* Pie Chart on the Left (40%) */ }
-                            <div style={ { flex: '0 0 400px', height: '400px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' } }>
-                                <div style={ {
+                        <div style={{ display: 'flex', gap: '40px', alignItems: 'center' }}>
+                            {/* Pie Chart on the Left (40%) */}
+                            <div style={{ flex: '0 0 400px', height: '400px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <div style={{
                                     position: 'absolute',
                                     textAlign: 'center',
                                     display: 'flex',
                                     flexDirection: 'column',
                                     zIndex: 1,
                                     pointerEvents: 'none'
-                                } }>
-                                    <span style={ { fontSize: '10px', fontWeight: 800, color: 'var(--text-muted)', lineHeight: 1.2 } }>ПЛОТНОСТЬ</span>
-                                    <span style={ { fontSize: '10px', fontWeight: 800, color: 'var(--text-muted)', lineHeight: 1.2 } }>МАППИНГА</span>
+                                }}>
+                                    <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-muted)', lineHeight: 1.2 }}>ПЛОТНОСТЬ</span>
+                                    <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-muted)', lineHeight: 1.2 }}>МАППИНГА</span>
                                 </div>
                                 <ResponsiveContainer width="100%" height="100%">
                                     <PieChart>
                                         <Pie
-                                            data={ pagesChartData }
+                                            data={pagesChartData}
                                             cx="50%"
                                             cy="50%"
-                                            innerRadius={ 80 }
-                                            outerRadius={ 120 }
-                                            paddingAngle={ 0 }
+                                            innerRadius={80}
+                                            outerRadius={120}
+                                            paddingAngle={0}
                                             stroke="none"
                                             dataKey="value"
                                         >
-                                            { pagesChartData.map((entry, index) => (
-                                                <Cell key={ `cell-${index}` } fill={ entry.color } />
-                                            )) }
+                                            {pagesChartData.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={entry.color} />
+                                            ))}
                                         </Pie>
-                                        <Tooltip content={ <CustomTooltip /> } />
+                                        <Tooltip content={<CustomTooltip />} />
                                     </PieChart>
                                 </ResponsiveContainer>
                             </div>
 
-                            {/* Cards on the Right (60%) */ }
-                            <div style={ {
+                            {/* Cards on the Right (60%) */}
+                            <div style={{
                                 flex: 1,
                                 display: 'grid',
                                 gridTemplateColumns: 'repeat(2, 1fr)',
@@ -1768,11 +1717,11 @@ const HeatmapPage = ({ projects }) =>
                                 maxHeight: '450px',
                                 overflowY: 'auto',
                                 paddingRight: '8px'
-                            } }>
-                                { pagesChartData.map((item, index) => (
+                            }}>
+                                {pagesChartData.map((item, index) => (
                                     <div
-                                        key={ item.name }
-                                        style={ {
+                                        key={item.name}
+                                        style={{
                                             padding: '16px',
                                             borderRadius: '16px',
                                             border: '1px solid var(--border-color)',
@@ -1784,9 +1733,9 @@ const HeatmapPage = ({ projects }) =>
                                             boxShadow: '0 2px 8px rgba(0,0,0,0.02)',
                                             position: 'relative',
                                             paddingLeft: '32px'
-                                        } }
+                                        }}
                                     >
-                                        <div style={ {
+                                        <div style={{
                                             position: 'absolute',
                                             left: '12px',
                                             top: '20px',
@@ -1794,98 +1743,97 @@ const HeatmapPage = ({ projects }) =>
                                             height: '10px',
                                             borderRadius: '50%',
                                             backgroundColor: item.color
-                                        } } />
+                                        }} />
 
-                                        <div style={ { fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }>
-                                            { item.name }
+                                        <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                            {item.name}
                                         </div>
 
-                                        <div style={ { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--primary-accent)', fontWeight: 600 } }>
-                                            { activeMetric === 'time' && <span>⏱</span> }
-                                            { activeMetric === 'time' ? formatSeconds(item.value) : item.value }
-                                            <span style={ { color: 'var(--text-placeholder)', fontWeight: 400 } }>({ item.percentage }%)</span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--primary-accent)', fontWeight: 600 }}>
+                                            {activeMetric === 'time' && <span>⏱</span>}
+                                            {activeMetric === 'time' ? formatSeconds(item.value) : item.value}
+                                            <span style={{ color: 'var(--text-placeholder)', fontWeight: 400 }}>({item.percentage}%)</span>
                                         </div>
 
-                                        { item.url && (
-                                            <div style={ { fontSize: '10px', color: 'var(--text-placeholder)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis' } }>
-                                                { item.url }
+                                        {item.url && (
+                                            <div style={{ fontSize: '10px', color: 'var(--text-placeholder)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                {item.url}
                                             </div>
-                                        ) }
+                                        )}
                                     </div>
-                                )) }
+                                ))}
                             </div>
                         </div>
 
                     </div>
-                ) }
+                )}
 
-            {/* Test Coverage визуализация */ }
+            {/* Test Coverage визуализация */}
             {
                 activeTab === 'test' && !loading && !error && testCoverageData && (
-                    <div style={ { display: 'flex', flexDirection: 'column', gap: '40px' } }>
-                        {/* Приоритезация функциональных блоков */ }
-                        <div style={ {
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '40px' }}>
+                        {/* Приоритезация функциональных блоков */}
+                        <div style={{
                             backgroundColor: 'var(--bg-content)',
                             padding: '32px',
                             borderRadius: '24px',
                             border: '1px solid var(--border-color)',
                             boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
-                        } }>
-                            <div style={ { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' } }>
-                                <div style={ { display: 'flex', flexDirection: 'column' } }>
-                                    <h2 style={ styles.subHeader }>
+                        }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                    <h2 style={styles.subHeader}>
                                         Приоритезация функциональных блоков
                                     </h2>
-                                    <p style={ { fontSize: '14px', color: 'var(--text-muted)', margin: '4px 0 0 0' } }>
+                                    <p style={{ fontSize: '14px', color: 'var(--text-muted)', margin: '4px 0 0 0' }}>
                                         Ранжирование по приоритету (Инциденты + Время)
                                     </p>
                                 </div>
                                 <MetricToggle />
                             </div>
 
-                            <div style={ { display: 'flex', flexDirection: 'column', gap: '32px' } }>
-                                {/* Pareto Chart for FB - Now Full Width like Code Coverage */ }
-                                <div style={ { height: '400px', width: '100%' } }>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+                                {/* Pareto Chart for FB - Now Full Width like Code Coverage */}
+                                <div style={{ height: '400px', width: '100%' }}>
                                     <ResponsiveContainer width="100%" height="100%">
                                         <BarChart
-                                            data={ fbChartData }
+                                            data={fbChartData}
                                             layout="vertical"
-                                            margin={ { top: 5, right: 30, left: 10, bottom: 5 } }
+                                            margin={{ top: 5, right: 30, left: 10, bottom: 5 }}
                                         >
                                             <XAxis type="number" hide />
                                             <YAxis
                                                 type="category"
                                                 dataKey="name"
-                                                width={ 180 }
-                                                fontSize={ 11 }
-                                                tick={ { fill: 'var(--text-secondary)', fontWeight: 600 } }
-                                                tickFormatter={ (value) => value.length > 25 ? value.substring(0, 23) + '...' : value }
+                                                width={180}
+                                                fontSize={11}
+                                                tick={{ fill: 'var(--text-secondary)', fontWeight: 600 }}
+                                                tickFormatter={(value) => value.length > 25 ? value.substring(0, 23) + '...' : value}
                                             />
-                                            <Tooltip content={ <CustomTooltip /> } cursor={ { fill: 'var(--bg-input)' } } />
+                                            <Tooltip content={<CustomTooltip />} cursor={{ fill: 'var(--bg-input)' }} />
                                             <Bar
                                                 dataKey="value"
-                                                radius={ [0, 4, 4, 0] }
+                                                radius={[0, 4, 4, 0]}
                                             >
-                                                { fbChartData.map((entry, index) => (
-                                                    <Cell key={ `cell-fb-${index}` } fill={ entry.color } />
-                                                )) }
+                                                {fbChartData.map((entry, index) => (
+                                                    <Cell key={`cell-fb-${index}`} fill={entry.color} />
+                                                ))}
                                             </Bar>
                                         </BarChart>
                                     </ResponsiveContainer>
                                 </div>
 
-                                {/* Priority List - Now as a Grid of Cards like Code Coverage */ }
-                                <div style={ {
+                                {/* Priority List - Now as a Grid of Cards like Code Coverage */}
+                                <div style={{
                                     display: 'grid',
                                     gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
                                     gap: '12px'
-                                } }>
-                                    { [...(testCoverageData?.functionalBlocks || [])]
+                                }}>
+                                    {[...(testCoverageData?.functionalBlocks || [])]
                                         .map(fb => ({ ...fb, priorityScore: calculatePriorityScore(fb) }))
                                         .sort((a, b) => b.priorityScore - a.priorityScore)
                                         .slice(0, 20)
-                                        .map((fb, idx) =>
-                                        {
+                                        .map((fb, idx) => {
                                             const entryColor = fbChartData.find(p => p.name === fb.functionalBlockName)?.color || 'var(--text-placeholder)';
                                             const totalMetric = getTotalMetricValue(testCoverageData?.functionalBlocks);
                                             const percentage = totalMetric > 0
@@ -1898,9 +1846,9 @@ const HeatmapPage = ({ projects }) =>
 
                                             return (
                                                 <div
-                                                    key={ fb.functionalBlockId }
-                                                    onClick={ () => setSelectedComponent(fb.functionalBlockName) }
-                                                    style={ {
+                                                    key={fb.functionalBlockId}
+                                                    onClick={() => setSelectedComponent(fb.functionalBlockName)}
+                                                    style={{
                                                         padding: '12px 16px',
                                                         borderRadius: '12px',
                                                         border: `1px solid ${selectedComponent === fb.functionalBlockName ? 'var(--primary-accent)' : 'var(--border-color)'}`,
@@ -1911,30 +1859,30 @@ const HeatmapPage = ({ projects }) =>
                                                         transition: 'all 0.2s',
                                                         cursor: 'pointer',
                                                         boxShadow: selectedComponent === fb.functionalBlockName ? '0 4px 12px rgba(99, 102, 241, 0.08)' : 'none'
-                                                    } }
+                                                    }}
                                                 >
-                                                    <div style={ { display: 'flex', alignItems: 'center', gap: '8px' } }>
-                                                        <div style={ { width: '8px', height: '8px', borderRadius: '50%', backgroundColor: entryColor, flexShrink: 0 } } />
-                                                        <span style={ { fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }>
-                                                            { fb.functionalBlockName }
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: entryColor, flexShrink: 0 }} />
+                                                        <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                            {fb.functionalBlockName}
                                                         </span>
                                                     </div>
-                                                    <div style={ { fontSize: '11px', color: 'var(--text-muted)', paddingLeft: '16px' } }>
-                                                        { activeMetric === 'time' ? formatSeconds(value) : value } ({ percentage }%)
-                                                        <span style={ { marginLeft: '8px', color: 'var(--text-placeholder)', fontSize: '10px' } }>Priority: { fb.priorityScore.toFixed(0) }</span>
+                                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', paddingLeft: '16px' }}>
+                                                        {activeMetric === 'time' ? formatSeconds(value) : value} ({percentage}%)
+                                                        <span style={{ marginLeft: '8px', color: 'var(--text-placeholder)', fontSize: '10px' }}>Priority: {fb.priorityScore.toFixed(0)}</span>
                                                     </div>
                                                 </div>
                                             );
-                                        }) }
+                                        })}
                                 </div>
                             </div>
                         </div>
                     </div>
-                ) }
+                )}
 
-            {/* Модальное окно массового импорта */ }
-            { showImportModal && (
-                <div style={ {
+            {/* Модальное окно массового импорта */}
+            {showImportModal && (
+                <div style={{
                     position: 'fixed',
                     top: 0,
                     left: 0,
@@ -1947,27 +1895,27 @@ const HeatmapPage = ({ projects }) =>
                     alignItems: 'center',
                     zIndex: 2000,
                     animation: 'fadeIn 0.2s ease-out',
-                } }>
-                    <div style={ {
+                }}>
+                    <div style={{
                         backgroundColor: 'var(--bg-content)',
                         width: '600px',
                         borderRadius: '24px',
                         boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
                         overflow: 'hidden',
                         fontFamily: '"Inter", sans-serif'
-                    } }>
-                        <div style={ {
+                    }}>
+                        <div style={{
                             padding: '24px 32px',
                             borderBottom: '1px solid var(--border-color)',
                             display: 'flex',
                             justifyContent: 'space-between',
                             alignItems: 'center',
                             background: 'var(--bg-input)'
-                        } }>
-                            <h2 style={ styles.subHeader }>Загрузка истории TIA</h2>
+                        }}>
+                            <h2 style={styles.subHeader}>Загрузка истории TIA</h2>
                             <button
-                                onClick={ () => setShowImportModal(false) }
-                                style={ {
+                                onClick={() => setShowImportModal(false)}
+                                style={{
                                     background: 'none',
                                     border: 'none',
                                     fontSize: '24px',
@@ -1978,18 +1926,18 @@ const HeatmapPage = ({ projects }) =>
                                     alignItems: 'center',
                                     justifyContent: 'center',
                                     transition: 'color 0.2s'
-                                } }
-                                onMouseOver={ (e) => e.currentTarget.style.color = 'var(--text-secondary)' }
-                                onMouseOut={ (e) => e.currentTarget.style.color = 'var(--text-placeholder)' }
+                                }}
+                                onMouseOver={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
+                                onMouseOut={(e) => e.currentTarget.style.color = 'var(--text-placeholder)'}
                             >х</button>
                         </div>
 
-                        <div style={ { padding: '32px' } }>
-                            <p style={ { marginBottom: '24px', color: 'var(--text-muted)', fontSize: '14px', lineHeight: '1.6' } }>
+                        <div style={{ padding: '32px' }}>
+                            <p style={{ marginBottom: '24px', color: 'var(--text-muted)', fontSize: '14px', lineHeight: '1.6' }}>
                                 Выберите файлы отчетов в формате JSON для массового импорта истории дефектов и привязки их к текущему проекту.
                             </p>
 
-                            <div style={ {
+                            <div style={{
                                 position: 'relative',
                                 marginBottom: '24px',
                                 border: '2px dashed var(--border-color)',
@@ -1999,16 +1947,16 @@ const HeatmapPage = ({ projects }) =>
                                 transition: 'all 0.2s ease',
                                 backgroundColor: 'var(--bg-input)',
                                 cursor: 'pointer'
-                            } }
-                                onMouseOver={ (e) => (e.currentTarget.style.borderColor = 'var(--border-focus)', e.currentTarget.style.backgroundColor = 'var(--bg-input)') }
-                                onMouseOut={ (e) => (e.currentTarget.style.borderColor = 'var(--border-color)', e.currentTarget.style.backgroundColor = 'var(--bg-input)') }
+                            }}
+                                onMouseOver={(e) => (e.currentTarget.style.borderColor = 'var(--border-focus)', e.currentTarget.style.backgroundColor = 'var(--bg-input)')}
+                                onMouseOut={(e) => (e.currentTarget.style.borderColor = 'var(--border-color)', e.currentTarget.style.backgroundColor = 'var(--bg-input)')}
                             >
                                 <input
                                     type="file"
                                     multiple
                                     accept=".json"
-                                    onChange={ (e) => setImportFiles(Array.from(e.target.files)) }
-                                    style={ {
+                                    onChange={(e) => setImportFiles(Array.from(e.target.files))}
+                                    style={{
                                         position: 'absolute',
                                         top: 0,
                                         left: 0,
@@ -2016,17 +1964,17 @@ const HeatmapPage = ({ projects }) =>
                                         height: '100%',
                                         opacity: 0,
                                         cursor: 'pointer'
-                                    } }
+                                    }}
                                 />
 
-                                <div style={ { fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' } }>
-                                    { importFiles.length > 0 ? `Выбрано файлов: ${importFiles.length}` : 'Нажмите для выбора JSON файлов' }
+                                <div style={{ fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                                    {importFiles.length > 0 ? `Выбрано файлов: ${importFiles.length}` : 'Нажмите для выбора JSON файлов'}
                                 </div>
-                                <div style={ { fontSize: '12px', color: 'var(--text-placeholder)' } }>Перетащите файлы сюда или кликните для обзора</div>
+                                <div style={{ fontSize: '12px', color: 'var(--text-placeholder)' }}>Перетащите файлы сюда или кликните для обзора</div>
                             </div>
 
-                            { importProcessing && (
-                                <div style={ {
+                            {importProcessing && (
+                                <div style={{
                                     padding: '20px',
                                     backgroundColor: 'var(--bg-main)',
                                     borderRadius: '12px',
@@ -2037,18 +1985,18 @@ const HeatmapPage = ({ projects }) =>
                                     fontFamily: '"SF Mono", "Fira Code", monospace',
                                     color: 'var(--primary-accent)',
                                     boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)'
-                                } }>
-                                    { importLog.map((log, i) => (
-                                        <div key={ i } style={ { marginBottom: '4px', opacity: i === importLog.length - 1 ? 1 : 0.7 } }>
-                                            <span style={ { color: 'var(--text-muted)' } }>[{ new Date().toLocaleTimeString() }]</span> { log }
+                                }}>
+                                    {importLog.map((log, i) => (
+                                        <div key={i} style={{ marginBottom: '4px', opacity: i === importLog.length - 1 ? 1 : 0.7 }}>
+                                            <span style={{ color: 'var(--text-muted)' }}>[{new Date().toLocaleTimeString()}]</span> {log}
                                         </div>
-                                    )) }
+                                    ))}
                                     <div id="import-log-end" />
                                 </div>
-                            ) }
+                            )}
 
-                            { importError && (
-                                <div style={ {
+                            {importError && (
+                                <div style={{
                                     padding: '16px',
                                     backgroundColor: 'var(--error-bg)',
                                     border: '1px solid var(--error)',
@@ -2059,15 +2007,15 @@ const HeatmapPage = ({ projects }) =>
                                     display: 'flex',
                                     alignItems: 'center',
                                     gap: '12px'
-                                } }>
-                                    <span>⚠️</span> { importError }
+                                }}>
+                                    <span>⚠️</span> {importError}
                                 </div>
-                            ) }
+                            )}
 
-                            <div style={ { display: 'flex', justifyContent: 'flex-end', gap: '12px' } }>
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
                                 <button
-                                    onClick={ () => setShowImportModal(false) }
-                                    style={ {
+                                    onClick={() => setShowImportModal(false)}
+                                    style={{
                                         padding: '0 24px',
                                         height: '48px',
                                         backgroundColor: 'var(--bg-content)',
@@ -2078,17 +2026,17 @@ const HeatmapPage = ({ projects }) =>
                                         fontSize: '14px',
                                         cursor: 'pointer',
                                         transition: 'all 0.2s'
-                                    } }
-                                    onMouseOver={ (e) => (e.currentTarget.style.backgroundColor = 'var(--bg-input)', e.currentTarget.style.borderColor = 'var(--border-focus)') }
-                                    onMouseOut={ (e) => (e.currentTarget.style.backgroundColor = 'var(--bg-content)', e.currentTarget.style.borderColor = 'var(--border-color)') }
-                                    disabled={ importProcessing }
+                                    }}
+                                    onMouseOver={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-input)', e.currentTarget.style.borderColor = 'var(--border-focus)')}
+                                    onMouseOut={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-content)', e.currentTarget.style.borderColor = 'var(--border-color)')}
+                                    disabled={importProcessing}
                                 >
                                     Отмена
                                 </button>
                                 <button
-                                    onClick={ handleProcessFiles }
-                                    disabled={ importFiles.length === 0 || importProcessing }
-                                    style={ {
+                                    onClick={handleProcessFiles}
+                                    disabled={importFiles.length === 0 || importProcessing}
+                                    style={{
                                         padding: '0 24px',
                                         height: '48px',
                                         backgroundColor: 'var(--primary-accent)',
@@ -2101,16 +2049,16 @@ const HeatmapPage = ({ projects }) =>
                                         boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)',
                                         transition: 'all 0.2s',
                                         opacity: (importFiles.length === 0 || importProcessing) ? 0.6 : 1
-                                    } }
-                                    onMouseOver={ (e) => (importFiles.length > 0 && !importProcessing) && (e.currentTarget.style.backgroundColor = 'var(--primary-hover)', e.currentTarget.style.transform = 'translateY(-1px)') }
-                                    onMouseOut={ (e) => (importFiles.length > 0 && !importProcessing) && (e.currentTarget.style.backgroundColor = 'var(--primary-accent)', e.currentTarget.style.transform = 'translateY(0)') }
+                                    }}
+                                    onMouseOver={(e) => (importFiles.length > 0 && !importProcessing) && (e.currentTarget.style.backgroundColor = 'var(--primary-hover)', e.currentTarget.style.transform = 'translateY(-1px)')}
+                                    onMouseOut={(e) => (importFiles.length > 0 && !importProcessing) && (e.currentTarget.style.backgroundColor = 'var(--primary-accent)', e.currentTarget.style.transform = 'translateY(0)')}
                                 >
-                                    { importProcessing ? (
-                                        <span style={ { display: 'flex', alignItems: 'center', gap: '8px' } }>
-                                            <div style={ { width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' } } />
+                                    {importProcessing ? (
+                                        <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />
                                             Обработка...
                                         </span>
-                                    ) : 'Начать импорт' }
+                                    ) : 'Начать импорт'}
                                 </button>
                             </div>
                         </div>
@@ -2119,10 +2067,10 @@ const HeatmapPage = ({ projects }) =>
             )
             }
 
-            {/* Модальное окно маппинга для импорта */ }
+            {/* Модальное окно маппинга для импорта */}
             {
                 showMappingModal && (
-                    <div style={ {
+                    <div style={{
                         position: 'fixed',
                         top: 0,
                         left: 0,
@@ -2135,8 +2083,8 @@ const HeatmapPage = ({ projects }) =>
                         alignItems: 'center',
                         zIndex: 2000,
                         animation: 'fadeIn 0.2s ease-out',
-                    } }>
-                        <div style={ {
+                    }}>
+                        <div style={{
                             backgroundColor: 'var(--bg-content)',
                             width: '1200px',
                             maxWidth: '95vw',
@@ -2147,24 +2095,24 @@ const HeatmapPage = ({ projects }) =>
                             display: 'flex',
                             flexDirection: 'column',
                             fontFamily: '"Inter", sans-serif'
-                        } }>
-                            <div style={ {
+                        }}>
+                            <div style={{
                                 padding: '24px 32px',
                                 borderBottom: '1px solid var(--border-color)',
                                 display: 'flex',
                                 justifyContent: 'space-between',
                                 alignItems: 'center',
                                 background: 'var(--bg-input)'
-                            } }>
+                            }}>
                                 <div>
-                                    <h2 style={ styles.subHeader }>Маппинг компонентов</h2>
-                                    <div style={ { fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' } }>Свяжите компоненты из отчета с функциональными блоками Allure</div>
+                                    <h2 style={styles.subHeader}>Маппинг компонентов</h2>
+                                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>Свяжите компоненты из отчета с функциональными блоками Allure</div>
                                 </div>
 
-                                <div style={ { display: 'flex', alignItems: 'center', gap: '12px' } }>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                                     <button
-                                        onClick={ () => setShowMappingModal(false) }
-                                        style={ {
+                                        onClick={() => setShowMappingModal(false)}
+                                        style={{
                                             padding: '0 20px',
                                             height: '40px',
                                             backgroundColor: 'var(--bg-content)',
@@ -2178,16 +2126,16 @@ const HeatmapPage = ({ projects }) =>
                                             display: 'flex',
                                             alignItems: 'center',
                                             gap: '8px'
-                                        } }
-                                        onMouseOver={ (e) => (e.currentTarget.style.backgroundColor = 'var(--bg-input)', e.currentTarget.style.borderColor = 'var(--border-focus)') }
-                                        onMouseOut={ (e) => (e.currentTarget.style.backgroundColor = 'var(--bg-content)', e.currentTarget.style.borderColor = 'var(--border-color)') }
+                                        }}
+                                        onMouseOver={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-input)', e.currentTarget.style.borderColor = 'var(--border-focus)')}
+                                        onMouseOut={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-content)', e.currentTarget.style.borderColor = 'var(--border-color)')}
                                     >
                                         Назад к выбору файлов
                                     </button>
 
                                     <button
-                                        onClick={ () => setShowMappingModal(false) }
-                                        style={ {
+                                        onClick={() => setShowMappingModal(false)}
+                                        style={{
                                             background: 'none',
                                             border: 'none',
                                             fontSize: '24px',
@@ -2198,29 +2146,29 @@ const HeatmapPage = ({ projects }) =>
                                             alignItems: 'center',
                                             justifyContent: 'center',
                                             transition: 'color 0.2s'
-                                        } }
-                                        onMouseOver={ (e) => e.currentTarget.style.color = 'var(--text-secondary)' }
-                                        onMouseOut={ (e) => e.currentTarget.style.color = 'var(--text-placeholder)' }
+                                        }}
+                                        onMouseOver={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
+                                        onMouseOut={(e) => e.currentTarget.style.color = 'var(--text-placeholder)'}
                                     >×</button>
                                 </div>
                             </div>
 
-                            <div style={ { display: 'flex', flex: 1, overflow: 'hidden' } }>
-                                {/* Левая панель: Список компонентов */ }
-                                <div style={ {
+                            <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+                                {/* Левая панель: Список компонентов */}
+                                <div style={{
                                     width: '350px',
                                     borderRight: '1px solid var(--border-color)',
                                     display: 'flex',
                                     flexDirection: 'column',
                                     backgroundColor: 'var(--bg-input)'
-                                } }>
-                                    <div style={ { padding: '16px', borderBottom: '1px solid var(--border-color)' } }>
+                                }}>
+                                    <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)' }}>
                                         <input
                                             type="text"
                                             placeholder="Поиск компонента..."
-                                            value={ mappingFilter }
-                                            onChange={ (e) => setMappingFilter(e.target.value) }
-                                            style={ {
+                                            value={mappingFilter}
+                                            onChange={(e) => setMappingFilter(e.target.value)}
+                                            style={{
                                                 width: '100%',
                                                 padding: '10px 12px',
                                                 borderRadius: '8px',
@@ -2229,11 +2177,11 @@ const HeatmapPage = ({ projects }) =>
                                                 outline: 'none',
                                                 backgroundColor: 'var(--bg-content)',
                                                 color: 'var(--text-primary)'
-                                            } }
+                                            }}
                                         />
                                     </div>
-                                    <div style={ { flex: 1, overflowY: 'auto', padding: '12px' } }>
-                                        { renderComponentTree(
+                                    <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+                                        {renderComponentTree(
                                             buildComponentTree(
                                                 Array.from(new Set(parsedHistoryItems.flatMap(item =>
                                                     item.affected_components.map(c => typeof c === 'string' ? c : c.name)
@@ -2241,26 +2189,26 @@ const HeatmapPage = ({ projects }) =>
                                                     .sort()
                                                     .filter(name => name.toLowerCase().includes(mappingFilter.toLowerCase()))
                                             )
-                                        ) }
+                                        )}
                                     </div>
                                 </div>
 
-                                {/* Правая панель: Дерево маппинга */ }
-                                <div style={ { flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-content)' } }>
-                                    <div style={ { padding: '16px', borderBottom: '1px solid var(--border-color)', backgroundColor: 'var(--bg-content)' } }>
-                                        <div style={ { marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' } }>
-                                            <h3 style={ { margin: 0, fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' } }>
-                                                { selectedComponentForMapping ? `Маппинг для: ${selectedComponentForMapping}` : 'Выберите компонент слева' }
+                                {/* Правая панель: Дерево маппинга */}
+                                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-content)' }}>
+                                    <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)', backgroundColor: 'var(--bg-content)' }}>
+                                        <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                                                {selectedComponentForMapping ? `Маппинг для: ${selectedComponentForMapping}` : 'Выберите компонент слева'}
                                             </h3>
-                                            <div style={ { display: 'flex', alignItems: 'center', gap: '12px' } }>
-                                                { selectedComponentForMapping && (
-                                                    <div style={ { fontSize: '13px', color: 'var(--text-muted)' } }>
-                                                        { componentMappings[selectedComponentForMapping]?.length || 0 } привязано
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                {selectedComponentForMapping && (
+                                                    <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                                                        {componentMappings[selectedComponentForMapping]?.length || 0} привязано
                                                     </div>
-                                                ) }
+                                                )}
                                                 <div
                                                     title="Подсказка по маппингу:&#10;• Один клик — выбрать/убрать текущий элемент&#10;• Двойной клик — выбрать/убрать элемент со всеми вложенными"
-                                                    style={ {
+                                                    style={{
                                                         cursor: 'help',
                                                         fontSize: '16px',
                                                         backgroundColor: 'var(--bg-input)',
@@ -2273,17 +2221,15 @@ const HeatmapPage = ({ projects }) =>
                                                         border: '1px solid var(--border-color)',
                                                         transition: 'all 0.2s',
                                                         visibility: selectedComponentForMapping ? 'visible' : 'hidden'
-                                                    } }
-                                                    onMouseOver={ (e) =>
-                                                    {
+                                                    }}
+                                                    onMouseOver={(e) => {
                                                         e.currentTarget.style.backgroundColor = 'var(--bg-input)';
                                                         e.currentTarget.style.transform = 'scale(1.1)';
-                                                    } }
-                                                    onMouseOut={ (e) =>
-                                                    {
+                                                    }}
+                                                    onMouseOut={(e) => {
                                                         e.currentTarget.style.backgroundColor = 'var(--bg-input)';
                                                         e.currentTarget.style.transform = 'scale(1)';
-                                                    } }
+                                                    }}
                                                 >
                                                     💡
                                                 </div>
@@ -2292,10 +2238,10 @@ const HeatmapPage = ({ projects }) =>
                                         <input
                                             type="text"
                                             placeholder="Поиск по дереву фич..."
-                                            value={ folderSearchTerm }
-                                            onChange={ (e) => setFolderSearchTerm(e.target.value) }
-                                            disabled={ !selectedComponentForMapping }
-                                            style={ {
+                                            value={folderSearchTerm}
+                                            onChange={(e) => setFolderSearchTerm(e.target.value)}
+                                            disabled={!selectedComponentForMapping}
+                                            style={{
                                                 width: '100%',
                                                 padding: '10px 12px',
                                                 borderRadius: '8px',
@@ -2304,46 +2250,46 @@ const HeatmapPage = ({ projects }) =>
                                                 outline: 'none',
                                                 backgroundColor: !selectedComponentForMapping ? 'var(--bg-input)' : 'var(--bg-content)',
                                                 color: 'var(--text-primary)'
-                                            } }
+                                            }}
                                         />
                                     </div>
-                                    <div style={ { flex: 1, overflowY: 'auto', padding: '20px' } }>
-                                        { selectedComponentForMapping ? (
+                                    <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+                                        {selectedComponentForMapping ? (
                                             renderFolderTreeForMapping(
                                                 filterFolders(filterFoldersForProject(folders), folderSearchTerm),
                                                 selectedComponentForMapping
                                             )
                                         ) : (
-                                            <div style={ {
+                                            <div style={{
                                                 display: 'flex',
                                                 flexDirection: 'column',
                                                 alignItems: 'center',
                                                 justifyContent: 'center',
                                                 height: '100%',
                                                 color: 'var(--text-placeholder)'
-                                            } }>
+                                            }}>
 
-                                                <div style={ { fontSize: '16px' } }>Выберите компонент из списка слева,</div>
-                                                <div style={ { fontSize: '14px' } }>чтобы настроить его связи с функциональными блоками</div>
+                                                <div style={{ fontSize: '16px' }}>Выберите компонент из списка слева,</div>
+                                                <div style={{ fontSize: '14px' }}>чтобы настроить его связи с функциональными блоками</div>
                                             </div>
-                                        ) }
+                                        )}
                                     </div>
                                 </div>
                             </div>
 
-                            <div style={ {
+                            <div style={{
                                 padding: '16px 32px',
                                 backgroundColor: 'var(--bg-content)',
                                 borderTop: '1px solid var(--border-color)',
                                 display: 'flex',
                                 justifyContent: 'flex-end',
                                 gap: '12px'
-                            } }>
+                            }}>
 
                                 <button
-                                    onClick={ () => handleSaveBulkHistory(false) }
-                                    disabled={ loading }
-                                    style={ {
+                                    onClick={() => handleSaveBulkHistory(false)}
+                                    disabled={loading}
+                                    style={{
                                         padding: '0 24px',
                                         height: '44px',
                                         backgroundColor: loading ? 'var(--success)' : 'var(--success)',
@@ -2359,12 +2305,12 @@ const HeatmapPage = ({ projects }) =>
                                         display: 'flex',
                                         alignItems: 'center',
                                         gap: '8px'
-                                    } }
-                                    onMouseOver={ (e) => !loading && (e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--success) 85%, black)', e.currentTarget.style.transform = 'translateY(-1px)') }
-                                    onMouseOut={ (e) => !loading && (e.currentTarget.style.backgroundColor = 'var(--success)', e.currentTarget.style.transform = 'translateY(0)') }
+                                    }}
+                                    onMouseOver={(e) => !loading && (e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--success) 85%, black)', e.currentTarget.style.transform = 'translateY(-1px)')}
+                                    onMouseOut={(e) => !loading && (e.currentTarget.style.backgroundColor = 'var(--success)', e.currentTarget.style.transform = 'translateY(0)')}
                                 >
                                     <span>Завершить импорт и маппинг</span>
-                                    { loading && <div style={ { width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' } } /> }
+                                    {loading && <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />}
                                 </button>
                             </div>
                         </div>
@@ -2372,10 +2318,10 @@ const HeatmapPage = ({ projects }) =>
                 )
             }
 
-            {/* Модальное окно подтверждения незамапленных компонентов */ }
+            {/* Модальное окно подтверждения незамапленных компонентов */}
             {
                 showUnmappedConfirmation && (
-                    <div style={ {
+                    <div style={{
                         position: 'fixed',
                         top: 0,
                         left: 0,
@@ -2388,8 +2334,8 @@ const HeatmapPage = ({ projects }) =>
                         justifyContent: 'center',
                         zIndex: 2100, // Выше чем mapping modal
                         fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-                    } }>
-                        <div style={ {
+                    }}>
+                        <div style={{
                             backgroundColor: 'var(--bg-content)',
                             borderRadius: '16px',
                             width: '600px', // Increased width
@@ -2397,43 +2343,43 @@ const HeatmapPage = ({ projects }) =>
                             boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
                             overflow: 'hidden',
                             animation: 'fadeIn 0.2s ease-out'
-                        } }>
-                            <div style={ {
+                        }}>
+                            <div style={{
                                 padding: '24px 28px',
                                 borderBottom: '1px solid var(--error)',
                                 backgroundColor: 'var(--bg-content)',
                                 display: 'flex',
                                 alignItems: 'center',
                                 gap: '16px'
-                            } }>
-                                {/* Emoji removed */ }
+                            }}>
+                                {/* Emoji removed */}
                                 <div>
-                                    <h3 style={ { margin: 0, fontSize: '20px', fontWeight: 600, color: 'var(--text-primary)' } }>
+                                    <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: 'var(--text-primary)' }}>
                                         Незамапленные компоненты
                                     </h3>
-                                    <div style={ { fontSize: '14px', color: 'var(--error)', marginTop: '4px', fontWeight: 500 } }>
+                                    <div style={{ fontSize: '14px', color: 'var(--error)', marginTop: '4px', fontWeight: 500 }}>
                                         Требуется подтверждение действия
                                     </div>
                                 </div>
                             </div>
 
-                            <div style={ { padding: '28px' } }>
-                                <p style={ { margin: '0 0 20px', fontSize: '15px', lineHeight: '1.6', color: 'var(--text-secondary)' } }>
-                                    Вы не связали следующие компоненты ({ unmappedList.length }) с функциональными блоками Allure.
+                            <div style={{ padding: '28px' }}>
+                                <p style={{ margin: '0 0 20px', fontSize: '15px', lineHeight: '1.6', color: 'var(--text-secondary)' }}>
+                                    Вы не связали следующие компоненты ({unmappedList.length}) с функциональными блоками Allure.
                                     <br />
                                     <strong>Вы уверены, что хотите сохранить историю без привязки этих компонентов?</strong>
                                 </p>
 
-                                <div style={ {
+                                <div style={{
                                     maxHeight: '300px',
                                     overflowY: 'auto',
                                     border: '1px solid var(--border-color)',
                                     borderRadius: '8px',
                                     backgroundColor: 'var(--bg-input)'
-                                } }>
-                                    <ul style={ { margin: 0, padding: '8px 0', listStyle: 'none' } }>
-                                        { unmappedList.map((comp, idx) => (
-                                            <li key={ idx } style={ {
+                                }}>
+                                    <ul style={{ margin: 0, padding: '8px 0', listStyle: 'none' }}>
+                                        {unmappedList.map((comp, idx) => (
+                                            <li key={idx} style={{
                                                 padding: '10px 16px',
                                                 marginBottom: '6px',
                                                 fontSize: '14px',
@@ -2445,26 +2391,26 @@ const HeatmapPage = ({ projects }) =>
                                                 gap: '12px',
                                                 border: '1px solid var(--border-color)',
                                                 boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-                                            } }>
-                                                <span style={ { width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--error)', flexShrink: 0, boxShadow: '0 0 8px color-mix(in srgb, var(--error) 50%, transparent)' } } />
-                                                <span style={ { fontWeight: 600 } }>{ comp.name }</span>
+                                            }}>
+                                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--error)', flexShrink: 0, boxShadow: '0 0 8px color-mix(in srgb, var(--error) 50%, transparent)' }} />
+                                                <span style={{ fontWeight: 600 }}>{comp.name}</span>
                                             </li>
-                                        )) }
+                                        ))}
                                     </ul>
                                 </div>
                             </div>
 
-                            <div style={ {
+                            <div style={{
                                 padding: '20px 28px',
                                 backgroundColor: 'var(--bg-input)',
                                 borderTop: '1px solid var(--border-color)',
                                 display: 'flex',
                                 justifyContent: 'flex-end',
                                 gap: '12px'
-                            } }>
+                            }}>
                                 <button
-                                    onClick={ () => setShowUnmappedConfirmation(false) }
-                                    style={ {
+                                    onClick={() => setShowUnmappedConfirmation(false)}
+                                    style={{
                                         padding: '10px 20px',
                                         borderRadius: '8px',
                                         border: '1px solid var(--border-color)',
@@ -2474,19 +2420,18 @@ const HeatmapPage = ({ projects }) =>
                                         fontWeight: 500,
                                         cursor: 'pointer',
                                         transition: 'all 0.2s'
-                                    } }
-                                    onMouseOver={ (e) => e.currentTarget.style.backgroundColor = 'var(--bg-input)' }
-                                    onMouseOut={ (e) => e.currentTarget.style.backgroundColor = 'var(--bg-content)' }
+                                    }}
+                                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-input)'}
+                                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-content)'}
                                 >
                                     Отмена
                                 </button>
                                 <button
-                                    onClick={ () =>
-                                    {
+                                    onClick={() => {
                                         setShowUnmappedConfirmation(false);
                                         handleSaveBulkHistory(true);
-                                    } }
-                                    style={ {
+                                    }}
+                                    style={{
                                         padding: '10px 20px',
                                         borderRadius: '8px',
                                         border: 'none',
@@ -2497,9 +2442,9 @@ const HeatmapPage = ({ projects }) =>
                                         cursor: 'pointer',
                                         boxShadow: '0 4px 6px rgba(220, 38, 38, 0.2)',
                                         transition: 'all 0.2s'
-                                    } }
-                                    onMouseOver={ (e) => e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--error) 85%, black)' }
-                                    onMouseOut={ (e) => e.currentTarget.style.backgroundColor = 'var(--error)' }
+                                    }}
+                                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--error) 85%, black)'}
+                                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'var(--error)'}
                                 >
                                     Продолжить без них
                                 </button>

@@ -763,12 +763,17 @@ export async function bulkImportHistory(req, res) {
                 }
             });
 
-            if (defectInserts.length > 0) {
+            const uniqueDefectInsertsMap = new Map();
+            defectInserts.forEach(defect => {
+                const uniqueKey = `${defect.component_id}_${defect.change_date}_${defect.issue_key}_${defect.mr_iid}`;
+                uniqueDefectInsertsMap.set(uniqueKey, defect);
+            });
+            const uniqueDefectInserts = Array.from(uniqueDefectInsertsMap.values());
+
+            if (uniqueDefectInserts.length > 0) {
                 const chunkSize = 500;
-                for (let i = 0; i < defectInserts.length; i += chunkSize) {
-                    const chunk = defectInserts.slice(i, i + chunkSize);
-                    // Используем onConflict для дедупликации и UPSERT - индекс idx_component_defects_unique_v4
-                    // включает: component_id, change_date, issue_key, mr_iid
+                for (let i = 0; i < uniqueDefectInserts.length; i += chunkSize) {
+                    const chunk = uniqueDefectInserts.slice(i, i + chunkSize);
                     await trx('component_defects')
                         .insert(chunk)
                         .onConflict(['component_id', 'change_date', 'issue_key', 'mr_iid'])
