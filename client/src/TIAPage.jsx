@@ -366,11 +366,23 @@ const TIAPage = ({ projects }) => {
             const components = allComponents || extractComponents();
             const pageDependencies = allPageDependencies || buildPageDependencies(components);
 
-            // Извлекаем release_version, change_date и is_bug_fix из отчета
-            const report = frontendJSON && isNewTiaFormat(frontendJSON) ? frontendJSON : (backendJSON && isNewTiaFormat(backendJSON) ? backendJSON : null);
+            // Извлекаем release_version, change_date и is_bug_fix из соответствующего отчета
+            let report = null;
+            if (component.type === 'frontend') {
+                report = frontendJSON && isNewTiaFormat(frontendJSON) ? frontendJSON : null;
+            } else if (component.type === 'backend') {
+                report = backendJSON && isNewTiaFormat(backendJSON) ? backendJSON : null;
+            }
+
+            if (!report) {
+                report = (frontendJSON && isNewTiaFormat(frontendJSON)) ? frontendJSON : ((backendJSON && isNewTiaFormat(backendJSON)) ? backendJSON : null);
+            }
+
             const releaseVersion = report?.release_version || null;
             const changeDate = report?.change_date || null;
             const isBugFix = report?.is_bug_fix || false;
+            const issueKey = report?.issue_key || null;
+            const mrIid = report?.mr_iid || null;
 
             // Если нет маппинга на функциональные блоки, все равно сохраняем метаданные компонента
             // Для этого отправляем пустой массив, но с метаданными
@@ -385,6 +397,8 @@ const TIAPage = ({ projects }) => {
                 releaseVersion: releaseVersion,
                 changeDate: changeDate,
                 isBugFix: isBugFix,
+                issueKey: issueKey,
+                mrIid: mrIid,
             });
         } catch (err) {
             logError('Save component mapping error', err.message);

@@ -29,6 +29,8 @@ const componentValidationSchema = Joi.object({
         Joi.valid(null, '')
     ).optional().description('Дата изменения компонента в формате ISO 8601'),
     isBugFix: Joi.boolean().optional().description('Флаг анализа компонентов из бага'),
+    issueKey: Joi.string().allow(null, '').optional().description('Ключ задачи в Jira'),
+    mrIid: Joi.alternatives().try(Joi.number(), Joi.string()).allow(null, '').optional().description('ID мерж-реквеста'),
 });
 
 /**
@@ -177,7 +179,7 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
 }
 
 export async function handleComponentMapping(req, res) {
-    const { projectId, componentType, componentName, functionalBlock, pageDependencies, releaseVersion, releaseVersions, changeDate, isBugFix } = req.body;
+    const { projectId, componentType, componentName, functionalBlock, pageDependencies, releaseVersion, releaseVersions, changeDate, isBugFix, issueKey, mrIid } = req.body;
     const componentId = req.params.componentId; // Для PATCH
 
     try {
@@ -251,7 +253,9 @@ export async function handleComponentMapping(req, res) {
             releaseVersion,
             releaseVersions,
             changeDate: normalizedChangeDate,
-            isBugFix
+            isBugFix,
+            issueKey,
+            mrIid
         }, {
             abortEarly: false, // Показывать все ошибки валидации
             stripUnknown: true, // Удалять неизвестные поля
@@ -270,6 +274,8 @@ export async function handleComponentMapping(req, res) {
         // Используем нормализованные значения из валидации
         const validatedPageDependencies = value.pageDependencies;
         const validatedChangeDate = value.changeDate; // Может быть null или ISO строка
+        const validatedIssueKey = value.issueKey;
+        const validatedMrIid = value.mrIid;
 
         // Нормализуем releaseVersions: если передан releaseVersion (строка или массив), используем его, иначе releaseVersions
         let normalizedReleaseVersions = [];
@@ -292,7 +298,7 @@ export async function handleComponentMapping(req, res) {
         const component = await findOrCreateComponent(projectId, componentType, componentName);
 
         // 2. Если isBugFix === true, сохраняем в component_defects для каждой версии (только добавляем, не удаляем и не меняем)
-        if (isBugFix === true && (normalizedReleaseVersions.length > 0 || validatedChangeDate)) {
+        if (isBugFix === true && (normalizedReleaseVersions.length > 0 || validatedChangeDate || validatedIssueKey || validatedMrIid)) {
             try {
                 const defectsToInsert = [];
 
@@ -303,8 +309,8 @@ export async function handleComponentMapping(req, res) {
                             component_id: component.id,
                             release_version: version || null,
                             change_date: validatedChangeDate || null,
-                            issue_key: null,
-                            mr_iid: null,
+                            issue_key: validatedIssueKey || null,
+                            mr_iid: validatedMrIid || null,
                             is_bug_fix: true
                         });
                     }
@@ -314,8 +320,8 @@ export async function handleComponentMapping(req, res) {
                         component_id: component.id,
                         release_version: null,
                         change_date: validatedChangeDate || null,
-                        issue_key: null,
-                        mr_iid: null,
+                        issue_key: validatedIssueKey || null,
+                        mr_iid: validatedMrIid || null,
                         is_bug_fix: true
                     });
                 }
