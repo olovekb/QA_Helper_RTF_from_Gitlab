@@ -27,7 +27,8 @@ const TIAPage = ({ projects }) => {
     const [isPartialSaving, setIsPartialSaving] = useState(false);
     const [partialSaveMessage, setPartialSaveMessage] = useState('');
     const [tiaReport, setTiaReport] = useState(null); // Новый формат TIA
-    const [tiaFileName, setTiaFileName] = useState('');
+    const [frontendFileName, setFrontendFileName] = useState('');
+    const [backendFileName, setBackendFileName] = useState('');
     const [mode, setMode] = useState('mapping'); // mapping | light
     const [expandedDetails, setExpandedDetails] = useState({});
     const [expandedPageComponents, setExpandedPageComponents] = useState({});
@@ -130,9 +131,9 @@ const TIAPage = ({ projects }) => {
             reader.onload = (event) => {
                 try {
                     const json = JSON.parse(event.target.result);
+                    setFrontendFileName(file.name);
                     if (isNewTiaFormat(json)) {
                         setTiaReport(json);
-                        setTiaFileName(file.name);
                         setFrontendJSON(json);
                         setError('');
                         return;
@@ -141,7 +142,6 @@ const TIAPage = ({ projects }) => {
                     console.log('Frontend JSON loaded:', json);
                     setFrontendJSON(json);
                     setTiaReport(null);
-                    setTiaFileName('');
                     setError('');
                 } catch (err) {
                     setError('Неверный формат JSON-файла.');
@@ -159,10 +159,10 @@ const TIAPage = ({ projects }) => {
             reader.onload = (event) => {
                 try {
                     const json = JSON.parse(event.target.result);
+                    setBackendFileName(file.name);
                     if (isNewTiaFormat(json)) {
                         // Если загружен новый формат в бэкенд, тоже обрабатываем
                         setTiaReport(json);
-                        setTiaFileName(file.name);
                         setBackendJSON(json);
                         setError('');
                         return;
@@ -1507,7 +1507,7 @@ const TIAPage = ({ projects }) => {
                         ▶
                     </span>
                 )}
-                {!folder.children || folder.children.length === 0 && <span style={{ width: '16px' }} />}
+                {(!folder.children || folder.children.length === 0) && <span style={{ width: '16px' }} />}
                 <span style={{
                     fontSize: '14px',
                     fontWeight: level === 0 ? 700 : 500,
@@ -2632,7 +2632,7 @@ const TIAPage = ({ projects }) => {
                             />
                         </div>
 
-                        {(frontendJSON || tiaReport) && (
+                        {frontendJSON && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginLeft: 'auto' }}>
                                 <span style={{
                                     ...styles.fileName,
@@ -2644,13 +2644,16 @@ const TIAPage = ({ projects }) => {
                                     paddingTop: '0',
                                     paddingBottom: '0'
                                 }}>
-                                    {frontendJSON ? (frontendJSON.name || 'frontend.json') : (tiaFileName || 'tia.json')}
+                                    {frontendFileName || 'frontend.json'}
                                 </span>
                                 <button
                                     onClick={() => {
                                         setFrontendJSON(null);
-                                        setTiaReport(null);
-                                        setTiaFileName('');
+                                        setFrontendFileName('');
+                                        // Если это был единственный источник tiaReport, очищаем его
+                                        if (!backendJSON) {
+                                            setTiaReport(null);
+                                        }
                                     }}
                                     style={{
                                         width: '32px',
@@ -2713,10 +2716,17 @@ const TIAPage = ({ projects }) => {
                                     paddingTop: '0',
                                     paddingBottom: '0'
                                 }}>
-                                    {backendJSON.name || 'backend.json'}
+                                    {backendFileName || 'backend.json'}
                                 </span>
                                 <button
-                                    onClick={() => setBackendJSON(null)}
+                                    onClick={() => {
+                                        setBackendJSON(null);
+                                        setBackendFileName('');
+                                        // Если это был единственный источник tiaReport, очищаем его
+                                        if (!frontendJSON) {
+                                            setTiaReport(null);
+                                        }
+                                    }}
                                     style={{
                                         width: '32px',
                                         height: '32px',
@@ -2748,6 +2758,8 @@ const TIAPage = ({ projects }) => {
                     </div>
                 </div>
             </div>
+
+            {renderLightSummary()}
 
             <div style={styles.footer}>
                 {error && <div style={styles.error}>{error}</div>}
