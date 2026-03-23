@@ -327,9 +327,8 @@ const HeatmapPage = ({ projects }) => {
                 let componentsToProcess = [];
                 const uniqueMap = json.unique_affected_components || {};
 
-                if (json.unique_affected_components) {
-                    componentsToProcess = Object.keys(json.unique_affected_components);
-                } else if (json.backend_components && Array.isArray(json.backend_components)) {
+                if (json.backend_components && Array.isArray(json.backend_components)) {
+                    // Новый формат бекенда в приоритете
                     const backendPages = [];
                     json.backend_components.forEach(backendComp => {
                         const compName = `${backendComp.service_name || 'unknown'}::${backendComp.controller_name || backendComp.name}`;
@@ -352,6 +351,8 @@ const HeatmapPage = ({ projects }) => {
                         }
                     });
                     item.pages = backendPages;
+                } else if (json.unique_affected_components) {
+                    componentsToProcess = Object.keys(json.unique_affected_components);
                 } else if (json.global_risks && Array.isArray(json.global_risks)) {
                     componentsToProcess = json.global_risks
                         .map(risk => risk.source)
@@ -382,6 +383,19 @@ const HeatmapPage = ({ projects }) => {
                             .map(p => p.page_meta?.name || 'Unknown')
                     };
                 });
+
+                // Поддержка "старого" формата JSON, где endpoints лежат внутри json.pages, 
+                // а контроллеры спрятаны в page_meta.controller
+                if (item.pages && Array.isArray(item.pages)) {
+                    item.pages.forEach(page => {
+                        if (page.page_meta && page.page_meta.controller && page.page_meta.name !== page.page_meta.controller) {
+                            if (!page.page_meta.route || page.page_meta.route === page.page_meta.name) {
+                                page.page_meta.route = page.page_meta.name; // Сохраняем "[GET] /..." в route
+                            }
+                            page.page_meta.name = page.page_meta.controller; // Перезаписываем name на Контроллер
+                        }
+                    });
+                }
 
                 allParsedItems.push(item);
 
