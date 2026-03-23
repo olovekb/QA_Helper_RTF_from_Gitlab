@@ -60,6 +60,10 @@ const HeatmapPage = ({ projects }) => {
     const [expandedComponentFolders, setExpandedComponentFolders] = useState({});
     const [expandedPageLists, setExpandedPageLists] = useState({});
 
+    const [showAllCode, setShowAllCode] = useState(false);
+    const [showAllPages, setShowAllPages] = useState(false);
+    const [showAllFb, setShowAllFb] = useState(false);
+
     // Загрузка доступных версий при изменении проекта или дат
     useEffect(() => {
         if (projectId) {
@@ -325,6 +329,29 @@ const HeatmapPage = ({ projects }) => {
 
                 if (json.unique_affected_components) {
                     componentsToProcess = Object.keys(json.unique_affected_components);
+                } else if (json.backend_components && Array.isArray(json.backend_components)) {
+                    const backendPages = [];
+                    json.backend_components.forEach(backendComp => {
+                        const compName = `${backendComp.service_name || 'unknown'}::${backendComp.controller_name || backendComp.name}`;
+                        componentsToProcess.push(compName);
+                        uniqueMap[compName] = {
+                            risk_level: backendComp.risk_level || 'LOW',
+                            type: 'backend'
+                        };
+
+                        if (backendComp.endpoints && Array.isArray(backendComp.endpoints)) {
+                            backendComp.endpoints.forEach(ep => {
+                                backendPages.push({
+                                    page_meta: {
+                                        name: backendComp.controller_name || compName,
+                                        route: ep.route
+                                    },
+                                    depends_on_components: [compName]
+                                });
+                            });
+                        }
+                    });
+                    item.pages = backendPages;
                 } else if (json.global_risks && Array.isArray(json.global_risks)) {
                     componentsToProcess = json.global_risks
                         .map(risk => risk.source)
@@ -332,8 +359,7 @@ const HeatmapPage = ({ projects }) => {
                 }
 
                 componentsToProcess.forEach(compName => {
-                    // Определяем тип компонента
-                    let type = 'frontend'; // По умолчанию фронтенд
+                    let type = 'frontend';
                     const detail = uniqueMap[compName] || {};
                     if (json.type === 'backend' || detail.type === 'backend') {
                         type = 'backend';
@@ -1092,12 +1118,12 @@ const HeatmapPage = ({ projects }) => {
         return Math.min(score, 100);
     };
 
-    // Подготовка данных для Pareto (Топ-15 + Прочие)
-    const prepareParetoData = (items, totalValue) => {
+    const prepareParetoData = (items, totalValue, isExpanded = false) => {
         if (!items) return [];
         const sorted = [...items].sort((a, b) => getMetricValue(b) - getMetricValue(a));
-        const top = sorted.slice(0, 15);
-        const others = sorted.slice(15);
+        const limit = isExpanded ? sorted.length : 15;
+        const top = sorted.slice(0, limit);
+        const others = sorted.slice(limit);
 
         const result = top.map((item, index) => ({
             name: item.componentName || item.pageName || item.functionalBlockName,
@@ -1137,9 +1163,9 @@ const HeatmapPage = ({ projects }) => {
     };
 
 
-    const codeChartData = prepareParetoData(heatmapData?.components, getTotalMetricValue(heatmapData?.components));
-    const pagesChartData = prepareParetoData(testCoverageData?.pages, getTotalMetricValue(testCoverageData?.pages));
-    const fbChartData = prepareParetoData(testCoverageData?.functionalBlocks, getTotalMetricValue(testCoverageData?.functionalBlocks));
+    const codeChartData = prepareParetoData(heatmapData?.components, getTotalMetricValue(heatmapData?.components), showAllCode);
+    const pagesChartData = prepareParetoData(testCoverageData?.pages, getTotalMetricValue(testCoverageData?.pages), showAllPages);
+    const fbChartData = prepareParetoData(testCoverageData?.functionalBlocks, getTotalMetricValue(testCoverageData?.functionalBlocks), showAllFb);
 
     return (
         <div style={{
@@ -1580,7 +1606,7 @@ const HeatmapPage = ({ projects }) => {
                     </div>
 
 
-                    <div style={{ height: '400px', width: '100%', marginBottom: '32px' }}>
+                    <div style={{ height: showAllCode ? `${Math.max(400, codeChartData.length * 30)}px` : '400px', width: '100%', marginBottom: '32px', transition: 'height 0.3s ease' }}>
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart
                                 data={codeChartData}
@@ -1648,6 +1674,31 @@ const HeatmapPage = ({ projects }) => {
                             </div>
                         ))}
                     </div>
+                    {heatmapData?.components?.length > 15 && (
+                        <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'center' }}>
+                            <button
+                                onClick={() => setShowAllCode(!showAllCode)}
+                                style={{
+                                    padding: '10px 24px',
+                                    backgroundColor: 'var(--bg-input)',
+                                    color: 'var(--text-secondary)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: '12px',
+                                    fontWeight: 600,
+                                    fontSize: '13px',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px'
+                                }}
+                                onMouseOver={(e) => (e.currentTarget.style.backgroundColor = 'var(--border-color)', e.currentTarget.style.color = 'var(--text-primary)')}
+                                onMouseOut={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-input)', e.currentTarget.style.color = 'var(--text-secondary)')}
+                            >
+                                {showAllCode ? '▲ Свернуть "Прочее"' : '▼ Развернуть "Прочее"'}
+                            </button>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -1665,10 +1716,10 @@ const HeatmapPage = ({ projects }) => {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                             <div style={{ display: 'flex', flexDirection: 'column' }}>
                                 <h2 style={styles.subHeader}>
-                                    Влияние на страницы (Импакт)
+                                    {side === 'backend' ? 'Влияние на контроллеры (Импакт)' : 'Влияние на страницы (Импакт)'}
                                 </h2>
                                 <p style={{ fontSize: '14px', color: 'var(--text-muted)', margin: '4px 0 0 0' }}>
-                                    Распределение связей между компонентами и страницами приложения
+                                    {side === 'backend' ? 'Распределение связей между сервисами и эндпоинтами' : 'Распределение связей между компонентами и страницами приложения'}
                                 </p>
                             </div>
                         </div>
@@ -1764,7 +1815,31 @@ const HeatmapPage = ({ projects }) => {
                                 ))}
                             </div>
                         </div>
-
+                        {testCoverageData?.pages?.length > 15 && (
+                            <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'center' }}>
+                                <button
+                                    onClick={() => setShowAllPages(!showAllPages)}
+                                    style={{
+                                        padding: '10px 24px',
+                                        backgroundColor: 'var(--bg-input)',
+                                        color: 'var(--text-secondary)',
+                                        border: '1px solid var(--border-color)',
+                                        borderRadius: '12px',
+                                        fontWeight: 600,
+                                        fontSize: '13px',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '8px'
+                                    }}
+                                    onMouseOver={(e) => (e.currentTarget.style.backgroundColor = 'var(--border-color)', e.currentTarget.style.color = 'var(--text-primary)')}
+                                    onMouseOut={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-input)', e.currentTarget.style.color = 'var(--text-secondary)')}
+                                >
+                                    {showAllPages ? '▲ Свернуть "Прочее"' : '▼ Развернуть "Прочее"'}
+                                </button>
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -1794,7 +1869,7 @@ const HeatmapPage = ({ projects }) => {
 
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
                                 {/* Pareto Chart for FB - Now Full Width like Code Coverage */}
-                                <div style={{ height: '400px', width: '100%' }}>
+                                <div style={{ height: showAllFb ? `${Math.max(400, fbChartData.length * 30)}px` : '400px', width: '100%', transition: 'height 0.3s ease' }}>
                                     <ResponsiveContainer width="100%" height="100%">
                                         <BarChart
                                             data={fbChartData}
@@ -1832,7 +1907,7 @@ const HeatmapPage = ({ projects }) => {
                                     {[...(testCoverageData?.functionalBlocks || [])]
                                         .map(fb => ({ ...fb, priorityScore: calculatePriorityScore(fb) }))
                                         .sort((a, b) => b.priorityScore - a.priorityScore)
-                                        .slice(0, 20)
+                                        .slice(0, showAllFb ? undefined : 20)
                                         .map((fb, idx) => {
                                             const entryColor = fbChartData.find(p => p.name === fb.functionalBlockName)?.color || 'var(--text-placeholder)';
                                             const totalMetric = getTotalMetricValue(testCoverageData?.functionalBlocks);
@@ -1875,6 +1950,31 @@ const HeatmapPage = ({ projects }) => {
                                             );
                                         })}
                                 </div>
+                                {testCoverageData?.functionalBlocks?.length > 20 && (
+                                    <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'center' }}>
+                                        <button
+                                            onClick={() => setShowAllFb(!showAllFb)}
+                                            style={{
+                                                padding: '10px 24px',
+                                                backgroundColor: 'var(--bg-input)',
+                                                color: 'var(--text-secondary)',
+                                                border: '1px solid var(--border-color)',
+                                                borderRadius: '12px',
+                                                fontWeight: 600,
+                                                fontSize: '13px',
+                                                cursor: 'pointer',
+                                                transition: 'all 0.2s',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '8px'
+                                            }}
+                                            onMouseOver={(e) => (e.currentTarget.style.backgroundColor = 'var(--border-color)', e.currentTarget.style.color = 'var(--text-primary)')}
+                                            onMouseOut={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-input)', e.currentTarget.style.color = 'var(--text-secondary)')}
+                                        >
+                                            {showAllFb ? '▲ Свернуть "Прочее"' : '▼ Развернуть "Прочее"'}
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
