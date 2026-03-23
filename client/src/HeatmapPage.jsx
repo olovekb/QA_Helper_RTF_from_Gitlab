@@ -63,6 +63,9 @@ const HeatmapPage = ({ projects }) => {
     const [showAllCode, setShowAllCode] = useState(false);
     const [showAllPages, setShowAllPages] = useState(false);
     const [showAllFb, setShowAllFb] = useState(false);
+    
+    // Состояние группировки для бэкенда (controller / method)
+    const [groupingType, setGroupingType] = useState('controller');
 
     // Загрузка доступных версий при изменении проекта или дат
     useEffect(() => {
@@ -1183,17 +1186,20 @@ const HeatmapPage = ({ projects }) => {
 
         const map = new Map();
         testCoverageData.pages.forEach(page => {
-            const controllerName = page.pageName || 'Unknown Controller';
-            if (!map.has(controllerName)) {
-                map.set(controllerName, {
-                    pageName: controllerName,
-                    pageRoute: '', // Пустой роут чтобы рендерилось имя контроллера
+            // Если группируемся по роуту, ключом будет роут. 
+            // Если по контроллеру - имя (которое мы подменили на контроллер при парсинге)
+            const key = groupingType === 'controller' ? (page.pageName || 'Unknown Controller') : (page.pageRoute || page.pageName);
+            
+            if (!map.has(key)) {
+                map.set(key, {
+                    pageName: key,
+                    pageRoute: groupingType === 'method' ? page.pageRoute : '',
                     defectCount: 0,
                     uniqueIncidentCount: 0,
                     issueKeys: []
                 });
             }
-            const group = map.get(controllerName);
+            const group = map.get(key);
             group.defectCount += (page.defectCount || 0);
             
             const allIssues = new Set([...group.issueKeys, ...(page.issueKeys || [])]);
@@ -1210,7 +1216,7 @@ const HeatmapPage = ({ projects }) => {
             }))
             .sort((a, b) => b.defectCount - a.defectCount);
             
-    }, [testCoverageData?.pages, side]);
+    }, [testCoverageData?.pages, side, groupingType]);
 
     const codeChartData = prepareParetoData(heatmapData?.components, getTotalMetricValue(heatmapData?.components), showAllCode);
     const pagesChartData = prepareParetoData(processedPagesData, getTotalMetricValue(processedPagesData), showAllPages);
@@ -1775,6 +1781,51 @@ const HeatmapPage = ({ projects }) => {
                                     {side === 'backend' ? 'Распределение связей между сервисами и эндпоинтами' : 'Распределение связей между компонентами и страницами приложения'}
                                 </p>
                             </div>
+                            
+                            {side === 'backend' && (
+                                <div style={{ 
+                                    display: 'flex', 
+                                    backgroundColor: 'var(--bg-input)', 
+                                    borderRadius: '12px', 
+                                    padding: '4px',
+                                    border: '1px solid var(--border-color)'
+                                }}>
+                                    <button
+                                        onClick={() => setGroupingType('controller')}
+                                        style={{
+                                            padding: '8px 16px',
+                                            borderRadius: '8px',
+                                            border: 'none',
+                                            backgroundColor: groupingType === 'controller' ? 'var(--bg-content)' : 'transparent',
+                                            color: groupingType === 'controller' ? 'var(--primary-accent)' : 'var(--text-muted)',
+                                            fontWeight: 600,
+                                            fontSize: '13px',
+                                            cursor: 'pointer',
+                                            boxShadow: groupingType === 'controller' ? '0 2px 8px rgba(0,0,0,0.05)' : 'none',
+                                            transition: 'all 0.2s'
+                                        }}
+                                    >
+                                        Контроллеры
+                                    </button>
+                                    <button
+                                        onClick={() => setGroupingType('method')}
+                                        style={{
+                                            padding: '8px 16px',
+                                            borderRadius: '8px',
+                                            border: 'none',
+                                            backgroundColor: groupingType === 'method' ? 'var(--bg-content)' : 'transparent',
+                                            color: groupingType === 'method' ? 'var(--primary-accent)' : 'var(--text-muted)',
+                                            fontWeight: 600,
+                                            fontSize: '13px',
+                                            cursor: 'pointer',
+                                            boxShadow: groupingType === 'method' ? '0 2px 8px rgba(0,0,0,0.05)' : 'none',
+                                            transition: 'all 0.2s'
+                                        }}
+                                    >
+                                        Методы API
+                                    </button>
+                                </div>
+                            )}
                         </div>
 
                         <div style={{ display: 'flex', gap: '40px', alignItems: 'center' }}>
