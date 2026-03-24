@@ -411,10 +411,10 @@ ${toolInstruction}
       useOpenRouterOnly ? OPENROUTER_API_KEY : (apiKey || OPENROUTER_API_KEY),
       useOpenRouterOnly
         ? {
-            temperature: 0.25,
-            max_tokens: 24000,
-            logRateLimit: true
-          }
+          temperature: 0.25,
+          max_tokens: 24000,
+          logRateLimit: true
+        }
         : baseModelOptions
     );
   };
@@ -450,7 +450,7 @@ ${toolInstruction}
 
   // Нормализация вывода для моделей, склонных вставлять пустые или "```markdown" блоки
   content = content.replace(/```\s*markdown\s*/g, '```');
-  content = content.replace(/```\s*\n\s*```/g, ''); // удаляем пустые блоки ```\n```
+  content = content.replace(/```[ \t]*\n[ \t]*```/g, ''); // удаляем только пустые блоки (одиночный перенос без контента)
 
   // Если вся выдача в одном общем fenced-блоке — режем по секциям "### ..."
   const startsFence = /^\s*```/.test(content);
@@ -475,7 +475,7 @@ ${toolInstruction}
   const multiBlocks = content.match(/```[\s\S]*?```/g);
   if (multiBlocks && multiBlocks.length > 1) {
     const filtered = multiBlocks
-      .map(b => ({ raw: b, inner: b.replace(/^```\s*/,'').replace(/\s*```$/,'').trim() }))
+      .map(b => ({ raw: b, inner: b.replace(/^```\s*/, '').replace(/\s*```$/, '').trim() }))
       .filter(x => x.inner && /^###\s/.test(x.inner));
     if (filtered.length) {
       content = filtered.map(x => '```\n' + x.inner + '\n```').join('\n\n');
