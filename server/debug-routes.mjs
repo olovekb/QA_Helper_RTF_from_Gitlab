@@ -4,6 +4,15 @@
 
 import { runAutomatedTest, analyzeResults, compareWithReference } from './debug-agent.mjs';
 import { analyzeProjectRules, debugRuleApplication, getRulesForProject } from './validation-engine.mjs';
+import multer from 'multer';
+import os from 'os';
+import path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import fs from 'fs/promises';
+
+const execPromise = promisify(exec);
+const upload = multer({ dest: os.tmpdir() });
 
 /**
  * Регистрирует debug маршруты на Express app
@@ -213,6 +222,46 @@ export function registerDebugRoutes(app) {
                 success: false,
                 error: error.message
             });
+        }
+    });
+
+    /**
+     * POST /api/debug/ocr
+     * Отладка OCR воркера
+     * Body: file (multipart), targetText (field)
+     */
+    app.post('/api/debug/ocr', upload.single('image'), async (req, res) => {
+        try {
+            const { targetText = 'все' } = req.body;
+            const file = req.file;
+
+            if (!file) {
+                return res.status(400).json({ error: 'Изображение (image) обязательно' });
+            }
+
+            console.log(`[DEBUG OCR] Тестирование OCR для файла: ${file.originalname}, цель: ${targetText}`);
+
+            const scriptPath = path.join(process.cwd(), 'server', 'scripts', 'ocr_worker.py');
+            const command = `python "${scriptPath}" "${file.path}" "${targetText}"`;
+
+            try {
+                const { stdout, stderr } = await execPromise(command, {
+                    env: { ...process.env }
+                });
+
+                if (stderr) console.warn('[DEBUG OCR] stderr:', stderr);
+
+                const result = JSON.parse(stdout);
+                res.json(result);
+
+            } finally {
+                // Удаляем временный файл
+                await fs.unlink(file.path).catch(() => {});
+            }
+
+        } catch (error) {
+            console.error('[DEBUG OCR] Ошибка:', error);
+            res.status(500).json({ error: error.message });
         }
     });
 

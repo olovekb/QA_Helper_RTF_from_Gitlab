@@ -1,15 +1,24 @@
-// confluenceFetcher.mjs
 import fetch from 'node-fetch';
 import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
 import { JSDOM } from 'jsdom';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import fs from 'fs/promises';
+import { join } from 'path';
+import os from 'os';
+import pLimit from 'p-limit';
 
-// --- Конфиг -------------------------------------------------------------------
+const execAsync = promisify(exec);
+const ocrLimit = pLimit(1);
+
 const CONFLUENCE_BASE = process.env.CONFLUENCE_BASE || 'https://confluence.artsofte.ru';
 const CONTENT_URL = (pageId) =>
     `${CONFLUENCE_BASE}/rest/api/content/${pageId}?expand=body.export_view,version,metadata.labels,ancestors`;
 const ATTACHMENTS_URL = (pageId, limit = 200) =>
     `${CONFLUENCE_BASE}/rest/api/content/${pageId}/child/attachment?limit=${limit}&expand=version,metadata`;
+const CHILD_PAGES_URL = (pageId, limit = 100) =>
+    `${CONFLUENCE_BASE}/rest/api/content/${pageId}/child/page?limit=${limit}`;
 const VIEW_URL = (pageId) => `${CONFLUENCE_BASE}/pages/viewpage.action?pageId=${pageId}`;
 
 // --- Утилиты ------------------------------------------------------------------
@@ -27,18 +36,15 @@ const TEXTUAL_MIMES = new Set([
 
 const collapseWS = (s) => String(s).replace(/\s+/g, ' ').trim();
 
-// абсолютная подстановка относительных ссылок
 function absolutizeUrls(html, base) {
     return html.replace(/(src|href)=(["'])\/(?!\/)/g, (_m, attr, quote) => `${attr}=${quote}${base}/`);
 }
 
-// канонизация confluence-URL (убираем atl_token, переводим createpage→viewpage)
 function canonicalizeConfluenceUrl(raw) {
     try {
         const u = new URL(raw);
         if (u.hostname.includes('confluence')) {
             u.searchParams.delete('atl_token');
-            // createpage -> viewpage
             if (u.pathname.endsWith('/pages/createpage.action')) {
                 const from = u.searchParams.get('fromPageId') || u.searchParams.get('pageId');
                 if (from) {
@@ -53,7 +59,6 @@ function canonicalizeConfluenceUrl(raw) {
     }
 }
 
-// прогоняем все ссылочные () в markdown и чистим confluence-хвосты
 function canonicalizeAllLinksInMarkdown(md) {
     return md.replace(/\((https?:\/\/[^)\s]+)\)/g, (_, url) => `(${canonicalizeConfluenceUrl(url)})`);
 }
@@ -155,7 +160,6 @@ function renumberOrderedLists(md) {
     return out.join('\n');
 }
 
-// Нормализация вложенных списков
 export function normalizeNestedLists(md) {
     const lines = md.split('\n');
 
@@ -435,17 +439,19 @@ async function tryFetchTextAttachment(url, bearer) {
 
 // --- Основная функция ----------------------------------------------------------
 /**
- * Возвращает аккуратный Markdown страницы Confluence + список вложений.
- * @param {string} bearerToken
- * @param {string|number} pageId
- * @param {object} options
- * @param {boolean} [options.inlineTextAttachments=true] — инлайнить текстовые вложения в хвост Markdown
- * @returns {{ markdown: string, attachments: Array<{name:string, url:string, mediaType?:string, size?:number}> }}
+ * Получает Markdown страницы и её вложения
+ * @param {string} bearerToken Токен авторизации
+ * @param {string|number} pageId ID страницы
+ * @param {object} options Настройки
+ * @param {boolean} [options.inlineTextAttachments=true] Инлайнить текст
+ * @param {boolean} [options.includeChildren=false] Включать дочерние страницы
+ * @param {boolean} [options.ocr=false] Выполнять OCR для изображений
+ * @param {number} [options.depth=0] Текущая глубина рекурсии
  */
 export async function fetchConfluencePage(
     bearerToken,
     pageId,
-    { inlineTextAttachments = true } = {}
+    { inlineTextAttachments = true, includeChildren = false, ocr = false, depth = 0 } = {}
 ) {
     // Валидация входных параметров
     if (!bearerToken || typeof bearerToken !== 'string' || !bearerToken.trim()) {
@@ -454,18 +460,18 @@ export async function fetchConfluencePage(
     if (!pageId) {
         throw new Error('pageId обязателен');
     }
-    
+
     const cleanToken = bearerToken.trim();
     const url = CONTENT_URL(pageId);
-    
+
     console.log(`[fetchConfluencePage] Запрос к Confluence: pageId=${pageId}, URL=${url}`);
     console.log(`[fetchConfluencePage] bearerToken длина: ${cleanToken.length}, первые 20 символов: ${cleanToken.substring(0, 20)}...`);
-    
+
     // 1) HTML export_view
     const contentRes = await fetch(url, {
-        headers: { 
-            Accept: 'application/json', 
-            Authorization: `Bearer ${cleanToken}` 
+        headers: {
+            Accept: 'application/json',
+            Authorization: `Bearer ${cleanToken}`
         },
     });
     const bodyText = await contentRes.text();
@@ -489,8 +495,9 @@ export async function fetchConfluencePage(
     const dom = new JSDOM(html);
     let mdBody = td.turndown(dom.window.document.body);
 
-    // 4) вырезаем inline-картинки (в глоссариях это часто «Изображение»)
-    mdBody = stripInlineImagesFromMarkdown(mdBody);
+    if (!ocr) {
+        mdBody = stripInlineImagesFromMarkdown(mdBody);
+    }
 
     // 5) Вложения
     const attRes = await fetch(ATTACHMENTS_URL(pageId), {
@@ -508,8 +515,11 @@ export async function fetchConfluencePage(
             url: buildAttachmentUrl(a),
             mediaType: a.metadata?.mediaType || a.mimeType,
             size: a.extensions?.fileSize || a.filesize,
-        }))
-        .filter((a) => !/^image\//i.test(a.mediaType || ''));
+        }));
+
+    if (!ocr) {
+        attachments.filter((a) => !/^image\//i.test(a.mediaType || ''));
+    }
 
     // 6) Список вложений + инлайн текстовых
     let attachmentsMd = '';
@@ -545,19 +555,155 @@ export async function fetchConfluencePage(
     let md =
         frontMatter(data) +
         mdBody.trim() +
-        (attachments.length ? `\n\n## Вложения\n\n${attachmentsMd}` : '') +
+        (attachments.filter(a => !/^image\//i.test(a.mediaType || '')).length ? `\n\n## Вложения\n\n${attachmentsMd}` : '') +
         inlineSection;
 
-    // 8) Пост-обработка
-    md = stripCssNoiseFromMarkdown(md);
-    md = normalizeAdmonitions(md);
-    md = normalizeNestedLists(md);
-    md = renumberOrderedLists(md);
-    md = stripConfluenceTabCaptions(md);
-    md = canonicalizeAllLinksInMarkdown(md);
-    // убираем «Нажмите здесь для раскрытия…» и подобные раскрывашки
-    md = md.replace(/^\s*Нажмите здесь для раскрытия[^\n]*\n?/gmi, '');
-    md = md.replace(/\n{3,}/g, '\n\n');
+    if (ocr) {
+        const imageAttachments = attachments.filter(a => /^image\//i.test(a.mediaType || ''));
+        if (imageAttachments.length > 0) {
+            console.log(`[fetchConfluencePage] Найдено ${imageAttachments.length} изображений для OCR`);
+            const ocrResults = await processOcrForImages(imageAttachments, bearerToken);
+            if (ocrResults) {
+                md += '\n\n## Результаты OCR изображений\n\n' + ocrResults;
+            }
+        }
+    }
 
-    return { markdown: md.trim(), attachments };
+    md = `[CONFLUENCE_PAGE: id=${pageId}, title="${data.title || ''}"]\n\n` + md;
+
+    if (includeChildren && depth < 5) {
+        console.log(`[fetchConfluencePage] Загрузка дочерних страниц для ${pageId} (глубина ${depth})`);
+        const childPages = await fetchChildPagesRecursively(pageId, bearerToken, {
+            inlineTextAttachments,
+            includeChildren,
+            ocr,
+            depth: (depth || 0) + 1
+        });
+        return {
+            id: String(pageId),
+            title: data.title,
+            markdown: md.trim(),
+            attachments: attachments.filter(a => !/^image\//i.test(a.mediaType || '')),
+            childPages
+        };
+    }
+
+    return {
+        id: String(pageId),
+        title: data.title,
+        markdown: md.trim(),
+        attachments: attachments.filter(a => !/^image\//i.test(a.mediaType || ''))
+    };
+}
+
+/**
+ * Выполняет OCR для списка изображений
+ * @param {Array} images 
+ * @param {string} token 
+ */
+async function processOcrForImages(images, token) {
+    let combinedResults = '';
+    const tempDir = join(os.tmpdir(), `confluence_ocr_${Date.now()}`);
+    await fs.mkdir(tempDir, { recursive: true });
+
+    try {
+        const ocrPromises = images.map(img => ocrLimit(async () => {
+            const fileName = img.name || `image_${Date.now()}.png`;
+            const filePath = join(tempDir, fileName);
+
+            try {
+                const response = await fetch(img.url, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                if (!response.ok) throw new Error(`Ошибка загрузки: ${response.status}`);
+
+                const buffer = await response.buffer();
+                await fs.writeFile(filePath, buffer);
+
+                const ocrText = await runOcrScript(filePath);
+                if (ocrText) {
+                    return `### Изображение: ${img.name}\n\n> [!OCR Result]\n> ${ocrText.replace(/\n/g, '\n> ')}\n\n`;
+                }
+            } catch (err) {
+                console.error(`[OCR] Ошибка обработки ${img.name}:`, err.message);
+                return `### Изображение: ${img.name}\n\n> [!ERROR]\n> Не удалось распознать: ${err.message}\n\n`;
+            }
+            return ''; // Return empty string if no OCR text or error
+        }));
+
+        const results = await Promise.all(ocrPromises);
+        combinedResults = results.join('');
+
+    } finally {
+        await fs.rm(tempDir, { recursive: true, force: true }).catch(() => { });
+    }
+
+    return combinedResults;
+}
+
+/**
+ * Запускает Python-скрипт OCR
+ * @param {string} filePath 
+ */
+async function runOcrScript(filePath) {
+    const pythonPath = process.platform === 'win32' ? 'python' : 'python3';
+    const scriptPath = join(process.cwd(), 'server', 'scripts', 'ocr_worker.py');
+    const command = `"${pythonPath}" "${scriptPath}" "${filePath}" "all"`;
+
+    try {
+        const { stdout, stderr } = await execAsync(command, {
+            env: { ...process.env },
+            maxBuffer: 50 * 1024 * 1024 // 50MB buffer for large OCR results
+        });
+
+        if (stderr) console.log(`[OCR Python Stderr] ${stderr}`);
+
+        const result = JSON.parse(stdout);
+        if (result.error) throw new Error(result.error);
+        return result.text;
+    } catch (err) {
+        if (err.stderr) console.error(`[OCR Python Error Stderr] ${err.stderr}`);
+        throw err;
+    }
+}
+
+/**
+ * Рекурсивно собирает дочерние страницы с поддержкой пагинации
+ * @param {string} parentId 
+ * @param {string} token 
+ * @param {object} options 
+ */
+async function fetchChildPagesRecursively(parentId, token, options) {
+    let nextUrl = CHILD_PAGES_URL(parentId);
+    const childrenList = [];
+
+    // 1) Собираем список всех детей (с учетом пагинации)
+    while (nextUrl) {
+        const response = await fetch(nextUrl, {
+            headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }
+        });
+
+        if (!response.ok) break;
+
+        const data = await response.json();
+        if (data.results) {
+            childrenList.push(...data.results);
+        }
+
+        if (data._links?.next) {
+            nextUrl = CONFLUENCE_BASE + data._links.next;
+        } else {
+            nextUrl = null;
+        }
+    }
+
+    const pages = [];
+    // 2) Обрабатываем каждого ребенка
+    // Параллельная загрузка дочерних страниц
+    const childPages = await Promise.all(childrenList.map(child =>
+        fetchConfluencePage(token, child.id, options)
+    ));
+    pages.push(...childPages);
+
+    return pages;
 }

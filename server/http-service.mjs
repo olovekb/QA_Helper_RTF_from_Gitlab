@@ -2,7 +2,7 @@ import fetch from 'node-fetch';
 import axios from 'axios'
 import { spinningLoader } from './spinning-loader.mjs';
 import { callWithCloudRuFallback } from './cloudruClient.mjs';
-import config from './config.json' assert { type: 'json' };
+import config from './config.mjs';
 
 // TODO: Нужно рефачить - переиспользовать из tia-mapping-service\utils\allureAuth.js
 

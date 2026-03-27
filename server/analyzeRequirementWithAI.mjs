@@ -10,6 +10,9 @@ const SYSTEM_ENFORCER =
   'Ты — старший эксперт по системному анализу. ' +
   'Технологический стек проекта: фронтенд — Angular (TypeScript), бэкенд — .NET/C#. ' +
   'Если поведение относится к UI — трактуй его для Angular; если к серверу/API — трактуй для .NET. ' +
+  'ВАЖНО: Документация может состоять из нескольких связанных страниц (иерархия). ' +
+  'НЕ считай верхнеуровневое описание ошибкой ("неполнота" или "неоднозначность"), если подробная детализация приведена ниже в тексте (в дочерних разделах). ' +
+  'Сначала изучи ВЕСЬ предоставленный текст, прежде чем фиксировать дефект. ' +
   'Верни ТОЛЬКО набор Markdown-блоков строго заданного формата (только в ```), ' +
   'без каких-либо пояснений вне блоков. ' +
   'Если нет ошибок — верни пустую строку.';
@@ -43,6 +46,7 @@ export async function analyzeRequirementWithAI(
     contextHint = '—',
     contextPages = []
   } = opts;
+  let rawResponse = null;
 
   // ---------- 0) Промежуточная "уборка" ----------
   let cleanedReq = requirementText;
@@ -51,15 +55,18 @@ export async function analyzeRequirementWithAI(
 
   if (prefilter) {
     try {
+      // 🚨 ВАЖНО: Мы сжимаем ТОЛЬКО глоссарий и дополнительный контекст (внешние ссылки).
+      // Основное дерево страниц Confluence (contextPages) теперь ПЕРЕДАЁТСЯ RAW, 
+      // чтобы избежать потери данных в иерархии подразделов.
       const refined = await prepareContextWithAI({
         requirements: requirementText,
         glossary,
-        context,
+        context, // Сюда попадают вложенные ссылки
         contextHint,
-        contextPages,
-        maxGlossary: 40,
-        maxContext: 50,
-        apiToken: apiKey || OPENROUTER_API_KEY  // Передаём пользовательский ключ!
+        contextPages: [], // ОБНУЛЯЕМ: не пускаем дерево страниц в сжатие!
+        maxGlossary: 100,
+        maxContext: 200,
+        apiToken: apiKey || OPENROUTER_API_KEY
       });
       if (refined?.requirements_md?.trim()) cleanedReq = refined.requirements_md;
       if (refined?.mini_glossary_md?.trim()) miniGlossary = refined.mini_glossary_md;
@@ -68,6 +75,11 @@ export async function analyzeRequirementWithAI(
       console.warn('[analyze] prefilter failed, fallback to original input:', e.message);
     }
   }
+
+  // Склеиваем ПОЛНЫЙ текст всех страниц Confluence для прямой вставки в промпт
+  const confluenceFullContent = (Array.isArray(contextPages) ? contextPages : [])
+    .filter(Boolean)
+    .join('\n\n---\n\n');
 
   const sourceRegistry = createContextSourceRegistry();
   const { register, safeTrim, deriveTitleFromContent, extractPageId } = sourceRegistry;
@@ -191,8 +203,11 @@ export async function analyzeRequirementWithAI(
 ${cleanedReq}
 ---------------------------------------
 
-**Секции, на которые ссылается исходное требование (используй ТОЛЬКО для прояснения ссылок; не выводи сюда новые требования)**:
+**Секции, на которые ссылается исходное требование (сжатый контекст внешних ссылок; используй ТОЛЬКО для прояснения ссылок)**:
 ${filteredContext || '—'}
+
+**ПОЛНЫЙ ТЕКСТ СВЯЗАННОЙ ДОКУМЕНТАЦИИ (Дерево Confluence):**
+${confluenceFullContent || '—'}
 
 **Проект**: ${project}
 
@@ -328,6 +343,7 @@ ${toolInstruction}
 - **Нарушены свойства**: [список свойств через запятую]
 - **Фактический результат**: [что написано сейчас]
 - **Ожидаемый результат**: [что нужно написать, или уточняющий вопрос]
+- **Источник**: [ссылка на страницу (автозамена)]
 \`\`\`
 
 **Правила:**
@@ -350,6 +366,7 @@ ${toolInstruction}
 - **Нарушены свойства**: Завершённость, Проверяемость
 - **Фактический результат**: «текст "Счета к оплате" должен отображаться без счётчика»
 - **Ожидаемый результат**: Уточнить формулировку: “Если count = 0, отображать только заголовок ‘Счета к оплате’ без цифрового индикатора.”
+- **Источник**: https://confluence.example.com/pages/viewpage.action?pageId=123#id-Heading
 \`\`\`
 \`\`\`
 ### Если на форме настроены зависимости старых версий - они будут работать, но внести изменения, добавить новые зависимости будет нельзя.
@@ -360,6 +377,7 @@ ${toolInstruction}
 - **Нарушены свойства**: Завершённость, Недвусмысленность, Проверяемость
 - **Фактический результат**: «внести изменения, добавить новые зависимости будет нельзя»
 - **Ожидаемый результат**: Уточнить механизм блокировки: "При открытии формы с зависимостями старых версий, все элементы управления для добавления и редактирования зависимостей должны быть деактивированы (disabled). При попытке сохранить изменения через API должен возвращаться код ошибки 422 с сообщением 'Редактирование устаревших зависимостей запрещено. Пожалуйста, пересоздайте форму для использования новой версии'."
+- **Источник**: https://confluence.example.com/pages/viewpage.action?pageId=456#id-Heading
 \`\`\`
 `;
   console.log('[analyze] Финальный промпт:\n', prompt);
@@ -379,7 +397,6 @@ ${toolInstruction}
   };
 
   let content = '';
-  let rawResponse = null;
 
   try {
     console.log('[analyze] Запуск интерактивного режима (tools-enabled)');
@@ -448,11 +465,9 @@ ${toolInstruction}
   console.log(`[analyze] Итоговая длина ответа: ${content.length} символов`);
   console.log(`[analyze] Ответ (первые 200 символов): "${content.slice(0, 200) || 'no content'}..."`);
 
-  // Нормализация вывода для моделей, склонных вставлять пустые или "```markdown" блоки
   content = content.replace(/```\s*markdown\s*/g, '```');
-  content = content.replace(/```[ \t]*\n[ \t]*```/g, ''); // удаляем только пустые блоки (одиночный перенос без контента)
+  content = content.replace(/```[ \t]*\n[ \t]*```/g, '');
 
-  // Если вся выдача в одном общем fenced-блоке — режем по секциям "### ..."
   const startsFence = /^\s*```/.test(content);
   const endsFence = /```\s*$/.test(content);
   if (startsFence && endsFence) {
@@ -463,7 +478,6 @@ ${toolInstruction}
     }
   }
 
-  // Если вообще нет fenced-блоков, но есть заголовки — обернём каждую секцию
   if (!/```/.test(content) && /(^|\n)###\s/.test(content)) {
     const parts = content.split(/\n(?=###\s)/).map(s => s.trim()).filter(Boolean);
     if (parts.length) {
@@ -471,7 +485,6 @@ ${toolInstruction}
     }
   }
 
-  // Если в тексте уже есть несколько fenced-блоков — отфильтруем шумовые
   const multiBlocks = content.match(/```[\s\S]*?```/g);
   if (multiBlocks && multiBlocks.length > 1) {
     const filtered = multiBlocks
@@ -482,7 +495,8 @@ ${toolInstruction}
     }
   }
 
-  // Сохраняем для отладки
+  content = enrichAnalysisWithLinks(content, requirementText);
+
   try {
     fs.writeFileSync('requirement-analysis.txt', content, 'utf8');
   } catch (e) {
@@ -490,4 +504,47 @@ ${toolInstruction}
   }
 
   return content;
+}
+/**
+ * Программное вычисление ссылок на основе найденного текста
+ */
+function enrichAnalysisWithLinks(aiMarkdown, fullSource) {
+  const blocks = aiMarkdown.match(/```[\s\S]*?```/g);
+  if (!blocks) return aiMarkdown;
+
+  let enriched = aiMarkdown;
+
+  for (const block of blocks) {
+    const inner = block.replace(/^```\s*/, '').replace(/\s*```$/, '').trim();
+    const titleMatch = inner.match(/^###\s+\[(.*?)\]/);
+    if (!titleMatch) continue;
+
+    const reqTitle = titleMatch[1].trim();
+    const pos = fullSource.indexOf(reqTitle);
+    if (pos === -1) continue;
+
+    const beforeText = fullSource.slice(0, pos);
+
+    const pageMatches = [...beforeText.matchAll(/\[CONFLUENCE_PAGE:\s+id=(\d+),/g)];
+    const pageId = pageMatches.length ? pageMatches[pageMatches.length - 1][1] : null;
+
+    const headingMatches = [...beforeText.matchAll(/(?:^|\n)(#{1,6})\s+(.*)/g)];
+    const lastHeading = headingMatches.length ? headingMatches[headingMatches.length - 1][2].trim() : '';
+
+    if (pageId) {
+      const anchor = lastHeading ? `#id-${lastHeading.replace(/\s+/g, '')}` : '';
+      const finalLink = `https://confluence.artsofte.ru/pages/viewpage.action?pageId=${pageId}${anchor}`;
+
+      // Ищем поле Источник или добавляем в конец
+      if (inner.includes('**Источник**:')) {
+        const newInner = inner.replace(/\*\*Источник\*\*:\s*[^\n]*($|\n)/, `**Источник**: ${finalLink}\n`);
+        enriched = enriched.replace(block, '```\n' + newInner + '\n```');
+      } else {
+        const newInner = inner + `\n- **Источник**: ${finalLink}`;
+        enriched = enriched.replace(block, '```\n' + newInner + '\n```');
+      }
+    }
+  }
+
+  return enriched;
 }

@@ -4,3 +4,4 @@
 **/pgdata
 **/report/
 ai-logs/
+docker-compose.override.yml

@@ -100,9 +100,9 @@ async function processLargeOpenRouterRequest(messages, opts, apiKey) {
             }
         }],
         usage: {
-            prompt_tokens: Math.ceil(JSON.stringify(messages).length / 4),
-            completion_tokens: Math.ceil(combinedContent.length / 4),
-            total_tokens: Math.ceil((JSON.stringify(messages).length + combinedContent.length) / 4)
+            prompt_tokens: Math.ceil((JSON.stringify(messages || []).length || 0) / 4),
+            completion_tokens: Math.ceil((combinedContent?.length || 0) / 4),
+            total_tokens: Math.ceil(((JSON.stringify(messages || []).length || 0) + (combinedContent?.length || 0)) / 4)
         },
         model: model
     };
@@ -208,7 +208,7 @@ import { analyzeRequirementWithAI } from './analyzeRequirementWithAI.mjs';
 import { Buffer } from 'buffer';
 import multer from 'multer';
 import axios from 'axios';
-import config from './config.json' assert { type: 'json'};
+import config from './config.mjs';
 import http from 'http';
 import https from 'https';
 import { prepareContextWithAI } from './contextRefiner.mjs';
@@ -1117,6 +1117,7 @@ const TEST_CASE_RESPONSE_FORMAT_FIX = {
 };
 
 // Добавляем gzip сжатие для всех ответов
+/*
 app.use(compression({
     threshold: 1024, // Сжимать файлы больше 1KB
     level: 6, // Уровень сжатия (1-9, 6 оптимальный)
@@ -1129,6 +1130,7 @@ app.use(compression({
         return false;
     }
 }));
+*/
 
 const db = knex({
     client: 'pg',
@@ -1150,15 +1152,7 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'https://test-inspector.a
     .filter(Boolean);
 
 const corsOptions = {
-    origin(origin, callback) {
-        if (!origin) return callback(null, true);
-
-        if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
-            return callback(null, true);
-        }
-
-        return callback(new Error('Не разрешено конфигурацией CORS'));
-    },
+    origin: true, // Разрешаем всё для отладки
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-OpenRouter-Key', 'X-Atlassian-Token'],
     credentials: true,
@@ -2919,7 +2913,9 @@ app.post('/api/analyze/solution', async (req, res) => {
             text, pageId, context, project, glossary, bearerToken,
             glossaryPageId,
             contextPageIds,
-            contextInstruction
+            contextInstruction,
+            includeChildren,
+            processImages
         } = req.body;
 
         // Получаем OpenRouter API Key из header (с фоллбэком на config)
@@ -2937,20 +2933,74 @@ app.post('/api/analyze/solution', async (req, res) => {
             if (!bearerToken) {
                 return res.status(400).json({ success: false, error: 'Для получения страницы Confluence требуется bearerToken' });
             }
-            const { markdown, attachments } = await fetchConfluencePage(bearerToken, pageId);
-            requirementText = markdown;
-            collectedAttachments = attachments || [];
-            // AUTO-CONTEXT: извлечь ссылки вида ...pageId=123456 из основной статьи и подтянуть их как дополнительный контекст (без рекурсии)
+            const rootPage = await fetchConfluencePage(bearerToken, pageId, { 
+                includeChildren, 
+                ocr: processImages 
+            });
+            
+            // Поиск страницы "Детализация"
+            const findDetailingPage = (p) => {
+                if (String(p.title || '').toLowerCase().includes('детализация')) return p;
+                if (p.childPages) {
+                    for (const child of p.childPages) {
+                        const found = findDetailingPage(child);
+                        if (found) return found;
+                    }
+                }
+                return null;
+            };
+
+            const detailingPage = findDetailingPage(rootPage);
+            let finalMarkdown = '';
+            const contextPages = [];
+
+            if (detailingPage && detailingPage.childPages && detailingPage.childPages.length > 0) {
+                console.log(`[analyze/solution] Найдена страница Детализация: "${detailingPage.title}". Схлопываем ${detailingPage.childPages.length} дочерних страниц.`);
+                // Схлопываем детей Детализации в основной анализ с маркерами
+                finalMarkdown = detailingPage.childPages.map(p => 
+                    `[CONFLUENCE_PAGE: id=${p.id}, title=${p.title}]\n\n${p.markdown}`
+                ).join('\n\n---\n\n');
+                
+                // Родительская и сама страница Детализация — в контекст
+                contextPages.push(`[CONFLUENCE_PAGE: id=${rootPage.id}, title=${rootPage.title}]\n\n${rootPage.markdown}`);
+                if (detailingPage.id !== rootPage.id) {
+                    contextPages.push(`[CONFLUENCE_PAGE: id=${detailingPage.id}, title=${detailingPage.title}]\n\n${detailingPage.markdown}`);
+                }
+            } else {
+                finalMarkdown = `[CONFLUENCE_PAGE: id=${rootPage.id}, title=${rootPage.title}]\n\n${rootPage.markdown}`;
+                // Все дочерние (если есть) — в контекст с маркерами
+                const collectAllChildren = (p, acc = []) => {
+                    if (p.childPages) {
+                        for (const child of p.childPages) {
+                            acc.push(`[CONFLUENCE_PAGE: id=${child.id}, title=${child.title}]\n\n${child.markdown}`);
+                            collectAllChildren(child, acc);
+                        }
+                    }
+                    return acc;
+                };
+                contextPages.push(...collectAllChildren(rootPage));
+            }
+
+            requirementText = finalMarkdown;
+            collectedAttachments = rootPage.attachments || [];
+            req._hierarchicalContextPages = contextPages;
+            
             try {
                 const linkedIds = new Set();
-                // 1. Извлекаем pageId= из markdown
-                Array.from(String(markdown || '').matchAll(/pageId=(\d{4,})/g)).forEach(m => linkedIds.add(m[1]));
-                // 2. Извлекаем pageId из обычных URL вида https://confluence.../pages/viewpage.action?pageId=123456
-                Array.from(String(markdown || '').matchAll(/viewpage\.action\?pageId=(\d{4,})/gi)).forEach(m => linkedIds.add(m[1]));
-                // 3. Извлекаем pageId из коротких ссылок вида /pages/123456
-                Array.from(String(markdown || '').matchAll(/\/pages\/(\d{4,})/g)).forEach(m => linkedIds.add(m[1]));
-                // не включаем саму страницу
-                linkedIds.delete(String(pageId));
+                const allMarkdown = [finalMarkdown, ...contextPages].join('\n');
+                Array.from(allMarkdown.matchAll(/pageId=(\d{4,})/g)).forEach(m => linkedIds.add(m[1]));
+                Array.from(allMarkdown.matchAll(/viewpage\.action\?pageId=(\d{4,})/gi)).forEach(m => linkedIds.add(m[1]));
+                Array.from(allMarkdown.matchAll(/\/pages\/(\d{4,})/g)).forEach(m => linkedIds.add(m[1]));
+                
+                // Убираем уже загруженные ID (чтобы не фетчить по кругу)
+                const loadedIds = new Set();
+                const collectLoadedIds = (p) => {
+                    loadedIds.add(String(p.id));
+                    if (p.childPages) p.childPages.forEach(collectLoadedIds);
+                };
+                collectLoadedIds(rootPage);
+                
+                for (const id of loadedIds) linkedIds.delete(id);
                 console.log(`[analyze/solution] Найдено ${linkedIds.size} ссылок на другие страницы: [${Array.from(linkedIds).join(', ')}]`);
                 if (linkedIds.size) {
                     // подготовим список markdown‑блоков для contextPages
@@ -3022,10 +3072,14 @@ app.post('/api/analyze/solution', async (req, res) => {
 
                     contextPages.push(markdown);
                 } catch (e) {
-
                     contextPages.push(`Confluence pageId=${cid}\n\n(Не удалось загрузить: ${e.message})`);
                 }
             }
+        }
+
+        // Добавляем ранее извлеченную иерархию (детей/родителей при Detailing)
+        if (req._hierarchicalContextPages) {
+            contextPages.push(...req._hierarchicalContextPages);
         }
 
         // 4) Анализ (с префильтром)
@@ -17312,6 +17366,7 @@ try {
 }
 
 // Запуск сервера
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server is listening ON ALL INTERFACES (0.0.0.0) at port ${PORT}`);
+    console.log(`🔗 Local access: http://localhost:${PORT}`);
 });

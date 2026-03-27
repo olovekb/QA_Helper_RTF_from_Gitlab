@@ -15,7 +15,7 @@ import config from './config.json' assert { type: 'json' };
 
 // === Конфиг модели / API ===
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = process.env.REFINER_MODEL || 'meta-llama/llama-4-maverick:free';
+const MODEL = process.env.REFINER_MODEL || 'meta-llama/llama-3.1-8b-instruct:free';
 
 const API_TOKEN = config.openRouterAiKey;
 const CLOUDRU_API_KEY = config.cloudruApiKey;
@@ -83,84 +83,15 @@ async function callHybridAPI(messages, opts = {}) {
         schemaName,
         schemaProps,
         expectedKeys = [],
-        apiToken = API_TOKEN  // Извлекаем apiToken из опций
+        apiToken = API_TOKEN
     } = opts;
 
-    // Сначала пробуем Cloud.ru
-    try {
-        console.log(`[refiner] Trying Cloud.ru API`);
-
-        const response_format = schemaName && schemaProps ? {
-            type: 'json_schema',
-            json_schema: {
-                name: schemaName,
-                schema: {
-                    type: 'object',
-                    properties: schemaProps,
-                    required: Object.keys(schemaProps),
-                    additionalProperties: false
-                },
-                strict: true
-            }
-        } : null;
-
-        const result = await callCloudRuAPI(messages, {
-            model: config.cloudruModels[0], // Используем первую модель из списка
-            temperature,
-            max_tokens: maxTokens,
-            response_format
-        });
-
-        console.log(`[refiner] Cloud.ru success`);
-        const content = result.choices?.[0]?.message?.content || '';
-        if (!content && result.choices?.[0]?.message?.tool_calls) {
-            console.log(`[refiner] ⚠️ Content пустой, но есть tool_calls - пытаемся извлечь из tool_calls`);
-            // ✅ НОВОЕ: Если есть tool_calls, но нет content, пытаемся извлечь данные из tool_calls
-            const toolCalls = result.choices[0].message.tool_calls || [];
-            for (const toolCall of toolCalls) {
-                if (toolCall.function?.arguments) {
-                    try {
-                        const args = JSON.parse(toolCall.function.arguments);
-                        // Если в arguments есть JSON-строка, используем её как content
-                        if (typeof args === 'string' && args.trim().startsWith('{')) {
-                            console.log(`[refiner] ✅ Извлечён content из tool_call arguments`);
-                            return safeParseContent(args, result, expectedKeys);
-                        }
-                    } catch (e) {
-                        // Игнорируем ошибки парсинга
-                    }
-                }
-            }
-        }
-        if (!content) {
-            console.log(`[refiner] ⚠️ Content пустой, проверяем альтернативные форматы`);
-            // ✅ НОВОЕ: Проверяем альтернативные форматы
-            if (result.choices?.[0]?.delta?.content) {
-                console.log(`[refiner] ✅ Найден content в delta`);
-                return safeParseContent(result.choices[0].delta.content, result, expectedKeys);
-            }
-            if (result.choices?.[0]?.text) {
-                console.log(`[refiner] ✅ Найден text в choice`);
-                return safeParseContent(result.choices[0].text, result, expectedKeys);
-            }
-            if (result.content) {
-                console.log(`[refiner] ✅ Найден content в корне ответа`);
-                return safeParseContent(result.content, result, expectedKeys);
-            }
-            console.log(`[refiner] parse error: Пустой ответ модели`);
-            throw new Error('Пустой ответ модели');
-        }
-        return safeParseContent(content, result, expectedKeys);
-
-    } catch (error) {
-        // Увеличиваем количество попыток для Cloud.ru перед fallback
-        // Пробуем еще раз с небольшой задержкой
-        console.warn(`[refiner] Cloud.ru failed (attempt 1): ${error.message}, retrying...`);
-        
+    // Сначала пробуем Cloud.ru (все доступные модели по очереди)
+    const cloudModels = config.cloudruModels || [];
+    for (const model of cloudModels) {
         try {
-            await sleep(1000); // Небольшая задержка перед повторной попыткой
-            console.log(`[refiner] Retrying Cloud.ru API`);
-            
+            console.log(`[refiner] Trying Cloud.ru model: ${model}`);
+
             const response_format = schemaName && schemaProps ? {
                 type: 'json_schema',
                 json_schema: {
@@ -176,21 +107,45 @@ async function callHybridAPI(messages, opts = {}) {
             } : null;
 
             const result = await callCloudRuAPI(messages, {
-                model: config.cloudruModels[0],
+                model,
                 temperature,
                 max_tokens: maxTokens,
-                response_format
+                response_format,
+                useResponseFormatForCloudRu: true // ✅ ВКЛЮЧАЕМ JSON SCHEMA ДЛЯ CLOUD.RU
             });
 
-            console.log(`[refiner] Cloud.ru success on retry`);
-            return safeParseContent(result.choices?.[0]?.message?.content || '', result, expectedKeys);
-        } catch (retryError) {
-            console.warn(`[refiner] Cloud.ru failed (attempt 2): ${retryError.message}, falling back to OpenRouter`);
+            const content = result.choices?.[0]?.message?.content || '';
+            const toolCalls = result.choices?.[0]?.message?.tool_calls || [];
 
-            // Fallback на OpenRouter - ВАЖНО: передаем apiToken!
-            return await callJSON(messages, { maxTokens, temperature, schemaName, schemaProps, expectedKeys, apiToken });
+            if (content) {
+                console.log(`[refiner] Cloud.ru success with ${model}`);
+                return safeParseContent(content, result, expectedKeys);
+            }
+
+            if (toolCalls.length > 0) {
+                console.log(`[refiner] ⚠️ Content пустой, но есть tool_calls у ${model}`);
+                for (const toolCall of toolCalls) {
+                    if (toolCall.function?.arguments) {
+                        try {
+                            const args = JSON.parse(toolCall.function.arguments);
+                            if (typeof args === 'object') {
+                                console.log(`[refiner] ✅ Извлечён объект из tool_call arguments`);
+                                return args;
+                            }
+                        } catch (e) { }
+                    }
+                }
+            }
+
+            console.warn(`[refiner] Model ${model} returned empty content, trying next...`);
+        } catch (err) {
+            console.warn(`[refiner] Cloud.ru model ${model} failed: ${err.message}`);
         }
     }
+
+    // Если Cloud.ru не сработал - идем в OpenRouter (FALLBACK)
+    console.log(`[refiner] Falling back to OpenRouter (MODEL=${MODEL})`);
+    return await callJSON(messages, { maxTokens, temperature, schemaName, schemaProps, expectedKeys, apiToken });
 }
 
 // --- Утилиты ------------------------------------------------------------------
@@ -391,8 +346,9 @@ function splitContextIntoPages(ctx) {
         return byExplicit.map(x => x.trim()).filter(Boolean);
     }
 
-    // 2) Начало новой статьи по маркеру Confluence Page ID
-    const byPid = s.split(/\n+(?=Confluence\s*Page\s*ID\s*:\s*\d+)/i);
+    // 2) Начало новой статьи по маркеру Confluence Page ID или [CONFLUENCE_PAGE]
+    const pidRegex = /\n+(?=(?:Confluence\s*Page\s*ID\s*:\s*\d+|\[CONFLUENCE_PAGE:\s*id=\d+))/i;
+    const byPid = s.split(pidRegex);
     if (byPid.length > 1) {
         return byPid.map(x => x.trim()).filter(Boolean);
     }
@@ -431,10 +387,10 @@ function splitContextIntoPages(ctx) {
     for (const group of groups) {
         const trimmedGroup = group.trim();
         if (!trimmedGroup) continue;
-        
+
         // Попытка добавить группу к буферу
         const potentialBuffer = buffer ? buffer + '\n\n' + trimmedGroup : trimmedGroup;
-        
+
         // Добавление, если после добавления объем буфера не превышает лимит
         if (potentialBuffer.length <= CHUNK_SIZE_CONTEXT) {
             buffer = potentialBuffer;
@@ -592,59 +548,13 @@ async function callTools(messages, tool, { maxTokens = 1800, temperature = 0.0, 
     return null;
 }
 
+// Гибридный вызов для JSON (Cloud.ru -> OpenRouter)
 async function callJSON(
     messages,
     { maxTokens = 2500, temperature = 0.0, schemaName, schemaProps, expectedKeys = [], apiToken = API_TOKEN } = {}
 ) {
-    const headers = { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' };
-
-    const makeReq = (useSchema) => {
-        const base = { model: MODEL, max_tokens: maxTokens, temperature, messages };
-        if (useSchema && schemaName && schemaProps) {
-            base.response_format = {
-                type: 'json_schema',
-                json_schema: {
-                    name: schemaName,
-                    schema: { type: 'object', properties: schemaProps, required: Object.keys(schemaProps), additionalProperties: false },
-                    strict: true
-                }
-            };
-        } else {
-            base.response_format = { type: 'json_object' };
-        }
-        return base;
-    };
-
-    let useSchema = true; // пробуем json_schema сначала, затем json_object
-    let rateRetries = 0;
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS_TOTAL; attempt++) {
-        try {
-            const body = JSON.stringify(makeReq(useSchema));
-            const res = await fetch(OPENROUTER_URL, { method: 'POST', headers, body });
-            const txt = await res.text();
-
-            if (!res.ok) {
-                const unsupported = /response[_-]?format|json[_-]?schema/i.test(txt);
-                if (res.status === 429) {
-                    const waitMs = pickRetryAfterMs(res);
-                    await sleep(waitMs);
-                    if (++rateRetries > MAX_RATE_LIMIT_RETRIES) return null;
-                    attempt--; continue;
-                }
-                if (unsupported && useSchema) { useSchema = false; attempt--; continue; }
-                await sleep(BASE_RETRY_MS * attempt);
-                continue;
-            }
-
-            const data = JSON.parse(txt);
-            const content = data?.choices?.[0]?.message?.content?.trim() || '';
-            return safeParseContent(content, data, expectedKeys);
-        } catch (e) {
-            await sleep(BASE_RETRY_MS * attempt + 500); // небольшая доп. пауза для снижения 429
-        }
-    }
-    return null;
+    // Просто переиспользуем уже написанный callHybridAPI, так как он делает ровно это
+    return await callHybridAPI(messages, { maxTokens, temperature, schemaName, schemaProps, expectedKeys, apiToken });
 }
 
 function safeParseContent(content, data, expectedKeys = []) {
@@ -659,13 +569,35 @@ function safeParseContent(content, data, expectedKeys = []) {
     }
 }
 
-// Простой «текстовый» вызов (fallback)
+// Простой «текстовый» вызов (Гибридный)
 async function callText(messages, { maxTokens = 1200, temperature = 0.0, apiToken = API_TOKEN } = {}) {
+    // 1. Сначала Cloud.ru
+    const cloudModels = config.cloudruModels || [];
+    for (const model of cloudModels) {
+        try {
+            console.log(`[refiner] Trying Cloud.ru model (text): ${model}`);
+            const result = await callCloudRuAPI(messages, {
+                model,
+                temperature,
+                max_tokens: maxTokens,
+                useResponseFormatForCloudRu: false
+            });
+            const content = result.choices?.[0]?.message?.content || '';
+            if (content) {
+                console.log(`[refiner] Cloud.ru text success with ${model}`);
+                return stripReasoningWrappers(content);
+            }
+        } catch (e) {
+            console.warn(`[refiner] Cloud.ru text model ${model} failed: ${e.message}`);
+        }
+    }
+
+    // 2. Фолбэк на OpenRouter
+    console.log(`[refiner] Falling back to OpenRouter for text (MODEL=${MODEL})`);
     const headers = { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' };
     const req = { model: MODEL, max_tokens: maxTokens, temperature, messages };
 
     let rateRetries = 0;
-
     for (let attempt = 1; attempt <= MAX_ATTEMPTS_TOTAL; attempt++) {
         try {
             console.log(`[refiner] callTEXT attempt=${attempt} rateRetries=${rateRetries} maxTok=${maxTokens}`);
@@ -676,12 +608,9 @@ async function callText(messages, { maxTokens = 1200, temperature = 0.0, apiToke
                 console.warn(`[refiner] TEXT HTTP ${res.status}. retry-after=${res.headers.get('retry-after') || '-'} txt.head=${txt.slice(0, 200)}`);
                 if (res.status === 429) {
                     const waitMs = pickRetryAfterMs(res);
-                    console.warn(`[refiner] 429 (text): ждём ${Math.round(waitMs / 1000)}s…`);
                     await sleep(waitMs);
-                    rateRetries++;
-                    if (rateRetries > MAX_RATE_LIMIT_RETRIES) return '';
-                    attempt--;
-                    continue;
+                    if (++rateRetries > MAX_RATE_LIMIT_RETRIES) return '';
+                    attempt--; continue;
                 }
                 await sleep(BASE_RETRY_MS * attempt);
                 continue;
@@ -690,7 +619,6 @@ async function callText(messages, { maxTokens = 1200, temperature = 0.0, apiToke
             const data = await res.json().catch(() => ({}));
             const content = data?.choices?.[0]?.message?.content?.trim() || '';
             return stripReasoningWrappers(content);
-
         } catch (e) {
             console.warn(`[refiner] callTEXT error: ${e?.message || e}`);
             await sleep(BASE_RETRY_MS * attempt);
@@ -800,16 +728,16 @@ async function reduceContext(originalRequirements, contextRaw, hintText, maxItem
         const fs = await import('fs');
         const debugDir = './debug-context';
         if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true });
-        
+
         // Сохранение исходного контекста
         fs.writeFileSync(`${debugDir}/01-raw-context.md`, raw);
-        
+
         // Сохранение каждой страницы отдельно
         pages.forEach((page, i) => {
             const sizeKB = Math.round(page.length / 1000);
             fs.writeFileSync(`${debugDir}/02-page-${String(i + 1).padStart(2, '0')}-${sizeKB}kb.md`, page);
         });
-        
+
         console.log(`[refiner] DEBUG: Saved ${pages.length} pages to ${debugDir}/`);
     }
 
@@ -879,14 +807,14 @@ ${pageChunks[c]}
                 let out = null, part = '';
 
                 if (!part) {
-                const result = await callHybridAPI(messages, {
-                    maxTokens: 2000,  // Увеличено с 900 для более детального извлечения
-                    temperature: 0.0,
-                    schemaName: 'ReduceContext',
-                    schemaProps: { context_md: { type: 'string' } },
-                    expectedKeys: ['context_md'],
-                    apiToken
-                });
+                    const result = await callHybridAPI(messages, {
+                        maxTokens: 2000,  // Увеличено с 900 для более детального извлечения
+                        temperature: 0.0,
+                        schemaName: 'ReduceContext',
+                        schemaProps: { context_md: { type: 'string' } },
+                        expectedKeys: ['context_md'],
+                        apiToken
+                    });
                     out = result;
                     part = String(out?.context_md || '');
                 }
@@ -937,7 +865,7 @@ ${pageChunks[c]}
                 let items = mdToItems(part);
                 const chunk = pageChunks[c];
                 const RATIO_MIN = 0.12;  // Снижено с 0.18 до 0.12 для сохранения большего количества релевантных фактов
-                
+
                 // 🚨 КРИТИЧНО: Ключевые слова для тест-дизайна — всегда сохраняем!
                 const criticalKeywords = [
                     'если', 'иначе', 'при условии', 'когда',
@@ -946,23 +874,23 @@ ${pageChunks[c]}
                     'ошибка', 'некорректно', 'невалидно', 'отклонено',
                     'автоматически', 'предзаполнить', 'очистить', 'скрыть', 'показать'
                 ];
-                
+
                 // Фильтруем с приоритетом для критичных фактов
                 const hasCriticalKeyword = (line) => {
                     const lineLower = line.toLowerCase();
                     return criticalKeywords.some(kw => lineLower.includes(kw));
                 };
-                
+
                 // Разделяем на критичные и обычные
                 const criticalItems = items.filter(hasCriticalKeyword);
                 const normalItems = items.filter(line => !hasCriticalKeyword(line));
-                
+
                 // Для обычных применяем фильтр по contentRatio
                 let filteredNormal = normalItems.filter(line => contentRatio(line, chunk) >= RATIO_MIN);
                 if (!filteredNormal.length && normalItems.length) {
                     filteredNormal = normalItems.slice(0, Math.min(3, normalItems.length));
                 }
-                
+
                 // Объединяем: критичные всегда + отфильтрованные обычные
                 items = [...criticalItems, ...filteredNormal];
 
