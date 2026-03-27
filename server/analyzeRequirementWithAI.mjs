@@ -5,7 +5,6 @@ import { callWithCloudRuFallback } from './cloudruClient.mjs';
 import { createContextSourceRegistry, createContextToolset } from './contextToolset.mjs';
 import { runInteractiveLLM } from './interactiveLLM.mjs';
 import config from './config.json' assert { type: 'json' };
-// Жёсткая инструкция к финальному ответу: только нужные Markdown-блоки
 const SYSTEM_ENFORCER =
   'Ты — старший эксперт по системному анализу. ' +
   'Технологический стек проекта: фронтенд — Angular (TypeScript), бэкенд — .NET/C#. ' +
@@ -17,7 +16,6 @@ const SYSTEM_ENFORCER =
   'без каких-либо пояснений вне блоков. ' +
   'Если нет ошибок — верни пустую строку.';
 
-// Настройки API
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_API_KEY = config.openRouterAiKey;
 
@@ -48,22 +46,18 @@ export async function analyzeRequirementWithAI(
   } = opts;
   let rawResponse = null;
 
-  // ---------- 0) Промежуточная "уборка" ----------
   let cleanedReq = requirementText;
   let miniGlossary = glossary;
   let filteredContext = context;
 
   if (prefilter) {
     try {
-      // 🚨 ВАЖНО: Мы сжимаем ТОЛЬКО глоссарий и дополнительный контекст (внешние ссылки).
-      // Основное дерево страниц Confluence (contextPages) теперь ПЕРЕДАЁТСЯ RAW, 
-      // чтобы избежать потери данных в иерархии подразделов.
       const refined = await prepareContextWithAI({
         requirements: requirementText,
         glossary,
-        context, // Сюда попадают вложенные ссылки
+        context,
         contextHint,
-        contextPages: [], // ОБНУЛЯЕМ: не пускаем дерево страниц в сжатие!
+        contextPages: [],
         maxGlossary: 100,
         maxContext: 200,
         apiToken: apiKey || OPENROUTER_API_KEY
@@ -72,11 +66,10 @@ export async function analyzeRequirementWithAI(
       if (refined?.mini_glossary_md?.trim()) miniGlossary = refined.mini_glossary_md;
       if (refined?.context_md?.trim()) filteredContext = refined.context_md;
     } catch (e) {
-      console.warn('[analyze] prefilter failed, fallback to original input:', e.message);
+      console.warn('[analyze] ошибка префильтрации, откат к исходным данным:', e.message);
     }
   }
 
-  // Склеиваем ПОЛНЫЙ текст всех страниц Confluence для прямой вставки в промпт
   const confluenceFullContent = (Array.isArray(contextPages) ? contextPages : [])
     .filter(Boolean)
     .join('\n\n---\n\n');
@@ -412,11 +405,11 @@ ${toolInstruction}
     if (interactiveResult.status === 'assistant-message') {
       content = interactiveResult.message?.content?.trim() || '';
     } else if (interactiveResult.status === 'final-tool-call') {
-      console.warn(`[analyze] Модель завершила работу через tool "${interactiveResult.toolName}" — возвращаем аргументы как текст`);
+      console.warn(`[analyze] Модель завершила работу через инструмент "${interactiveResult.toolName}" — возвращаем аргументы как текст`);
       content = JSON.stringify(interactiveResult.args || {}, null, 2);
     }
 
-    console.log(`[analyze] Interactive response length: ${content.length}`);
+    console.log(`[analyze] Длина интерактивного ответа: ${content.length}`);
   } catch (interactiveError) {
     console.warn('[analyze] Интерактивный режим не удался, fallback к одиночному запросу:', interactiveError.message);
   }
@@ -463,7 +456,7 @@ ${toolInstruction}
   }
 
   console.log(`[analyze] Итоговая длина ответа: ${content.length} символов`);
-  console.log(`[analyze] Ответ (первые 200 символов): "${content.slice(0, 200) || 'no content'}..."`);
+  console.log(`[analyze] Ответ (первые 200 символов): "${content.slice(0, 200) || 'пусто'}..."`);
 
   content = content.replace(/```\s*markdown\s*/g, '```');
   content = content.replace(/```[ \t]*\n[ \t]*```/g, '');

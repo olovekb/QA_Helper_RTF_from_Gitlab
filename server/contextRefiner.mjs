@@ -1,26 +1,22 @@
-// contextRefiner.mjs
 import fetch from 'node-fetch';
 import { callCloudRuAPI } from './cloudruClient.mjs';
 import config from './config.json' assert { type: 'json' };
 
 /**
  * Оркестратор подготовки входных данных:
- *  1) (удалено) — требования не меняем, возвращаем как есть
- *  2) reduceGlossary() — выжимает глоссарий чанками
- *  3) reduceContext()  — выжимает контекст по страницам/чанкам
+ *  1) reduceGlossary() — выжимает глоссарий чанками
+ *  2) reduceContext()  — выжимает контекст по страницам/чанкам
  *
  * На 429 ждём минуту (или Retry-After), ретраим и продолжаем.
  * Подробные логи в каждом шаге.
  */
 
-// === Конфиг модели / API ===
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const MODEL = process.env.REFINER_MODEL || 'meta-llama/llama-3.1-8b-instruct:free';
 
 const API_TOKEN = config.openRouterAiKey;
 const CLOUDRU_API_KEY = config.cloudruApiKey;
 
-// Жёсткая директива: только валидный JSON, без размышлений и Markdown
 const SYSTEM_JSON_ONLY =
     'Ты — парсер. Отвечай ТОЛЬКО валидным JSON-объектом. ' +
     'НИКАКИХ пояснений/Markdown/```/префиксов/суффиксов/доп. текста. ' +
@@ -30,26 +26,21 @@ const SYSTEM_JSON_ONLY =
 
 const CLIP_REQ_IN = 120000;
 const CLIP_GLS_IN = 160000;
-const CLIP_CTX_IN = 500000;    // Увеличено для больших контекстов
-const LIMIT_GLS_OUT = 40000;   // Увеличено для лучшего качества глоссария
-const LIMIT_CTX_OUT = 120000;  // Увеличено в 3 раза для лучшей передачи контекста (120KB вместо 36KB)
+const CLIP_CTX_IN = 500000;
+const LIMIT_GLS_OUT = 40000;
+const LIMIT_CTX_OUT = 120000;
 
-// === Чанкование ===
-const CHUNK_SIZE_GLOSSARY = 128000;  // Увеличено в 2 раза
-const CHUNK_SIZE_CONTEXT = 128000;   // Увеличено в 2 раза
-
-// === Retry / Rate-limit ===
+const CHUNK_SIZE_GLOSSARY = 128000;
+const CHUNK_SIZE_CONTEXT = 128000;
 const MAX_ATTEMPTS_TOTAL = 6;
 const BASE_RETRY_MS = 1000;
 const DEFAULT_RATE_WAIT_MS = 60_000;
 const MAX_RATE_LIMIT_RETRIES = 5;
 
-// === Управление tool-calls ===
 const ENV_TOOLS_DISABLED = /^(1|true|yes)$/i.test(String(process.env.REFINER_DISABLE_TOOLS || ''));
-let TOOLS_ENABLED = !ENV_TOOLS_DISABLED; // по умолчанию включены
+let TOOLS_ENABLED = !ENV_TOOLS_DISABLED;
 
-// === Параллельная обработка ===
-const MAX_CONCURRENT_REQUESTS = 3; // Ограничение одновременных запросов
+const MAX_CONCURRENT_REQUESTS = 3;
 const requestSemaphore = {
     running: 0,
     queue: [],
@@ -75,7 +66,6 @@ const requestSemaphore = {
     }
 };
 
-// === Гибридный API вызов (Cloud.ru + OpenRouter fallback) ===
 async function callHybridAPI(messages, opts = {}) {
     const {
         maxTokens = 2500,
@@ -86,7 +76,6 @@ async function callHybridAPI(messages, opts = {}) {
         apiToken = API_TOKEN
     } = opts;
 
-    // Сначала пробуем Cloud.ru (все доступные модели по очереди)
     const cloudModels = config.cloudruModels || [];
     for (const model of cloudModels) {
         try {
@@ -111,7 +100,7 @@ async function callHybridAPI(messages, opts = {}) {
                 temperature,
                 max_tokens: maxTokens,
                 response_format,
-                useResponseFormatForCloudRu: true // ✅ ВКЛЮЧАЕМ JSON SCHEMA ДЛЯ CLOUD.RU
+                useResponseFormatForCloudRu: true
             });
 
             const content = result.choices?.[0]?.message?.content || '';
@@ -123,13 +112,13 @@ async function callHybridAPI(messages, opts = {}) {
             }
 
             if (toolCalls.length > 0) {
-                console.log(`[refiner] ⚠️ Content пустой, но есть tool_calls у ${model}`);
+                console.log(`[refiner] Content пустой, но есть tool_calls у ${model}`);
                 for (const toolCall of toolCalls) {
                     if (toolCall.function?.arguments) {
                         try {
                             const args = JSON.parse(toolCall.function.arguments);
                             if (typeof args === 'object') {
-                                console.log(`[refiner] ✅ Извлечён объект из tool_call arguments`);
+                                console.log(`[refiner] Извлечён объект из tool_call arguments`);
                                 return args;
                             }
                         } catch (e) { }
@@ -143,12 +132,10 @@ async function callHybridAPI(messages, opts = {}) {
         }
     }
 
-    // Если Cloud.ru не сработал - идем в OpenRouter (FALLBACK)
     console.log(`[refiner] Falling back to OpenRouter (MODEL=${MODEL})`);
     return await callJSON(messages, { maxTokens, temperature, schemaName, schemaProps, expectedKeys, apiToken });
 }
 
-// --- Утилиты ------------------------------------------------------------------
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -158,7 +145,7 @@ function joinContextPages(p) {
         return p.contextPages
             .map(x => typeof x === 'string' ? x : (x?.text || ''))
             .filter(Boolean)
-            .join('\n\n--- page ---\n\n'); // маркер понимает splitContextIntoPages
+            .join('\n\n--- page ---\n\n');
     }
     return p.context || '';
 }
@@ -178,7 +165,6 @@ function contentRatio(a, b) {
 
 
 function pickRetryAfterMs(res) {
-    // Retry-After может быть секундами или датой
     const h = res.headers?.get?.('retry-after');
     if (!h) return DEFAULT_RATE_WAIT_MS;
     const secs = Number(h);
@@ -199,7 +185,6 @@ function hardClip(str, max) {
 
 function stripReasoningWrappers(s) {
     s = String(s || '');
-    // Выпиливаем любые fenced-блоки, кроме явно json
     s = s.replace(/```(?!json)[\s\S]*?```/gi, '');
     return s
         .replace(/<think>[\s\S]*?<\/think>/gi, '')
@@ -208,7 +193,7 @@ function stripReasoningWrappers(s) {
         .trim();
 }
 
-// «Ремонт» строк: внутри кавычек заменяем сырые переводы строк на \n и экранируем непарные кавычки
+// внутри кавычек заменяем сырые переводы строк на \n и экранируем непарные кавычки
 function escapeBrokenJSONString(candidate) {
     let out = '';
     let inStr = false, esc = false;
@@ -255,7 +240,6 @@ function parseMaybeJSON(raw, expectedKeys = []) {
 
     s = stripReasoningWrappers(s);
 
-    // 1) Если есть fenced-блок с json — берём его содержимое
     const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
     if (fence) s = fence[1].trim();
 
@@ -270,7 +254,6 @@ function parseMaybeJSON(raw, expectedKeys = []) {
         return null;
     };
 
-    // 2) Объекты — ищем те, где есть ожидаемые ключи
     const objCandidates = extractBalancedBlocks(s, '{', '}');
     const keyRegex = expectedKeys.length ? new RegExp(`"(${expectedKeys.join('|')})"\\s*:`) : null;
 
@@ -281,14 +264,13 @@ function parseMaybeJSON(raw, expectedKeys = []) {
         }
     }
 
-    // 3) Массивы
+
     const arrCandidates = extractBalancedBlocks(s, '\\[', '\\]');
     for (const cand of arrCandidates) {
         const parsed = tryParse(cand);
         if (parsed && typeof parsed === 'object') return parsed;
     }
 
-    // 4) Последняя попытка — самый длинный объект
     if (objCandidates.length) {
         const longest = objCandidates.sort((a, b) => b.length - a.length)[0];
         const parsed = tryParse(longest);
@@ -298,7 +280,6 @@ function parseMaybeJSON(raw, expectedKeys = []) {
     throw new Error('Не найден JSON в ответе модели');
 }
 
-// Безопасный пустой результат
 function emptyRefine() {
     return { requirements_md: '', mini_glossary_md: '', context_md: '' };
 }
@@ -340,26 +321,22 @@ function splitContextIntoPages(ctx) {
     const s = String(ctx || '').trim();
     if (!s) return [];
 
-    // 1) Явный разделитель страниц
     const byExplicit = s.split(/\n+---+\s*(?:page|страница)?\s*---+\n+/i);
     if (byExplicit.length > 1) {
         return byExplicit.map(x => x.trim()).filter(Boolean);
     }
 
-    // 2) Начало новой статьи по маркеру Confluence Page ID или [CONFLUENCE_PAGE]
     const pidRegex = /\n+(?=(?:Confluence\s*Page\s*ID\s*:\s*\d+|\[CONFLUENCE_PAGE:\s*id=\d+))/i;
     const byPid = s.split(pidRegex);
     if (byPid.length > 1) {
         return byPid.map(x => x.trim()).filter(Boolean);
     }
 
-    // 3) Группировка по главным заголовкам # (объединение вложенных ## и ### в одну страницу)
     const lines = s.split('\n');
     const groups = [];
     let currentGroup = [];
 
     for (const line of lines) {
-        // Новый главный заголовок # == начало новой группы
         if (/^#\s+[^\n]+/.test(line) && !/^##/.test(line)) {
             if (currentGroup.length > 0) {
                 groups.push(currentGroup.join('\n').trim());
@@ -371,15 +348,12 @@ function splitContextIntoPages(ctx) {
         }
     }
 
-    // Сохранение последней группы
     if (currentGroup.length > 0) {
         groups.push(currentGroup.join('\n').trim());
     }
 
-    // При отсутствии групп возвращает весь текст как одну страницу
     if (groups.length === 0) return [s];
 
-    // 4) Объединение маленьких страниц (меньше 3kb) с соседними
     const MIN_PAGE_SIZE = 3000;
     const merged = [];
     let buffer = '';
@@ -388,19 +362,15 @@ function splitContextIntoPages(ctx) {
         const trimmedGroup = group.trim();
         if (!trimmedGroup) continue;
 
-        // Попытка добавить группу к буферу
         const potentialBuffer = buffer ? buffer + '\n\n' + trimmedGroup : trimmedGroup;
 
-        // Добавление, если после добавления объем буфера не превышает лимит
         if (potentialBuffer.length <= CHUNK_SIZE_CONTEXT) {
             buffer = potentialBuffer;
-            // Сохранение, если объем буфера превышает лимит
             if (buffer.length >= MIN_PAGE_SIZE) {
                 merged.push(buffer);
                 buffer = '';
             }
         } else {
-            // Сохранение текущего буфера и создание нового
             if (buffer) {
                 merged.push(buffer);
             }
@@ -408,7 +378,6 @@ function splitContextIntoPages(ctx) {
         }
     }
 
-    // Сохранение остатка буфера
     if (buffer) merged.push(buffer);
 
     return merged.filter(Boolean);
@@ -424,10 +393,10 @@ function splitBySize(s, size) {
 
 function sanitizeRequirementsForContext(req) {
     let s = String(req || '');
-    s = s.replace(/^---[\s\S]*?---\s*/i, '');          // front-matter
-    s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1');   // [text](url) → text
-    s = s.replace(/\bhttps?:\/\/[^\s)]+/gi, '');       // naked URLs
-    s = s.replace(/^\s*url:\s*".*?"\s*$/gmi, '');      // url: "..."
+    s = s.replace(/^---[\s\S]*?---\s*/i, '');
+    s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1');
+    s = s.replace(/\bhttps?:\/\/[^\s)]+/gi, '');
+    s = s.replace(/^\s*url:\s*".*?"\s*$/gmi, '');
     return s.trim();
 }
 
@@ -450,110 +419,12 @@ function filterContextItemsByAllowedSources(items, allowedUrls, forbiddenUrls) {
     }).filter(Boolean);
 }
 
-// ---------- Tool-calls (если поддерживается модель) ----------
-function buildTool(name, propName, description = 'Return strict JSON payload') {
-    return {
-        type: 'function',
-        function: {
-            name,
-            description,
-            parameters: {
-                type: 'object',
-                properties: { [propName]: { type: 'string' } },
-                required: [propName],
-                additionalProperties: false
-            }
-        }
-    };
-}
 
-function safeParseArgs(args, expectedKeys) {
-    if (!args) return null;
-    try { return JSON.parse(args); } catch {
-        try { return parseMaybeJSON(args, expectedKeys); } catch { return null; }
-    }
-}
 
-function extractToolArgsFromData(data, toolName, expectedKeys) {
-    const m = data?.choices?.[0]?.message;
-    if (m?.tool_calls?.length) {
-        const tc = m.tool_calls.find((t) => t?.function?.name === toolName);
-        if (tc?.function?.arguments) return safeParseArgs(tc.function.arguments, expectedKeys);
-    }
-    if (m?.function_call?.name === toolName) {
-        return safeParseArgs(m.function_call.arguments, expectedKeys);
-    }
-    return null;
-}
-
-async function callTools(messages, tool, { maxTokens = 1800, temperature = 0.0, expectedKeys = [], apiToken = API_TOKEN } = {}) {
-    if (!TOOLS_ENABLED) return null;
-
-    const headers = { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' };
-    const req = {
-        model: MODEL,
-        max_tokens: maxTokens,
-        temperature,
-        tools: [tool],
-        tool_choice: { type: 'function', function: { name: tool.function.name } },
-        messages
-    };
-
-    let rateRetries = 0;
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS_TOTAL; attempt++) {
-        try {
-            console.log(`[refiner] callTOOLS attempt=${attempt} rateRetries=${rateRetries} maxTok=${maxTokens} tool=${tool.function.name}`);
-            const res = await fetch(OPENROUTER_URL, { method: 'POST', headers, body: JSON.stringify(req) });
-
-            if (!res.ok) {
-                const txt = await res.text().catch(() => '');
-                console.warn(`[refiner] TOOLS HTTP ${res.status}. retry-after=${res.headers.get('retry-after') || '-'} txt.head=${txt.slice(0, 200)}`);
-
-                // 404 — эндпоинт не поддерживает tools → выключаем на сессию
-                if (res.status === 404 && /No endpoints.*tool use/i.test(txt)) {
-                    console.warn('[refiner] Модель не поддерживает tool-calls → отключаю tools на сессию.');
-                    TOOLS_ENABLED = false;
-                    return null;
-                }
-
-                if (res.status === 429) {
-                    const waitMs = pickRetryAfterMs(res);
-                    console.warn(`[refiner] 429 (tools): ждём ${Math.round(waitMs / 1000)}s…`);
-                    await sleep(waitMs);
-                    rateRetries++;
-                    if (rateRetries > MAX_RATE_LIMIT_RETRIES) return null;
-                    attempt--; // не сжигаем попытку
-                    continue;
-                }
-                await sleep(BASE_RETRY_MS * attempt);
-                continue;
-            }
-
-            const data = await res.json().catch(() => null);
-            const args = extractToolArgsFromData(data, tool.function.name, expectedKeys);
-            if (args) return args;
-
-            // если tool-call не случился — мягкий фолбэк на обычный JSON из content
-            const content = data?.choices?.[0]?.message?.content || '';
-            console.log(`[refiner] TOOLS fallback: content.len=${content.length}`);
-            return parseMaybeJSON(content, expectedKeys);
-
-        } catch (e) {
-            console.warn(`[refiner] callTOOLS error: ${e?.message || e}`);
-            await sleep(BASE_RETRY_MS * attempt);
-        }
-    }
-    console.warn('[refiner] все попытки callTOOLS исчерпаны');
-    return null;
-}
-
-// Гибридный вызов для JSON (Cloud.ru -> OpenRouter)
 async function callJSON(
     messages,
     { maxTokens = 2500, temperature = 0.0, schemaName, schemaProps, expectedKeys = [], apiToken = API_TOKEN } = {}
 ) {
-    // Просто переиспользуем уже написанный callHybridAPI, так как он делает ровно это
     return await callHybridAPI(messages, { maxTokens, temperature, schemaName, schemaProps, expectedKeys, apiToken });
 }
 
@@ -569,9 +440,8 @@ function safeParseContent(content, data, expectedKeys = []) {
     }
 }
 
-// Простой «текстовый» вызов (Гибридный)
+
 async function callText(messages, { maxTokens = 1200, temperature = 0.0, apiToken = API_TOKEN } = {}) {
-    // 1. Сначала Cloud.ru
     const cloudModels = config.cloudruModels || [];
     for (const model of cloudModels) {
         try {
@@ -592,7 +462,6 @@ async function callText(messages, { maxTokens = 1200, temperature = 0.0, apiToke
         }
     }
 
-    // 2. Фолбэк на OpenRouter
     console.log(`[refiner] Falling back to OpenRouter for text (MODEL=${MODEL})`);
     const headers = { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' };
     const req = { model: MODEL, max_tokens: maxTokens, temperature, messages };
@@ -627,14 +496,12 @@ async function callText(messages, { maxTokens = 1200, temperature = 0.0, apiToke
     return '';
 }
 
-// === ЭТАП 2. Ужать глоссарий (чанками) =======================================
 
 async function reduceGlossary(originalRequirements, glossaryRaw, maxItems, limitChars = LIMIT_GLS_OUT, apiToken = API_TOKEN) {
     const glossary = hardClip(glossaryRaw || '', CLIP_GLS_IN);
     console.log(`[refiner] Stage#2 glossary in.len=${glossary.length}`);
     if (!glossary.trim()) return '';
 
-    // Для модели используем "санитизированные" требования, но не изменяем оригинал
     const reqForModel = sanitizeRequirementsForContext(hardClip(originalRequirements || '', CLIP_REQ_IN));
 
     const chunks = splitBySize(glossary, CHUNK_SIZE_GLOSSARY);
@@ -670,14 +537,7 @@ ${chunks[i]}
 
         let out = null, part = '';
 
-        //    if (TOOLS_ENABLED) {
-        //       const tool = buildTool('submit_glossary', 'mini_glossary_md', 'Return mini_glossary_md list');
-        //       out = await callTools(messages, tool, { maxTokens: 700, temperature: 0.0, expectedKeys: ['mini_glossary_md'] });
-        //       part = String(out?.mini_glossary_md || '');
-        //   }
-
         if (!part) {
-            // Используем Cloud.ru с fallback на OpenRouter
             const result = await callHybridAPI(messages, {
                 maxTokens: 10000,
                 temperature: 0.0,
@@ -701,17 +561,14 @@ ${chunks[i]}
     return md;
 }
 
-// === ЭТАП 3. Ужать доп. контекст =============================================
 
 async function reduceContext(originalRequirements, contextRaw, hintText, maxItems, limitChars = LIMIT_CTX_OUT, apiToken = API_TOKEN) {
     const raw = hardClip(contextRaw || '', CLIP_CTX_IN);
     console.log(`[refiner] Stage#3 context in.len=${raw.length}`);
     if (!raw.trim()) return '';
 
-    // Дебаг-режим: включение через process.env.DEBUG_CONTEXT_PAGES=1 или config.debugContextPages=true
     const debugMode = process.env.DEBUG_CONTEXT_PAGES === '1' || config.debugContextPages === true;
 
-    // Требования: только как ориентир (не источник фактов)
     const reqForModel = sanitizeRequirementsForContext(
         hardClip(originalRequirements || '', CLIP_REQ_IN)
     );
@@ -723,16 +580,13 @@ async function reduceContext(originalRequirements, contextRaw, hintText, maxItem
 
     const pages = splitContextIntoPages(raw);
 
-    // Дебаг-режим: сохранение промежуточных результатов
     if (debugMode) {
         const fs = await import('fs');
         const debugDir = './debug-context';
         if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true });
 
-        // Сохранение исходного контекста
         fs.writeFileSync(`${debugDir}/01-raw-context.md`, raw);
 
-        // Сохранение каждой страницы отдельно
         pages.forEach((page, i) => {
             const sizeKB = Math.round(page.length / 1000);
             fs.writeFileSync(`${debugDir}/02-page-${String(i + 1).padStart(2, '0')}-${sizeKB}kb.md`, page);
@@ -808,7 +662,7 @@ ${pageChunks[c]}
 
                 if (!part) {
                     const result = await callHybridAPI(messages, {
-                        maxTokens: 2000,  // Увеличено с 900 для более детального извлечения
+                        maxTokens: 2000,
                         temperature: 0.0,
                         schemaName: 'ReduceContext',
                         schemaProps: { context_md: { type: 'string' } },
@@ -858,15 +712,14 @@ ${pageChunks[c]}
                             { role: 'system', content: 'Отвечай ТОЛЬКО списком Markdown, по одному пункту на строку.' },
                             { role: 'user', content: user2 }
                         ],
-                        { maxTokens: 1500, temperature: 0.0, apiToken }  // Увеличено с 600 для более детального извлечения
+                        { maxTokens: 1500, temperature: 0.0, apiToken }
                     );
                 }
 
                 let items = mdToItems(part);
                 const chunk = pageChunks[c];
-                const RATIO_MIN = 0.12;  // Снижено с 0.18 до 0.12 для сохранения большего количества релевантных фактов
+                const RATIO_MIN = 0.12;
 
-                // 🚨 КРИТИЧНО: Ключевые слова для тест-дизайна — всегда сохраняем!
                 const criticalKeywords = [
                     'если', 'иначе', 'при условии', 'когда',
                     'максимум', 'минимум', 'не более', 'не менее', 'от', 'до',
@@ -874,24 +727,18 @@ ${pageChunks[c]}
                     'ошибка', 'некорректно', 'невалидно', 'отклонено',
                     'автоматически', 'предзаполнить', 'очистить', 'скрыть', 'показать'
                 ];
-
-                // Фильтруем с приоритетом для критичных фактов
                 const hasCriticalKeyword = (line) => {
                     const lineLower = line.toLowerCase();
                     return criticalKeywords.some(kw => lineLower.includes(kw));
                 };
-
-                // Разделяем на критичные и обычные
                 const criticalItems = items.filter(hasCriticalKeyword);
                 const normalItems = items.filter(line => !hasCriticalKeyword(line));
 
-                // Для обычных применяем фильтр по contentRatio
                 let filteredNormal = normalItems.filter(line => contentRatio(line, chunk) >= RATIO_MIN);
                 if (!filteredNormal.length && normalItems.length) {
                     filteredNormal = normalItems.slice(0, Math.min(3, normalItems.length));
                 }
 
-                // Объединяем: критичные всегда + отфильтрованные обычные
                 items = [...criticalItems, ...filteredNormal];
 
                 items = filterContextItemsByAllowedSources(items, allowedUrls, forbiddenUrls);
@@ -921,7 +768,6 @@ ${pageChunks[c]}
     const dedup = dedupLines(acc, maxItems);
     const md = dedup.join('\n').slice(0, limitChars);
 
-    // Дебаг-режим: сохранение итогового результата
     if (debugMode) {
         const fs = await import('fs');
         fs.writeFileSync('./debug-context/03-final-context.md', md);
@@ -932,11 +778,9 @@ ${pageChunks[c]}
     return md;
 }
 
-// === Публичный оркестратор ====================================================
-
 /**
  * @param {object} p
- * @param {string} p.requirements          — исходные требования (возвращаем без изменений)
+ * @param {string} p.requirements        
  * @param {string} [p.glossary]
  * @param {string} [p.context]
  * @param {string} [p.contextHint]
@@ -945,11 +789,10 @@ ${pageChunks[c]}
  * @returns {Promise<{requirements_md:string, mini_glossary_md:string, context_md:string}>}
  */
 export async function prepareContextWithAI(p) {
-    const maxGlossary = Number.isFinite(p.maxGlossary) ? p.maxGlossary : 40;  // Увеличено с 25 до 40
-    const maxContext = Number.isFinite(p.maxContext) ? p.maxContext : 50;   // Увеличено с 16 до 50
+    const maxGlossary = Number.isFinite(p.maxGlossary) ? p.maxGlossary : 40;
+    const maxContext = Number.isFinite(p.maxContext) ? p.maxContext : 50;
     const apiToken = p.apiToken || API_TOKEN;
 
-    // Маскируем ключ для логирования
     const maskedKey = apiToken ? `${apiToken.slice(0, 10)}...${apiToken.slice(-4)}` : 'NONE';
     console.log('[refiner] === ORCHESTRATION START ===');
     console.log(`[refiner] inputs: req.len=${(p.requirements || '').length} gloss.len=${(p.glossary || '').length} ctx.len=${(p.context || '').length}`);
@@ -958,13 +801,10 @@ export async function prepareContextWithAI(p) {
     console.log(`[refiner] using API key: ${maskedKey}`);
 
     try {
-        // 1) Требования не меняем: возвращаем как есть
         const requirements_md = String(p.requirements || '');
 
-        // 2) Глоссарий — выжимка
         const mini_glossary_md = await reduceGlossary(requirements_md, p.glossary || '', maxGlossary, LIMIT_GLS_OUT, apiToken);
 
-        // 3) Контекст — выжимка
         const ctxHint =
             (p.contextHint && p.contextHint.trim() && p.contextHint.trim() !== '—')
                 ? p.contextHint.trim()

@@ -20,7 +20,6 @@ const CONFLUENCE_BASE_URL = process.env.CONFLUENCE_BASE || 'https://confluence.a
 async function processLargeOpenRouterRequest(messages, opts, apiKey) {
     const { model, models, temperature, max_tokens, response_format } = opts;
 
-    // Находим самое большое сообщение (обычно user content)
     let largestMessage = null;
     let largestIndex = -1;
     let maxSize = 0;
@@ -35,64 +34,57 @@ async function processLargeOpenRouterRequest(messages, opts, apiKey) {
     });
 
     if (!largestMessage || largestIndex === -1) {
-        throw new Error('Could not find largest message to split');
+        throw new Error('Не удалось найти большое сообщение для разделения');
     }
 
-    console.log(`[callWithBackoff] Splitting message ${largestIndex} (${maxSize} chars) into chunks...`);
+    console.log(`[callWithBackoff] Разделение сообщения ${largestIndex} (${maxSize} симв.) на чанки...`);
 
-    // Разбиваем большое сообщение на чанки
     const content = largestMessage.content;
-    const chunkSize = 80000; // Размер чанка в символах (примерно 20,000 токенов)
+    const chunkSize = 80000;
     const chunks = [];
 
     for (let i = 0; i < content.length; i += chunkSize) {
         chunks.push(content.slice(i, i + chunkSize));
     }
 
-    console.log(`[callWithBackoff] Created ${chunks.length} chunks`);
+    console.log(`[callWithBackoff] Создано ${chunks.length} чанков`);
 
-    // Обрабатываем каждый чанк
     const results = [];
     for (let i = 0; i < chunks.length; i++) {
-        console.log(`[callWithBackoff] Processing chunk ${i + 1}/${chunks.length}...`);
+        console.log(`[callWithBackoff] Обработка чанка ${i + 1}/${chunks.length}...`);
 
-        // Создаем копию сообщений с текущим чанком
         const chunkMessages = [...messages];
         chunkMessages[largestIndex] = {
             ...largestMessage,
             content: chunks[i]
         };
 
-        // Добавляем инструкцию для чанка
         if (chunks.length > 1) {
             chunkMessages[largestIndex].content = `ЧАСТЬ ${i + 1} ИЗ ${chunks.length}:\n\n${chunks[i]}`;
         }
 
         try {
-            // Используем прямую отправку без проверки размера
             const chunkResult = await makeDirectOpenRouterCall(chunkMessages, apiKey, {
                 model,
                 models,
                 temperature,
-                max_tokens: Math.min(max_tokens, 4000), // Ограничиваем размер ответа
+                max_tokens: Math.min(max_tokens, 4000),
                 response_format
             });
 
             results.push(chunkResult.choices?.[0]?.message?.content || '');
-            console.log(`[callWithBackoff] Chunk ${i + 1} processed successfully`);
+            console.log(`[callWithBackoff] Чанк ${i + 1} успешно обработан`);
 
         } catch (error) {
-            console.error(`[callWithBackoff] Chunk ${i + 1} failed:`, error.message);
-            results.push(''); // Добавляем пустую строку для неудачного чанка
+            console.error(`[callWithBackoff] Ошибка в чанке ${i + 1}:`, error.message);
+            results.push('');
         }
     }
 
-    // Объединяем результаты
     const combinedContent = results.filter(r => r.trim()).join('\n\n');
 
-    console.log(`[callWithBackoff] Combined ${results.length} chunks into final result (${combinedContent.length} chars)`);
+    console.log(`[callWithBackoff] Объединено ${results.length} чанков в итоговый результат (${combinedContent.length} симв.)`);
 
-    // Возвращаем результат в формате, ожидаемом вызывающим кодом
     return {
         choices: [{
             message: {
@@ -142,7 +134,7 @@ async function makeDirectOpenRouterCall(messages, apiKey, opts) {
 
     if (!response.ok) {
         const errorText = await response.text().catch(() => '');
-        throw new Error(`OpenRouter API error ${response.status}: ${errorText}`);
+        throw new Error(`Ошибка OpenRouter API ${response.status}: ${errorText}`);
     }
 
     return await response.json();

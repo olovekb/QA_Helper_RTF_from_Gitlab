@@ -146,11 +146,8 @@ def estimate_confidence(raw_output: str, match_count: int) -> Optional[float]:
 def build_prompt(target_text: str) -> str:
     """
     Промпт для DeepSeek-OCR-2
-    """
-    # Robust check for "all text" mode (handles English, Cyrillic, and common mess)
-    norm = target_text.lower().strip()
+    """    norm = target_text.lower().strip()
     if norm in ["все", "все", "all", "everything", "*", ""] or "все" in norm:
-        # Для общего распознавания используем самый надежный промпт DeepSeek-OCR
         return "Extract all text from the image and return it as markdown. Preserve the layout and tables if possible."
     
     return (
@@ -205,9 +202,7 @@ def ocr_process(image_path: str, target_text: str) -> None:
             return
 
         with Image.open(image_path) as img:
-            # Resize image if it's too large (documented limit is often around 4-8MB base64)
-            # DeepSeek-OCR-2 хорошо работает с высоким разрешением. 
-            # Увеличиваем лимит до 2048, чтобы мелкий текст (цены, условия) не смазывался.
+  
             max_size = 3072
             if max(img.size) > max_size:
                 ratio = max_size / float(max(img.size))
@@ -216,13 +211,10 @@ def ocr_process(image_path: str, target_text: str) -> None:
             
             width, height = img.size
             
-            # Save to temporary buffer to get base64
             from io import BytesIO
             buffered = BytesIO()
 
-            # Handle transparency (white background instead of black for PNGs)
             if img.mode in ("RGBA", "P", "LA"):
-                # Create white background same size as img
                 background = Image.new("RGB", img.size, (255, 255, 255))
                 if img.mode == "P":
                     img = img.convert("RGBA")
@@ -232,14 +224,12 @@ def ocr_process(image_path: str, target_text: str) -> None:
             elif img.mode != "RGB":
                 img = img.convert("RGB")
 
-            # Save as JPEG with high quality to minimize artifacts
             img.save(buffered, format="JPEG", quality=95)
             base64_image = base64.b64encode(buffered.getvalue()).decode("utf-8")
             mime_type = "image/jpeg"
 
         prompt = build_prompt(normalized_target)
         
-        # Build payload exactly like working curl
         payload = {
             "model": "deepseek-ai/DeepSeek-OCR-2",
             "max_tokens": 2500,
@@ -274,7 +264,6 @@ def ocr_process(image_path: str, target_text: str) -> None:
         
         for attempt in range(max_retries):
             try:
-                # Final diagnostic log before API call
                 sys.stderr.write(f"[DEBUG OCR] Attempt {attempt+1} starting API call. Model: deepseek-ai/DeepSeek-OCR-2, Prompt: '{prompt}', Image: {width}x{height}, Payload: {len(base64_image)} chars\n")
 
                 with httpx.Client(timeout=120.0) as client:
@@ -288,12 +277,10 @@ def ocr_process(image_path: str, target_text: str) -> None:
                         data = response.json()
                         break
                     
-                    # Log retry-able errors
                     last_error = f"HTTP {response.status_code}: {response.text}"
                     sys.stderr.write(f"[DEBUG OCR] Attempt {attempt+1} failed: {last_error}\n")
                     
-                    # If 503, maybe the server is really down, but we still retry a bit
-                    # Only retry on 5xx, 429, or connection errors
+              
                     if response.status_code < 500 and response.status_code != 429:
                         break
                         
@@ -302,7 +289,6 @@ def ocr_process(image_path: str, target_text: str) -> None:
                 sys.stderr.write(f"[DEBUG OCR] Attempt {attempt+1} exception: {last_error}\n")
             
             if attempt < max_retries - 1:
-                # Less aggressive backoff: 3, 6 seconds
                 sleep_time = 3 * (attempt + 1)
                 time.sleep(sleep_time)
 
@@ -339,23 +325,19 @@ def ocr_process(image_path: str, target_text: str) -> None:
             ))
             return
 
-        # More robust check for "all text" mode (handles broken encoding for "все")
         all_text_keywords = ["все", "all", "everything", "*"]
         is_all_text = (
             not normalized_target or 
             normalized_target.lower() in all_text_keywords or
-            # Hack for common broken encodings of "все" (3 weird chars)
             (len(normalized_target) == 3 and not any(c.isalnum() for c in normalized_target))
         )
         
-        # Always parse bboxes if present, as DeepSeek often returns them even for markdown task
         matches = parse_bboxes(raw_content)
         cleaned_text = re.sub(r'(?:text)?\[\[.*?\]\]', '', raw_content).strip()
         if not cleaned_text:
             cleaned_text = raw_content
 
         if is_all_text:
-            # Return result in the format expected by confluenceFetcher (needs .text)
             detections = []
             for idx, bbox_0_1000 in enumerate(matches):
                 bbox_px = clamp_bbox_to_image(bbox_0_1000, width, height)
@@ -383,7 +365,6 @@ def ocr_process(image_path: str, target_text: str) -> None:
             print_json(result)
             return
 
-        # Specific target search mode
         if not matches:
             print_json(build_error(
                 "BAD_RESPONSE_FORMAT",

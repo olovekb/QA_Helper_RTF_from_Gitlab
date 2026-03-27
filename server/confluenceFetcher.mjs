@@ -21,7 +21,6 @@ const CHILD_PAGES_URL = (pageId, limit = 100) =>
     `${CONFLUENCE_BASE}/rest/api/content/${pageId}/child/page?limit=${limit}`;
 const VIEW_URL = (pageId) => `${CONFLUENCE_BASE}/pages/viewpage.action?pageId=${pageId}`;
 
-// --- Утилиты ------------------------------------------------------------------
 const TEXTUAL_MIMES = new Set([
     'text/plain',
     'text/markdown',
@@ -59,107 +58,6 @@ function canonicalizeConfluenceUrl(raw) {
     }
 }
 
-function canonicalizeAllLinksInMarkdown(md) {
-    return md.replace(/\((https?:\/\/[^)\s]+)\)/g, (_, url) => `(${canonicalizeConfluenceUrl(url)})`);
-}
-
-// Убираем CSS-макросы/шум
-function stripCssNoiseFromMarkdown(md) {
-    const lines = md.split('\n');
-    const out = [];
-    let inCss = false;
-    let brace = 0;
-
-    for (let line of lines) {
-        const t = line.trim();
-
-        if (!inCss && (t.startsWith('.') || t.startsWith('#')) && t.includes('{') && /[;:{}#\[\]]/.test(t)) {
-            inCss = true;
-            brace = (t.match(/{/g) || []).length - (t.match(/}/g) || []).length;
-            continue;
-        }
-        if (inCss) {
-            brace += (t.match(/{/g) || []).length - (t.match(/}/g) || []).length;
-            if (brace <= 0) inCss = false;
-            continue;
-        }
-        out.push(line);
-    }
-    return out.filter((l) => !/^(?:\.|#)[\w\-].*{.*}/.test(l.trim())).join('\n');
-}
-
-// Сносим подписи табов, дублирующие заголовки
-function stripConfluenceTabCaptions(md) {
-    const tabNames = ['Бизнес-требования', 'Варианты реализации', 'Сценарии', 'Экранные формы'];
-    const lines = md.split('\n');
-    const filtered = lines.filter((line) => {
-        const t = line.trim();
-        if (!t) return true;
-        return !(tabNames.includes(t) && !t.startsWith('#'));
-    });
-    return filtered.join('\n');
-}
-
-// Сплющиваем вложенные блокквоты
-function flattenBlockquotes(md) {
-    return md.replace(/^>+\s?/gm, '> ');
-}
-
-// Дедуп и нормализация admonitions
-function normalizeAdmonitions(md) {
-    let out = flattenBlockquotes(md);
-    out = out.replace(/(^>\s*\[!NOTE][^\n]*\n)(?:^>\s*\[!NOTE][^\n]*\n)+/gm, '$1');
-    return out;
-}
-
-// Перенумерация упорядоченных списков по уровням (1..n на каждом уровне)
-function renumberOrderedLists(md) {
-    const lines = md.split('\n');
-    const out = [];
-    const counters = [];
-    let inCode = false;
-
-    const olRx = /^(\s*)(\d+)[\.\)]\s+(.*)$/;
-    const fenceRx = /^\s*```/;
-
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-
-        if (fenceRx.test(line)) {
-            inCode = !inCode;
-            out.push(line);
-            continue;
-        }
-        if (inCode) {
-            out.push(line);
-            continue;
-        }
-
-        const m = line.match(olRx);
-        if (!m) {
-            if (!line.trim() || line.startsWith('#') || line.trim().startsWith('|') || line.trim().startsWith('>')) {
-                counters.length = 0;
-            }
-            out.push(line);
-            continue;
-        }
-
-        const indent = m[1] || '';
-        const level = Math.floor(indent.length / 2);
-        const text = m[3];
-
-        if (counters.length <= level) {
-            while (counters.length <= level) counters.push(0);
-        } else {
-            counters.length = level + 1;
-        }
-        counters[level] = (counters[level] || 0) + 1;
-
-        out.push(`${'  '.repeat(level)}${counters[level]}. ${text}`);
-    }
-    return out.join('\n');
-}
-
 export function normalizeNestedLists(md) {
     const lines = md.split('\n');
 
@@ -191,7 +89,7 @@ export function normalizeNestedLists(md) {
             continue;
         }
 
-        let [, indent, , /*num*/, alpha, roman, rest] = m;
+        let [, indent, , , alpha, roman, rest] = m;
         const kind = getKind(m);
         const curIndent = indent.length;
 
@@ -228,7 +126,6 @@ export function normalizeNestedLists(md) {
     return out.join('\n').replace(/\n{3,}/g, '\n\n');
 }
 
-// Полностью удаляем inline-изображения
 function stripInlineImagesFromMarkdown(md) {
     let out = md;
     out = out.replace(/!\[[^\]]*]\([^)\n]+\)/g, '');
@@ -236,9 +133,7 @@ function stripInlineImagesFromMarkdown(md) {
     return out;
 }
 
-// ---------------------- Надёжная конверсия HTML-таблиц → Markdown ------------
 function serializeInline(node) {
-    // текстовая сборка содержимого ячейки с поддержкой ссылок/BR, без картинок
     if (node.nodeType === 3) return node.nodeValue || '';
     const name = (node.nodeName || '').toUpperCase();
     if (name === 'BR') return ' / ';
@@ -254,29 +149,25 @@ function serializeInline(node) {
 }
 
 function tableToMarkdown(tableEl) {
-    // 1) собираем строки
     const rows = Array.from(tableEl.querySelectorAll('tr'));
     if (!rows.length) return '';
 
-    // 2) определяем число колонок (с учётом colspan)
     const colCount = rows.reduce((max, tr) => {
         const sum = Array.from(tr.children).reduce((acc, td) => acc + (parseInt(td.getAttribute('colspan') || '1', 10) || 1), 0);
         return Math.max(max, sum);
     }, 0);
 
-    // 3) заполняем сетку с учётом rowspan/colspan
+
     const grid = [];
-    const carry = new Array(colCount).fill(0); // сколько строк ещё «занято» из-за rowspan
+    const carry = new Array(colCount).fill(0);
 
     for (const tr of rows) {
         const row = new Array(colCount).fill('');
-        // сначала помечаем занятые колонки пустыми, уменьшаем счетчики
         for (let c = 0; c < colCount; c++) if (carry[c] > 0) carry[c]--;
 
         let col = 0;
         const cells = Array.from(tr.children);
         for (const cell of cells) {
-            // ищем первую свободную колонку
             while (col < colCount && carry[col] > 0) col++;
             if (col >= colCount) break;
 
@@ -284,15 +175,12 @@ function tableToMarkdown(tableEl) {
             const rowspan = Math.max(1, parseInt(cell.getAttribute('rowspan') || '1', 10) || 1);
 
             let text = collapseWS(serializeInline(cell));
-            // частые артефакты глоссариев
             if (/^\s*(изображение|image)\s*$/i.test(text)) text = '';
 
             row[col] = text;
 
-            // бронируем последующие колонки в текущей строке
             for (let k = 1; k < colspan; k++) row[col + k] = '';
 
-            // помечаем занятие строк из-за rowspan
             for (let k = 0; k < colspan; k++) if (rowspan > 1) carry[col + k] = Math.max(carry[col + k], rowspan - 1);
 
             col += colspan;
@@ -300,7 +188,6 @@ function tableToMarkdown(tableEl) {
         grid.push(row);
     }
 
-    // 4) определяем правую «полезную» границу (чтобы не тянуть хвосты пустых)
     let lastUseful = colCount - 1;
     outer: for (; lastUseful >= 0; lastUseful--) {
         for (const r of grid) if ((r[lastUseful] || '').trim()) break outer;
@@ -310,9 +197,8 @@ function tableToMarkdown(tableEl) {
 
     if (!trimmed.length || !width) return '';
 
-    // 5) первая строка — заголовок, если есть thead/th, иначе берём первую ненулевую
     const hasTh = !!tableEl.querySelector('th');
-    const headerRowIndex = 0; // минимально инвазивно: всегда первая
+    const headerRowIndex = 0;
     const header = trimmed[headerRowIndex].map(c => c || ' ');
     const body = trimmed.slice(headerRowIndex + 1);
 
@@ -329,7 +215,6 @@ function tableToMarkdown(tableEl) {
     return '\n' + lines.join('\n') + '\n\n';
 }
 
-// Turndown + правила -----------------------------------------------------------
 function buildTurndown() {
     const td = new TurndownService({
         codeBlockStyle: 'fenced',
@@ -340,7 +225,6 @@ function buildTurndown() {
     });
     td.use(gfm);
 
-    // Чистим содержимое ячеек таблиц (схлопываем пробелы/переносы)
     td.addRule('clean-cells', {
         filter: ['td', 'th'],
         replacement: function (content) {
@@ -348,20 +232,17 @@ function buildTurndown() {
         },
     });
 
-    // Переопределяем конверсию TABLE целиком (надёжнее, чем gfm по сложным макросам)
     td.addRule('strong-table', {
         filter: (node) => node.nodeName === 'TABLE',
         replacement: (_content, node) => {
             try {
                 return tableToMarkdown(node);
             } catch {
-                // если что-то пошло не так — даём шанс стандартному конвертору (не регрессим)
                 return '\n\n';
             }
         }
     });
 
-    // Панели/инфобоксы Confluence
     td.addRule('aui-panels', {
         filter: (node) =>
             node.nodeName === 'DIV' &&
@@ -371,13 +252,12 @@ function buildTurndown() {
             const titleEl =
                 node.querySelector('.title, .aui-message-header') ||
                 node.querySelector('.confluence-information-macro-title');
-            const title = titleEl ? titleEl.textContent.trim() : 'Note';
+            const title = titleEl ? titleEl.textContent.trim() : 'Примечание';
             const body = content.trim().replace(/^\s+|\s+$/g, '');
             return `\n> [!NOTE] ${title}\n> ${body.replace(/\n/g, '\n> ')}\n\n`;
         },
     });
 
-    // Fenced code
     td.addRule('fenced-pre', {
         filter: (node) => node.nodeName === 'PRE' && node.firstElementChild && node.firstElementChild.nodeName === 'CODE',
         replacement: (_content, node) => {
@@ -437,7 +317,6 @@ async function tryFetchTextAttachment(url, bearer) {
     return await r.text();
 }
 
-// --- Основная функция ----------------------------------------------------------
 /**
  * Получает Markdown страницы и её вложения
  * @param {string} bearerToken Токен авторизации
@@ -453,7 +332,6 @@ export async function fetchConfluencePage(
     pageId,
     { inlineTextAttachments = true, includeChildren = false, ocr = false, depth = 0 } = {}
 ) {
-    // Валидация входных параметров
     if (!bearerToken || typeof bearerToken !== 'string' || !bearerToken.trim()) {
         throw new Error('bearerToken обязателен и должен быть непустой строкой');
     }
@@ -467,7 +345,6 @@ export async function fetchConfluencePage(
     console.log(`[fetchConfluencePage] Запрос к Confluence: pageId=${pageId}, URL=${url}`);
     console.log(`[fetchConfluencePage] bearerToken длина: ${cleanToken.length}, первые 20 символов: ${cleanToken.substring(0, 20)}...`);
 
-    // 1) HTML export_view
     const contentRes = await fetch(url, {
         headers: {
             Accept: 'application/json',
@@ -477,20 +354,18 @@ export async function fetchConfluencePage(
     const bodyText = await contentRes.text();
     if (!contentRes.ok) {
         const errorMsg = bodyText.trim().slice(0, 500);
-        console.error(`[fetchConfluencePage] ❌ Ошибка ${contentRes.status}: ${errorMsg}`);
+        console.error(`[fetchConfluencePage] Ошибка ${contentRes.status}: ${errorMsg}`);
         if (contentRes.status === 401) {
             throw new Error(`Ошибка авторизации (401) при загрузке страницы Confluence pageId=${pageId}. Проверьте bearerToken. Ответ сервера: ${errorMsg}`);
         }
-        throw new Error(`Content fetch failed: ${contentRes.status} ${errorMsg}…`);
+        throw new Error(`Ошибка загрузки контента: ${contentRes.status} ${errorMsg}…`);
     }
     const data = JSON.parse(bodyText);
     const rawHtml = data.body?.export_view?.value;
     if (!rawHtml) throw new Error('Не найдено поле body.export_view.value');
 
-    // 2) Абсолютизация ссылок
     const html = absolutizeUrls(rawHtml, CONFLUENCE_BASE.replace(/\/+$/, ''));
 
-    // 3) HTML → Markdown
     const td = buildTurndown();
     const dom = new JSDOM(html);
     let mdBody = td.turndown(dom.window.document.body);
@@ -499,16 +374,14 @@ export async function fetchConfluencePage(
         mdBody = stripInlineImagesFromMarkdown(mdBody);
     }
 
-    // 5) Вложения
     const attRes = await fetch(ATTACHMENTS_URL(pageId), {
         headers: { Accept: 'application/json', Authorization: `Bearer ${bearerToken}` },
     });
     const attText = await attRes.text();
     if (!attRes.ok) {
-        throw new Error(`Attachments fetch failed: ${attRes.status} ${attText.trim().slice(0, 200)}…`);
+        throw new Error(`Ошибка загрузки вложений: ${attRes.status} ${attText.trim().slice(0, 200)}…`);
     }
     const attJson = JSON.parse(attText);
-    // исключаем изображения из итогового списка вложений
     const attachments = (attJson.results || [])
         .map((a) => ({
             name: a.title,
@@ -521,10 +394,9 @@ export async function fetchConfluencePage(
         attachments.filter((a) => !/^image\//i.test(a.mediaType || ''));
     }
 
-    // 6) Список вложений + инлайн текстовых
     let attachmentsMd = '';
     for (const a of attachments) {
-        attachmentsMd += `- [${a.name}](${canonicalizeConfluenceUrl(a.url)})${a.mediaType ? ` — ${a.mediaType}` : ''}${a.size ? ` (${a.size} bytes)` : ''}\n`;
+        attachmentsMd += `- [${a.name}](${canonicalizeConfluenceUrl(a.url)})${a.mediaType ? ` — ${a.mediaType}` : ''}${a.size ? ` (${a.size} байт)` : ''}\n`;
     }
 
     let inlineSection = '';
@@ -535,7 +407,7 @@ export async function fetchConfluencePage(
                 const text = await tryFetchTextAttachment(a.url, bearerToken);
                 if (text) textOnes.push({ name: a.name, text });
             } catch {
-                /* пропускаем */
+
             }
         }
         if (textOnes.length) {
@@ -551,7 +423,6 @@ export async function fetchConfluencePage(
         }
     }
 
-    // 7) Сборка MD
     let md =
         frontMatter(data) +
         mdBody.trim() +
@@ -569,7 +440,7 @@ export async function fetchConfluencePage(
         }
     }
 
-    md = `[CONFLUENCE_PAGE: id=${pageId}, title="${data.title || ''}"]\n\n` + md;
+    md = `[СТРАНИЦА_CONFLUENCE: id=${pageId}, title="${data.title || ''}"]\n\n` + md;
 
     if (includeChildren && depth < 5) {
         console.log(`[fetchConfluencePage] Загрузка дочерних страниц для ${pageId} (глубина ${depth})`);
@@ -622,13 +493,13 @@ async function processOcrForImages(images, token) {
 
                 const ocrText = await runOcrScript(filePath);
                 if (ocrText) {
-                    return `### Изображение: ${img.name}\n\n> [!OCR Result]\n> ${ocrText.replace(/\n/g, '\n> ')}\n\n`;
+                    return `### Изображение: ${img.name}\n\n> [!Результат OCR]\n> ${ocrText.replace(/\n/g, '\n> ')}\n\n`;
                 }
             } catch (err) {
                 console.error(`[OCR] Ошибка обработки ${img.name}:`, err.message);
-                return `### Изображение: ${img.name}\n\n> [!ERROR]\n> Не удалось распознать: ${err.message}\n\n`;
+                return `### Изображение: ${img.name}\n\n> [!ОШИБКА]\n> Не удалось распознать: ${err.message}\n\n`;
             }
-            return ''; // Return empty string if no OCR text or error
+            return '';
         }));
 
         const results = await Promise.all(ocrPromises);
@@ -653,7 +524,7 @@ async function runOcrScript(filePath) {
     try {
         const { stdout, stderr } = await execAsync(command, {
             env: { ...process.env },
-            maxBuffer: 50 * 1024 * 1024 // 50MB buffer for large OCR results
+            maxBuffer: 50 * 1024 * 1024
         });
 
         if (stderr) console.log(`[OCR Python Stderr] ${stderr}`);
@@ -677,7 +548,6 @@ async function fetchChildPagesRecursively(parentId, token, options) {
     let nextUrl = CHILD_PAGES_URL(parentId);
     const childrenList = [];
 
-    // 1) Собираем список всех детей (с учетом пагинации)
     while (nextUrl) {
         const response = await fetch(nextUrl, {
             headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }
@@ -698,8 +568,6 @@ async function fetchChildPagesRecursively(parentId, token, options) {
     }
 
     const pages = [];
-    // 2) Обрабатываем каждого ребенка
-    // Параллельная загрузка дочерних страниц
     const childPages = await Promise.all(childrenList.map(child =>
         fetchConfluencePage(token, child.id, options)
     ));
