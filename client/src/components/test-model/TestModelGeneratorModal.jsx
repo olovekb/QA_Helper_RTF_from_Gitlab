@@ -505,6 +505,15 @@ const TreeVisualizer = ({ treeData }) => {
     const nodeWidth = 220;
     const nodeHeight = 50;
 
+    // Диагностика
+    console.log('TreeVisualizer: treeData:', treeData?.length || 0, 'features');
+    if (treeData && treeData.length > 0) {
+        const totalStories = treeData.reduce((acc, f) => acc + (f.stories?.length || 0), 0);
+        const totalScenarios = treeData.reduce((acc, f) => acc + (f.stories || []).reduce((a, s) => a + (s.scenarios?.length || 0), 0), 0);
+        const totalCodes = treeData.reduce((acc, f) => acc + (f.stories || []).reduce((a, s) => a + (s.scenarios || []).reduce((a2, sc) => a2 + (sc.codes?.length || 0), 0), 0), 0);
+        console.log('TreeVisualizer: stories:', totalStories, 'scenarios:', totalScenarios, 'codes:', totalCodes);
+    }
+
     const { nodes: initialNodes, edges: initialEdges } = useMemo(() => {
         const allNodes = [];
         const allEdges = [];
@@ -724,6 +733,8 @@ export default function TestModelGeneratorModal({
     const [modelHistory, setModelHistory] = useState([]); // [{ version, model, timestamp, comment }]
     const [modelDiff, setModelDiff] = useState(null); // diff между v1 и v2
     const [showDiffView, setShowDiffView] = useState(false);
+    const [availableModels, setAvailableModels] = useState([]);
+    const [selectedModel, setSelectedModel] = useState('');
 
     // Функция для подсчета всех узлов в дереве
     const countAllNodes = (treeData) => {
@@ -1089,6 +1100,22 @@ export default function TestModelGeneratorModal({
         };
     }, [isResizing, handleMouseMove, handleMouseUp]);
 
+    // Загрузка доступных моделей Cloud.ru
+    useEffect(() => {
+        const fetchModels = async () => {
+            try {
+                const { data } = await axios.get(`${config.serverUrl}/cloudru-models`);
+                if (data.models && data.models.length > 0) {
+                    setAvailableModels(data.models);
+                    setSelectedModel(data.models[0]); // По умолчанию первая модель
+                }
+            } catch (error) {
+                console.warn('Не удалось загрузить список моделей:', error);
+            }
+        };
+        fetchModels();
+    }, []);
+
 
     // --- Core Logic (with minor refactoring for clarity) ---
     const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
@@ -1340,6 +1367,11 @@ export default function TestModelGeneratorModal({
         try {
             // Используем переданные данные вместо чтения из IndexedDB
             const payload = buildRequirementsPayload({ includeRequirements: true });
+            
+            // Добавляем выбранную модель в payload
+            if (selectedModel) {
+                payload.models = [selectedModel];
+            }
 
             // Сначала пробуем асинхронный API
             try {
@@ -1998,27 +2030,53 @@ export default function TestModelGeneratorModal({
             <div className="modal-header">
                 <h2>Редактор тестовой модели {modelVersion > 1 && <span style={{ fontSize: '0.8em', color: 'var(--text-secondary)' }}>(v{modelVersion})</span>}</h2>
                 <div className="header-actions">
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginRight: '12px' }}>
-                        <label style={{ fontSize: '0.9em', color: 'var(--text-secondary)', marginRight: '8px' }}>
-                            Режим:
-                        </label>
-                        <select
-                            value={generationMode}
-                            onChange={(e) => setGenerationMode(e.target.value)}
-                            disabled={isBusy || modelGenerationStatus === 'processing'}
-                            style={{
-                                background: 'var(--bg-content)',
-                                border: '1px solid var(--border-primary)',
-                                color: 'var(--text-primary)',
-                                borderRadius: '4px',
-                                padding: '6px 12px',
-                                fontSize: '0.9em',
-                                cursor: (isBusy || modelGenerationStatus === 'processing') ? 'default' : 'pointer'
-                            }}
-                        >
-                            <option value="create">Создать с нуля</option>
-                            <option value="refine" disabled={!localGeneratedModel || localGeneratedModel.length === 0}>Доработать текущую</option>
-                        </select>
+                    <div style={{ display: 'flex', gap: '16px', alignItems: 'center', marginRight: '12px' }}>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <label style={{ fontSize: '0.9em', color: 'var(--text-secondary)', marginRight: '8px' }}>
+                                Модель:
+                            </label>
+                            <select
+                                value={selectedModel}
+                                onChange={(e) => setSelectedModel(e.target.value)}
+                                disabled={isBusy || modelGenerationStatus === 'processing' || availableModels.length === 0}
+                                style={{
+                                    background: 'var(--bg-content)',
+                                    border: '1px solid var(--border-primary)',
+                                    color: 'var(--text-primary)',
+                                    borderRadius: '4px',
+                                    padding: '6px 12px',
+                                    fontSize: '0.85em',
+                                    cursor: (isBusy || modelGenerationStatus === 'processing' || availableModels.length === 0) ? 'default' : 'pointer',
+                                    maxWidth: '220px'
+                                }}
+                            >
+                                {availableModels.map(model => (
+                                    <option key={model} value={model}>{model}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <label style={{ fontSize: '0.9em', color: 'var(--text-secondary)', marginRight: '8px' }}>
+                                Режим:
+                            </label>
+                            <select
+                                value={generationMode}
+                                onChange={(e) => setGenerationMode(e.target.value)}
+                                disabled={isBusy || modelGenerationStatus === 'processing'}
+                                style={{
+                                    background: 'var(--bg-content)',
+                                    border: '1px solid var(--border-primary)',
+                                    color: 'var(--text-primary)',
+                                    borderRadius: '4px',
+                                    padding: '6px 12px',
+                                    fontSize: '0.9em',
+                                    cursor: (isBusy || modelGenerationStatus === 'processing') ? 'default' : 'pointer'
+                                }}
+                            >
+                                <option value="create">Создать с нуля</option>
+                                <option value="refine" disabled={!localGeneratedModel || localGeneratedModel.length === 0}>Доработать текущую</option>
+                            </select>
+                        </div>
                     </div>
                     <button
                         type="button"
@@ -2175,7 +2233,13 @@ export default function TestModelGeneratorModal({
                 <div className={`resizer ${isResizing ? 'is-resizing' : ''}`} onMouseDown={handleMouseDown}></div>
 
                 <div className="visualizer-pane">
-                    <TreeVisualizer treeData={treeData} />
+                    {treeData && treeData.length > 0 ? (
+                        <TreeVisualizer treeData={treeData} />
+                    ) : (
+                        <div style={{ padding: 20, color: 'var(--text-secondary)', textAlign: 'center' }}>
+                            Нет данных для отображения диаграммы
+                        </div>
+                    )}
                 </div>
             </div>
         </Modal>

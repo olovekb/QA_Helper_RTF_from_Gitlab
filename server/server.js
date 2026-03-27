@@ -6083,8 +6083,22 @@ async function generateTestModelAsync(taskId, inputData) {
 
         const {
             requirements,
-            text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken
+            text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken,
+            models: inputModels
         } = inputData;
+        
+        // Используем переданную модель или первую из списка по умолчанию
+        // Если выбрана конкретная модель - пробуем её первой, затем fallback на остальные
+        let modelsToTry;
+        if (inputModels && inputModels.length > 0) {
+            // Выбранная модель + все остальные из config как fallback
+            const selected = inputModels[0];
+            const fallbackModels = config.cloudruModels.filter(m => m !== selected);
+            modelsToTry = [selected, ...fallbackModels];
+        } else {
+            modelsToTry = config.cloudruModels;
+        }
+        console.log(`[generate-test-model-async] Модели для попыток (выбранная + fallback): ${modelsToTry.join(', ')}`);
 
         if (!requirements && !text && !pageId) {
             throw new Error('Нужно передать requirements (строка/массив), либо text, либо pageId');
@@ -6588,6 +6602,7 @@ ${contextSourcesSummary || '—'}
                             temperature: 0,
                             top_p: 0.9,
                             max_tokens: 20000,  // ✅ Уменьшили запас completion, чтобы не превышать лимит Cloud.ru на больших промптах
+                            models: modelsToTry,  // ✅ Используем выбранную модель + fallback
                             extra: { transforms: 'middle-out' }
                         }
                     });
@@ -6606,6 +6621,7 @@ ${contextSourcesSummary || '—'}
                             temperature: 0,
                             top_p: 0.9,
                             max_tokens: 20000,  // ✅ Синхронизировано с основным вызовом
+                            models: modelsToTry,  // ✅ Используем выбранную модель + fallback
                             extra: { transforms: 'middle-out' }
                         }
                     );
@@ -6625,21 +6641,34 @@ ${contextSourcesSummary || '—'}
                     console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: args не получены`);
                 }
 
-                if (args && args.model) {
+                // Поддержка разных форматов ответа модели:
+                // 1. args.model - массив Features
+                // 2. args.features - массив Features  
+                // 3. args (прямой объект Feature с id, text, stories) - GigaChat
+                let modelSource = args?.model || args?.features;
+                
+                // Если modelSource пустой - возможно модель вернула объект Feature напрямую
+                // (GigaChat может вернуть {id, text, stories} вместо {model: [{id, text, stories}]})
+                if (!modelSource && args?.id && args?.text && args?.stories && Array.isArray(args?.stories)) {
+                    console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: модель вернула объект Feature напрямую, оборачиваем в массив`);
+                    modelSource = [args];
+                }
+                
+                if (modelSource) {
                     // Если model - это массив, используем его напрямую
-                    if (Array.isArray(args.model)) {
-                        partialModel = args.model;
+                    if (Array.isArray(modelSource)) {
+                        partialModel = modelSource;
                     }
                     // Если model - это объект с полем items (массив), используем items
-                    else if (typeof args.model === 'object' && args.model !== null && Array.isArray(args.model.items)) {
-                        console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: args.model содержит items, используем args.model.items`);
-                        partialModel = args.model.items;
+                    else if (typeof modelSource === 'object' && modelSource !== null && Array.isArray(modelSource.items)) {
+                        console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: modelSource содержит items, используем items`);
+                        partialModel = modelSource.items;
                     }
                     // Если model - это строка (JSON), парсим её
-                    else if (typeof args.model === 'string') {
-                        console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: args.model - строка длиной ${args.model.length} символов`);
-                        console.log(`[generate-test-model-async] Первые 200 символов: ${args.model.substring(0, 200)}`);
-                        console.log(`[generate-test-model-async] Последние 200 символов: ${args.model.substring(Math.max(0, args.model.length - 200))}`);
+                    else if (typeof modelSource === 'string') {
+                        console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: args.model - строка длиной ${modelSource.length} символов`);
+                        console.log(`[generate-test-model-async] Первые 200 символов: ${modelSource.substring(0, 200)}`);
+                        console.log(`[generate-test-model-async] Последние 200 символов: ${modelSource.substring(Math.max(0, modelSource.length - 200))}`);
 
                         try {
                             const parsed = JSON5.parse(args.model);
@@ -6649,16 +6678,16 @@ ${contextSourcesSummary || '—'}
                                 console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: распарсенный JSON содержит items, используем parsed.items`);
                                 partialModel = parsed.items;
                             } else {
-                                console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: args.model не является массивом после парсинга, тип:`, typeof parsed);
+                                console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: modelSource не является массивом после парсинга, тип:`, typeof parsed);
                                 partialModel = null;
                             }
                         } catch (parseErr) {
-                            console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: Ошибка парсинга args.model как JSON:`, parseErr.message);
+                            console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: Ошибка парсинга modelSource как JSON:`, parseErr.message);
 
                             // ✅ Улучшенная попытка восстановить обрезанный JSON
                             if (parseErr.message.includes('invalid end of input') || parseErr.message.includes('Unexpected end')) {
-                                console.warn(`[generate-test-model-async] ⚠️ JSON обрезан на ${args.model.length} символах. Попытка восстановления...`);
-                                let fixedJson = args.model.trim();
+                                console.warn(`[generate-test-model-async] ⚠️ JSON обрезан на ${modelSource.length} символах. Попытка восстановления...`);
+                                let fixedJson = modelSource.trim();
 
                                 // Стратегия 1: Подсчитываем открывающие и закрывающие скобки
                                 const openBrackets = (fixedJson.match(/\[/g) || []).length;
@@ -6735,7 +6764,7 @@ ${contextSourcesSummary || '—'}
 2. Если модель слишком большая - разбей на несколько Feature и отправь их по очереди
 3. НЕ отправляй обрезанный JSON - он будет отклонен
 
-Текущий размер JSON: ${args.model.length} символов. Убедись, что JSON завершен (закрыты все скобки и кавычки).`.trim();
+Текущий размер JSON: ${modelSource.length} символов. Убедись, что JSON завершен (закрыты все скобки и кавычки).`.trim();
                                     }
                                 }
                             } else {
@@ -7091,6 +7120,22 @@ ${contextSourcesSummary || '—'}
         // ✅ НОВОЕ: Обогащение backend Code Expected Result
         cleanedModel = enrichBackendCodesWithExpectedResult(cleanedModel);
 
+        // Диагностика структуры модели ДО очистки
+        console.log(`[generateTestModelAsync] Диагностика ДО validateAndCleanModel:`);
+        console.log(`[generateTestModelAsync]   Всего features: ${cleanedModel?.length || 0}`);
+        for (const f of (cleanedModel || [])) {
+            const storyCount = (f.stories || []).length;
+            const scenarioCount = (f.stories || []).reduce((acc, s) => acc + (s.scenarios || []).length, 0);
+            const codeCount = (f.stories || []).reduce((acc, s) => acc + (s.scenarios || []).reduce((acc2, sc) => acc2 + (sc.codes || []).length, 0), 0);
+            console.log(`[generateTestModelAsync]   Feature "${f.text?.substring(0, 50)}...": ${storyCount} stories, ${scenarioCount} scenarios, ${codeCount} codes`);
+            for (const s of (f.stories || []).slice(0, 3)) {
+                console.log(`[generateTestModelAsync]     Story "${s.text?.substring(0, 40)}...": ${(s.scenarios || []).length} scenarios`);
+                for (const sc of (s.scenarios || []).slice(0, 2)) {
+                    console.log(`[generateTestModelAsync]       Scenario "${sc.text?.substring(0, 40)}...": ${(sc.codes || []).length} codes`);
+                }
+            }
+        }
+
         // === ВАЛИДАЦИЯ И ОЧИСТКА МОДЕЛИ ===
         console.log(`[generate-test-model-async] Валидация и очистка сгенерированной модели...`);
         cleanedModel = validateAndCleanModel(cleanedModel);
@@ -7340,6 +7385,19 @@ ${escalationPrompt}`;
         }
 
         // ✅ НОВОЕ: Собираем метрики
+        // Диагностика структуры модели
+        console.log(`[generateTestModelAsync] Диагностика cleanedModel:`);
+        console.log(`[generateTestModelAsync]   Всего features: ${cleanedModel?.length || 0}`);
+        for (const f of (cleanedModel || [])) {
+            const storyCount = (f.stories || []).length;
+            const scenarioCount = (f.stories || []).reduce((acc, s) => acc + (s.scenarios || []).length, 0);
+            const codeCount = (f.stories || []).reduce((acc, s) => acc + (s.scenarios || []).reduce((acc2, sc) => acc2 + (sc.codes || []).length, 0), 0);
+            console.log(`[generateTestModelAsync]   Feature "${f.text?.substring(0, 50)}...": ${storyCount} stories, ${scenarioCount} scenarios, ${codeCount} codes`);
+            for (const s of (f.stories || [])) {
+                console.log(`[generateTestModelAsync]     Story "${s.text?.substring(0, 40)}...": ${(s.scenarios || []).length} scenarios`);
+            }
+        }
+        
         const scenariosCount = cleanedModel.reduce((acc, f) =>
             acc + (f.stories || []).reduce((acc2, s) => acc2 + (s.scenarios || []).length, 0), 0
         );
@@ -7550,6 +7608,17 @@ app.post('/api/refine-test-model', async (req, res) => {
         res.status(500).json({
             error: error.message || 'Неизвестная ошибка при доработке модели'
         });
+    }
+});
+
+// Endpoint to get available Cloud.ru models
+app.get('/api/cloudru-models', async (req, res) => {
+    try {
+        const models = config.cloudruModels || [];
+        res.json({ models });
+    } catch (error) {
+        console.error('Error getting cloudru models:', error);
+        res.status(500).json({ error: 'Failed to get models' });
     }
 });
 

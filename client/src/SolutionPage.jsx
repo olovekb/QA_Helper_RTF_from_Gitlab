@@ -798,6 +798,16 @@ export default function SolutionPage ({ projects = [] })
   useEffect(() =>
   {
     if (modelGenerationTaskId && modelGenerationStatus === 'processing') {
+      console.log('SolutionPage: Возобновляем проверку статуса генерации модели, taskId:', modelGenerationTaskId);
+      // Добавляем защиту от бесконечного цикла - проверяем, что taskId валидный UUID
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(modelGenerationTaskId)) {
+        console.warn('SolutionPage: Некорректный taskId, сбрасываем статус генерации');
+        setModelGenerationTaskId(null);
+        setModelGenerationProgress(0);
+        setModelGenerationStatus(null);
+        return;
+      }
       checkModelGenerationStatus(modelGenerationTaskId);
     }
   }, [modelGenerationTaskId, modelGenerationStatus]);
@@ -855,6 +865,29 @@ export default function SolutionPage ({ projects = [] })
       }
     };
     loadSavedBddResult();
+    
+    // ✅ ИСПРАВЛЕНИЕ: Сбрасываем зависший статус генерации модели при загрузке страницы
+    const fixModelGenerationStatus = async () => {
+      const savedStatus = localStorage.getItem('modelGenerationStatus');
+      const savedTaskId = localStorage.getItem('modelGenerationTaskId');
+      
+      console.log('SolutionPage: проверка статуса генерации модели:', { savedStatus, savedTaskId });
+      
+      // Если статус 'processing' но нет taskId - сбрасываем
+      if (savedStatus === 'processing' && !savedTaskId) {
+        console.log('SolutionPage: сбрасываем зависший статус генерации модели (нет taskId)');
+        localStorage.removeItem('modelGenerationStatus');
+        localStorage.removeItem('modelGenerationTaskId');
+        localStorage.removeItem('modelGenerationProgress');
+      }
+      
+      // Если есть taskId но нет статуса в localStorage - тоже сбрасываем
+      if (savedTaskId && !savedStatus) {
+        console.log('SolutionPage: сбрасываем taskId без статуса');
+        localStorage.removeItem('modelGenerationTaskId');
+      }
+    };
+    fixModelGenerationStatus();
   }, []);
 
   // Загружаем сохраненные тест-кейсы при инициализации (только если нет активной задачи)
