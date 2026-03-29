@@ -213,6 +213,16 @@ import http from 'http';
 import https from 'https';
 import { prepareContextWithAI } from './contextRefiner.mjs';
 import { callWithCloudRuFallback, callCloudRuAPI } from './cloudruClient.mjs';
+import { chunkify, linkChunks } from './semanticChunking.mjs';
+import { 
+    initPgVectorStore, 
+    isPgVectorInitialized, 
+    indexChunks, 
+    semanticSearch,
+    multiHopStructuredSearch,
+    deleteChunksByDocId
+} from './pgvectorStore.mjs';
+import { refineCodesWithSemanticSearch } from './semanticSearchRefiner.mjs';
 
 import { createContextSourceRegistry, createContextToolset } from './contextToolset.mjs';
 import { runInteractiveLLM } from './interactiveLLM.mjs';
@@ -843,7 +853,8 @@ function buildModelUserPrompt({
     totalChunks,
     previousContext,
     logicSection,
-    interactiveInstructionBlock
+    interactiveInstructionBlock,
+    ragContext
 }) {
     const chunkNotice = totalChunks > 1
         ? `ВАЖНО: Это ЧАСТЬ ${chunkIdx + 1} из ${totalChunks} большого документа.`
@@ -895,6 +906,8 @@ ${reqChunk}
 ---
 
 ${logicSection ? `ДОПОЛНИТЕЛЬНЫЕ ЛОГИЧЕСКИЕ ОГРАНИЧЕНИЯ:\n${logicSection}\n` : ''}
+
+${ragContext ? `📚 КОНТЕКСТ ИЗ ДОКУМЕНТАЦИИ (RAG):\n${ragContext}\n` : ''}
 ⚠️ ИНСТРУКЦИЯ ПО УСЛОВИЯМ:
 Если в требованиях или логике есть развилка (например, "доступно только для бизнеса"), ты обязан создать ОТДЕЛЬНЫЕ сценарии для каждой ветки:
 1. Сценарий для позитивного кейса (условие выполнено).
@@ -6073,6 +6086,7 @@ async function generateTestModelAsync(taskId, inputData) {
     const startTime = Date.now();
     let regenerationCount = 0;
     let escalationCount = 0;
+    const CLOUDRU_API_KEY = process.env.CLOUDRU_API_KEY || config.cloudru?.apiKey;
 
     try {
         await db('generation_tasks').where('id', taskId).update({
@@ -6194,6 +6208,74 @@ async function generateTestModelAsync(taskId, inputData) {
                         console.warn(`[generate-test-model-async] Не удалось загрузить связанную страницу pageId=${lid}:`, linkErr.message);
                     }
                 }
+                
+                // === СЕМАНТИЧЕСКАЯ ЧАНКИЗАЦИЯ (pgvector) ===
+                // Индексируем все загруженные страницы в pgvector для RAG
+                const allPageChunks = [];
+                
+                if (CLOUDRU_API_KEY && isPgVectorInitialized()) {
+                    try {
+                        console.log(`[generate-test-model-async] Семантическая чанкизация страниц в pgvector...`);
+                        
+                        // Удаляем старые чанки для этой страницы перед переиндексацией
+                        await deleteChunksByDocId(String(pageId));
+                        
+                        // Чанкизируем основную страницу
+                        if (baseRequirement) {
+                            const mainChunks = await chunkify(baseRequirement, {
+                                pageId: pageId,
+                                title: deriveTitleFromContent(baseRequirement, `Страница ${pageId}`, pageId)
+                            });
+                            
+                            // Добавляем source_type для разделения main/linked
+                            for (const chunk of mainChunks) {
+                                chunk.source_type = 'main';
+                            }
+                            
+                            console.log(`[generate-test-model-async] Основная страница: ${mainChunks.length} чанков`);
+                            
+                            // Индексируем
+                            const mainIndexResult = await indexChunks(mainChunks, CLOUDRU_API_KEY);
+                            console.log(`[generate-test-model-async] Индексация основной страницы: ${mainIndexResult.processed} чанков`);
+                            
+                            allPageChunks.push(...mainChunks);
+                        }
+                        
+                        // Чанкизируем linked pages
+                        for (const autoPage of autoPages) {
+                            // Извлекаем pageId из текста
+                            const pageIdMatch = autoPage.match(/pageId=(\d+)/);
+                            if (pageIdMatch) {
+                                const linkedPageId = pageIdMatch[1];
+                                const linkedChunks = await chunkify(autoPage, {
+                                    pageId: linkedPageId,
+                                    title: `Связанная страница ${linkedPageId}`
+                                });
+                                
+                                // Добавляем source_type для linked страниц
+                                for (const chunk of linkedChunks) {
+                                    chunk.source_type = 'linked';
+                                }
+                                
+                                // Удаляем старые чанки для linked страницы
+                                await deleteChunksByDocId(String(linkedPageId));
+                                
+                                const linkedIndexResult = await indexChunks(linkedChunks, CLOUDRU_API_KEY);
+                                console.log(`[generate-test-model-async] Linked page ${linkedPageId}: ${linkedIndexResult.processed} чанков`);
+                                
+                                allPageChunks.push(...linkedChunks);
+                            }
+                        }
+                        
+                        console.log(`[generate-test-model-async] ✅ Всего индексировано ${allPageChunks.length} чанков в pgvector`);
+                        
+                    } catch (chunkingError) {
+                        console.warn(`[generate-test-model-async] ⚠️ Ошибка чанкизации/индексации:`, chunkingError.message);
+                        console.warn(`[generate-test-model-async] ⚠️ Используем fallback на contextRefiner`);
+                    }
+                } else {
+                    console.log(`[generate-test-model-async] pgvector недоступен, используем contextRefiner`);
+                }
             } catch (e) {
                 console.error(`[generate-test-model-async] ❌ КРИТИЧЕСКАЯ ОШИБКА при загрузке страницы Confluence:`, e.message);
                 throw new Error(`Не удалось загрузить страницу Confluence pageId=${pageId}: ${e.message}. Проверьте bearerToken и доступ к странице.`);
@@ -6285,6 +6367,40 @@ async function generateTestModelAsync(taskId, inputData) {
         // Проверяем, что требования не содержат только примеры из промпта
         if (reqStringForModel.length < 100) {
             console.warn(`[generate-test-model-async] ⚠️ ВНИМАНИЕ: Требования очень короткие (${reqStringForModel.length} символов). Возможно, контент не загружен.`);
+        }
+
+        // RAG
+        let ragContextForChunks = [];
+        if (CLOUDRU_API_KEY && isPgVectorInitialized()) {
+            try {
+                console.log("[generate-test-model-async] Получение RAG контекста из pgvector...");
+                const ragQuery = "Основные требования: " + reqStringForModel.substring(0, 2000);
+                const ragResults = await multiHopStructuredSearch(ragQuery, CLOUDRU_API_KEY, {
+                    primaryTopK: 10,
+                    expansionTopK: 5,
+                    authorityMain: 1.0,
+                    authorityLinked: 0.7,
+                    depth: 2
+                });
+                if (ragResults.length > 0) {
+                    console.log("[generate-test-model-async] Найдено " + ragResults.length + " чанков через multi-hop");
+                    const mainChunks = ragResults.filter(r => r.source_type === 'main' || r.hop_distance === 0);
+                    const linkedChunks = ragResults.filter(r => r.source_type === 'linked' || r.hop_distance > 0);
+                    let contextText = '';
+                    if (mainChunks.length > 0) {
+                        contextText += '=== КОНТЕКСТ ИЗ ОСНОВНОГО ДОКУМЕНТА ===\n';
+                        contextText += mainChunks.map((r, i) => "[" + (i+1) + "] " + (r.content || r.metadata?.cleaned_text || '')).join('\n\n');
+                    }
+                    if (linkedChunks.length > 0) {
+                        contextText += '\n\n=== ДОПОЛНИТЕЛЬНЫЙ КОНТЕКСТ ИЗ СВЯЗАННЫХ ДОКУМЕНТОВ ===\n';
+                        contextText += linkedChunks.map((r, i) => "[" + (i+1) + "] " + (r.content || r.metadata?.cleaned_text || '')).join('\n\n');
+                    }
+                    ragContextForChunks = [contextText];
+                    console.log("[generate-test-model-async] RAG контекст: " + contextText.length + " символов");
+                }
+            } catch (ragError) {
+                console.warn('[generate-test-model-async] Ошибка RAG:', ragError.message);
+            }
         }
 
         // ✅ ЭТАП 1: GLOBAL CONTEXT EXTRACTION (Skeleton & Flesh архитектура)
@@ -6569,9 +6685,10 @@ ${contextSourcesSummary || '—'}
                 reqChunk: reqChunkText,
                 chunkIdx,
                 totalChunks: reqChunks.length,
-                previousContext, // ✅ Передаем контекст для предотвращения дублей
+                previousContext,
                 logicSection: logicSectionForChunk,
-                interactiveInstructionBlock
+                interactiveInstructionBlock,
+                ragContext: ragContextForChunks[0] || null
             });
 
             const baseUserPrompt = userPrompt;
@@ -7140,6 +7257,19 @@ ${contextSourcesSummary || '—'}
         console.log(`[generate-test-model-async] Валидация и очистка сгенерированной модели...`);
         cleanedModel = validateAndCleanModel(cleanedModel);
 
+        // === СЕМАНТИЧЕСКОЕ УТОЧНЕНИЕ CODES (RAG) ===
+        if (CLOUDRU_API_KEY && isPgVectorInitialized()) {
+            console.log(`[generate-test-model-async] Уточнение Code через семантический поиск...`);
+            try {
+                cleanedModel = await refineCodesWithSemanticSearch(cleanedModel, CLOUDRU_API_KEY, {
+                    usePgVector: true,
+                    topK: 5
+                });
+            } catch (e) {
+                console.warn('[generate-test-model-async] Ошибка семантического уточнения:', e.message);
+            }
+        }
+
         // ✅ ФАЗА 5: COVERAGE REPORT
         console.log('[generateTestModelAsync] Фаза 5: Генерация Coverage Report');
         let coverageReportData = null;
@@ -7212,7 +7342,8 @@ ${storyIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}
                             totalChunks: reqChunks.length,
                             previousContext,
                             logicSection: logicSectionForChunk,
-                            interactiveInstructionBlock
+                            interactiveInstructionBlock,
+                            ragContext: ragContextForChunks[0] || null
                         });
 
                         // ✅ Добавляем escalation prompt к базовому промпту
@@ -17378,6 +17509,26 @@ try {
     writeValidationRulesMarkdown();
 } catch (e) {
     console.warn('[startup] Не удалось сгенерировать validation-rules.md:', e.message);
+}
+
+// Инициализация pgvector для семантической чанкизации
+const CLOUDRU_API_KEY = process.env.CLOUDRU_API_KEY || config.cloudru?.apiKey;
+if (CLOUDRU_API_KEY) {
+    try {
+        await initPgVectorStore({
+            host: process.env.DB_HOST || 'localhost',
+            port: parseInt(process.env.DB_PORT || '5432'),
+            database: process.env.DB_NAME || 'tia_mapping_db',
+            user: process.env.DB_USER || 'tia_user',
+            password: process.env.DB_PASSWORD || 'password'
+        });
+        console.log('[startup] ✅ pgvector для семантической чанкизации инициализирован');
+    } catch (e) {
+        console.warn('[startup] ⚠️ Не удалось инициализировать pgvector:', e.message);
+        console.warn('[startup] ⚠️ Будет использован fallback на contextRefiner');
+    }
+} else {
+    console.warn('[startup] ⚠️ CLOUDRU_API_KEY не найден, используем contextRefiner');
 }
 
 // Запуск сервера

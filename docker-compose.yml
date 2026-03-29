@@ -10,10 +10,10 @@ services:
       - CLIENT_PORT=3000
       - DB_HOST=postgresql
       - DB_PORT=5432
-      - DB_NAME=allure_inspector_db
+      - DB_NAME=tia_mapping_db
       - DB_USER=${DB_USER:-tia_user}
       - DB_PASSWORD=${DB_PASSWORD:-password}
-      - DATABASE_URL=postgresql://${DB_USER:-tia_user}:${DB_PASSWORD:-password}@postgresql:5432/allure_inspector_db
+      - DATABASE_URL=postgresql://${DB_USER:-tia_user}:${DB_PASSWORD:-password}@postgresql:5432/tia_mapping_db
     ports:
       - 3000:3000
       - 5000:5000
@@ -99,7 +99,7 @@ services:
         max-file: "3"
 
   postgresql:
-    image: postgres:16
+    image: pgvector/pgvector:pg16-trixie
     restart: always
     ports:
       - 5432:5432
