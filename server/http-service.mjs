@@ -4,16 +4,16 @@ import { spinningLoader } from './spinning-loader.mjs';
 import { callWithCloudRuFallback } from './cloudruClient.mjs';
 import config from './config.mjs';
 
-// TODO: Нужно рефачить - переиспользовать из tia-mapping-service\utils\allureAuth.js
+
 
 const OPENROUTER_KEY = config.openRouterAiKey;
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 const BASE_URL = config.baseUrl;
 const ALLURE_TOKEN = config.allureToken;
-const API_TOKEN = await getJwtToken();
+let API_TOKEN = null;
 const HEADERS = {
-    'Authorization': `Bearer ${API_TOKEN}`,
+    'Authorization': '',
     'Content-Type': 'application/json',
 };
 let isRefreshing = false;
@@ -21,9 +21,14 @@ let tokenPromise = null;
 
 export async function getJwtToken() {
     try {
-        let spinnerInterval = spinningLoader('Авторизуемся по токену Allure...');
+        let normalizedUrl = BASE_URL.replace(/\/$/, '');
+        if (!normalizedUrl.endsWith('/api') && !normalizedUrl.includes('/api/')) {
+            normalizedUrl += '/api';
+        }
+
+        let spinnerInterval = spinningLoader('Авторизация в Allure');
         const response = await axios.post(
-            `${BASE_URL}/uaa/oauth/token`,
+            `${normalizedUrl}/uaa/oauth/token`,
             new URLSearchParams({
                 grant_type: "apitoken",
                 scope: "openid",
@@ -37,9 +42,11 @@ export async function getJwtToken() {
         );
         clearInterval(spinnerInterval);
         const jwtToken = response.data.access_token;
+        API_TOKEN = jwtToken;
+        HEADERS['Authorization'] = `Bearer ${jwtToken}`;
         return jwtToken;
     } catch (error) {
-        console.error("Ошибка получения JWT токена:", error.message);
+        console.error("Ошибка получения токена:", error.message);
         throw error;
     }
 }
@@ -56,6 +63,12 @@ async function refreshJwtToken() {
     return tokenPromise;
 }
 export async function fetchWithAuth(url, options = {}) {
+    if (!API_TOKEN && !isRefreshing) {
+        await refreshJwtToken();
+    } else if (isRefreshing) {
+        await tokenPromise;
+    }
+
     options.headers = {
         ...HEADERS,
         ...(options.headers || {}),
