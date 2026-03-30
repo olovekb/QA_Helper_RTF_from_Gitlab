@@ -361,17 +361,18 @@ export async function fetchConfluencePage(
         throw new Error(`Ошибка загрузки контента: ${contentRes.status} ${errorMsg}…`);
     }
     const data = JSON.parse(bodyText);
-    const rawHtml = data.body?.export_view?.value;
-    if (!rawHtml) throw new Error('Не найдено поле body.export_view.value');
+    const rawHtml = String(data.body?.export_view?.value ?? '').trim();
+    if (!rawHtml) console.log(`[fetchConfluencePage] пустая страница pageId=${pageId}, тело пропущено`);
 
-    const html = absolutizeUrls(rawHtml, CONFLUENCE_BASE.replace(/\/+$/, ''));
-
-    const td = buildTurndown();
-    const dom = new JSDOM(html);
-    let mdBody = td.turndown(dom.window.document.body);
-
-    if (!ocr) {
-        mdBody = stripInlineImagesFromMarkdown(mdBody);
+    let mdBody = '';
+    if (rawHtml) {
+        const html = absolutizeUrls(rawHtml, CONFLUENCE_BASE.replace(/\/+$/, ''));
+        const td = buildTurndown();
+        const dom = new JSDOM(html);
+        mdBody = td.turndown(dom.window.document.body);
+        if (!ocr) {
+            mdBody = stripInlineImagesFromMarkdown(mdBody);
+        }
     }
 
     const attRes = await fetch(ATTACHMENTS_URL(pageId), {
