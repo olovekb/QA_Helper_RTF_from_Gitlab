@@ -1532,9 +1532,10 @@ const TIAPage = ({ projects }) => {
         ));
     };
 
-    // Фильтрация папок для проекта 307 (показываем только Block и SubBlock на корневом уровне, но под ними показываем все)
+    // Фильтрация папок для проектов Nocode (показываем только Block и SubBlock на корневом уровне, но под ними показываем все)
+    const nocodeProjectIds = ['307', '377'];
     const filterFoldersForProject = (folders) => {
-        if (projectId !== '307') {
+        if (!nocodeProjectIds.includes(String(projectId))) {
             return folders;
         }
 
@@ -1565,7 +1566,7 @@ const TIAPage = ({ projects }) => {
         return result;
     };
 
-    // Форматирование customFieldName для отображения (для проекта 307 показываем Block/SubBlock вместо Feature)
+    // Форматирование customFieldName для отображения (для проектов Nocode показываем Block/SubBlock вместо Feature)
     const formatCustomFieldName = (folder, level = 0) => {
         if (folder.node_type === 'TEST_CASE') {
             const layerPrefix = folder.layer ? `[${folder.layer}] ` : '';

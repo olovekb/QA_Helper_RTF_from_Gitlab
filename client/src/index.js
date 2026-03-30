@@ -28,7 +28,8 @@ const projects = [
   { id: 305, name: 'АФБ' },
   { id: 308, name: 'LKPFL' },
   { id: 309, name: 'ККБ-ЮЛ 2.0' },
-  { id: 307, name: 'NC' }
+  { id: 307, name: 'NC' },
+  { id: 377, name: 'NC-Айыл' },
 ];
 
 const root = ReactDOM.createRoot(document.getElementById('root'));

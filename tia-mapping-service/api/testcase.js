@@ -54,7 +54,7 @@ export const createStubTestCase = async (req, res) => {
         if (!treeRes.ok) throw new Error(`Failed to fetch tree list: ${await treeRes.text()}`);
         const treeData = await treeRes.json();
 
-        const nocodeProjectIds = ['1', '307'];
+        const nocodeProjectIds = ['1', '307', '377'];
         let structureTree = treeData.content?.find(item =>
             nocodeProjectIds.includes(String(projectId))
                 ? (item.name === "Global Structure" || item.name === "Structure")

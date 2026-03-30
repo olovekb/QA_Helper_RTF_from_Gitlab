@@ -85,7 +85,7 @@ async function getTreeId(projectId) {
 
             const treeData = await treeResponse.json();
             let structureTree = null;
-            const nocodeProjectIds = ['1', '307'];
+            const nocodeProjectIds = ['1', '307', '377'];
             if (nocodeProjectIds.includes(String(projectId))) {
                 structureTree = treeData.content?.find(item => item.name === "Global Structure") || treeData.content?.find(item => item.name === "Structure");
             } else {

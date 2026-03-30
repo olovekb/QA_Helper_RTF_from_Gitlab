@@ -111,7 +111,7 @@ async function getTreeId (projectId)
             const treeData = await treeResponse.json();
             logInfo(`Ответ от /api/tree для projectId ${projectId}:`, JSON.stringify(treeData)); // Логирование ответа для отладки
             // Извлекаем treeId из ответа (логика синхронизирована с structure.js)
-            const nocodeProjectIds = ['1', '307'];
+            const nocodeProjectIds = ['1', '307', '377'];
             let structureTree = null;
             if (nocodeProjectIds.includes(String(projectId))) {
                 structureTree = treeData.content?.find(item => item.name === "Global Structure");
