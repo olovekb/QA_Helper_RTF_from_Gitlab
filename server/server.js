@@ -4177,8 +4177,6 @@ function tryParseInlineToolCall (rawContent, toolName)
     return null;
 }
 
-
-
 //
 // Универсальная функция для повторных попыток при 5xx,
 // принимающая либо строку prompt, либо массив сообщений {role, content}
