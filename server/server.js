@@ -4253,14 +4253,25 @@ export async function callWithBackoff (url, promptOrMessages, apiKey, opts = {})
             console.log(`[callWithBackoff] Запрос к модели: ${payload.model}`);
         }
 
-        const resp = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-        });
+        let resp;
+        try {
+            resp = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+        } catch (networkErr) {
+            const waitMs = backoff(attempt);
+            if (logRateLimit) {
+                console.warn(`[callWithBackoff] Network error (попытка ${attempt} из ${maxAttempts}): ${networkErr.message}. Ретрай через ${waitMs}ms`);
+            }
+            if (attempt >= maxAttempts) throw networkErr;
+            await new Promise(r => setTimeout(r, waitMs));
+            continue;
+        }
 
         // Успешно — парсим и проверяем
         if (resp.ok) {
