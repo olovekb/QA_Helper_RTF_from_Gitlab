@@ -32,7 +32,8 @@ const tiaAllowedOrigins = (process.env.TIA_ALLOWED_ORIGINS ||
     .filter(Boolean);
 
 const corsOptions = {
-    origin(origin, callback) {
+    origin (origin, callback)
+    {
         if (!origin) return callback(null, true);
 
         if (tiaAllowedOrigins.includes('*') || tiaAllowedOrigins.includes(origin)) {
@@ -67,7 +68,8 @@ app.post('/api/upload/json', uploadMiddleware, handleJsonUpload);
 app.post('/api/errors', logServerError);
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', (req, res) =>
+{
     res.status(200).json({
         status: 'healthy',
         timestamp: new Date().toISOString(),
@@ -80,15 +82,24 @@ app.get('/health', (req, res) => {
  * @route GET /api/structure
  * @param {string} projectId - ID проекта
  */
-app.get('/api/structure', async (req, res) => {
+app.get('/api/structure', async (req, res) =>
+{
     const projectId = req.query.projectId; // Извлекаем ID проекта из параметров запроса
     if (!projectId) {
         return res.status(400).send('Отсутствует идентификатор проекта (projectId)');
     }
 
+    const skipCriteria = { customFieldIdsToSkip: [], namePatternsToSkip: [] };
+    if (req.query.skipCustomFieldIds) {
+        skipCriteria.customFieldIdsToSkip = req.query.skipCustomFieldIds
+            .split(',')
+            .map(id => Number(id.trim()))
+            .filter(id => !isNaN(id));
+    }
+
     try {
-        const structure = await getProjectStructure(projectId); // Получаем структуру проекта без фильтров пропуска
-        res.json(structure); // Отправляем структуру клиенту
+        const structure = await getProjectStructure(projectId, skipCriteria);
+        res.json(structure);
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : (typeof error === 'string' ? error : JSON.stringify(error) || 'Неизвестная ошибка');
         logError(`Ошибка получения структуры для проекта ${projectId}:`, errorMessage); // Логирование ошибки
@@ -117,7 +128,8 @@ app.get('/api/components/functional-block-links', getFunctionalBlockPageComponen
  * @route GET /api/functional-blocks
  * @param {string} projectId - ID проекта
  */
-app.get('/api/functional-blocks', async (req, res) => {
+app.get('/api/functional-blocks', async (req, res) =>
+{
     const { projectId } = req.query;
     if (!projectId) {
         return res.status(400).json({ error: 'Необходимо указать projectId.' });
@@ -191,8 +203,10 @@ app.post('/api/stub', createStubTestCase);
 // /api/testplan removed - functionality replaced by launch splitting modal
 
 // Обработка всех маршрутов для React SPA (перенаправление на index.html)
-app.get('*', (req, res) => {
-    res.sendFile(path.join(clientBuildPath, 'index.html'), (err) => {
+app.get('*', (req, res) =>
+{
+    res.sendFile(path.join(clientBuildPath, 'index.html'), (err) =>
+    {
         if (err) {
             logError(`Ошибка при обслуживании статического файла: ${err.message}`);
             res.status(500).send('Ошибка при загрузке приложения');
@@ -201,7 +215,8 @@ app.get('*', (req, res) => {
 });
 
 // Функция для применения миграций
-async function runMigrations() {
+async function runMigrations ()
+{
     try {
         logInfo('Применение миграций базы данных...');
         const [batchNo, log] = await databasePool.migrate.latest();
@@ -220,7 +235,8 @@ async function runMigrations() {
  * Эндпоинт для ручного запуска миграций (для админов)
  * @route POST /api/migrations/run
  */
-app.post('/api/migrations/run', async (req, res) => {
+app.post('/api/migrations/run', async (req, res) =>
+{
     try {
         logInfo('[migrations] Запрос на ручное применение миграций');
         const result = await runMigrations();
@@ -244,7 +260,8 @@ app.post('/api/migrations/run', async (req, res) => {
  * Эндпоинт для проверки статуса миграций
  * @route GET /api/migrations/status
  */
-app.get('/api/migrations/status', async (req, res) => {
+app.get('/api/migrations/status', async (req, res) =>
+{
     try {
         const migrations = await databasePool.migrate.list();
         res.json({
@@ -262,7 +279,8 @@ app.get('/api/migrations/status', async (req, res) => {
 });
 
 // Запуск сервера на указанном порту
-app.listen(config.port, async () => {
+app.listen(config.port, async () =>
+{
     logInfo(`TIA Mapping Service запущен на http://localhost:${config.port}`);
     logInfo(`Allure base url ${process.env.ALLURE_BASE_URL}`) // Логирование env
     logInfo(`Allure token ${process.env.ALLURE_TOKEN}`) // Логирование env

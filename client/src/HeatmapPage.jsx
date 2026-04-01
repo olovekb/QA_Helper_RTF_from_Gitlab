@@ -285,7 +285,7 @@ const HeatmapPage = ({ projects }) =>
         try {
             // Use /api/structure for tree view instead of flat list
             const response = await axios.get(`${config.TIAUrl}/api/structure`, {
-                params: { projectId, skipCustomFieldIds: '-3' },
+                params: { projectId },
             });
             // /api/structure returns { folders: [...] }
             const folderList = response.data.folders || [];

@@ -1,8 +1,9 @@
-import { fetchWithAuth, authHeaders } from '../utils/allureAuth.js'; // Импорт утилит для аутентификации
+import { fetchWithAuth, authHeaders, buildTestCaseTreeEntityUrl, getTestCaseTreeEntityContent } from '../utils/allureAuth.js'; // Импорт утилит для аутентификации
 import config from '../config/index.js'; // Импорт конфигурации проекта
 import { logError, logInfo, logWarn } from '../utils/logger.js'; // Импорт логгера
 import { savePageComponentDependencies } from './components.js'; // Импорт функции для сохранения связей Page -> компоненты
 import databasePool from '../db/pool.js'; // Импорт пула соединений с БД
+import { resolveGroupPathFromDb } from '../utils/testCaseTreeEntity.js';
 
 
 // Глобальный кэш для хранения результатов запросов
@@ -36,20 +37,27 @@ async function logResponse (response, url, requestBody = null)
  */
 async function fetchLeafTestCasesRecursive (projectId, treeId, parentNodeId, mode = 'FULL')
 {
+    const pathToGroup = await resolveGroupPathFromDb(projectId, parentNodeId);
     const allTestCaseIds = [];
 
-    async function collect (nodeId, isInitial = false)
+    async function collect (pathToFolder, isInitial = false)
     {
         try {
-            const url = `${config.allureBaseUrl}/api/v2/project/${projectId}/test-case/tree/tree-node?treeId=${treeId}&parentNodeId=${nodeId}&page=0&size=1000`;
+            const url = buildTestCaseTreeEntityUrl(config.allureBaseUrl, {
+                projectId,
+                treeId,
+                page: 0,
+                size: 1000,
+                pathPrefix: pathToFolder,
+            });
             const res = await fetchWithAuth(url, { headers: authHeaders });
             if (!res.ok) {
-                logWarn(`Failed to fetch nodes for ${nodeId} (tree ${treeId}): ${res.status}`);
+                logWarn(`Failed to fetch nodes for path ${JSON.stringify(pathToFolder)} (tree ${treeId}): ${res.status}`);
                 return;
             }
 
             const data = await res.json();
-            const children = data.children?.content || [];
+            const children = getTestCaseTreeEntityContent(data);
 
             for (const child of children) {
                 if (child.type === 'LEAF' && child.testCaseId) {
@@ -59,7 +67,7 @@ async function fetchLeafTestCasesRecursive (projectId, treeId, parentNodeId, mod
                     // Если режим SELECTIVE — заходим только если мы НЕ на верхнем уровне (чтобы собрать тесты внутри вложенных групп, если они листовые?)
                     // НЕТ, для Story логика: только прямо вложенные тесты. В другие GROUP (Scenario) НЕ заходим.
                     if (mode === 'FULL') {
-                        await collect(child.id);
+                        await collect([...pathToFolder, Number(child.id)]);
                     } else if (mode === 'SELECTIVE' && isInitial) {
                         // В селективном режиме на первом уровне мы собираем только LEAF.
                         // Если встретили GROUP — игнорируем, так как это скорее всего Scenario.
@@ -71,11 +79,11 @@ async function fetchLeafTestCasesRecursive (projectId, treeId, parentNodeId, mod
                 }
             }
         } catch (err) {
-            logError(`Error in recursive collection for node ${nodeId}: ${err.message}`);
+            logError(`Error in recursive collection for path ${JSON.stringify(pathToFolder)}: ${err.message}`);
         }
     }
 
-    await collect(parentNodeId, true);
+    await collect(pathToGroup, true);
     return [...new Set(allTestCaseIds)]; // Unique IDs
 }
 
@@ -579,12 +587,19 @@ export async function createTestPlan (req, res)
                                 if (dbRes) groupName = dbRes.name;
                             } catch (e) { }
 
-                            // Проверяем в Allure c leaf=true
-                            const treeUrl = `${config.allureBaseUrl}/api/v2/project/${projectId}/test-case/tree/tree-node?treeId=${treeId}&parentNodeId=${groupId}&page=0&size=1&leaf=true`;
+                            const pathPrefix = await resolveGroupPathFromDb(projectId, groupId);
+                            const treeUrl = buildTestCaseTreeEntityUrl(config.allureBaseUrl, {
+                                projectId,
+                                treeId,
+                                page: 0,
+                                size: 1,
+                                pathPrefix,
+                                leaf: true,
+                            });
                             const treeRes = await fetchWithAuth(treeUrl, { headers: authHeaders });
                             if (!treeRes.ok) return null; // Не удалось проверить
                             const treeData = await treeRes.json();
-                            if (!treeData.children || treeData.children.content.length === 0) {
+                            if (getTestCaseTreeEntityContent(treeData).length === 0) {
                                 return { id: groupId, name: groupName };
                             }
                             return null;
