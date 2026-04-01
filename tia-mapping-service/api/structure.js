@@ -16,7 +16,8 @@ let currentProjectId = null;
  * @returns {Promise<Object>} - Структура проекта с папками, содержащими name, customFieldId, их названия и вложенные дети
  * @throws {Error} - Если запрос не удался
  */
-export async function getProjectStructure(projectId, skipCriteria = { customFieldIdsToSkip: [], namePatternsToSkip: [] }) {
+export async function getProjectStructure (projectId, skipCriteria = { customFieldIdsToSkip: [], namePatternsToSkip: [] })
+{
     try {
         logInfo(`Запрашиваем иерархическую структуру папок проекта с ID ${projectId} из Allure API`); // Логирование запроса\
 
@@ -155,15 +156,18 @@ export async function getProjectStructure(projectId, skipCriteria = { customFiel
         const nocodeProjectIds = ['307', '377'];
         if (nocodeProjectIds.includes(String(projectId))) {
             const customFieldsMap = new Map();
-            customFields.forEach(field => {
+            customFields.forEach(field =>
+            {
                 customFieldsMap.set(field.id, field.name);
             });
             logInfo(`[projectId=${projectId}] Доступные customFields (${customFields.length}):`);
-            customFields.forEach(field => {
+            customFields.forEach(field =>
+            {
                 logInfo(`[projectId=${projectId}] customField: id=${field.id}, name="${field.name}"`);
             });
             logInfo(`[projectId=${projectId}] Корневые узлы (${rootContent.length}):`);
-            rootContent.forEach((node, idx) => {
+            rootContent.forEach((node, idx) =>
+            {
                 const customFieldName = customFieldsMap.get(node.customFieldId);
                 logInfo(`[projectId=${projectId}] Корневой узел ${idx}: id=${node.id}, name="${node.name}", customFieldId=${node.customFieldId}, customFieldName="${customFieldName}", type=${node.type}`);
             });
@@ -196,24 +200,21 @@ export async function getProjectStructure(projectId, skipCriteria = { customFiel
  * @param {string|null} parentId - ID родительского функционального блока (null для корня, UUID)
  * @param {Array} customFields - Список пользовательских полей с id и названиями
  */
-async function saveFunctionalBlocks(projectId, nodes, parentId, customFields) {
+async function saveFunctionalBlocks (projectId, nodes, parentId, customFields)
+{
     const customFieldsMap = new Map();
-    customFields.forEach(field => {
+    customFields.forEach(field =>
+    {
         customFieldsMap.set(field.id, field.name);
     });
 
     // Собираем данные для пакетной вставки/обновления
-    const blocksToInsert = [];
-    const blocksToUpdate = [];
+    const blocksToUpsert = [];
     for (const node of nodes) {
         if (node.type === 'GROUP') {
             logInfo(`Обрабатываем узел типа GROUP с ID ${node.id}, name: ${node.name}, customFieldId: ${node.customFieldId}, parentId: ${parentId}, children count: ${node.children?.content?.length || 0}`);
 
-            const existingBlock = await databasePool('functional_blocks')
-                .where({ allure_id: node.id.toString(), project_id: projectId })
-                .first();
-
-            const blockData = {
+            blocksToUpsert.push({
                 allure_id: node.id.toString(),
                 project_id: projectId,
                 name: node.name,
@@ -225,43 +226,32 @@ async function saveFunctionalBlocks(projectId, nodes, parentId, customFields) {
                 layer: node.layer || null,
                 created_at: databasePool.fn.now(),
                 updated_at: databasePool.fn.now(),
-            };
-
-            if (!existingBlock) {
-                blocksToInsert.push(blockData);
-            } else {
-                blocksToUpdate.push({ ...blockData, id: existingBlock.id });
-            }
+            });
         } else if (node.type !== 'LEAF') {
             logWarn(`Пропущен узел с ID ${node.id} (type: ${node.type}, name: ${node.name}) — не GROUP и не LEAF`);
         }
     }
 
-    // Пакетная вставка новых блоков
-    if (blocksToInsert.length > 0) {
-        await databasePool('functional_blocks').insert(blocksToInsert);
-        logInfo(`Пакетно создано ${blocksToInsert.length} новых функциональных блоков для проекта ${projectId}`);
-    }
+    if (blocksToUpsert.length > 0) {
+        const uniqueBlocksMap = new Map();
+        blocksToUpsert.forEach(block => uniqueBlocksMap.set(block.allure_id, block));
+        const uniqueBlocksToUpsert = Array.from(uniqueBlocksMap.values());
 
-    // Пакетное обновление существующих блоков
-    if (blocksToUpdate.length > 0) {
-        await Promise.all(
-            blocksToUpdate.map(block =>
-                databasePool('functional_blocks')
-                    .where({ id: block.id })
-                    .update({
-                        name: block.name,
-                        custom_field_id: block.custom_field_id,
-                        custom_field_name: block.custom_field_name,
-                        count: block.count,
-                        parent_id: block.parent_id,
-                        node_type: block.node_type,
-                        layer: block.layer,
-                        updated_at: block.updated_at,
-                    })
-            )
-        );
-        logInfo(`Пакетно обновлено ${blocksToUpdate.length} функциональных блоков для проекта ${projectId}`);
+        await databasePool('functional_blocks')
+            .insert(uniqueBlocksToUpsert)
+            .onConflict('allure_id')
+            .merge([
+                'name',
+                'custom_field_id',
+                'custom_field_name',
+                'count',
+                'parent_id',
+                'node_type',
+                'layer',
+                'updated_at'
+            ]);
+
+        logInfo(`Пакетно загружено / обновлено ${uniqueBlocksToUpsert.length} функциональных блоков для проекта ${projectId}`);
     }
 
 }
@@ -277,11 +267,13 @@ async function saveFunctionalBlocks(projectId, nodes, parentId, customFields) {
  * @param {Object} [skipCriteria] - Критерии для пропуска узлов (например, { customFieldIdsToSkip: [], namePatternsToSkip: [] })
  * @returns {Promise<Array>} - Массив отформатированных папок с их детьми
  */
-async function getNestedFoldersParallel(projectId, pathPrefix, treeId, customFields, skipCriteria = { customFieldIdsToSkip: [], namePatternsToSkip: [] }) {
+async function getNestedFoldersParallel (projectId, pathPrefix, treeId, customFields, skipCriteria = { customFieldIdsToSkip: [], namePatternsToSkip: [] })
+{
     const limit = pLimit(5);
     const folders = [];
     const customFieldsMap = new Map();
-    customFields.forEach(field => {
+    customFields.forEach(field =>
+    {
         customFieldsMap.set(field.id, field.name);
     });
 
@@ -330,7 +322,8 @@ async function getNestedFoldersParallel(projectId, pathPrefix, treeId, customFie
 
         const interestingNodes = pageContent.filter(node => node.type === 'GROUP');
         const folderPromises = interestingNodes.map(node =>
-            limit(async () => {
+            limit(async () =>
+            {
                 try {
                     const childPath = [...pathPrefix, Number(node.id)];
 
@@ -418,7 +411,8 @@ async function getNestedFoldersParallel(projectId, pathPrefix, treeId, customFie
 
         const resolvedFolders = await Promise.all(folderPromises);
         // Обрабатываем результаты: если это массив (для Feature в Nocode), распаковываем его
-        resolvedFolders.forEach((result, index) => {
+        resolvedFolders.forEach((result, index) =>
+        {
             if (Array.isArray(result)) {
                 // Если вернулся массив (дети Feature), добавляем их напрямую
                 const validResults = result.filter(folder => folder !== null);
@@ -448,7 +442,8 @@ async function getNestedFoldersParallel(projectId, pathPrefix, treeId, customFie
  * @param {Object} skipCriteria - Критерии пропуска ({ customFieldIdsToSkip: [], namePatternsToSkip: [] })
  * @returns {boolean} - True, если узел нужно пропустить
  */
-function shouldSkipNode(node, skipCriteria) {
+function shouldSkipNode (node, skipCriteria)
+{
     const { customFieldIdsToSkip = [], namePatternsToSkip = [] } = skipCriteria;
 
     if (customFieldIdsToSkip.length > 0 && customFieldIdsToSkip.includes(node.customFieldId)) {
