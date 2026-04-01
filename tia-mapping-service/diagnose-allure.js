@@ -1,22 +1,32 @@
-import { fetchWithAuth, authHeaders } from './utils/allureAuth.js';
+import { fetchWithAuth, authHeaders, buildTestCaseTreeEntityUrl, getTestCaseTreeEntityContent } from './utils/allureAuth.js';
 import config from './config/index.js';
+import { resolveGroupPathFromDb } from './utils/testCaseTreeEntity.js';
 
 async function fetchLeafTestCasesRecursive(projectId, treeId, parentNodeId, mode = 'FULL') {
     const allTestCaseIds = [];
-    async function collect(nodeId, isInitial = false) {
+
+    const initialPath = await resolveGroupPathFromDb(projectId, parentNodeId);
+
+    async function collect(currentPath, isInitial = false) {
         try {
-            const url = `${config.allureBaseUrl}/api/v2/project/${projectId}/test-case/tree/tree-node?treeId=${treeId}&parentNodeId=${nodeId}&page=0&size=100`;
+            const url = buildTestCaseTreeEntityUrl(config.allureBaseUrl, {
+                projectId,
+                treeId,
+                page: 0,
+                size: 100,
+                pathPrefix: currentPath
+            });
             const res = await fetchWithAuth(url, { headers: authHeaders });
             if (!res.ok) return;
             const data = await res.json();
-            const children = data.children?.content || [];
+            const children = getTestCaseTreeEntityContent(data);
 
             for (const child of children) {
                 if (child.type === 'LEAF' && child.testCaseId) {
                     allTestCaseIds.push(child.testCaseId);
                 } else if (child.type === 'GROUP') {
                     if (mode === 'FULL') {
-                        await collect(child.id);
+                        await collect([...currentPath, Number(child.id)]);
                     } else if (mode === 'SELECTIVE' && isInitial) {
                         console.log(`  [SKIP] Skipping nested group ${child.id} (${child.name}) in SELECTIVE mode`);
                     }
@@ -24,7 +34,7 @@ async function fetchLeafTestCasesRecursive(projectId, treeId, parentNodeId, mode
             }
         } catch (err) { }
     }
-    await collect(parentNodeId, true);
+    await collect(initialPath, true);
     return [...new Set(allTestCaseIds)];
 }
 

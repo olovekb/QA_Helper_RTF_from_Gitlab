@@ -1,13 +1,22 @@
-import { fetchWithAuth, authHeaders } from './utils/allureAuth.js';
+import { fetchWithAuth, authHeaders, buildTestCaseTreeEntityUrl, getTestCaseTreeEntityContent } from './utils/allureAuth.js';
 import config from './config/index.js';
 import { logInfo, logError } from './utils/logger.js';
+import { resolveGroupPathFromDb } from './utils/testCaseTreeEntity.js';
 
 const projectId = '4'; // Hardcoded for this test
 const treeId = '532'; // Hardcoded based on user logs
 
 async function inspectNode(nodeId) {
-    const url = `${config.allureBaseUrl}/api/v2/project/${projectId}/test-case/tree/tree-node?treeId=${treeId}&parentNodeId=${nodeId}&page=0&size=100`;
+    const pathPrefix = await resolveGroupPathFromDb(projectId, nodeId);
+    const url = buildTestCaseTreeEntityUrl(config.allureBaseUrl, {
+        projectId,
+        treeId,
+        page: 0,
+        size: 100,
+        pathPrefix
+    });
     console.log(`Inspecting Node ID: ${nodeId}`);
+    console.log(`Resolved path:`, pathPrefix);
     console.log(`URL: ${url}`);
 
     try {
@@ -20,8 +29,9 @@ async function inspectNode(nodeId) {
         }
 
         const data = await response.json();
+        const children = getTestCaseTreeEntityContent(data);
         console.log('DATA (Children):');
-        console.log(JSON.stringify(data, null, 2));
+        console.log(JSON.stringify(children, null, 2));
     } catch (err) {
         console.error('Fetch error:', err.message);
     }

@@ -24,7 +24,8 @@ export const authHeaders = {
  * @returns {Promise<string>} - Полученный JWT-токен
  * @throws {Error} - Если произошла ошибка при получении токена
  */
-export async function getJwtToken() {
+export async function getJwtToken ()
+{
     try {
         // Отображаем спиннер во время выполнения запроса
         let spinnerInterval = spinningLoader('Авторизуемся по токену Allure...');
@@ -62,14 +63,17 @@ export async function getJwtToken() {
  * Использует блокировку, чтобы избежать параллельных запросов
  * @returns {Promise<string>} - Новый или текущий JWT-токен
  */
-async function refreshJwtToken() {
+async function refreshJwtToken ()
+{
     if (!isRefreshing) {
         isRefreshing = true; // Устанавливаем флаг, чтобы предотвратить параллельные обновления
-        tokenPromise = getJwtToken().then((newToken) => {
+        tokenPromise = getJwtToken().then((newToken) =>
+        {
             isRefreshing = false; // Сбрасываем флаг после обновления
             authHeaders['Authorization'] = `Bearer ${newToken}`; // Обновляем заголовки
             return newToken; // Возвращаем новый токен
-        }).catch((error) => {
+        }).catch((error) =>
+        {
             isRefreshing = false; // Сбрасываем флаг в случае ошибки
             throw error; // Пробрасываем ошибку
         });
@@ -84,7 +88,8 @@ async function refreshJwtToken() {
  * @returns {Promise<Response>} - Ответ от сервера
  * @throws {Error} - Если запрос не удался после обновления токена
  */
-export async function fetchWithAuth(url, options = {}) {
+export async function fetchWithAuth (url, options = {})
+{
     // Копируем текущие заголовки и добавляем пользовательские, если есть
     const requestHeaders = {
         ...authHeaders, // Используем глобальные заголовки с токеном
@@ -147,19 +152,68 @@ export async function fetchWithAuth(url, options = {}) {
 }
 
 /**
+ * Собрать URL .../testcasetree/entity с query-параметрами
+ */
+export function buildTestCaseTreeEntityUrl (allureBaseUrl, options)
+{
+    const base = String(allureBaseUrl || '');
+    const entityBase = `${base}/api/testcasetree/entity`;
+    const {
+        projectId,
+        treeId,
+        page,
+        size,
+        pathPrefix = [],
+        leaf,
+        deleted,
+    } = options;
+    const q = new URLSearchParams();
+    q.set('projectId', String(projectId));
+    q.set('treeId', String(treeId));
+    q.set('page', String(page));
+    q.set('size', String(size));
+    for (const id of pathPrefix) {
+        q.append('path', String(id));
+    }
+    if (deleted != null) {
+        q.set('deleted', String(deleted));
+    }
+    if (leaf) {
+        q.set('leaf', 'true');
+    }
+    q.set('sort', 'nodeSortOrder,asc');
+    return `${entityBase}?${q.toString()}`;
+}
+
+/**
+ * Ноды страницы из ответа testcasetree/entity
+ */
+export function getTestCaseTreeEntityContent (data)
+{
+    const fromChildren = data?.children?.content;
+    const fromTop = data?.content;
+    if (Array.isArray(fromChildren)) return fromChildren;
+    if (Array.isArray(fromTop)) return fromTop;
+    return [];
+}
+
+/**
  * Логирование предупреждений (можно добавить в logger.js, если нужно)
  * @param {string} message - Сообщение для логирования
  */
-function logWarn(message) {
+function logWarn (message)
+{
     console.warn(message);
 }
 
 
-export function spinningLoader(text) {
+export function spinningLoader (text)
+{
     const spinnerFrames = ['|', '/', '-', '\\'];
     let i = 0;
 
-    const interval = setInterval(() => {
+    const interval = setInterval(() =>
+    {
         process.stdout.write(`\r${text}` + spinnerFrames[i]);
         i = (i + 1) % spinnerFrames.length;
     }, 100);
