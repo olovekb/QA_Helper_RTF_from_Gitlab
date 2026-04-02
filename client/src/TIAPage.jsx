@@ -930,11 +930,27 @@ const TIAPage = ({ projects }) => {
     // Собрать все уникальные folderIds из componentMappings
     const getAllSelectedFolderIds = () => {
         const allFolderIds = new Set();
+        // Прямые маппинги компонентов
         Object.values(componentMappings).forEach(folderIds => {
             if (Array.isArray(folderIds)) {
                 folderIds.forEach(id => allFolderIds.add(id.toString()));
             }
         });
+        
+        // Маппинги страниц (через компоненты)
+        components.forEach(comp => {
+            const pages = getPagesUsingComponent(comp.name);
+            pages.forEach(page => {
+                const pName = page.page_meta?.name?.trim();
+                const pMaps = pageMappings[pName] || [];
+                pMaps.forEach(m => {
+                    if (m.functional_block_allure_id) {
+                        allFolderIds.add(m.functional_block_allure_id.toString());
+                    }
+                });
+            });
+        });
+        
         return Array.from(allFolderIds);
     };
 
@@ -942,7 +958,20 @@ const TIAPage = ({ projects }) => {
     const handleOpenSplitModal = async (force = false) => {
         // Валидация незамапленных компонентов
         if (!force) {
-            const unmapped = components.filter(c => !componentMappings[c.id] || componentMappings[c.id].length === 0);
+            const unmapped = components.filter(c => {
+                // Если есть прямой маппинг
+                if (componentMappings[c.id] && componentMappings[c.id].length > 0) return false;
+                
+                // Если есть маппинг через страницы (ТК уже привязаны к страницам этого компонента)
+                const pages = getPagesUsingComponent(c.name);
+                const hasPageMapping = pages.some(page => {
+                    const pName = page.page_meta?.name?.trim();
+                    return pName && pageMappings[pName]?.length > 0;
+                });
+                
+                return !hasPageMapping;
+            });
+            
             if (unmapped.length > 0) {
                 setUnmappedComponentsList(unmapped);
                 // По умолчанию открываем первый доступный тип
@@ -3139,7 +3168,12 @@ const TIAPage = ({ projects }) => {
                                                 const riskColor = comp.riskLevel === 'HIGH' ? '#dc3545' :
                                                     comp.riskLevel === 'MEDIUM' ? '#ffc107' : '#28a745';
                                                 const isSelected = selectedComponentId === comp.id;
-                                                const hasMapping = componentMappings[comp.id]?.length > 0;
+                                                const hasDirectMapping = componentMappings[comp.id]?.length > 0;
+                                                const hasPageMappingForComp = pages.some(page => {
+                                                    const pName = page.page_meta?.name?.trim();
+                                                    return pName && pageMappings[pName]?.length > 0;
+                                                });
+                                                const hasMapping = hasDirectMapping || hasPageMappingForComp;
 
                                                 // Подготовка опций для Select внутри каждой карточки
                                                 const getFlatFolders = (nodes, result = []) => {
@@ -3653,56 +3687,9 @@ const TIAPage = ({ projects }) => {
                                                             </div>
                                                         )}
 
-                                                        {/* Маппинг функциональных блоков */}
-                                                        <div style={{
-                                                            marginTop: '16px',
-                                                            paddingTop: '12px',
-                                                            borderTop: '1px solid #e2e8f0'
-                                                        }}>
-                                                            <div style={{
-                                                                fontSize: '12px',
-                                                                color: '#64748b',
-                                                                marginBottom: '8px',
-                                                                fontWeight: 600
-                                                            }}>
-                                                                Привязать к функциональным блокам:
-                                                            </div>
-                                                            <div onClick={(e) => e.stopPropagation()}>
-                                                                <Select
-                                                                    isMulti
-                                                                    placeholder="Выберите блоки..."
-                                                                    options={folderOptions}
-                                                                    value={currentMappingOptions}
-                                                                    onChange={(selected) => handleMappingChange(comp.id, selected || [])}
-                                                                    styles={{
-                                                                        control: (base) => ({
-                                                                            ...base,
-                                                                            borderRadius: '8px',
-                                                                            borderColor: '#e2e8f0',
-                                                                            boxShadow: 'none',
-                                                                            '&:hover': { borderColor: '#3b82f6' }
-                                                                        }),
-                                                                        multiValue: (base) => ({
-                                                                            ...base,
-                                                                            backgroundColor: '#eff6ff',
-                                                                            borderRadius: '4px'
-                                                                        }),
-                                                                        multiValueLabel: (base) => ({
-                                                                            ...base,
-                                                                            color: '#1e40af',
-                                                                            fontWeight: 500
-                                                                        }),
-                                                                        multiValueRemove: (base) => ({
-                                                                            ...base,
-                                                                            color: '#3b82f6',
-                                                                            '&:hover': { backgroundColor: '#dbeafe', color: '#1d4ed8' }
-                                                                        })
-                                                                    }}
-                                                                />
-                                                            </div>
-                                                        </div>
 
-                                                        {/* Отображение привязанных блоков (Покрыто) - Стиль как на скриншоте */}
+
+                                                        {/* Отображение привязанных блоков (Покрыто) - Теги вместо списка */}
                                                         {hasMapping && (
                                                             <div style={{
                                                                 marginTop: '12px'
@@ -3717,77 +3704,86 @@ const TIAPage = ({ projects }) => {
                                                                 </div>
                                                                 <div style={{
                                                                     display: 'flex',
-                                                                    flexDirection: 'column',
-                                                                    gap: '4px'
+                                                                    flexWrap: 'wrap',
+                                                                    gap: '6px'
                                                                 }}>
-                                                                    {componentMappings[comp.id].map(folderId => {
-                                                                        const folder = findFolderById(folders, folderId);
-                                                                        const isAutoMapped = autoMappedBlocks[comp.id]?.includes(folderId.toString());
+                                                                    {(() => {
+                                                                        // Собираем все уникальные блоки: прямые и по страницам
+                                                                        const directIds = componentMappings[comp.id] || [];
+                                                                        const pageLevelIds = pages.flatMap(page => {
+                                                                            const pName = page.page_meta?.name?.trim();
+                                                                            return (pageMappings[pName] || []).map(m => m.functional_block_allure_id?.toString());
+                                                                        }).filter(Boolean);
                                                                         
-                                                                        return (
-                                                                            <div
-                                                                                key={`${comp.id}-mapping-${folderId}`}
-                                                                                style={{
-                                                                                    padding: '8px 12px',
-                                                                                    backgroundColor: isAutoMapped ? '#fefce8' : '#f0fdf4',
-                                                                                    borderRadius: '6px',
-                                                                                    fontSize: '13px',
-                                                                                    color: isAutoMapped ? '#854d0e' : '#166534',
-                                                                                    border: `1px solid ${isAutoMapped ? '#fef08a' : '#dcfce7'}`,
-                                                                                    display: 'flex',
-                                                                                    alignItems: 'center',
-                                                                                    justifyContent: 'space-between',
-                                                                                    fontWeight: 500,
-                                                                                    width: '100%',
-                                                                                    boxSizing: 'border-box'
-                                                                                }}
-                                                                            >
-                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
-                                                                                    {isAutoMapped ? (
-                                                                                        <span title="Автоматическое сопоставление" style={{ fontSize: '14px' }}>🔄</span>
-                                                                                    ) : (
-                                                                                        <span style={{ color: '#22c55e' }}>✓</span>
-                                                                                    )}
-                                                                                    <span style={{ 
-                                                                                        whiteSpace: 'nowrap', 
-                                                                                        overflow: 'hidden', 
-                                                                                        textOverflow: 'ellipsis' 
-                                                                                    }}>
-                                                                                        {folder ? folder.name : `ID: ${folderId}`}
-                                                                                    </span>
-                                                                                </div>
-                                                                                <button
-                                                                                    onClick={(e) => {
-                                                                                        e.stopPropagation();
-                                                                                        handleRemoveMapping(comp.id, folderId);
-                                                                                    }}
+                                                                        const allIds = Array.from(new Set([...directIds, ...pageLevelIds]));
+                                                                        
+                                                                        return allIds.map(folderId => {
+                                                                            const folder = findFolderById(folders, folderId);
+                                                                            const isAutoMapped = autoMappedBlocks[comp.id]?.includes(folderId.toString());
+                                                                            const isPageLevel = !directIds.includes(folderId.toString());
+                                                                            
+                                                                            return (
+                                                                                <div
+                                                                                    key={`${comp.id}-mapping-${folderId}`}
                                                                                     style={{
-                                                                                        border: 'none',
-                                                                                        background: 'none',
-                                                                                        padding: '4px',
-                                                                                        cursor: 'pointer',
-                                                                                        color: isAutoMapped ? '#ca8a04' : '#22c55e',
-                                                                                        fontSize: '16px',
-                                                                                        lineHeight: 1,
-                                                                                        marginLeft: '8px',
+                                                                                        padding: '6px 10px',
+                                                                                        backgroundColor: isPageLevel ? '#ecfeff' : (isAutoMapped ? '#fefce8' : '#f0fdf4'),
+                                                                                        borderRadius: '8px',
+                                                                                        fontSize: '12px',
+                                                                                        color: isPageLevel ? '#083344' : (isAutoMapped ? '#854d0e' : '#166534'),
+                                                                                        border: `1px solid ${isPageLevel ? '#a5f3fc' : (isAutoMapped ? '#fef08a' : '#dcfce7')}`,
                                                                                         display: 'flex',
                                                                                         alignItems: 'center',
-                                                                                        justifyContent: 'center',
-                                                                                        borderRadius: '4px',
-                                                                                        transition: 'all 0.2s'
-                                                                                    }}
-                                                                                    onMouseEnter={(e) => {
-                                                                                        e.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.05)';
-                                                                                    }}
-                                                                                    onMouseLeave={(e) => {
-                                                                                        e.currentTarget.style.backgroundColor = 'transparent';
+                                                                                        gap: '6px',
+                                                                                        fontWeight: 500,
+                                                                                        transition: 'all 0.2s',
+                                                                                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
                                                                                     }}
                                                                                 >
-                                                                                    ×
-                                                                                </button>
-                                                                            </div>
-                                                                        );
-                                                                    })}
+                                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden' }}>
+                                                                                        {isPageLevel ? (
+                                                                                            <span title="Унаследовано из зависимостей страниц" style={{ fontSize: '12px' }}>📄</span>
+                                                                                        ) : (isAutoMapped ? (
+                                                                                            <span title="Автоматическое сопоставление" style={{ fontSize: '14px' }}>🔄</span>
+                                                                                        ) : (
+                                                                                            <span style={{ color: '#22c55e' }}>✓</span>
+                                                                                        ))}
+                                                                                        <span style={{ 
+                                                                                            whiteSpace: 'nowrap', 
+                                                                                            overflow: 'hidden', 
+                                                                                            textOverflow: 'ellipsis',
+                                                                                            maxWidth: '200px'
+                                                                                        }}>
+                                                                                            {folder ? folder.name : `ID: ${folderId}`}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                    {!isPageLevel && (
+                                                                                        <button
+                                                                                            onClick={(e) => {
+                                                                                                e.stopPropagation();
+                                                                                                handleRemoveMapping(comp.id, folderId);
+                                                                                            }}
+                                                                                            style={{
+                                                                                                border: 'none',
+                                                                                                background: 'none',
+                                                                                                padding: '2px',
+                                                                                                cursor: 'pointer',
+                                                                                                color: isAutoMapped ? '#ca8a04' : '#22c55e',
+                                                                                                fontSize: '14px',
+                                                                                                lineHeight: 1,
+                                                                                                display: 'flex',
+                                                                                                alignItems: 'center',
+                                                                                                justifyContent: 'center',
+                                                                                                borderRadius: '4px'
+                                                                                            }}
+                                                                                        >
+                                                                                            ×
+                                                                                        </button>
+                                                                                    )}
+                                                                                </div>
+                                                                            );
+                                                                        });
+                                                                    })()}
                                                                 </div>
                                                             </div>
                                                         )}
