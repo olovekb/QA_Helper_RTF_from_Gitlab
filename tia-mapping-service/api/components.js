@@ -412,9 +412,6 @@ export async function handleComponentMapping(req, res) {
                 for (const pageDep of validatedPageDependencies) {
                     const pageName = pageDep.pageName;
 
-                    // Ищем маппинги функциональных блоков для этой Page
-                    // Сначала проверяем новую структуру (components + component_functional_blocks)
-                    // Ослабляем проверку: ищем 'page', 'frontend' или 'component' по имени
                     const pageComponent = await databasePool('components')
                         .whereIn('component_type', ['page', 'frontend', 'component'])
                         .andWhere({
@@ -594,7 +591,7 @@ export async function getPageMappings(req, res) {
             });
 
         const pageComponentIds = pageComponents.map(c => c.id);
-        
+
         // Получаем все ID для каждого имени страницы (поддержка нескольких типов с одним именем)
         const nameToIdsMap = new Map();
         pageComponents.forEach(c => {
@@ -722,6 +719,59 @@ export async function getComponentMappings(req, res) {
                     functional_block_allure_id: row.functional_block_allure_id,
                     functional_block_name: row.functional_block_name,
                     functional_block_custom_field_name: row.functional_block_custom_field_name
+                });
+            }
+        });
+
+        // Шаг 2: Получаем маппинги из старой структуры (для тех, кто еще не мигрировал)
+        const oldMappings = await databasePool('component_mappings')
+            .join('functional_blocks', 'component_mappings.functional_block_id', 'functional_blocks.id')
+            .where({ 'component_mappings.project_id': projectId })
+            .select(
+                'component_mappings.project_id',
+                'component_mappings.component_type',
+                'component_mappings.component_name',
+                'functional_blocks.id as functional_block_id',
+                'functional_blocks.allure_id as functional_block_allure_id',
+                'functional_blocks.name as functional_block_name',
+                'functional_blocks.custom_field_name as functional_block_custom_field_name'
+            );
+
+        // Добавляем данные из старой структуры
+        oldMappings.forEach(row => {
+            // Ищем в карте по имени и типу (так как в старой структуре нет ID из новой таблицы)
+            // Используем поиск по значениям карты, так как ключи - это ID новой таблицы
+            const existingEntry = Array.from(componentMap.values()).find(c =>
+                c.component_name === row.component_name &&
+                c.component_type === row.component_type
+            );
+
+            if (existingEntry) {
+                // Добавляем блок, если его еще нет в списке функциональных блоков этого компонента
+                const blockExists = existingEntry.functional_blocks.some(fb => fb.functional_block_id === row.functional_block_id);
+                if (!blockExists) {
+                    existingEntry.functional_blocks.push({
+                        functional_block_id: row.functional_block_id,
+                        functional_block_allure_id: row.functional_block_allure_id,
+                        functional_block_name: row.functional_block_name,
+                        functional_block_custom_field_name: row.functional_block_custom_field_name
+                    });
+                }
+            } else {
+                // Если компонента нет в новой таблице (например, удален из кода, но есть в базе), 
+                // добавляем его целиком как "исторический"
+                const key = `old_${row.component_name}_${row.component_type}`;
+                componentMap.set(key, {
+                    component_id: null,
+                    project_id: row.project_id,
+                    component_type: row.component_type,
+                    component_name: row.component_name,
+                    functional_blocks: [{
+                        functional_block_id: row.functional_block_id,
+                        functional_block_allure_id: row.functional_block_allure_id,
+                        functional_block_name: row.functional_block_name,
+                        functional_block_custom_field_name: row.functional_block_custom_field_name
+                    }]
                 });
             }
         });
