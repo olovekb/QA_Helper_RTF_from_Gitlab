@@ -739,11 +739,9 @@ export async function getComponentMappings(req, res) {
 
         // Добавляем данные из старой структуры
         oldMappings.forEach(row => {
-            // Ищем в карте по имени и типу (так как в старой структуре нет ID из новой таблицы)
-            // Используем поиск по значениям карты, так как ключи - это ID новой таблицы
+
             const existingEntry = Array.from(componentMap.values()).find(c =>
-                c.component_name === row.component_name &&
-                c.component_type === row.component_type
+                c.component_name === row.component_name
             );
 
             if (existingEntry) {
