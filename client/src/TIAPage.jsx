@@ -460,65 +460,78 @@ const TIAPage = ({ projects }) => {
                     autoMappedBlocks[component.id] = new Set(); // Инициализируем Set для автоматических блоков
                 });
 
-                // Затем добавляем автоматические маппинги из связанных Page
-                const hasNewFormat = (frontendJSON && isNewTiaFormat(frontendJSON)) || (backendJSON && isNewTiaFormat(backendJSON));
-                if (hasNewFormat) {
-                    try {
-                        const components = extractedComponents;
-                        const pageDependencies = buildPageDependencies(components);
+                // Затем добавляем автоматические маппинги из связанных Page и по имени самого компонента
+                try {
+                    const components = extractedComponents;
+                    const pageDependencies = buildPageDependencies(components);
 
-                        // Собираем уникальные имена Page
-                        const pageNames = [...new Set(pageDependencies.map(dep => dep.pageName?.trim()))].filter(name => name); // Убираем пустые значения
+                    // Собираем уникальные имена: и из зависимостей, и сами имена компонентов (на случай если компонент — это страница)
+                    const allRelatedNames = new Set();
+                    pageDependencies.forEach(dep => {
+                        if (dep.pageName?.trim()) allRelatedNames.add(dep.pageName.trim());
+                    });
+                    components.forEach(comp => {
+                        if (comp.name?.trim()) allRelatedNames.add(comp.name.trim());
+                    });
 
-                        if (pageNames.length > 0) {
-                            console.log(`Запрашиваем маппинги для Page: ${pageNames.length} шт.`);
-                            const response = await axios.post(`${config.TIAUrl}/api/components/page-mappings`, {
-                                projectId,
-                                pageNames
-                            });
+                    const pageNames = Array.from(allRelatedNames);
 
-                            const { pageMappings: fetchedPageMappings } = response.data;
-                            console.log('TIA Page Mappings received:', fetchedPageMappings);
-                            setPageMappings(fetchedPageMappings || {});
-                            const pageMappingsData = fetchedPageMappings || {};
+                    if (pageNames.length > 0) {
+                        console.log(`Запрашиваем маппинги для имен: ${pageNames.length} шт.`);
+                        const response = await axios.post(`${config.TIAUrl}/api/components/page-mappings`, {
+                            projectId,
+                            pageNames
+                        });
 
-                            // Для каждого компонента находим связанные Page и добавляем их маппинги
-                            extractedComponents.forEach(component => {
-                                const componentId = component.id;
-                                const componentPageDeps = pageDependencies.filter(
-                                    dep => dep.componentName === component.name
-                                );
+                        const { pageMappings: fetchedPageMappings } = response.data;
+                        console.log('TIA Page Mappings received:', fetchedPageMappings);
+                        setPageMappings(fetchedPageMappings || {});
+                        const pageMappingsData = fetchedPageMappings || {};
 
-                                const autoFolderIds = new Set(initialMappings[componentId] || []);
+                        // Для каждого компонента находим связанные Page (и само имя) и добавляем их маппинги
+                        extractedComponents.forEach(component => {
+                            const componentId = component.id;
+                            const normalizedCompName = component.name?.trim();
+                            
+                            // 1. Собираем имена страниц, от которых зависит компонент
+                            const relatedPageNames = new Set(
+                                pageDependencies
+                                    .filter(dep => dep.componentName === component.name)
+                                    .map(dep => dep.pageName?.trim())
+                                    .filter(name => name)
+                            );
+                            
+                            // 2. Добавляем само имя компонента в список поиска маппингов
+                            if (normalizedCompName) {
+                                relatedPageNames.add(normalizedCompName);
+                            }
 
-                                componentPageDeps.forEach(pageDep => {
-                                    const pageName = pageDep.pageName?.trim();
-                                    if (!pageName) return;
+                            const autoFolderIds = new Set(initialMappings[componentId] || []);
+
+                            relatedPageNames.forEach(pageName => {
+                                const pageMapping = pageMappingsData[pageName] || [];
+
+                                pageMapping.forEach(mapping => {
+                                    const allureId = mapping.functional_block_allure_id;
+                                    const folderId = findFolderAllureId(allureId)?.toString();
                                     
-                                    const pageMapping = pageMappings[pageName] || [];
-
-                                    pageMapping.forEach(mapping => {
-                                        const allureId = mapping.functional_block_allure_id;
-                                        const folderId = findFolderAllureId(allureId)?.toString();
-                                        
-                                        if (folderId && !autoFolderIds.has(folderId)) {
-                                            autoFolderIds.add(folderId);
-                                            // Инициализируем Set для компонента в autoMappedBlocks, если его еще нет
-                                            if (!autoMappedBlocks[componentId]) {
-                                                autoMappedBlocks[componentId] = new Set();
-                                            }
-                                            autoMappedBlocks[componentId].add(folderId);
+                                    if (folderId && !autoFolderIds.has(folderId)) {
+                                        autoFolderIds.add(folderId);
+                                        // Инициализируем Set для компонента в autoMappedBlocks, если его еще нет
+                                        if (!autoMappedBlocks[componentId]) {
+                                            autoMappedBlocks[componentId] = new Set();
                                         }
-                                    });
+                                        autoMappedBlocks[componentId].add(folderId);
+                                    }
                                 });
-
-                                initialMappings[componentId] = Array.from(autoFolderIds);
                             });
-                        }
-                    } catch (err) {
-                        logError('Ошибка при загрузке автоматических маппингов из Page:', err.message);
-                        // Продолжаем работу даже если не удалось загрузить автоматические маппинги
+
+                            initialMappings[componentId] = Array.from(autoFolderIds);
+                        });
                     }
+                } catch (err) {
+                    logError('Ошибка при загрузке автоматических маппингов:', err.message);
+                    // Продолжаем работу даже если не удалось загрузить автоматические маппинги
                 }
 
                 setComponentMappings(initialMappings);
@@ -1058,6 +1071,21 @@ const TIAPage = ({ projects }) => {
         setComponentMappings(prev => ({
             ...prev,
             [componentId]: selectedOptions.map(option => option.value.toString()),
+        }));
+    };
+
+    const handleRemoveMapping = (componentId, folderId) => {
+        // Удаляем из обычных маппингов
+        setComponentMappings(prev => ({
+            ...prev,
+            [componentId]: (prev[componentId] || []).filter(id => id.toString() !== folderId.toString())
+        }));
+
+        // Если это был авто-маппинг, фиксируем его удаление (чтобы он не вернулся при ререндере, если логика сложная)
+        // Но сейчас логика простая, так что достаточно просто убрать из отображения
+        setAutoMappedBlocks(prev => ({
+            ...prev,
+            [componentId]: (prev[componentId] || []).filter(id => id.toString() !== folderId.toString())
         }));
     };
 
@@ -3113,6 +3141,20 @@ const TIAPage = ({ projects }) => {
                                                 const isSelected = selectedComponentId === comp.id;
                                                 const hasMapping = componentMappings[comp.id]?.length > 0;
 
+                                                // Подготовка опций для Select внутри каждой карточки
+                                                const getFlatFolders = (nodes, result = []) => {
+                                                    nodes.forEach(node => {
+                                                        result.push({ value: node.id.toString(), label: node.name });
+                                                        if (node.children) getFlatFolders(node.children, result);
+                                                    });
+                                                    return result;
+                                                };
+                                                const folderOptions = getFlatFolders(folders);
+                                                const currentMappingOptions = (componentMappings[comp.id] || []).map(id => {
+                                                    const folder = findFolderById(folders, id);
+                                                    return { value: id.toString(), label: folder ? folder.name : `ID: ${id}` };
+                                                });
+
                                                 return (
                                                     <div
                                                         key={comp.id}
@@ -3611,85 +3653,140 @@ const TIAPage = ({ projects }) => {
                                                             </div>
                                                         )}
 
+                                                        {/* Маппинг функциональных блоков */}
+                                                        <div style={{
+                                                            marginTop: '16px',
+                                                            paddingTop: '12px',
+                                                            borderTop: '1px solid #e2e8f0'
+                                                        }}>
+                                                            <div style={{
+                                                                fontSize: '12px',
+                                                                color: '#64748b',
+                                                                marginBottom: '8px',
+                                                                fontWeight: 600
+                                                            }}>
+                                                                Привязать к функциональным блокам:
+                                                            </div>
+                                                            <div onClick={(e) => e.stopPropagation()}>
+                                                                <Select
+                                                                    isMulti
+                                                                    placeholder="Выберите блоки..."
+                                                                    options={folderOptions}
+                                                                    value={currentMappingOptions}
+                                                                    onChange={(selected) => handleMappingChange(comp.id, selected || [])}
+                                                                    styles={{
+                                                                        control: (base) => ({
+                                                                            ...base,
+                                                                            borderRadius: '8px',
+                                                                            borderColor: '#e2e8f0',
+                                                                            boxShadow: 'none',
+                                                                            '&:hover': { borderColor: '#3b82f6' }
+                                                                        }),
+                                                                        multiValue: (base) => ({
+                                                                            ...base,
+                                                                            backgroundColor: '#eff6ff',
+                                                                            borderRadius: '4px'
+                                                                        }),
+                                                                        multiValueLabel: (base) => ({
+                                                                            ...base,
+                                                                            color: '#1e40af',
+                                                                            fontWeight: 500
+                                                                        }),
+                                                                        multiValueRemove: (base) => ({
+                                                                            ...base,
+                                                                            color: '#3b82f6',
+                                                                            '&:hover': { backgroundColor: '#dbeafe', color: '#1d4ed8' }
+                                                                        })
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                        </div>
 
-                                                        {/* Выбранные маппинги */}
+                                                        {/* Отображение привязанных блоков (Покрыто) - Стиль как на скриншоте */}
                                                         {hasMapping && (
                                                             <div style={{
-                                                                marginTop: '12px',
-                                                                paddingTop: '12px',
-                                                                borderTop: '1px solid #dee2e6'
+                                                                marginTop: '12px'
                                                             }}>
                                                                 <div style={{
-                                                                    fontSize: '12px',
-                                                                    color: '#6c757d',
-                                                                    marginBottom: '6px',
+                                                                    fontSize: '13px',
+                                                                    color: '#64748b',
+                                                                    marginBottom: '8px',
                                                                     fontWeight: 600
                                                                 }}>
                                                                     Покрыто:
                                                                 </div>
                                                                 <div style={{
                                                                     display: 'flex',
-                                                                    flexWrap: 'wrap',
-                                                                    gap: '6px'
+                                                                    flexDirection: 'column',
+                                                                    gap: '4px'
                                                                 }}>
                                                                     {componentMappings[comp.id].map(folderId => {
-                                                                        const folder = findFolderById(folders, parseInt(folderId));
-                                                                        const isAutoMapped = autoMappedBlocks[comp.id]?.includes(folderId);
-                                                                        return folder ? (
-                                                                            <span
-                                                                                key={folderId}
-                                                                                title={isAutoMapped ? 'Автоматически добавлен из связанной Page' : ''}
+                                                                        const folder = findFolderById(folders, folderId);
+                                                                        const isAutoMapped = autoMappedBlocks[comp.id]?.includes(folderId.toString());
+                                                                        
+                                                                        return (
+                                                                            <div
+                                                                                key={`${comp.id}-mapping-${folderId}`}
                                                                                 style={{
-                                                                                    padding: '4px 10px',
-                                                                                    backgroundColor: isAutoMapped ? '#fff3cd' : '#d4edda',
-                                                                                    borderRadius: '4px',
-                                                                                    fontSize: '12px',
-                                                                                    color: isAutoMapped ? '#856404' : '#155724',
-                                                                                    fontWeight: 500,
-                                                                                    border: isAutoMapped ? '1px solid #ffc107' : 'none',
-                                                                                    display: 'inline-flex',
+                                                                                    padding: '8px 12px',
+                                                                                    backgroundColor: isAutoMapped ? '#fefce8' : '#f0fdf4',
+                                                                                    borderRadius: '6px',
+                                                                                    fontSize: '13px',
+                                                                                    color: isAutoMapped ? '#854d0e' : '#166534',
+                                                                                    border: `1px solid ${isAutoMapped ? '#fef08a' : '#dcfce7'}`,
+                                                                                    display: 'flex',
                                                                                     alignItems: 'center',
-                                                                                    gap: '4px'
+                                                                                    justifyContent: 'space-between',
+                                                                                    fontWeight: 500,
+                                                                                    width: '100%',
+                                                                                    boxSizing: 'border-box'
                                                                                 }}
                                                                             >
-                                                                                {isAutoMapped && '🔄 '}
-                                                                                {formatCustomFieldName(folder, 0)}
+                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                                                                                    {isAutoMapped ? (
+                                                                                        <span title="Автоматическое сопоставление" style={{ fontSize: '14px' }}>🔄</span>
+                                                                                    ) : (
+                                                                                        <span style={{ color: '#22c55e' }}>✓</span>
+                                                                                    )}
+                                                                                    <span style={{ 
+                                                                                        whiteSpace: 'nowrap', 
+                                                                                        overflow: 'hidden', 
+                                                                                        textOverflow: 'ellipsis' 
+                                                                                    }}>
+                                                                                        {folder ? folder.name : `ID: ${folderId}`}
+                                                                                    </span>
+                                                                                </div>
                                                                                 <button
                                                                                     onClick={(e) => {
                                                                                         e.stopPropagation();
-                                                                                        // Удаляем из маппингов
-                                                                                        const updatedMappings = { ...componentMappings };
-                                                                                        updatedMappings[comp.id] = (updatedMappings[comp.id] || []).filter(id => id.toString() !== folderId.toString());
-                                                                                        setComponentMappings(updatedMappings);
-
-                                                                                        // Также убираем из списка авто-маппингов, чтобы он не подкрашивался если будет добавлен снова
-                                                                                        if (autoMappedBlocks[comp.id]?.includes(folderId)) {
-                                                                                            const updatedAuto = { ...autoMappedBlocks };
-                                                                                            updatedAuto[comp.id] = updatedAuto[comp.id].filter(id => id.toString() !== folderId.toString());
-                                                                                            setAutoMappedBlocks(updatedAuto);
-                                                                                        }
+                                                                                        handleRemoveMapping(comp.id, folderId);
                                                                                     }}
                                                                                     style={{
                                                                                         border: 'none',
                                                                                         background: 'none',
-                                                                                        color: 'inherit',
+                                                                                        padding: '4px',
                                                                                         cursor: 'pointer',
-                                                                                        padding: '0 2px',
-                                                                                        marginLeft: '4px',
-                                                                                        fontSize: '14px',
-                                                                                        fontWeight: 'bold',
+                                                                                        color: isAutoMapped ? '#ca8a04' : '#22c55e',
+                                                                                        fontSize: '16px',
+                                                                                        lineHeight: 1,
+                                                                                        marginLeft: '8px',
                                                                                         display: 'flex',
                                                                                         alignItems: 'center',
-                                                                                        opacity: 0.6
+                                                                                        justifyContent: 'center',
+                                                                                        borderRadius: '4px',
+                                                                                        transition: 'all 0.2s'
                                                                                     }}
-                                                                                    onMouseOver={(e) => e.currentTarget.style.opacity = 1}
-                                                                                    onMouseOut={(e) => e.currentTarget.style.opacity = 0.6}
-                                                                                    title="Удалить маппинг"
+                                                                                    onMouseEnter={(e) => {
+                                                                                        e.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.05)';
+                                                                                    }}
+                                                                                    onMouseLeave={(e) => {
+                                                                                        e.currentTarget.style.backgroundColor = 'transparent';
+                                                                                    }}
                                                                                 >
                                                                                     ×
                                                                                 </button>
-                                                                            </span>
-                                                                        ) : null;
+                                                                            </div>
+                                                                        );
                                                                     })}
                                                                 </div>
                                                             </div>
