@@ -476,8 +476,10 @@ const TIAPage = ({ projects }) =>
                 extractedComponents.forEach(component =>
                 {
                     const mappingsForComponent = existingMappings.filter(
-                        m => m.component_name === component.name && m.component_type === component.type
+                        m => m.component_name === component.name
                     );
+                    // Если есть несколько маппингов (например, для разных типов 'page' и 'frontend'),
+                    // то берем все уникальные блоки.
                     const folderIds = mappingsForComponent
                         .map(m => findFolderAllureId(m.functional_block_allure_id)?.toString() || '')
                         .filter(id => id);

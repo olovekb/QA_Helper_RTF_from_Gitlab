@@ -414,12 +414,14 @@ export async function handleComponentMapping(req, res) {
 
                     // Ищем маппинги функциональных блоков для этой Page
                     // Сначала проверяем новую структуру (components + component_functional_blocks)
+                    // Ослабляем проверку: ищем 'page', 'frontend' или 'component' по имени
                     const pageComponent = await databasePool('components')
-                        .where({
+                        .whereIn('component_type', ['page', 'frontend', 'component'])
+                        .andWhere({
                             project_id: projectId,
-                            component_type: 'page',
                             component_name: pageName
                         })
+                        .orderByRaw("CASE WHEN component_type = 'page' THEN 0 ELSE 1 END") // Приоритет 'page'
                         .first();
 
                     if (pageComponent) {
@@ -440,15 +442,16 @@ export async function handleComponentMapping(req, res) {
                     }
 
                     // Если не найдено в новой структуре, проверяем старую (component_mappings)
-                    if (autoMappedBlocks.size === 0 || !pageComponent) {
+                    if (autoMappedBlocks.size === 0) {
                         const oldPageMappings = await databasePool('component_mappings')
                             .join('functional_blocks', 'component_mappings.functional_block_id', 'functional_blocks.id')
-                            .where({
+                            .whereIn('component_mappings.component_type', ['page', 'frontend', 'component'])
+                            .andWhere({
                                 'component_mappings.project_id': projectId,
-                                'component_mappings.component_type': 'page',
                                 'component_mappings.component_name': pageName,
                                 'functional_blocks.project_id': projectId
                             })
+                            .orderByRaw("CASE WHEN component_type = 'page' THEN 0 ELSE 1 END") // Приоритет 'page'
                             .select('functional_blocks.id', 'functional_blocks.allure_id');
 
                         for (const fb of oldPageMappings) {
@@ -591,7 +594,15 @@ export async function getPageMappings(req, res) {
             });
 
         const pageComponentIds = pageComponents.map(c => c.id);
-        const nameToIdMap = new Map(pageComponents.map(c => [c.component_name, c.id]));
+        
+        // Получаем все ID для каждого имени страницы (поддержка нескольких типов с одним именем)
+        const nameToIdsMap = new Map();
+        pageComponents.forEach(c => {
+            if (!nameToIdsMap.has(c.component_name)) {
+                nameToIdsMap.set(c.component_name, []);
+            }
+            nameToIdsMap.get(c.component_name).push(c.id);
+        });
 
         // 2. Получаем все маппинги для этих компонентов (новая структура)
         let allNewMappings = [];
@@ -624,10 +635,10 @@ export async function getPageMappings(req, res) {
             const uniqueMappings = new Map();
 
             // Из новой структуры
-            const compId = nameToIdMap.get(pageName);
-            if (compId) {
+            const compIds = nameToIdsMap.get(pageName) || [];
+            if (compIds.length > 0) {
                 allNewMappings
-                    .filter(m => m.component_id === compId)
+                    .filter(m => compIds.includes(m.component_id))
                     .forEach(m => {
                         uniqueMappings.set(m.allure_id, {
                             functional_block_allure_id: m.allure_id,
