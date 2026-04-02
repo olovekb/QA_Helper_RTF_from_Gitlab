@@ -361,10 +361,10 @@ const TIAPage = ({ projects }) =>
                 if (pageName && page.depends_on_components) {
                     (page.depends_on_components || []).forEach((compName) =>
                     {
-                        // Определяем тип компонента: если это страница (page), то 'page', иначе 'component'
-                        // Но для создания компонента в БД нужен реальный тип: 'frontend' или 'backend'
-                        const realComponentType = componentTypeMap.get(compName) || 'frontend'; // По умолчанию frontend
-                        const dependencyType = realComponentType === 'page' ? 'page' : 'component'; // Тип зависимости
+                        const realComponentType = componentTypeMap.get(compName) || 'frontend';
+                        // Определяем тип компонента: если он встречается в списке страниц отчета, то это 'page'
+                        const isPage = (report.pages || []).some(p => p.page_meta?.name === compName);
+                        const dependencyType = isPage ? 'page' : 'component'; // Тип зависимости
 
                         dependencies.push({
                             pageName: pageName,
@@ -503,6 +503,7 @@ const TIAPage = ({ projects }) =>
                             });
 
                             const { pageMappings } = response.data;
+                            console.log('TIA Page Mappings received:', pageMappings);
 
                             // Для каждого компонента находим связанные Page и добавляем их маппинги
                             extractedComponents.forEach(component =>

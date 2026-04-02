@@ -587,8 +587,7 @@ export async function getPageMappings(req, res) {
         const pageComponents = await databasePool('components')
             .whereIn('component_name', pageNamesArray)
             .andWhere({
-                project_id: projectId,
-                component_type: 'page'
+                project_id: projectId
             });
 
         const pageComponentIds = pageComponents.map(c => c.id);
@@ -612,8 +611,7 @@ export async function getPageMappings(req, res) {
             .join('functional_blocks', 'component_mappings.functional_block_id', 'functional_blocks.id')
             .whereIn('component_name', pageNamesArray)
             .andWhere({
-                'component_mappings.project_id': projectId,
-                'component_mappings.component_type': 'page'
+                'component_mappings.project_id': projectId
             })
             .select(
                 'component_mappings.component_name',
