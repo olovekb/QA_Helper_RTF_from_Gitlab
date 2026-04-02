@@ -68,6 +68,8 @@ const TIAPage = ({ projects }) => {
     const [showEmptyGroupsModal, setShowEmptyGroupsModal] = useState(false);
     const [emptyGroupsData, setEmptyGroupsData] = useState([]);
     const [isCreatingStubs, setIsCreatingStubs] = useState(false);
+    const [expandedMappedComponents, setExpandedMappedComponents] = useState({}); // Для раскрытия длинных списков тегов { compId: boolean }
+    const [disabledInheritance, setDisabledInheritance] = useState({}); // Для блокировки наследования от страниц { compId: boolean }
 
 
 
@@ -389,12 +391,16 @@ const TIAPage = ({ projects }) => {
             // Для этого отправляем пустой массив, но с метаданными
             const functionalBlocks = folderIds.length > 0 ? folderIds.map(id => id.toString()) : [];
 
+            // Если наследование заблокировано, не отправляем зависимости страниц (чтобы бэкенд не авто-мапил)
+            const isInheritanceBlocked = disabledInheritance[component.id];
+            const pageDeps = isInheritanceBlocked ? [] : pageDependencies.filter(dep => dep.componentName === component.name);
+            
             await axios.post(`${config.TIAUrl}/api/components`, {
                 projectId,
                 componentType: component.type,
                 componentName: component.name,
                 functionalBlock: functionalBlocks,
-                pageDependencies: pageDependencies.filter(dep => dep.componentName === component.name),
+                pageDependencies: pageDeps,
                 releaseVersion: releaseVersion,
                 changeDate: changeDate,
                 isBugFix: isBugFix,
@@ -939,6 +945,9 @@ const TIAPage = ({ projects }) => {
         
         // Маппинги страниц (через компоненты)
         components.forEach(comp => {
+            // Учитываем блокировку наследования
+            if (disabledInheritance[comp.id]) return;
+            
             const pages = getPagesUsingComponent(comp.name);
             pages.forEach(page => {
                 const pName = page.page_meta?.name?.trim();
@@ -959,10 +968,13 @@ const TIAPage = ({ projects }) => {
         // Валидация незамапленных компонентов
         if (!force) {
             const unmapped = components.filter(c => {
-                // Если есть прямой маппинг
+                // Прямой маппинг
                 if (componentMappings[c.id] && componentMappings[c.id].length > 0) return false;
                 
-                // Если есть маппинг через страницы (ТК уже привязаны к страницам этого компонента)
+                // Наследование заблокировано - считаем только прямой маппинг
+                if (disabledInheritance[c.id]) return true;
+
+                // Маппинг через страницы (если не заблокирован)
                 const pages = getPagesUsingComponent(c.name);
                 const hasPageMapping = pages.some(page => {
                     const pName = page.page_meta?.name?.trim();
@@ -3586,207 +3598,292 @@ const TIAPage = ({ projects }) => {
                                                         )}
 
                                                         {/* Где используется — Show More toggle if > 10 Pages */}
-                                                        {pages.length > 0 && (
-                                                            <div style={{ marginTop: '12px' }}>
-                                                                <div style={{
-                                                                    fontSize: '12px',
-                                                                    color: '#6c757d',
-                                                                    marginBottom: '8px',
-                                                                    fontWeight: 600,
-                                                                    display: 'flex',
-                                                                    justifyContent: 'space-between',
-                                                                    alignItems: 'center'
-                                                                }}>
-                                                                    <span>Где используется ({pages.length}):</span>
-                                                                    {pages.length > 10 && (
-                                                                        <button
-                                                                            onClick={(e) => {
-                                                                                e.stopPropagation();
-                                                                                setExpandedPageLists(prev => ({
-                                                                                    ...prev,
-                                                                                    [comp.id]: !prev[comp.id]
-                                                                                }));
-                                                                            }}
-                                                                            style={{
-                                                                                background: 'none',
-                                                                                border: 'none',
-                                                                                color: '#007bff',
-                                                                                fontSize: '11px',
-                                                                                cursor: 'pointer',
-                                                                                padding: 0,
-                                                                                fontWeight: 600
-                                                                            }}
-                                                                        >
-                                                                            {expandedPageLists[comp.id] ? 'Скрыть' : `Показать все (${pages.length})`}
-                                                                        </button>
-                                                                    )}
-                                                                </div>
-                                                                <div style={{
-                                                                    display: 'flex',
-                                                                    flexWrap: 'wrap',
-                                                                    gap: '6px'
-                                                                }}>
-                                                                    {(expandedPageLists[comp.id] ? pages : pages.slice(0, 10)).map((page, idx) => {
-                                                                        const pageName = page.page_meta?.name || 'Unknown';
-                                                                        const pageRoute = page.page_meta?.route;
-                                                                        const tooltipText = [
-                                                                            page.page_meta?.human_title,
-                                                                            pageRoute ? `Route: ${pageRoute}` : null,
-                                                                            page.page_meta?.file_path
-                                                                        ].filter(Boolean).join('\n');
-
-                                                                        const hasPageMapping = pageMappings[pageName?.trim()]?.length > 0;
-                                                                        return (
-                                                                            <div key={`${comp.id}-page-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                                                                                <span
-                                                                                    title={tooltipText}
-                                                                                    style={{
-                                                                                        padding: '4px 10px',
-                                                                                        backgroundColor: hasPageMapping ? '#d1fae5' : '#e9ecef',
-                                                                                        borderRadius: '4px',
-                                                                                        fontSize: '12px',
-                                                                                        color: hasPageMapping ? '#065f46' : '#111',
-                                                                        border: hasPageMapping ? '1px solid #6ee7b7' : '1px solid transparent',
-                                                                                        fontWeight: 500,
-                                                                                        cursor: 'help',
-                                                                                        display: 'inline-flex',
-                                                                                        alignItems: 'center',
-                                                                                        gap: '6px'
-                                                                                    }}
-                                                                                >
-                                                                                    <span>{pageName}</span>
-                                                                                    {pageRoute && (
-                                                                                        <span style={{
-                                                                                            fontSize: '11px',
-                                                                                            color: '#6c757d',
-                                                                                            fontFamily: 'monospace',
-                                                                                            backgroundColor: '#dee2e6',
-                                                                                            padding: '2px 6px',
-                                                                                            borderRadius: '3px'
-                                                                                        }}>
-                                                                                            {pageRoute}
-                                                                                        </span>
-                                                                                    )}
+                                                        {(() => {
+                                                            const pages = getPagesUsingComponent(comp.name);
+                                                            const hasDirect = componentMappings[comp.id]?.length > 0;
+                                                            
+                                                            // Наследование учитываем только если оно не заблокировано пользователем
+                                                            const isInheritanceBlocked = disabledInheritance[comp.id];
+                                                            const hasPageMapping = !isInheritanceBlocked && pages.some(page => {
+                                                                const pName = page.page_meta?.name?.trim();
+                                                                return pName && pageMappings[pName]?.length > 0;
+                                                            });
+                                                            
+                                                            const hasMapping = hasDirect || hasPageMapping;
+                                                            
+                                                            return (
+                                                                <>
+                                                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                                            <div style={{
+                                                                                padding: '10px',
+                                                                                backgroundColor: hasMapping ? '#f0fdf4' : '#fff1f2',
+                                                                                borderRadius: '12px',
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                justifyContent: 'center',
+                                                                                transition: 'all 0.3s ease'
+                                                                            }}>
+                                                                                <span style={{ fontSize: '20px', lineHeight: 1 }}>
+                                                                                    {hasMapping ? '✅' : '⚠️'}
                                                                                 </span>
                                                                             </div>
-                                                                        );
-                                                                    })}
-                                                                    {!expandedPageLists[comp.id] && pages.length > 10 && (
-                                                                        <div style={{
-                                                                            padding: '4px 10px',
-                                                                            backgroundColor: '#f8f9fa',
-                                                                            borderRadius: '4px',
-                                                                            fontSize: '12px',
-                                                                            color: '#6c757d',
-                                                                            border: '1px dashed #dee2e6'
-                                                                        }}>
-                                                                            + еще {pages.length - 10}
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                        )}
-
-
-
-                                                        {/* Отображение привязанных блоков (Покрыто) - Теги вместо списка */}
-                                                        {hasMapping && (
-                                                            <div style={{
-                                                                marginTop: '12px'
-                                                            }}>
-                                                                <div style={{
-                                                                    fontSize: '13px',
-                                                                    color: '#64748b',
-                                                                    marginBottom: '8px',
-                                                                    fontWeight: 600
-                                                                }}>
-                                                                    Покрыто:
-                                                                </div>
-                                                                <div style={{
-                                                                    display: 'flex',
-                                                                    flexWrap: 'wrap',
-                                                                    gap: '6px'
-                                                                }}>
-                                                                    {(() => {
-                                                                        // Собираем все уникальные блоки: прямые и по страницам
-                                                                        const directIds = componentMappings[comp.id] || [];
-                                                                        const pageLevelIds = pages.flatMap(page => {
-                                                                            const pName = page.page_meta?.name?.trim();
-                                                                            return (pageMappings[pName] || []).map(m => m.functional_block_allure_id?.toString());
-                                                                        }).filter(Boolean);
-                                                                        
-                                                                        const allIds = Array.from(new Set([...directIds, ...pageLevelIds]));
-                                                                        
-                                                                        return allIds.map(folderId => {
-                                                                            const folder = findFolderById(folders, folderId);
-                                                                            const isAutoMapped = autoMappedBlocks[comp.id]?.includes(folderId.toString());
-                                                                            const isPageLevel = !directIds.includes(folderId.toString());
-                                                                            
-                                                                            return (
-                                                                                <div
-                                                                                    key={`${comp.id}-mapping-${folderId}`}
-                                                                                    style={{
-                                                                                        padding: '6px 10px',
-                                                                                        backgroundColor: isPageLevel ? '#ecfeff' : (isAutoMapped ? '#fefce8' : '#f0fdf4'),
-                                                                                        borderRadius: '8px',
-                                                                                        fontSize: '12px',
-                                                                                        color: isPageLevel ? '#083344' : (isAutoMapped ? '#854d0e' : '#166534'),
-                                                                                        border: `1px solid ${isPageLevel ? '#a5f3fc' : (isAutoMapped ? '#fef08a' : '#dcfce7')}`,
-                                                                                        display: 'flex',
-                                                                                        alignItems: 'center',
-                                                                                        gap: '6px',
-                                                                                        fontWeight: 500,
-                                                                                        transition: 'all 0.2s',
-                                                                                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-                                                                                    }}
-                                                                                >
-                                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden' }}>
-                                                                                        {isPageLevel ? (
-                                                                                            <span title="Унаследовано из зависимостей страниц" style={{ fontSize: '12px' }}>📄</span>
-                                                                                        ) : (isAutoMapped ? (
-                                                                                            <span title="Автоматическое сопоставление" style={{ fontSize: '14px' }}>🔄</span>
-                                                                                        ) : (
-                                                                                            <span style={{ color: '#22c55e' }}>✓</span>
-                                                                                        ))}
-                                                                                        <span style={{ 
-                                                                                            whiteSpace: 'nowrap', 
-                                                                                            overflow: 'hidden', 
-                                                                                            textOverflow: 'ellipsis',
-                                                                                            maxWidth: '200px'
+                                                                            <div>
+                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                    <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: '#1e293b' }}>
+                                                                                        {comp.name}
+                                                                                    </h4>
+                                                                                    <span style={{
+                                                                                        padding: '4px 8px',
+                                                                                        backgroundColor: '#f1f5f9',
+                                                                                        borderRadius: '6px',
+                                                                                        fontSize: '11px',
+                                                                                        color: '#64748b',
+                                                                                        fontWeight: 600,
+                                                                                        textTransform: 'uppercase',
+                                                                                        letterSpacing: '0.5px'
+                                                                                    }}>
+                                                                                        {comp.type}
+                                                                                    </span>
+                                                                                    {isInheritanceBlocked && (
+                                                                                        <span style={{
+                                                                                            padding: '4px 8px',
+                                                                                            backgroundColor: '#fff1f2',
+                                                                                            borderRadius: '6px',
+                                                                                            fontSize: '11px',
+                                                                                            color: '#e11d48',
+                                                                                            fontWeight: 600
                                                                                         }}>
-                                                                                            {folder ? folder.name : `ID: ${folderId}`}
+                                                                                            Блокировка наследования
                                                                                         </span>
-                                                                                    </div>
-                                                                                    {!isPageLevel && (
-                                                                                        <button
-                                                                                            onClick={(e) => {
-                                                                                                e.stopPropagation();
-                                                                                                handleRemoveMapping(comp.id, folderId);
-                                                                                            }}
-                                                                                            style={{
-                                                                                                border: 'none',
-                                                                                                background: 'none',
-                                                                                                padding: '2px',
-                                                                                                cursor: 'pointer',
-                                                                                                color: isAutoMapped ? '#ca8a04' : '#22c55e',
-                                                                                                fontSize: '14px',
-                                                                                                lineHeight: 1,
-                                                                                                display: 'flex',
-                                                                                                alignItems: 'center',
-                                                                                                justifyContent: 'center',
-                                                                                                borderRadius: '4px'
-                                                                                            }}
-                                                                                        >
-                                                                                            ×
-                                                                                        </button>
                                                                                     )}
                                                                                 </div>
-                                                                            );
-                                                                        });
-                                                                    })()}
-                                                                </div>
-                                                            </div>
-                                                        )}
+                                                                                <div style={{ fontSize: '13px', color: '#64748b', marginTop: '4px' }}>
+                                                                                    {hasMapping ? 'Замаплено на функциональные блоки' : 'Не привязано к функциональным блокам'}
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+                                                                        {/* Кнопки действий: Очистить маппинг */}
+                                                                        {hasMapping && (
+                                                                            <button
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    if (window.confirm(`Вы уверены, что хотите полностью очистить маппинг для компонента "${comp.name}"?\n\nЭто удалит все прямые привязки и заблокирует наследование тестов от страниц для этого компонента. Данные самих страниц при этом затронуты не будут.`)) {
+                                                                                        setComponentMappings(prev => ({ ...prev, [comp.id]: [] }));
+                                                                                        setDisabledInheritance(prev => ({ ...prev, [comp.id]: true }));
+                                                                                        setPartialSaveMessage('');
+                                                                                    }
+                                                                                }}
+                                                                                style={{
+                                                                                    padding: '8px 14px',
+                                                                                    backgroundColor: '#fff1f2',
+                                                                                    color: '#e11d48',
+                                                                                    border: '1px solid #fecdd3',
+                                                                                    borderRadius: '8px',
+                                                                                    fontSize: '12px',
+                                                                                    fontWeight: 600,
+                                                                                    cursor: 'pointer',
+                                                                                    transition: 'all 0.2s ease',
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '6px'
+                                                                                }}
+                                                                                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#ffe4e6'; }}
+                                                                                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#fff1f2'; }}
+                                                                            >
+                                                                                Очистить маппинг
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+
+                                                                    {/* Список Страниц */}
+                                                                    <div style={{ padding: '12px', backgroundColor: '#f8fafc', borderRadius: '12px', marginBottom: '16px', border: '1px solid #f1f5f9' }}>
+                                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                                                                            <h5 style={{ margin: 0, fontSize: '13px', fontWeight: 600, color: '#64748b' }}>
+                                                                                Используется на страницах:
+                                                                            </h5>
+                                                                            {pages.length > 10 && (
+                                                                                <button
+                                                                                    onClick={(e) => {
+                                                                                        e.stopPropagation();
+                                                                                        setExpandedPageLists(prev => ({ ...prev, [comp.id]: !prev[comp.id] }));
+                                                                                    }}
+                                                                                    style={{
+                                                                                        background: 'none',
+                                                                                        border: 'none',
+                                                                                        color: '#6366f1',
+                                                                                        fontSize: '11px',
+                                                                                        cursor: 'pointer',
+                                                                                        padding: 0,
+                                                                                        fontWeight: 600
+                                                                                    }}
+                                                                                >
+                                                                                    {expandedPageLists[comp.id] ? 'Скрыть' : `Показать все (${pages.length})`}
+                                                                                </button>
+                                                                            )}
+                                                                        </div>
+                                                                        <div style={{
+                                                                            display: 'flex',
+                                                                            flexWrap: 'wrap',
+                                                                            gap: '6px'
+                                                                        }}>
+                                                                            {(expandedPageLists[comp.id] ? pages : pages.slice(0, 10)).map((page, idx) => {
+                                                                                const pageName = page.page_meta?.name || 'Unknown';
+                                                                                const pageRoute = page.page_meta?.route;
+                                                                                const tooltipText = [
+                                                                                    page.page_meta?.human_title,
+                                                                                    pageRoute ? `Route: ${pageRoute}` : null,
+                                                                                    page.page_meta?.file_path
+                                                                                ].filter(Boolean).join('\n');
+
+                                                                                const hasPageMapping = pageMappings[pageName?.trim()]?.length > 0;
+                                                                                return (
+                                                                                    <div key={`${comp.id}-page-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                                                                        <span
+                                                                                            title={tooltipText}
+                                                                                            style={{
+                                                                                                padding: '4px 10px',
+                                                                                                backgroundColor: hasPageMapping ? '#d1fae5' : '#e9ecef',
+                                                                                                borderRadius: '4px',
+                                                                                                fontSize: '12px',
+                                                                                                color: hasPageMapping ? '#065f46' : '#111',
+                                                                                                border: hasPageMapping ? '1px solid #6ee7b7' : '1px solid transparent',
+                                                                                                fontWeight: 500,
+                                                                                                cursor: 'help',
+                                                                                                display: 'inline-flex',
+                                                                                                alignItems: 'center',
+                                                                                                gap: '6px'
+                                                                                            }}
+                                                                                        >
+                                                                                            <span>{pageName}</span>
+                                                                                            {pageRoute && (
+                                                                                                <span style={{ fontSize: '11px', color: '#6c757d', fontFamily: 'monospace', backgroundColor: '#dee2e6', padding: '2px 6px', borderRadius: '3px' }}>
+                                                                                                    {pageRoute}
+                                                                                                </span>
+                                                                                            )}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                );
+                                                                            })}
+                                                                            {!expandedPageLists[comp.id] && pages.length > 10 && (
+                                                                                <div style={{ padding: '4px 10px', backgroundColor: '#f8f9fa', borderRadius: '4px', fontSize: '12px', color: '#6c757d', border: '1px dashed #dee2e6' }}>
+                                                                                    + еще {pages.length - 10}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {/* Отображение привязанных блоков (Покрыто) */}
+                                                                    {hasMapping && (
+                                                                        <div style={{ marginTop: '12px' }}>
+                                                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                                                                                <div style={{ fontSize: '13px', color: '#64748b', fontWeight: 600 }}>
+                                                                                    Покрыто:
+                                                                                </div>
+                                                                                {isInheritanceBlocked && (
+                                                                                    <button 
+                                                                                        onClick={(e) => { 
+                                                                                            e.stopPropagation(); 
+                                                                                            setDisabledInheritance(prev => ({ ...prev, [comp.id]: false })); 
+                                                                                        }}
+                                                                                        style={{ background: 'none', border: 'none', color: '#6366f1', fontSize: '12px', cursor: 'pointer', padding: 0 }}
+                                                                                    >
+                                                                                        Вернуть наследование
+                                                                                    </button>
+                                                                                )}
+                                                                            </div>
+                                                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                                                                {(() => {
+                                                                                    const directIds = componentMappings[comp.id] || [];
+                                                                                    const pageLevelIds = isInheritanceBlocked ? [] : pages.flatMap(page => {
+                                                                                        const pName = page.page_meta?.name?.trim();
+                                                                                        return (pageMappings[pName] || []).map(m => m.functional_block_allure_id?.toString());
+                                                                                    }).filter(Boolean);
+                                                                                    
+                                                                                    const allIds = Array.from(new Set([...directIds, ...pageLevelIds]));
+                                                                                    const isTagsExpanded = expandedMappedComponents[comp.id];
+                                                                                    const LIMIT = 10;
+                                                                                    const displayedIds = isTagsExpanded ? allIds : allIds.slice(0, LIMIT);
+                                                                                    
+                                                                                    return (
+                                                                                        <>
+                                                                                            {displayedIds.map(folderId => {
+                                                                                                const folder = findFolderById(folders, folderId);
+                                                                                                const isAutoMapped = autoMappedBlocks[comp.id]?.includes(folderId.toString());
+                                                                                                const isPageLevel = !directIds.includes(folderId.toString());
+                                                                                                
+                                                                                                return (
+                                                                                                    <div
+                                                                                                        key={`${comp.id}-mapping-${folderId}`}
+                                                                                                        style={{
+                                                                                                            padding: '6px 12px',
+                                                                                                            backgroundColor: isPageLevel ? '#ecfeff' : (isAutoMapped ? '#fefce8' : '#f0fdf4'),
+                                                                                                            borderRadius: '8px',
+                                                                                                            fontSize: '12px',
+                                                                                                            color: isPageLevel ? '#083344' : (isAutoMapped ? '#854d0e' : '#166534'),
+                                                                                                            border: `1px solid ${isPageLevel ? '#a5f3fc' : (isAutoMapped ? '#fef08a' : '#dcfce7')}`,
+                                                                                                            display: 'flex',
+                                                                                                            alignItems: 'center',
+                                                                                                            gap: '6px',
+                                                                                                            fontWeight: 500,
+                                                                                                        }}
+                                                                                                    >
+                                                                                                        <span style={{ 
+                                                                                                            whiteSpace: 'nowrap', 
+                                                                                                            overflow: 'hidden', 
+                                                                                                            textOverflow: 'ellipsis',
+                                                                                                            maxWidth: '300px'
+                                                                                                        }}>
+                                                                                                            {folder ? formatCustomFieldName(folder) : `ID: ${folderId}`}
+                                                                                                        </span>
+                                                                                                        {!isPageLevel && (
+                                                                                                            <button
+                                                                                                                onClick={(e) => {
+                                                                                                                    e.stopPropagation();
+                                                                                                                    handleRemoveMapping(comp.id, folderId);
+                                                                                                                }}
+                                                                                                                style={{
+                                                                                                                    border: 'none',
+                                                                                                                    background: 'none',
+                                                                                                                    padding: '2px',
+                                                                                                                    cursor: 'pointer',
+                                                                                                                    color: 'inherit',
+                                                                                                                    fontSize: '14px',
+                                                                                                                    opacity: 0.6,
+                                                                                                                    display: 'flex',
+                                                                                                                    alignItems: 'center',
+                                                                                                                    justifyContent: 'center',
+                                                                                                                }}
+                                                                                                            >
+                                                                                                                ×
+                                                                                                            </button>
+                                                                                                        )}
+                                                                                                    </div>
+                                                                                                );
+                                                                                            })}
+                                                                                            {allIds.length > LIMIT && (
+                                                                                                <button
+                                                                                                    onClick={(e) => {
+                                                                                                        e.stopPropagation();
+                                                                                                        setExpandedMappedComponents(prev => ({
+                                                                                                            ...prev,
+                                                                                                            [comp.id]: !prev[comp.id]
+                                                                                                        }));
+                                                                                                    }}
+                                                                                                    style={{ padding: '6px 12px', backgroundColor: '#f1f5f9', borderRadius: '8px', fontSize: '12px', color: '#6366f1', border: '1px solid #e2e8f0', cursor: 'pointer', fontWeight: 600 }}
+                                                                                                >
+                                                                                                    {isTagsExpanded ? 'Скрыть ▴' : `Еще +${allIds.length - LIMIT} ▾`}
+                                                                                                </button>
+                                                                                            )}
+                                                                                        </>
+                                                                                    );
+                                                                                })()}
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+                                                                </>
+                                                            );
+                                                        })()}
                                                     </div>
                                                 );
                                             })}
