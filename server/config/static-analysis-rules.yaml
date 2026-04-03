@@ -1,4 +1,5 @@
-# БАЗОВЫЕ ПРАВИЛА ДЛЯ ВСЕХ ПРОЕКТОВ
+# Базовые правила анализа тест-кейсов
+# Проектные дополнения: config/projects/*.yaml → cases_rules: "<projectId>": [ ... ]
 base_rules:
   - id: "status_review"
     name: "Статус тест-кейса: Review"

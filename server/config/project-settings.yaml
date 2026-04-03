@@ -4,8 +4,7 @@
 #
 # Этот файл содержит настройки для каждого проекта:
 # - Название проекта
-# - Порог допустимых warnings (в процентах)
-# - Дополнительные настройки анализа
+# - Порог допустимого процента предупреждений для статического анализа тест-кейсов (warning_threshold) и тестовой модели (model_warning_threshold)
 #
 # Lead of QA определяет процент warnings для своего проекта.
 # ═══════════════════════════════════════════════════════════════
@@ -13,8 +12,10 @@
 # Настройки по умолчанию
 default:
   name: "Дефолтный проект"
-  warning_threshold: 10  # максимум 10% ворнингов для прохождения ревью
+  warning_threshold: 10 # максимум 10% ворнингов для прохождения ревью
+  model_warning_threshold: 10 # если не указан, используется значение warning_threshold
   error_threshold: 0
+  model_error_threshold: 0
   show_statistics: true
 
 # Настройки конкретных проектов
@@ -25,10 +26,10 @@ projects:
     error_threshold: 0
     show_statistics: true
     description: "Abanking Classic — ККБ ЮЛ"
-    
+
   "5":
     name: "ККБ ФЛ"
-    warning_threshold: 50 
+    warning_threshold: 50
     error_threshold: 0
     show_statistics: true
     description: "Abanking Classic — ККБ ФЛ"
@@ -46,10 +47,10 @@ projects:
     error_threshold: 0
     show_statistics: true
     description: "Nopaper"
-    
+
   "307":
     name: "Nocode"
     warning_threshold: 50
     error_threshold: 0
     show_statistics: true
-    description: "Nocode"    
+    description: "Nocode"
