@@ -8,11 +8,11 @@ import { formatStepsForPrompt } from './stepsNormalizer.mjs';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
-async function callOpenRouterForAnalyze (messages, apiKey, opts = {})
+export async function callOpenRouterForAnalyze (messages, apiKey, opts = {})
 {
     const { callWithBackoff } = await import('./server.js');
     return callWithBackoff(OPENROUTER_URL, messages, apiKey, {
-        models: ['xiaomi/mimo-v2-pro', ...(config.fallbackModels || [])],
+        models: ['google/gemma-4-31b-it', ...(config.fallbackModels || [])],
         reduceTokensOn400: true,
         ...opts
     });
@@ -73,11 +73,12 @@ const LAYER_TO_MD = {
 };
 
 const EXAMPLES_MD_DIR = path.join('./server/config/examples', 'test-cases');
+const EXAMPLES_TEST_MODEL_DIR = path.join('./server/config/examples', 'test-model');
 
 /**
  * Парсит содержимое .md-файла в массив блоков примеров (разделители: --- или ## Пример)
  */
-function parseMdExamples (content)
+export function parseMdExamples (content)
 {
     const blocks = content
         .split(/\r?\n---\r?\n/)
@@ -158,9 +159,26 @@ function loadAllExamples ()
 }
 
 /**
+ * Опциональные антипримеры для AI-анализа тестовой модели (отдельный каталог от test-cases).
+ * Файл: `server/config/examples/test-model/antiexamples.md`
+ */
+export function loadTestModelExamples ()
+{
+    const filepath = path.join(EXAMPLES_TEST_MODEL_DIR, 'antiexamples.md');
+    try {
+        if (fs.existsSync(filepath)) {
+            return parseMdExamples(fs.readFileSync(filepath, 'utf8'));
+        }
+    } catch (error) {
+        console.warn(`[loadTestModelExamples] Не удалось загрузить ${filepath}:`, error.message);
+    }
+    return [];
+}
+
+/**
  * Объединить примеры для промпта
  */
-function prepareExamplesForPrompt (examples)
+export function prepareExamplesForPrompt (examples)
 {
     if (!examples) return 'Примеры отсутствуют';
 
@@ -191,7 +209,7 @@ function prepareExamplesForPrompt (examples)
 /**
  * Создать сообщение для роли developer с примерами
  */
-function createDeveloperContent (examples)
+export function createDeveloperContent (examples)
 {
     const hasExamples = (Array.isArray(examples) && examples.length > 0) ||
         (typeof examples === 'object' && Object.keys(examples).length > 0);

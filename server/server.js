@@ -197,9 +197,21 @@ import
     getProjectRulesDocumentation
 } from './validation-engine.mjs';
 import { writeValidationRulesMarkdown } from './scripts/generate-validation-rules-md.mjs';
+import { writeTestModelRulesMarkdown } from './scripts/generate-test-model-rules-md.mjs';
 import { exportStructureAllure, exportStructureAllureNocode } from './xmind-parce/export-structure-allure.mjs';
 import { analyzeTestCaseWithAI, analyzeBulkTestCasesWithAI, analyzeRecheckWithAI, extractExpectedResult } from './ai-testcase.mjs';
-import { getLatestIssuesByJiraIssue, getLatestRunInfo, saveAnalysisResults, deleteAnalysisResultsByJiraIssue } from './static-analysis-db.mjs';
+import { analyzeTestModelWithAI, analyzeTestModelRecheckWithAI } from './ai-model.mjs';
+import { staticAnalysisModel } from './static-analysis-model.mjs';
+import
+{
+    getLatestIssuesByJiraIssue,
+    getLatestRunInfo,
+    getLatestModelRunInfo,
+    saveAnalysisResults,
+    saveModelAnalysisResults,
+    getLatestModelIssuesForRecheck,
+    deleteAnalysisResultsByJiraIssue
+} from './static-analysis-db.mjs';
 import { fetchConfluencePage } from './confluenceFetcher.mjs';
 import { analyzeRequirementWithAI } from './analyzeRequirementWithAI.mjs';
 import { Buffer } from 'buffer';
@@ -250,7 +262,7 @@ import
     runTestCaseLLMWithContext,
     validateFixedCases
 } from './llm-with-context.mjs';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import knexfile from './db/knexfile.js';
@@ -2546,8 +2558,14 @@ app.get('/api/analyze/status', async (req, res) =>
     if (!jiraIssue) {
         return res.json({ hasReview: false });
     }
+    const analysisType = String(req.query.analysisType || 'cases').trim().toLowerCase();
     try {
-        const info = await getLatestRunInfo(jiraIssue);
+        let info = null;
+        if (analysisType === 'model') {
+            info = await getLatestModelRunInfo(jiraIssue);
+        } else {
+            info = await getLatestRunInfo(jiraIssue);
+        }
         if (!info) {
             return res.json({ hasReview: false });
         }
@@ -2567,8 +2585,12 @@ app.delete('/api/analyze/status', async (req, res) =>
     if (!jiraIssue) {
         return res.status(400).json({ error: 'jiraIssue обязателен' });
     }
+    const analysisType = String(req.query.analysisType || 'cases').trim().toLowerCase();
+    if (analysisType !== 'cases' && analysisType !== 'model') {
+        return res.status(400).json({ error: 'unknown analysisType' });
+    }
     try {
-        await deleteAnalysisResultsByJiraIssue(jiraIssue);
+        await deleteAnalysisResultsByJiraIssue(jiraIssue, analysisType);
         return res.json({ ok: true });
     } catch (err) {
         console.error(`[analyze/status DELETE] ${err.message}`);
@@ -2579,12 +2601,58 @@ app.delete('/api/analyze/status', async (req, res) =>
 // API для анализа тест-кейсов
 app.post('/api/analyze', async (req, res) =>
 {
-    const { projectId, jiraIssue } = req.body;
+    const { projectId, jiraIssue, analysisType, modelData, modelFileName } = req.body;
     console.log(`Запрос /api/analyze получил: ${JSON.stringify(req.body)}`);
 
     if (!projectId) {
         return res.status(400).json({ error: 'projectId обязателен для анализа' });
     }
+
+    if (analysisType === 'model' || modelData) {
+        const jiraForModel = typeof jiraIssue === 'string' && jiraIssue.trim() ? jiraIssue.trim() : null;
+        try {
+            const apiKey = req.headers['x-openrouter-key'] || null;
+            let aiRecommendations = [];
+            try {
+                let previousModelIssues = null;
+                try {
+                    previousModelIssues = await getLatestModelIssuesForRecheck(projectId, jiraForModel);
+                } catch (dbErr) {
+                    console.log(`[analyze/model] БД недоступна для истории модели: ${dbErr.message}`);
+                }
+                if (previousModelIssues?.issues?.length > 0) {
+                    console.log(`[analyze/model] Повторный анализ: ${previousModelIssues.issues.length} замечаний из последнего run ${previousModelIssues.runId}`);
+                    aiRecommendations = await analyzeTestModelRecheckWithAI(
+                        modelData,
+                        previousModelIssues.issues,
+                        apiKey,
+                        projectId,
+                        jiraForModel
+                    );
+                } else {
+                    aiRecommendations = await analyzeTestModelWithAI(modelData, apiKey, projectId);
+                }
+            } catch (err) {
+                console.error(`[analyze/model] Ошибка при AI-анализе тестовой модели:`, err);
+            }
+            const analysisResult = await staticAnalysisModel(modelData, projectId, aiRecommendations, modelFileName, jiraForModel);
+            try {
+                if (Array.isArray(aiRecommendations) && aiRecommendations.length > 0) {
+                    await saveModelAnalysisResults(projectId, jiraForModel, modelFileName || null, aiRecommendations);
+                } else {
+                    console.log(`[analyze/model] Пропуск сохранения в БД: нет замечаний (${aiRecommendations?.length ?? 0})`);
+                }
+            } catch (saveErr) {
+                console.error(`[analyze/model] Ошибка сохранения в БД:`, saveErr.message);
+                console.error(`[analyze/model] Stack:`, saveErr.stack);
+            }
+            return res.json(analysisResult.html);
+        } catch (error) {
+            console.error(`[analyze/model] Ошибка при анализе модели: ${error.message}`);
+            return res.status(500).json({ error: error.message });
+        }
+    }
+
     if (!jiraIssue) {
         return res.status(400).json({ error: 'jiraIssue обязателен для анализа' });
     }
@@ -2625,17 +2693,20 @@ app.post('/api/analyze', async (req, res) =>
 
             const subsetA = [];
             const subsetB = [];
-            if (previousIssues?.idsWithIssues?.size > 0) {
-                console.log(`[analyze] Задача ${jiraIssue} уже была проанализирована ранее, используем промпт для проверки`);
+            const cleanSet = previousIssues?.cleanTestCaseIds ?? new Set();
+            if (previousIssues) {
                 for (const tc of filteredCases) {
                     const tcId = String(tc.id);
+                    if (cleanSet.has(tcId) && !previousIssues.idsWithIssues.has(tcId)) {
+                        continue;
+                    }
                     if (previousIssues.idsWithIssues.has(tcId)) {
                         subsetA.push(tc);
                     } else {
                         subsetB.push(tc);
                     }
                 }
-                console.log(`[analyze] Повторный анализ: ${subsetA.length} тест-кейсов с замечаниями`);
+                console.log(`[analyze] повторная проверка=${subsetA.length}, проверка с нуля=${subsetB.length}, пропуск=${filteredCases.length - subsetA.length - subsetB.length}`);
             } else {
                 subsetB.push(...filteredCases);
             }
@@ -2675,14 +2746,16 @@ app.post('/api/analyze', async (req, res) =>
             aiRecommendations = null;
         }
 
-        const analysisResult = await staticAnalysis(jsonResult, projectId, aiRecommendations);
+        const analysisResult = await staticAnalysis(jsonResult, projectId, aiRecommendations, {
+            persistCleanIds: aiRecommendations != null
+        });
         const { html: htmlReport, metadata } = analysisResult;
 
         try {
-            if (metadata?.testCasesWithIssues?.length > 0) {
+            if (aiRecommendations != null) {
                 await saveAnalysisResults(projectId, jiraIssue, metadata);
             } else {
-                console.log(`[analyze] Пропуск сохранения: нет AI-замечаний (testCasesWithIssues: ${metadata?.testCasesWithIssues?.length ?? 0})`);
+                console.log(`[analyze] Пропуск сохранения: AI-ревью не выполнено или завершилось ошибкой`);
             }
         } catch (saveErr) {
             console.error(`[analyze] Ошибка сохранения в БД:`, saveErr.message);
@@ -2901,72 +2974,102 @@ app.get('/api/validation/projects', async (req, res) =>
 });
 
 /**
- * Экспорт правил в Markdown формат для документации
+ * Разбирает markdown-файл правил и возвращает { markdown, projectName } для projectId
+ * Если секции не найдены и передана regenerateFn — пересобирает файл и читает повторно
+ * @param {string} mdPath
+ * @param {string} h1Title
+ * @param {string|number} projectId
+ * @param {((force: boolean) => void)|null} regenerateFn
+ */
+function exportRulesMarkdown (mdPath, h1Title, projectId, regenerateFn = null)
+{
+    if (regenerateFn && !existsSync(mdPath)) {
+        regenerateFn(true);
+    }
+
+    let fullMd = readFileSync(mdPath, 'utf8');
+    let baseStart = fullMd.indexOf('## Базовые правила');
+    let projectsStart = fullMd.indexOf('## Проекты');
+
+    if ((baseStart === -1 || projectsStart === -1) && regenerateFn) {
+        regenerateFn(true);
+        fullMd = readFileSync(mdPath, 'utf8');
+        baseStart = fullMd.indexOf('## Базовые правила');
+        projectsStart = fullMd.indexOf('## Проекты');
+    }
+
+    if (baseStart === -1 || projectsStart === -1) {
+        throw new Error('Невалидный формат файла правил: не найдены секции «Базовые правила» / «Проекты»');
+    }
+
+    let baseSection = fullMd.slice(baseStart, projectsStart).trimEnd();
+    baseSection = baseSection.replace(/\n---\s*$/m, '').trimEnd();
+
+    const projectIdStr = String(projectId);
+    const escapedId = projectIdStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const projectHeaderRe = new RegExp(`^###\\s+.*\\(ID:\\s*${escapedId}\\)\\s*$`, 'm');
+    const match = fullMd.match(projectHeaderRe);
+
+    let markdown;
+    let projectName;
+
+    if (match && match.index != null) {
+        const projectStart = match.index;
+        const projectEnd = fullMd.indexOf('\n---', projectStart);
+        const projectSection = (projectEnd !== -1 ? fullMd.slice(projectStart, projectEnd) : fullMd.slice(projectStart)).trimEnd();
+        projectName = String(match[0] || '').trim();
+        markdown = [`# ${h1Title}`, '', baseSection, '---', '', projectSection].join('\n');
+    } else {
+        projectName = `ID: ${projectIdStr} (только базовые правила)`;
+        markdown = [`# ${h1Title}`, '', baseSection].join('\n');
+    }
+
+    return { markdown, projectName: projectName || `ID: ${projectIdStr}` };
+}
+
+/**
+ * Экспорт правил в .md-файл для документации
  */
 app.get('/api/validation/rules/export', async (req, res) =>
 {
     try {
         const { projectId } = req.query;
-
         if (!projectId) {
-            return res.status(400).json({
-                success: false,
-                error: 'Параметр projectId обязателен'
-            });
+            return res.status(400).json({ success: false, error: 'Параметр projectId обязателен' });
         }
-
-        const validationMdPath = join(__dirname, 'config', 'validation-rules.md');
-        const fullMd = readFileSync(validationMdPath, 'utf8');
-        const projectIdStr = String(projectId);
-
-        const baseStart = fullMd.indexOf('## Базовые правила');
-        const projectsStart = fullMd.indexOf('## Проекты');
-        if (baseStart === -1 || projectsStart === -1) {
-            throw new Error('Невалидный формат validation-rules.md: не найдены секции "Базовые правила" / "Проекты"');
-        }
-        let baseSection = fullMd.slice(baseStart, projectsStart).trimEnd();
-        baseSection = baseSection.replace(/\n---\s*$/m, '').trimEnd();
-
-        const escapedId = projectIdStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const projectHeaderRe = new RegExp(`^###\\s+.*\\(ID:\\s*${escapedId}\\)\\s*$`, 'm');
-        const match = fullMd.match(projectHeaderRe);
-
-        let markdown;
-        let projectName;
-
-        if (match && match.index != null) {
-            const projectStart = match.index;
-            const projectEnd = fullMd.indexOf('\n---', projectStart);
-            const projectSection = (projectEnd !== -1 ? fullMd.slice(projectStart, projectEnd) : fullMd.slice(projectStart)).trimEnd();
-            projectName = String(match[0] || '').trim();
-            markdown = [
-                '# Правила статического анализа тест-кейсов',
-                '',
-                baseSection,
-                '---',
-                '',
-                projectSection
-            ].join('\n');
-        } else {
-            projectName = `ID: ${projectIdStr} (только базовые правила)`;
-            markdown = [
-                '# Правила статического анализа тест-кейсов',
-                '',
-                baseSection
-            ].join('\n');
-        }
-
-        res.json({
-            success: true,
-            markdown,
-            projectName: projectName || `ID: ${projectIdStr}`
-        });
+        const result = exportRulesMarkdown(
+            join(__dirname, 'config', 'validation-rules.md'),
+            'Правила статического анализа тест-кейсов',
+            projectId,
+            writeValidationRulesMarkdown
+        );
+        res.json({ success: true, ...result });
     } catch (error) {
         console.error('[API] Ошибка экспорта правил:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Экспорт правил тестовой модели в Markdown
+ */
+app.get('/api/validation/test-model-rules/export', async (req, res) =>
+{
+    try {
+        const { projectId } = req.query;
+        if (!projectId) {
+            return res.status(400).json({ success: false, error: 'Параметр projectId обязателен' });
+        }
+        const result = exportRulesMarkdown(
+            join(__dirname, 'config', 'test-model-rules.md'),
+            'Правила ревью тестовой модели',
+            projectId,
+            writeTestModelRulesMarkdown
+        );
+        res.json({ success: true, ...result });
+    } catch (error) {
+        console.error('[API] Ошибка экспорта правил тестовой модели:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
@@ -17753,6 +17856,11 @@ try {
     writeValidationRulesMarkdown();
 } catch (e) {
     console.warn('[startup] Не удалось сгенерировать validation-rules.md:', e.message);
+}
+try {
+    writeTestModelRulesMarkdown();
+} catch (e) {
+    console.warn('[startup] Не удалось сгенерировать test-model-rules.md:', e.message);
 }
 
 // Запуск сервера

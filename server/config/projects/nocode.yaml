@@ -1,5 +1,5 @@
 # Кастомные правила для Nocode (id = 307)
-project_rules:
+cases_rules:
   "307":
     - id: "integration_feature_story_scenario"
       name: "Стуктура в интеграционных тест-кейсах"
@@ -32,3 +32,18 @@ project_rules:
         field: "layer"
         operator: "in"
         value: ["E2E Tests"]
+
+model_rules:
+  "307":
+    - id: "tm_structure_tms_match"
+      name: "Обязательная структура тестовой модели"
+      description: |
+        Базовая структура для Nocode:
+        Block → SubBlock → Feature → Story (C1 - E2E Tests) → Scenario (C2-C3 - Integration) → Code (C4 - Unit Tests)
+      level: "error"
+      category: "structure"
+      enabled: true
+      is_ai_enabled: true
+      ai_prompt: |
+        СТРУКТУРА.
+        Block → SubBlock → Feature → Story (уровень C1, E2E Tests) → Scenario (уровни C2 и C3, Integration) → Code (уровень C4, Unit Tests), если C4 используется. 
