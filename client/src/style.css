@@ -152,7 +152,7 @@ a:hover {
     align-items: flex-start !important;
 }
 
-.static-analysis-report-host .main-layout > .resizer {
+.static-analysis-report-host .main-layout>.resizer {
     align-self: stretch !important;
     flex-shrink: 0 !important;
 }
@@ -1490,4 +1490,10 @@ button:disabled {
     border: 2px solid var(--primary-accent);
     border-radius: 8px;
     cursor: pointer;
+}
+
+.rules-trigger-btn:hover {
+    color: var(-primary-hover) !important;
+    border: 2px solid var(--primary-hover);
+    background-color: var(--transparent);
 }

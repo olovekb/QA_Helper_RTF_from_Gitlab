@@ -170,8 +170,6 @@ function processModelTree (data, depth = 0)
 
 export async function staticAnalysisModel (modelData, projectId, aiRecommendations = [], modelFileName = null, jiraIssue = null)
 {
-    let output = '';
-
     const projectSettings = getProjectSettings(projectId);
     const headerTitleRaw = (modelFileName && String(modelFileName).trim())
         ? String(modelFileName).trim()
