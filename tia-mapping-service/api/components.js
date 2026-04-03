@@ -1,6 +1,6 @@
-import { logInfo, logError, logWarn } from '../utils/logger.js'; // Импорт логгера для информационных и ошибочных сообщений
-import databasePool from '../db/pool.js'; // Импорт пула подключений к базе данных
-import Joi from 'joi'; // Импорт библиотеки для валидации
+import { logInfo, logError, logWarn } from '../utils/logger.js';
+import databasePool from '../db/pool.js';
+import Joi from 'joi';
 
 /**
  * Схема валидации данных для компонентов и маппинга
@@ -33,17 +33,7 @@ const componentValidationSchema = Joi.object({
     mrIid: Joi.alternatives().try(Joi.number(), Joi.string()).allow(null, '').optional().description('ID мерж-реквеста'),
 });
 
-/**
- * Создание или обновление маппинга компонента
- * @param {Object} req - Объект запроса Express
- * @param {Object} res - Объект ответа Express
- * @returns {void}
- */
-/**
- * Сохранение связей Page -> компоненты
- * @param {string} projectId - Идентификатор проекта
- * @param {Array} pageDependencies - Массив связей {pageName, pageRoute, componentName, componentType}
- */
+
 /**
  * Найти или создать компонент в таблице components
  * @param {string} projectId - Идентификатор проекта
@@ -52,8 +42,6 @@ const componentValidationSchema = Joi.object({
  * @returns {Promise<Object>} - Объект компонента с id
  */
 async function findOrCreateComponent(projectId, componentType, componentName) {
-    // Используем onConflict для атомарного поиска/создания
-    // Это предотвращает ошибки дубликатов при параллельных запросах
     const [component] = await databasePool('components')
         .insert({
             project_id: projectId,
@@ -64,7 +52,7 @@ async function findOrCreateComponent(projectId, componentType, componentName) {
         })
         .onConflict(['project_id', 'component_type', 'component_name'])
         .merge({
-            updated_at: databasePool.fn.now() // Просто обновляем время, чтобы получить ID
+            updated_at: databasePool.fn.now()
         })
         .returning('*');
 
@@ -81,39 +69,29 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
         return;
     }
 
-    // Нормализуем pageDependencies: устанавливаем default для componentType
     const normalizedDeps = pageDependencies.map(dep => ({
         ...dep,
         componentType: (dep.componentType && ['component', 'page'].includes(dep.componentType))
             ? dep.componentType
-            : 'component' // Default если отсутствует, null, undefined или невалидное значение
+            : 'component'
     }));
 
-    // Используем уникальный ключ для предотвращения дублирования
-    // Удаление предварительных записей НЕ требуется, т.к. onConflict().merge() обновит существующие
     const uniqueDeps = new Map();
     for (const dep of normalizedDeps) {
-        // Ключ теперь включает pageRoute и componentType для полной уникальности
         const key = `${projectId}_${dep.pageName}_${dep.pageRoute || ''}_${dep.componentName}_${dep.componentType || ''}`;
         if (!uniqueDeps.has(key)) {
             uniqueDeps.set(key, dep);
         }
     }
 
-    // Используем уникальные зависимости
     const finalDeps = Array.from(uniqueDeps.values());
 
-    // Создаём новые связи (убираем дубликаты)
     const uniqueDepsMap = new Map();
     for (const dep of finalDeps) {
         const key = `${projectId}_${dep.pageName}_${dep.pageRoute || ''}_${dep.componentName}_${dep.componentType || ''}`;
         if (!uniqueDepsMap.has(key)) {
-            // Определяем реальный тип компонента для создания в таблице components
-            // Если есть realComponentType (frontend/backend), используем его
-            // Иначе пытаемся найти существующий компонент или используем 'frontend' по умолчанию
             let realComponentType = dep.realComponentType;
             if (!realComponentType || !['frontend', 'backend', 'page', 'component'].includes(realComponentType)) {
-                // Пытаемся найти существующий компонент
                 const existingComponent = await databasePool('components')
                     .where({
                         project_id: projectId,
@@ -124,15 +102,13 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
                 if (existingComponent) {
                     realComponentType = existingComponent.component_type;
                 } else {
-                    // По умолчанию для нового формата TIA - frontend
                     realComponentType = 'frontend';
                 }
             }
 
-            // Находим или создаём компонент с реальным типом
             const component = await findOrCreateComponent(
                 projectId,
-                realComponentType, // 'frontend', 'backend', 'page' или 'component'
+                realComponentType,
                 dep.componentName
             );
 
@@ -141,7 +117,7 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
                 page_name: dep.pageName,
                 page_route: dep.pageRoute || null,
                 component_name: dep.componentName,
-                component_type: dep.componentType, // Уже нормализован выше
+                component_type: dep.componentType,
                 component_id: component.id,
                 created_at: databasePool.fn.now(),
                 updated_at: databasePool.fn.now(),
@@ -152,8 +128,6 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
     const newDependencies = Array.from(uniqueDepsMap.values());
 
     if (newDependencies.length > 0) {
-        // PostgreSQL has a limit of ~32767 parameters per query
-        // Each row has 6 parameters, so we limit to 500 rows per batch (500 * 6 = 3000 params, well under limit)
         const BATCH_SIZE = 500;
         const totalBatches = Math.ceil(newDependencies.length / BATCH_SIZE);
 
@@ -180,20 +154,16 @@ export async function savePageComponentDependencies(projectId, pageDependencies)
 
 export async function handleComponentMapping(req, res) {
     const { projectId, componentType, componentName, functionalBlock, pageDependencies, releaseVersion, releaseVersions, changeDate, isBugFix, issueKey, mrIid } = req.body;
-    const componentId = req.params.componentId; // Для PATCH
+    const componentId = req.params.componentId;
 
     try {
-        // Логируем входящие данные для отладки
         logInfo(`Входящий запрос: pageDependencies=${JSON.stringify(pageDependencies)}`);
 
-        // Нормализуем pageDependencies перед валидацией (устанавливаем default для componentType)
         let normalizedPageDependencies = pageDependencies;
         if (normalizedPageDependencies && Array.isArray(normalizedPageDependencies)) {
             normalizedPageDependencies = normalizedPageDependencies.map((dep, index) => {
-                // Обрабатываем все возможные случаи: отсутствует, null, undefined, '', невалидное значение
                 let normalizedComponentType = dep.componentType;
 
-                // Проверяем, что значение либо отсутствует, либо невалидно
                 if (normalizedComponentType === undefined ||
                     normalizedComponentType === null ||
                     normalizedComponentType === '' ||
@@ -212,28 +182,22 @@ export async function handleComponentMapping(req, res) {
 
         logInfo(`После нормализации: pageDependencies=${JSON.stringify(normalizedPageDependencies)}`);
 
-        // Нормализуем changeDate: преобразуем в ISO формат если нужно, или устанавливаем null
         let normalizedChangeDate = changeDate;
         if (normalizedChangeDate === '' || normalizedChangeDate === null || normalizedChangeDate === undefined) {
             normalizedChangeDate = null;
         } else if (typeof normalizedChangeDate === 'string' && normalizedChangeDate.trim() !== '') {
-            // Пытаемся преобразовать различные форматы дат в ISO
             try {
-                // Формат "2026-01-22 14:31:18 +0500" -> ISO
                 const dateMatch = normalizedChangeDate.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+([+-]\d{4})$/);
                 if (dateMatch) {
                     const [, date, time, tz] = dateMatch;
-                    // Преобразуем timezone offset из +0500 в +05:00
                     const tzFormatted = tz.slice(0, 3) + ':' + tz.slice(3);
                     normalizedChangeDate = `${date}T${time}${tzFormatted}`;
                 } else {
-                    // Пытаемся распарсить как есть (может быть уже ISO)
                     const parsedDate = new Date(normalizedChangeDate);
                     if (isNaN(parsedDate.getTime())) {
                         logWarn(`Не удалось распарсить дату: ${normalizedChangeDate}, устанавливаем null`);
                         normalizedChangeDate = null;
                     } else {
-                        // Преобразуем в ISO строку
                         normalizedChangeDate = parsedDate.toISOString();
                     }
                 }
@@ -243,7 +207,6 @@ export async function handleComponentMapping(req, res) {
             }
         }
 
-        // Валидация входных данных
         const { error, value } = componentValidationSchema.validate({
             projectId,
             componentType,
@@ -257,9 +220,9 @@ export async function handleComponentMapping(req, res) {
             issueKey,
             mrIid
         }, {
-            abortEarly: false, // Показывать все ошибки валидации
-            stripUnknown: true, // Удалять неизвестные поля
-            convert: true // Включаем автоматическое преобразование типов
+            abortEarly: false,
+            stripUnknown: true,
+            convert: true
         });
 
         if (error) {
@@ -271,13 +234,11 @@ export async function handleComponentMapping(req, res) {
             return res.status(400).json({ error: errorMessages });
         }
 
-        // Используем нормализованные значения из валидации
         const validatedPageDependencies = value.pageDependencies;
-        const validatedChangeDate = value.changeDate; // Может быть null или ISO строка
+        const validatedChangeDate = value.changeDate;
         const validatedIssueKey = value.issueKey;
         const validatedMrIid = value.mrIid;
 
-        // Нормализуем releaseVersions: если передан releaseVersion (строка или массив), используем его, иначе releaseVersions
         let normalizedReleaseVersions = [];
         if (releaseVersions && Array.isArray(releaseVersions)) {
             normalizedReleaseVersions = releaseVersions.filter(v => v); // Убираем пустые значения
@@ -291,18 +252,14 @@ export async function handleComponentMapping(req, res) {
 
         logInfo(`Получен запрос на маппинг компонента: projectId=${projectId}, componentType=${componentType}, componentName=${componentName}, functionalBlock=${JSON.stringify(functionalBlock)}, releaseVersions=${JSON.stringify(normalizedReleaseVersions)}, isBugFix=${isBugFix}`);
 
-        // Нормализуем functionalBlock в массив строк
         const functionalBlocks = functionalBlock.map(block => block.toString());
 
-        // 1. Находим или создаём компонент в таблице components
         const component = await findOrCreateComponent(projectId, componentType, componentName);
 
-        // 2. Если isBugFix === true, сохраняем в component_defects для каждой версии (только добавляем, не удаляем и не меняем)
         if (isBugFix === true && (normalizedReleaseVersions.length > 0 || validatedChangeDate || validatedIssueKey || validatedMrIid)) {
             try {
                 const defectsToInsert = [];
 
-                // Если есть версии, создаём запись для каждой версии
                 if (normalizedReleaseVersions.length > 0) {
                     for (const version of normalizedReleaseVersions) {
                         defectsToInsert.push({
@@ -315,7 +272,6 @@ export async function handleComponentMapping(req, res) {
                         });
                     }
                 } else if (validatedChangeDate) {
-                    // Если версий нет, но есть дата, создаём одну запись
                     defectsToInsert.push({
                         component_id: component.id,
                         release_version: null,
@@ -327,8 +283,6 @@ export async function handleComponentMapping(req, res) {
                 }
 
                 if (defectsToInsert.length > 0) {
-                    // Используем onConflict для дедупликации с новым индексом idx_component_defects_unique_v3
-                    // Индекс включает: component_id, change_date, issue_key, mr_iid, release_version
                     await databasePool('component_defects')
                         .insert(defectsToInsert.map(r => ({
                             component_id: r.component_id,
@@ -344,13 +298,11 @@ export async function handleComponentMapping(req, res) {
                     logInfo(`Сохранено ${defectsToInsert.length} дефектов для компонента ${componentName} (${componentType}) в проекте ${projectId}`);
                 }
             } catch (defectError) {
-                // Игнорируем ошибки дубликатов (они уже обработаны через onConflict)
                 logWarn(`Не удалось сохранить дефекты для компонента ${componentName}: ${defectError.message}`);
             }
         }
 
         if (req.method === 'POST') {
-            // 3. Удаляем существующие связи компонент-функциональные блоки
             const deletedCount = await databasePool('component_functional_blocks')
                 .where({ component_id: component.id })
                 .del();
@@ -359,9 +311,7 @@ export async function handleComponentMapping(req, res) {
                 logInfo(`Удалены существующие связи (${deletedCount}) для компонента ${componentName} в проекте ${projectId}`);
             }
 
-            // 4. Если переданы функциональные блоки, создаём новые связи
             if (functionalBlocks.length > 0) {
-                // Проверяем существование каждого функционального блока
                 const newLinks = [];
                 for (const blockId of functionalBlocks) {
                     const functionalBlockData = await databasePool('functional_blocks')
@@ -391,15 +341,18 @@ export async function handleComponentMapping(req, res) {
                 logInfo(`Все связи удалены для компонента ${componentName} в проекте ${projectId} (передан пустой массив функциональных блоков)`);
             }
 
-            // 5. Сохраняем связи Page -> компоненты, если они переданы
+            const deletedDepsCount = await databasePool('page_component_dependencies')
+                .where({ component_id: component.id })
+                .del();
+
+            if (deletedDepsCount > 0) {
+                logInfo(`Удалены существующие связи со страницами (${deletedDepsCount}) для компонента ${componentName} в проекте ${projectId}`);
+            }
+
             if (validatedPageDependencies && validatedPageDependencies.length > 0) {
                 await savePageComponentDependencies(projectId, validatedPageDependencies);
 
-                // 5.5. Автоматический маппинг функциональных блоков из связанных Page
-                // Если компонент связан с Page, которая уже имеет маппинг с функциональными блоками,
-                // автоматически передаём эти блоки компоненту
 
-                // Получаем уже созданные связи компонента (после шага 4)
                 const existingBlockIds = new Set(
                     (await databasePool('component_functional_blocks')
                         .where({ component_id: component.id })
@@ -422,7 +375,6 @@ export async function handleComponentMapping(req, res) {
                         .first();
 
                     if (pageComponent) {
-                        // Находим функциональные блоки через новую структуру
                         const pageFunctionalBlocks = await databasePool('component_functional_blocks')
                             .join('functional_blocks', 'component_functional_blocks.functional_block_id', 'functional_blocks.id')
                             .where({
@@ -438,7 +390,6 @@ export async function handleComponentMapping(req, res) {
                         }
                     }
 
-                    // Если не найдено в новой структуре, проверяем старую (component_mappings)
                     if (autoMappedBlocks.size === 0) {
                         const oldPageMappings = await databasePool('component_mappings')
                             .join('functional_blocks', 'component_mappings.functional_block_id', 'functional_blocks.id')
@@ -459,7 +410,6 @@ export async function handleComponentMapping(req, res) {
                     }
                 }
 
-                // Создаём автоматические связи для найденных функциональных блоков
                 if (autoMappedBlocks.size > 0) {
                     const autoLinks = [];
                     for (const fbId of autoMappedBlocks) {
@@ -480,7 +430,6 @@ export async function handleComponentMapping(req, res) {
                 }
             }
 
-            // 6. Получаем актуальные связи из БД для ответа
             const currentLinks = await databasePool('component_functional_blocks')
                 .where({ component_id: component.id })
                 .join('functional_blocks', 'component_functional_blocks.functional_block_id', 'functional_blocks.id')
@@ -489,7 +438,6 @@ export async function handleComponentMapping(req, res) {
                     'functional_blocks.name as functional_block_name'
                 );
 
-            // Возвращаем только простые данные
             const responseMappings = currentLinks.map(link => ({
                 functional_block_allure_id: link.functional_block_allure_id,
                 functional_block_name: link.functional_block_name,
@@ -567,12 +515,9 @@ export async function getPageMappings(req, res) {
             return res.status(400).json({ error: 'Необходимо указать projectId.' });
         }
 
-        // pageNames может прийти как массив или как строка (если один элемент)
-        // Express автоматически парсит повторяющиеся query параметры в массив
         let pageNamesArray = [];
         if (pageNames) {
             if (Array.isArray(pageNames)) {
-                // Фильтруем только строки, убираем объекты
                 pageNamesArray = pageNames.filter(name => name && typeof name === 'string' && name !== '[object Object]');
             } else if (typeof pageNames === 'string' && pageNames !== '[object Object]') {
                 pageNamesArray = [pageNames];
@@ -583,7 +528,6 @@ export async function getPageMappings(req, res) {
 
         const pageMappings = {};
 
-        // 1. Получаем все компоненты типа 'page' для заданных имен (новая структура)
         const pageComponents = await databasePool('components')
             .whereIn('component_name', pageNamesArray)
             .andWhere({
@@ -592,7 +536,6 @@ export async function getPageMappings(req, res) {
 
         const pageComponentIds = pageComponents.map(c => c.id);
 
-        // Получаем все ID для каждого имени страницы (поддержка нескольких типов с одним именем)
         const nameToIdsMap = new Map();
         pageComponents.forEach(c => {
             if (!nameToIdsMap.has(c.component_name)) {
@@ -601,7 +544,6 @@ export async function getPageMappings(req, res) {
             nameToIdsMap.get(c.component_name).push(c.id);
         });
 
-        // 2. Получаем все маппинги для этих компонентов (новая структура)
         let allNewMappings = [];
         if (pageComponentIds.length > 0) {
             allNewMappings = await databasePool('component_functional_blocks')
@@ -614,7 +556,6 @@ export async function getPageMappings(req, res) {
                 );
         }
 
-        // 3. Получаем все маппинги из старой структуры
         const allOldMappings = await databasePool('component_mappings')
             .join('functional_blocks', 'component_mappings.functional_block_id', 'functional_blocks.id')
             .whereIn('component_name', pageNamesArray)
@@ -627,11 +568,9 @@ export async function getPageMappings(req, res) {
                 'functional_blocks.name as functional_block_name'
             );
 
-        // 4. Группируем результаты
         for (const pageName of pageNamesArray) {
             const uniqueMappings = new Map();
 
-            // Из новой структуры
             const compIds = nameToIdsMap.get(pageName) || [];
             if (compIds.length > 0) {
                 allNewMappings
@@ -644,7 +583,6 @@ export async function getPageMappings(req, res) {
                     });
             }
 
-            // Из старой структуры
             allOldMappings
                 .filter(m => m.component_name === pageName)
                 .forEach(m => {
@@ -683,7 +621,6 @@ export async function getComponentMappings(req, res) {
 
         logInfo(`Получаем маппинги для проекта ${projectId}`);
 
-        // Получаем маппинги из новой структуры
         const mappings = await databasePool('components')
             .where({ 'components.project_id': projectId })
             .leftJoin('component_functional_blocks', 'components.id', 'component_functional_blocks.component_id')
@@ -699,7 +636,6 @@ export async function getComponentMappings(req, res) {
                 'functional_blocks.custom_field_name as functional_block_custom_field_name'
             );
 
-        // Группируем по компонентам (один компонент может иметь несколько функциональных блоков)
         const componentMap = new Map();
         mappings.forEach(row => {
             const key = `${row.component_id}`;
@@ -723,7 +659,6 @@ export async function getComponentMappings(req, res) {
             }
         });
 
-        // Шаг 2: Получаем маппинги из старой структуры (для тех, кто еще не мигрировал)
         const oldMappings = await databasePool('component_mappings')
             .join('functional_blocks', 'component_mappings.functional_block_id', 'functional_blocks.id')
             .where({ 'component_mappings.project_id': projectId })
@@ -737,7 +672,6 @@ export async function getComponentMappings(req, res) {
                 'functional_blocks.custom_field_name as functional_block_custom_field_name'
             );
 
-        // Добавляем данные из старой структуры
         oldMappings.forEach(row => {
 
             const existingEntry = Array.from(componentMap.values()).find(c =>
@@ -745,7 +679,6 @@ export async function getComponentMappings(req, res) {
             );
 
             if (existingEntry) {
-                // Добавляем блок, если его еще нет в списке функциональных блоков этого компонента
                 const blockExists = existingEntry.functional_blocks.some(fb => fb.functional_block_id === row.functional_block_id);
                 if (!blockExists) {
                     existingEntry.functional_blocks.push({
@@ -756,8 +689,6 @@ export async function getComponentMappings(req, res) {
                     });
                 }
             } else {
-                // Если компонента нет в новой таблице (например, удален из кода, но есть в базе), 
-                // добавляем его целиком как "исторический"
                 const key = `old_${row.component_name}_${row.component_type}`;
                 componentMap.set(key, {
                     component_id: null,
@@ -774,11 +705,9 @@ export async function getComponentMappings(req, res) {
             }
         });
 
-        // Преобразуем в массив для обратной совместимости (старый формат)
         const responseMappings = [];
         componentMap.forEach(component => {
             if (component.functional_blocks.length > 0) {
-                // Создаём отдельную запись для каждого функционального блока
                 component.functional_blocks.forEach(fb => {
                     responseMappings.push({
                         project_id: component.project_id,
@@ -791,7 +720,6 @@ export async function getComponentMappings(req, res) {
                     });
                 });
             } else {
-                // Компонент без маппинга
                 responseMappings.push({
                     project_id: component.project_id,
                     component_type: component.component_type,
@@ -895,14 +823,13 @@ export async function getFunctionalBlockPageComponentLinks(req, res) {
  * @returns {void}
  */
 export async function deleteComponentMapping(req, res) {
-    // Валидация ID компонента
     const { error, value } = componentValidationSchema.validate({ ...req.body, componentId: req.params.componentId });
     if (error) {
         logError(`Ошибка валидации данных для удаления компонента: ${error.details[0].message}`);
         return res.status(400).send(error.details[0].message);
     }
 
-    const { componentId } = value; // Извлечение ID компонента
+    const { componentId } = value;
 
     try {
         logInfo(`Удаляем маппинг компонента с ID ${componentId}`);

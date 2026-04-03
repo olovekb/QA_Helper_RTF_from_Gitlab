@@ -394,7 +394,7 @@ const TIAPage = ({ projects }) => {
             // Если наследование заблокировано, не отправляем зависимости страниц (чтобы бэкенд не авто-мапил)
             const isInheritanceBlocked = disabledInheritance[component.id];
             const pageDeps = isInheritanceBlocked ? [] : pageDependencies.filter(dep => dep.componentName === component.name);
-            
+
             await axios.post(`${config.TIAUrl}/api/components`, {
                 projectId,
                 componentType: component.type,
@@ -498,7 +498,7 @@ const TIAPage = ({ projects }) => {
                         extractedComponents.forEach(component => {
                             const componentId = component.id;
                             const normalizedCompName = component.name?.trim();
-                            
+
                             // 1. Собираем имена страниц, от которых зависит компонент
                             const relatedPageNames = new Set(
                                 pageDependencies
@@ -506,7 +506,7 @@ const TIAPage = ({ projects }) => {
                                     .map(dep => dep.pageName?.trim())
                                     .filter(name => name)
                             );
-                            
+
                             // 2. Добавляем само имя компонента в список поиска маппингов
                             if (normalizedCompName) {
                                 relatedPageNames.add(normalizedCompName);
@@ -520,7 +520,7 @@ const TIAPage = ({ projects }) => {
                                 pageMapping.forEach(mapping => {
                                     const allureId = mapping.functional_block_allure_id;
                                     const folderId = findFolderAllureId(allureId)?.toString();
-                                    
+
                                     if (folderId && !autoFolderIds.has(folderId)) {
                                         autoFolderIds.add(folderId);
                                         // Инициализируем Set для компонента в autoMappedBlocks, если его еще нет
@@ -942,12 +942,12 @@ const TIAPage = ({ projects }) => {
                 folderIds.forEach(id => allFolderIds.add(id.toString()));
             }
         });
-        
+
         // Маппинги страниц (через компоненты)
         components.forEach(comp => {
             // Учитываем блокировку наследования
             if (disabledInheritance[comp.id]) return;
-            
+
             const pages = getPagesUsingComponent(comp.name);
             pages.forEach(page => {
                 const pName = page.page_meta?.name?.trim();
@@ -959,7 +959,7 @@ const TIAPage = ({ projects }) => {
                 });
             });
         });
-        
+
         return Array.from(allFolderIds);
     };
 
@@ -970,7 +970,7 @@ const TIAPage = ({ projects }) => {
             const unmapped = components.filter(c => {
                 // Прямой маппинг
                 if (componentMappings[c.id] && componentMappings[c.id].length > 0) return false;
-                
+
                 // Наследование заблокировано - считаем только прямой маппинг
                 if (disabledInheritance[c.id]) return true;
 
@@ -980,10 +980,10 @@ const TIAPage = ({ projects }) => {
                     const pName = page.page_meta?.name?.trim();
                     return pName && pageMappings[pName]?.length > 0;
                 });
-                
+
                 return !hasPageMapping;
             });
-            
+
             if (unmapped.length > 0) {
                 setUnmappedComponentsList(unmapped);
                 // По умолчанию открываем первый доступный тип
@@ -1638,9 +1638,6 @@ const TIAPage = ({ projects }) => {
                     children: filteredChildren
                 });
             } else {
-                // Для всех остальных типов (Feature, Story, Scenario, Code) - показываем их, если они не на корневом уровне
-                // Но эта функция вызывается рекурсивно, так что если мы здесь, значит это уже не корневой уровень
-                // Просто показываем все узлы с их детьми
                 const filteredChildren = folder.children && folder.children.length > 0
                     ? filterFoldersForProject(folder.children)
                     : [];
@@ -1653,13 +1650,13 @@ const TIAPage = ({ projects }) => {
         return result;
     };
 
-    // Форматирование customFieldName для отображения (для проектов Nocode показываем Block/SubBlock вместо Feature)
     const formatCustomFieldName = (folder, level = 0) => {
         if (folder.node_type === 'TEST_CASE') {
             const layerPrefix = folder.layer ? `[${folder.layer}] ` : '';
             return `${layerPrefix}${folder.name}`;
         }
-        return `${folder.customFieldName} - ${folder.name}`;
+        const type = folder.customFieldName || 'Блок';
+        return `[${type}] ${folder.name}`;
     };
 
     const getFolderOptions = (folders) => {
@@ -1689,15 +1686,10 @@ const TIAPage = ({ projects }) => {
 
     const isCreateButtonDisabled = () => !!getCreateButtonDisabledReason();
 
-    // Обновленная логика: РАЗРЕШАЕМ создание, даже если не все компоненты смаплены.
-    // Мы просто передадим те, что есть. Пустые маппинги будут проигнорированы.
     const isMappingConfirmDisabled = false;
 
-    // Проверка для кнопки "Подтвердить и создать"
-    // Jira ссылка теперь опциональна (проверяем валидность только если она введена)
     const isJiraValid = !jiraLink || jiraLink.match(/^https?:\/\/jira\.abanking\.ru\/browse\/[A-Z]+-\d+$/);
 
-    // Кнопка заблокирована только если Jira ссылка некорректна (если введена)
     const isMappingConfirmButtonDisabled = !isJiraValid;
 
     const renderQAAdvice = (qaAdvice = []) => {
@@ -1712,50 +1704,6 @@ const TIAPage = ({ projects }) => {
         ));
     };
 
-    const renderNestedComponents = (nestedComponents = [], parentId) => {
-        if (!nestedComponents.length) return null;
-        return (
-            <div style={{ marginTop: 8, padding: 8, backgroundColor: '#fff', borderRadius: 6, border: `1px solid ${styles.borderLight}` }}>
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>Затронутые вложенные компоненты</div>
-                {nestedComponents.map((nc, idx) => {
-                    const detailKey = `${parentId}-${idx}`;
-                    const isExpanded = !!expandedDetails[detailKey];
-                    return (
-                        <div key={detailKey} style={{ padding: '8px 0', borderTop: idx === 0 ? 'none' : `1px solid ${styles.borderLight}` }}>
-                            <div style={{ fontWeight: 600, color: '#111' }}>{nc.component_name}</div>
-                            {nc.change_source && <div style={{ fontSize: 13, color: '#111' }}>Источник: {nc.change_source}</div>}
-                            {nc.impact_summary && <div style={{ marginTop: 4, fontSize: 13, color: '#111' }}>{nc.impact_summary}</div>}
-                            <button
-                                onClick={() => toggleDetails(detailKey)}
-                                style={{ ...styles.modalButtonSave, marginTop: 6, padding: '6px 10px' }}
-                            >
-                                {isExpanded ? 'Скрыть детали' : 'Подробное описание'}
-                            </button>
-                            {isExpanded && (
-                                <div style={{ marginTop: 8, backgroundColor: '#f6f8fa', padding: 8, borderRadius: 6 }}>
-                                    {(nc.changed_methods || []).length > 0 && (
-                                        <div style={{ marginBottom: 8 }}>
-                                            <div style={{ fontWeight: 600, color: '#111' }}>Методы:</div>
-                                            <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
-                                                {nc.changed_methods.map((method, mi) => (
-                                                    <li key={`${detailKey}-method-${mi}`} style={{ fontSize: 13, color: '#111' }}>{method}</li>
-                                                ))}
-                                            </ul>
-                                        </div>
-                                    )}
-                                    {nc.diff_snippet && (
-                                        <pre style={{ whiteSpace: 'pre-wrap', backgroundColor: '#fff', padding: 8, borderRadius: 4, border: `1px solid ${styles.borderLight}`, color: '#111' }}>
-                                            {nc.diff_snippet}
-                                        </pre>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    );
-                })}
-            </div>
-        );
-    };
 
     const renderLightSummary = () => {
         if (!tiaReport || !isNewTiaFormat(tiaReport) || mode !== 'light') return null;
@@ -2738,7 +2686,6 @@ const TIAPage = ({ projects }) => {
                                     onClick={() => {
                                         setFrontendJSON(null);
                                         setFrontendFileName('');
-                                        // Если это был единственный источник tiaReport, очищаем его
                                         if (!backendJSON) {
                                             setTiaReport(null);
                                         }
@@ -2810,7 +2757,6 @@ const TIAPage = ({ projects }) => {
                                     onClick={() => {
                                         setBackendJSON(null);
                                         setBackendFileName('');
-                                        // Если это был единственный источник tiaReport, очищаем его
                                         if (!frontendJSON) {
                                             setTiaReport(null);
                                         }
@@ -3291,7 +3237,7 @@ const TIAPage = ({ projects }) => {
                                                                         borderRadius: '4px',
                                                                         border: '1px solid #dee2e6'
                                                                     }}>
-                                                                        📝 {comp.jsdoc}
+                                                                        {comp.jsdoc}
                                                                     </div>
                                                                 )}
                                                             </div>
@@ -3601,33 +3547,18 @@ const TIAPage = ({ projects }) => {
                                                         {(() => {
                                                             const pages = getPagesUsingComponent(comp.name);
                                                             const hasDirect = componentMappings[comp.id]?.length > 0;
-                                                            
-                                                            // Наследование учитываем только если оно не заблокировано пользователем
                                                             const isInheritanceBlocked = disabledInheritance[comp.id];
                                                             const hasPageMapping = !isInheritanceBlocked && pages.some(page => {
                                                                 const pName = page.page_meta?.name?.trim();
                                                                 return pName && pageMappings[pName]?.length > 0;
                                                             });
-                                                            
+
                                                             const hasMapping = hasDirect || hasPageMapping;
-                                                            
+
                                                             return (
                                                                 <>
                                                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
                                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                                                            <div style={{
-                                                                                padding: '10px',
-                                                                                backgroundColor: hasMapping ? '#f0fdf4' : '#fff1f2',
-                                                                                borderRadius: '12px',
-                                                                                display: 'flex',
-                                                                                alignItems: 'center',
-                                                                                justifyContent: 'center',
-                                                                                transition: 'all 0.3s ease'
-                                                                            }}>
-                                                                                <span style={{ fontSize: '20px', lineHeight: 1 }}>
-                                                                                    {hasMapping ? '✅' : '⚠️'}
-                                                                                </span>
-                                                                            </div>
                                                                             <div>
                                                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                                     <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: '#1e293b' }}>
@@ -3658,9 +3589,6 @@ const TIAPage = ({ projects }) => {
                                                                                         </span>
                                                                                     )}
                                                                                 </div>
-                                                                                <div style={{ fontSize: '13px', color: '#64748b', marginTop: '4px' }}>
-                                                                                    {hasMapping ? 'Замаплено на функциональные блоки' : 'Не привязано к функциональным блокам'}
-                                                                                </div>
                                                                             </div>
                                                                         </div>
                                                                         {/* Кнопки действий: Очистить маппинг */}
@@ -3675,21 +3603,28 @@ const TIAPage = ({ projects }) => {
                                                                                     }
                                                                                 }}
                                                                                 style={{
-                                                                                    padding: '8px 14px',
+                                                                                    padding: '10px 16px',
                                                                                     backgroundColor: '#fff1f2',
                                                                                     color: '#e11d48',
                                                                                     border: '1px solid #fecdd3',
-                                                                                    borderRadius: '8px',
-                                                                                    fontSize: '12px',
+                                                                                    borderRadius: '10px',
+                                                                                    fontSize: '13px',
                                                                                     fontWeight: 600,
                                                                                     cursor: 'pointer',
                                                                                     transition: 'all 0.2s ease',
                                                                                     display: 'flex',
                                                                                     alignItems: 'center',
-                                                                                    gap: '6px'
+                                                                                    gap: '8px',
+                                                                                    boxShadow: '0 1px 2px rgba(225, 29, 72, 0.05)'
                                                                                 }}
-                                                                                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#ffe4e6'; }}
-                                                                                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#fff1f2'; }}
+                                                                                onMouseEnter={(e) => {
+                                                                                    e.currentTarget.style.backgroundColor = '#ffe4e6';
+                                                                                    e.currentTarget.style.transform = 'translateY(-1px)';
+                                                                                }}
+                                                                                onMouseLeave={(e) => {
+                                                                                    e.currentTarget.style.backgroundColor = '#fff1f2';
+                                                                                    e.currentTarget.style.transform = 'translateY(0)';
+                                                                                }}
                                                                             >
                                                                                 Очистить маппинг
                                                                             </button>
@@ -3781,10 +3716,10 @@ const TIAPage = ({ projects }) => {
                                                                                     Покрыто:
                                                                                 </div>
                                                                                 {isInheritanceBlocked && (
-                                                                                    <button 
-                                                                                        onClick={(e) => { 
-                                                                                            e.stopPropagation(); 
-                                                                                            setDisabledInheritance(prev => ({ ...prev, [comp.id]: false })); 
+                                                                                    <button
+                                                                                        onClick={(e) => {
+                                                                                            e.stopPropagation();
+                                                                                            setDisabledInheritance(prev => ({ ...prev, [comp.id]: false }));
                                                                                         }}
                                                                                         style={{ background: 'none', border: 'none', color: '#6366f1', fontSize: '12px', cursor: 'pointer', padding: 0 }}
                                                                                     >
@@ -3795,23 +3730,44 @@ const TIAPage = ({ projects }) => {
                                                                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                                                                                 {(() => {
                                                                                     const directIds = componentMappings[comp.id] || [];
+
+                                                                                    const blockNamesMap = {};
+
+                                                                                    const selfMappings = pageMappings[comp.name?.trim()] || [];
+                                                                                    selfMappings.forEach(m => {
+                                                                                        const id = m.functional_block_allure_id?.toString();
+                                                                                        if (id && m.functional_block_name) blockNamesMap[id] = m.functional_block_name;
+                                                                                    });
+
                                                                                     const pageLevelIds = isInheritanceBlocked ? [] : pages.flatMap(page => {
                                                                                         const pName = page.page_meta?.name?.trim();
-                                                                                        return (pageMappings[pName] || []).map(m => m.functional_block_allure_id?.toString());
+                                                                                        const mappings = pageMappings[pName] || [];
+                                                                                        return mappings.map(m => {
+                                                                                            const id = m.functional_block_allure_id?.toString();
+                                                                                            if (id && m.functional_block_name) blockNamesMap[id] = m.functional_block_name;
+                                                                                            return id;
+                                                                                        });
                                                                                     }).filter(Boolean);
-                                                                                    
+
                                                                                     const allIds = Array.from(new Set([...directIds, ...pageLevelIds]));
                                                                                     const isTagsExpanded = expandedMappedComponents[comp.id];
                                                                                     const LIMIT = 10;
                                                                                     const displayedIds = isTagsExpanded ? allIds : allIds.slice(0, LIMIT);
-                                                                                    
+
                                                                                     return (
                                                                                         <>
                                                                                             {displayedIds.map(folderId => {
                                                                                                 const folder = findFolderById(folders, folderId);
                                                                                                 const isAutoMapped = autoMappedBlocks[comp.id]?.includes(folderId.toString());
                                                                                                 const isPageLevel = !directIds.includes(folderId.toString());
-                                                                                                
+
+                                                                                                let displayName = `ID: ${folderId}`;
+                                                                                                if (folder) {
+                                                                                                    displayName = formatCustomFieldName(folder);
+                                                                                                } else if (blockNamesMap[folderId]) {
+                                                                                                    displayName = blockNamesMap[folderId];
+                                                                                                }
+
                                                                                                 return (
                                                                                                     <div
                                                                                                         key={`${comp.id}-mapping-${folderId}`}
@@ -3828,13 +3784,13 @@ const TIAPage = ({ projects }) => {
                                                                                                             fontWeight: 500,
                                                                                                         }}
                                                                                                     >
-                                                                                                        <span style={{ 
-                                                                                                            whiteSpace: 'nowrap', 
-                                                                                                            overflow: 'hidden', 
+                                                                                                        <span style={{
+                                                                                                            whiteSpace: 'nowrap',
+                                                                                                            overflow: 'hidden',
                                                                                                             textOverflow: 'ellipsis',
-                                                                                                            maxWidth: '300px'
+                                                                                                            maxWidth: '305px'
                                                                                                         }}>
-                                                                                                            {folder ? formatCustomFieldName(folder) : `ID: ${folderId}`}
+                                                                                                            {displayName}
                                                                                                         </span>
                                                                                                         {!isPageLevel && (
                                                                                                             <button
@@ -3845,15 +3801,18 @@ const TIAPage = ({ projects }) => {
                                                                                                                 style={{
                                                                                                                     border: 'none',
                                                                                                                     background: 'none',
-                                                                                                                    padding: '2px',
+                                                                                                                    padding: '2px 4px',
                                                                                                                     cursor: 'pointer',
-                                                                                                                    color: 'inherit',
-                                                                                                                    fontSize: '14px',
-                                                                                                                    opacity: 0.6,
+                                                                                                                    color: '#e11d48',
+                                                                                                                    fontSize: '16px',
+                                                                                                                    fontWeight: 'bold',
                                                                                                                     display: 'flex',
                                                                                                                     alignItems: 'center',
                                                                                                                     justifyContent: 'center',
+                                                                                                                    lineHeight: 1,
+                                                                                                                    marginLeft: '2px'
                                                                                                                 }}
+                                                                                                                title="Удалить привязку"
                                                                                                             >
                                                                                                                 ×
                                                                                                             </button>
