@@ -328,33 +328,8 @@ export async function callCloudRuAPI(messages, opts = {}) {
     
     // Убрано логирование сообщений для чистоты консоли
 
-    // === ТЕСТОВЫЙ ЗАПРОС ДЛЯ ПРОВЕРКИ API ===
-    console.log(`\n🧪 TESTING CLOUD.RU API CONNECTIVITY`);
-    console.log(`${'='*60}`);
-    try {
-        const testResponse = await fetch(`${CLOUDRU_BASE_URL}/models`, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${API_TOKEN}`,
-                'Content-Type': 'application/json',
-                'Connection': 'keep-alive'
-            },
-            // @ts-ignore node-fetch v2 supports agent option
-            agent: getAgentForUrl(`${CLOUDRU_BASE_URL}/models`)
-        });
-        console.log(`📡 Test request status: ${testResponse.status} ${testResponse.statusText}`);
-        if (testResponse.ok) {
-            const testData = await testResponse.json();
-            console.log(`✅ Cloud.ru API is accessible`);
-            console.log(`📋 Available models: ${testData.data?.length || 0} models`);
-        } else {
-            const errorText = await testResponse.text();
-            console.log(`❌ Cloud.ru API test failed: ${errorText}`);
-        }
-    } catch (testError) {
-        console.log(`💥 Cloud.ru API test error: ${testError.message}`);
-    }
-    console.log(`${'='*60}\n`);
+    // Лишний preflight на /models убран: он добавлял отдельный network round-trip
+    // перед каждым запросом и не улучшал качество генерации.
 
     const headers = {
         'Authorization': `Bearer ${API_TOKEN}`,

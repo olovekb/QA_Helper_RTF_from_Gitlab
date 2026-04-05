@@ -1116,6 +1116,29 @@ export default function TestModelGeneratorModal({
         fetchModels();
     }, []);
 
+    useEffect(() => {
+        if (availableModels.length === 0) return;
+
+        let cancelled = false;
+
+        const restoreSelectedModel = async () => {
+            const savedModel = await idbGet('selectedCloudRuModel').catch(() => null);
+            if (!cancelled && savedModel && availableModels.includes(savedModel)) {
+                setSelectedModel(savedModel);
+            }
+        };
+
+        restoreSelectedModel();
+        return () => {
+            cancelled = true;
+        };
+    }, [availableModels]);
+
+    useEffect(() => {
+        if (!selectedModel) return;
+        idbSet('selectedCloudRuModel', selectedModel).catch(console.warn);
+    }, [selectedModel]);
+
 
     // --- Core Logic (with minor refactoring for clarity) ---
     const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
@@ -1459,8 +1482,11 @@ export default function TestModelGeneratorModal({
                 reviewNotes: reviewComment.trim() || '',
                 issues: issues,
                 baselineMetrics: baselineMetrics,
-                requirements: requirementsPayload.requirements || ''
+                requirements: requirementsPayload.requirements || '',
+                ...(selectedModel ? { models: [selectedModel] } : {})
             };
+
+            console.log('TestModelGeneratorModal: selectedModel for refine:', selectedModel || '(default from config)');
 
             const { data } = await axios.post(
                 `${config.serverUrl}/refine-test-model`,
@@ -1898,9 +1924,10 @@ export default function TestModelGeneratorModal({
                 console.log('TestModelGeneratorModal: modelStructure (без служебных полей):', modelStructure);
                 console.log('TestModelGeneratorModal: количество Features:', modelStructure.length);
                 console.log('TestModelGeneratorModal: includeBackendTests:', includeBackendTests);
+                console.log('TestModelGeneratorModal: selectedModel for test cases:', selectedModel);
                 
                 // ✅ Передаем преобразованную модель и флаг includeBackendTests
-                onGenerate(modelStructure, includeBackendTests);
+                onGenerate(modelStructure, includeBackendTests, selectedModel);
                 onClose(); // Закрываем модалку сразу
             } else {
                 console.error("onGenerate prop is not a function!");

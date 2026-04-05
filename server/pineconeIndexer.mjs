@@ -37,7 +37,7 @@ export async function initPinecone(apiKey, indexName = 'qa-helper') {
             console.log(`[pineconeIndexer] Индекс ${indexName} не существует, создаю...`);
             await pineconeClient.createIndex({
                 name: indexName,
-                dimension: 1024, // Для BAAAI/bge-m3 - 1024, для Qwen3-Embedding - 1536
+                dimension: 1024, // Текущий Cloud.ru embedding output в проекте ожидается как 1024-dim
                 metric: 'cosine'
             });
             console.log(`[pineconeIndexer] Индекс ${indexName} создан`);

@@ -97,11 +97,12 @@ export function isPgVectorInitialized() {
 }
 
 /**
- * Список моделей эмбеддеров с fallback
+ * Список моделей эмбеддеров в порядке приоритета.
+ * Сначала используем Qwen, затем откатываемся на bge-m3.
  */
 const EMBEDDING_MODELS = [
-    'BAAAI/bge-m3',
-    'Qwen/Qwen3-Embedding-0.6B'
+    'Qwen/Qwen3-Embedding-0.6B',
+    'BAAAI/bge-m3'
 ];
 
 /**

@@ -1117,12 +1117,13 @@ export default function SolutionPage ({ projects = [] })
     }
   };
 
-  const handleGenerateModel = async (modelStructure, includeBackendTests = true) =>
+  const handleGenerateModel = async (modelStructure, includeBackendTests = true, selectedModel = '') =>
   {
     trackEvent('generate_test_model', { page: '/solution', projectId: allureProject?.id, taskId: confluencePageId });
     console.log('SolutionPage: получена структура тестовой модели для генерации тест-кейсов:', modelStructure);
     console.log('SolutionPage: количество features в структуре:', modelStructure?.length);
     console.log('SolutionPage: includeBackendTests:', includeBackendTests);
+    console.log('SolutionPage: selectedModel:', selectedModel || '(default from config)');
 
     const payloadBase = buildRequirementsPayload({ includeRequirements: true });
 
@@ -1143,6 +1144,7 @@ export default function SolutionPage ({ projects = [] })
         const payload = {
           ...payloadBase,
           modelStructure,
+          ...(selectedModel ? { models: [selectedModel] } : {}),
           includeBackendTests: includeBackendTests !== false, // ✅ Передаём флаг включения backend тестов
           ...(allureProject ? { projectId: allureProject } : {})  // ✅ Добавляем projectId для shared steps
         };
@@ -1170,7 +1172,7 @@ export default function SolutionPage ({ projects = [] })
       // Fallback к старому синхронному API
       const { data } = await axios.post(
         `${config.serverUrl}/generate-test-cases`,
-        { ...payloadBase, modelStructure }, {
+        { ...payloadBase, modelStructure, ...(selectedModel ? { models: [selectedModel] } : {}) }, {
         headers: {
           'Content-Type': 'application/json'
         }

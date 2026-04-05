@@ -48,7 +48,8 @@ export async function chunkify(markdown, metadata = {}) {
         const chunkType = classifySection(section);
         
         // Фильтруем шум
-        if (chunkType === CHUNK_TYPES.NOISE_METADATA) {
+        if (chunkType === CHUNK_TYPES.NOISE_METADATA ||
+            chunkType === CHUNK_TYPES.TABLE_ROW) {
             continue;
         }
         
@@ -59,6 +60,10 @@ export async function chunkify(markdown, metadata = {}) {
             chunk_type: chunkType,
             section_path: section.path
         });
+
+        if (!atomicChunk) {
+            continue;
+        }
         
         // Определяем, нужно ли объединять с предыдущим (composite chunk)
         const shouldMerge = shouldMergeWithPrevious(atomicChunk, currentComposite);
@@ -117,7 +122,40 @@ function parseDocumentStructure(markdown) {
         const line = lines[i];
         lineNumber = i + 1;
         
-        // Проверяем заголовок
+        // Проверяем заголовок с нумерацией (например "3.1.2 Название" или "1. Требование")
+        const headingWithNumberMatch = line.match(/^(#{1,6})\s+(\d+(?:[\.\)]\d+)*)\s+(.+)$/);
+        if (headingWithNumberMatch) {
+            // Сохраняем предыдущую секцию
+            if (currentSection && sectionContent.length > 0) {
+                currentSection.content = sectionContent.join('\n').trim();
+                sections.push(currentSection);
+            }
+            
+            // Начинаем новую секцию
+            const level = headingWithNumberMatch[1].length;
+            const sectionNumber = headingWithNumberMatch[2].trim();
+            const text = headingWithNumberMatch[3].trim();
+            
+            // Обновляем путь заголовков
+            currentHeading = currentHeading.slice(0, level - 1);
+            currentHeading.push(text);
+            
+            currentSection = {
+                type: 'heading',
+                heading_level: level,
+                section_number: sectionNumber,
+                heading: text,
+                path: [...currentHeading],
+                content: '',
+                line_start: lineNumber,
+                line_end: lineNumber,
+                elements: []
+            };
+            sectionContent = [];
+            continue;
+        }
+        
+        // Проверяем заголовок без номера
         const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
         if (headingMatch) {
             // Сохраняем предыдущую секцию
@@ -246,7 +284,8 @@ function parseDocumentStructure(markdown) {
  * @returns {string} Тип чанка
  */
 function classifySection(section) {
-    const text = (section.heading + ' ' + section.content).toLowerCase();
+    const chunkableContent = getChunkableSectionText(section);
+    const text = `${section.heading || ''} ${chunkableContent}`.toLowerCase();
     
     // Проверяем на шум (changelog, история, метаданные)
     if (isNoise(text)) {
@@ -279,7 +318,7 @@ function classifySection(section) {
     }
     
     // Проверяем таблицы требований
-    if (section.elements?.some(el => el.type === 'table_row')) {
+    if (section.elements?.some(el => el.type === 'table_row') && !chunkableContent.trim()) {
         return CHUNK_TYPES.TABLE_ROW;
     }
     
@@ -510,8 +549,12 @@ function extractExplicitRefs(text) {
 }
 
 function createAtomicChunk(section, metadata) {
-    const cleanedText = cleanText(section.content || section.heading);
-    const rawText = section.content || section.heading || '';
+    const rawText = getChunkableSectionText(section);
+    if (!rawText.trim()) {
+        return null;
+    }
+
+    const cleanedText = cleanText(rawText);
     const explicitRefs = extractExplicitRefs(rawText);
     
     return {
@@ -520,10 +563,13 @@ function createAtomicChunk(section, metadata) {
         doc_title: metadata.doc_title,
         section_path: metadata.section_path || [],
         
+        // Номер раздела (например "3.1.2")
+        section_number: section.section_number || null,
+        
         heading: section.heading,
         heading_level: section.heading_level,
         
-        raw_text: section.content || section.heading,
+        raw_text: rawText,
         cleaned_text: cleanedText,
         
         chunk_type: metadata.chunk_type,
@@ -531,7 +577,7 @@ function createAtomicChunk(section, metadata) {
         parent_chunk_id: null,
         linked_chunk_ids: [],
         
-        requirement_id: extractRequirementId(section.content || section.heading),
+        requirement_id: extractRequirementId(rawText),
         feature_name: metadata.doc_title,
         
         source_location: {
@@ -593,17 +639,98 @@ function finalizeCompositeChunk(composite) {
 }
 
 // ============================================================
-// ЭТАП 4: MERGE LOGIC
+// ЭТАП 4: MERGE LOGIC - CONDITIONAL BRANCHES
 // ============================================================
+
+/**
+ * Проверяет, является ли текст условной конструкцией (если → то → иначе)
+ * Такие конструкции должны объединяться в один чанк
+ */
+function isConditionalBranch(text) {
+    if (!text) return false;
+    
+    const conditionalPatterns = [
+        /если\s+.+\s+то/i,
+        /если\s+.+\s+иначе/i,
+        /если\s+.+\s+в\s+противном\s+случае/i,
+        /в\s+случае\s+.+\s+выполняется/i,
+        /при\s+.+\s+выполняется/i,
+        /when\s+.+\s+then/i,
+        /if\s+.+\s+then/i,
+        /при\s+условии/i,
+        /допустим\s+/i,
+        /предположим\s+/i
+    ];
+    
+    return conditionalPatterns.some(pattern => pattern.test(text));
+}
+
+/**
+ * Проверяет, является ли текст продолжением условной конструкции
+ * (т.е. содержит "то", "иначе", "в противном случае" без нового "если")
+ */
+function isConditionalContinuation(text) {
+    if (!text) return false;
+    
+    const continuationPatterns = [
+        /\bто\b/i,
+        /\bиначе\b/i,
+        /\bв\s+противном\s+случае\b/i,
+        /\bв\s+противном\b/i,
+        /\bиначе\s+если\b/i,
+        /\bто\s+выполняется\b/i,
+        /\bто\s+отображается\b/i,
+        /\bто\s+происходит\b/i,
+        /\botherwise\b/i,
+        /\belse\b/i,
+        /\bthen\b/i
+    ];
+    
+    return continuationPatterns.some(pattern => pattern.test(text));
+}
+
+/**
+ * Проверяет, является ли текущий элемент началом нового условия
+ * (начинается с "если", "когда" и т.д.)
+ */
+function isNewCondition(text) {
+    if (!text) return false;
+    
+    const newConditionPatterns = [
+        /^(если|когда|при|в\s+случае)\s+/i,
+        /^если\b/i,
+        /^когда\b/i,
+        /^(if|when)\s+/i
+    ];
+    
+    return newConditionPatterns.some(pattern => pattern.test(text.trim()));
+}
 
 function shouldMergeWithPrevious(atomicChunk, currentComposite) {
     if (!currentComposite) return false;
     
-    // Объединяем если:
-    // 1. Типы совпадают (business_rule + business_rule)
-    // 2. UI-правила объединяем с UI-правилами
-    // 3. API-контракты объединяем
+    // 1. Если текущий чанк - начало условной конструкции, а предыдущий - нет условие
+    // объединяем чтобы не разрывать "если → то"
+    const currentText = atomicChunk.cleaned_text || '';
+    const prevText = currentComposite.cleaned_text || '';
     
+    // Если предыдущий содержит условную конструкцию (если/то/иначе), а текущий продолжает её - объединяем
+    if (isConditionalBranch(prevText) && isConditionalContinuation(currentText)) {
+        return true;
+    }
+    
+    // Если оба содержат условные конструкции - объединяем
+    if (isConditionalBranch(prevText) && isConditionalBranch(currentText)) {
+        return true;
+    }
+    
+    // 2. Если предыдущий - таблица требований, а текущий - её продолжение (не новый заголовок)
+    if (currentComposite.chunk_type === CHUNK_TYPES.TABLE_ROW && 
+        atomicChunk.chunk_type === CHUNK_TYPES.TABLE_ROW) {
+        return true;
+    }
+    
+    // 3. Объединяем если типы совпадают и предыдущий не слишком большой
     const mergeableTypes = [
         CHUNK_TYPES.BUSINESS_RULE,
         CHUNK_TYPES.UI_RULE,
@@ -639,6 +766,125 @@ function cleanText(text) {
         // Удаляем спецсимволы markdown которые не несут смысла
         .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // [text](url) -> text
         .replace(/[*_`#]/g, '')
+        .trim();
+}
+
+function getChunkableSectionText(section) {
+    return flattenMarkdownTables(section?.content || '');
+}
+
+function flattenMarkdownTables(text) {
+    if (!text) return '';
+
+    const lines = text.split('\n');
+    const normalizedLines = [];
+    let tableLines = [];
+
+    const flushTable = () => {
+        if (!tableLines.length) return;
+
+        const flattenedTable = flattenMarkdownTableBlock(tableLines);
+        if (flattenedTable) {
+            normalizedLines.push(flattenedTable);
+        }
+
+        tableLines = [];
+    };
+
+    for (const line of lines) {
+        if (isMarkdownTableLine(line)) {
+            tableLines.push(line);
+            continue;
+        }
+
+        flushTable();
+        normalizedLines.push(line);
+    }
+
+    flushTable();
+
+    return normalizedLines
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
+function isMarkdownTableLine(line) {
+    return /^\|.+\|$/.test((line || '').trim());
+}
+
+function flattenMarkdownTableBlock(lines) {
+    const rows = lines
+        .map(parseMarkdownTableRow)
+        .filter(cells => cells.length > 0);
+
+    if (!rows.length) {
+        return '';
+    }
+
+    const hasHeader = rows.length >= 2 && isMarkdownTableSeparatorRow(rows[1]);
+    if (hasHeader) {
+        const headers = rows[0].map((cell, index) => normalizeTableCellText(cell) || `column ${index + 1}`);
+        const dataRows = rows.slice(2);
+
+        if (!dataRows.length) {
+            return headers.join('; ');
+        }
+
+        return dataRows
+            .map(row => formatMarkdownTableRow(row, headers))
+            .filter(Boolean)
+            .join('\n');
+    }
+
+    return rows
+        .filter(row => !isMarkdownTableSeparatorRow(row))
+        .map(row => formatMarkdownTableRow(row))
+        .filter(Boolean)
+        .join('\n');
+}
+
+function parseMarkdownTableRow(line) {
+    const trimmed = (line || '').trim();
+    if (!trimmed) {
+        return [];
+    }
+
+    return trimmed
+        .replace(/^\|/, '')
+        .replace(/\|$/, '')
+        .split(/(?<!\\)\|/)
+        .map(cell => cell.trim());
+}
+
+function isMarkdownTableSeparatorRow(cells) {
+    return Array.isArray(cells) &&
+        cells.length > 0 &&
+        cells.every(cell => /^:?-+:?$/.test((cell || '').trim()));
+}
+
+function formatMarkdownTableRow(cells, headers = null) {
+    const normalizedCells = cells.map(cell => normalizeTableCellText(cell));
+    const hasAnyValue = normalizedCells.some(Boolean);
+    if (!hasAnyValue) {
+        return '';
+    }
+
+    if (headers && headers.length) {
+        return normalizedCells
+            .map((value, index) => `${headers[index] || `column ${index + 1}`}: ${value}`)
+            .join('; ');
+    }
+
+    return normalizedCells.join('; ');
+}
+
+function normalizeTableCellText(cell) {
+    return String(cell || '')
+        .replace(/\\\|/g, '|')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .replace(/[*_`#]/g, '')
+        .replace(/[ \t]+/g, ' ')
         .trim();
 }
 

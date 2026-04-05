@@ -85,6 +85,7 @@ async function callHybridAPI(messages, opts = {}) {
         expectedKeys = [],
         apiToken = API_TOKEN  // Извлекаем apiToken из опций
     } = opts;
+    const model = opts.model || config.cloudruModels[0];
 
     // Сначала пробуем Cloud.ru
     try {
@@ -105,7 +106,7 @@ async function callHybridAPI(messages, opts = {}) {
         } : null;
 
         const result = await callCloudRuAPI(messages, {
-            model: config.cloudruModels[0], // Используем первую модель из списка
+            model,
             temperature,
             max_tokens: maxTokens,
             response_format
@@ -176,7 +177,7 @@ async function callHybridAPI(messages, opts = {}) {
             } : null;
 
             const result = await callCloudRuAPI(messages, {
-                model: config.cloudruModels[0],
+                model,
                 temperature,
                 max_tokens: maxTokens,
                 response_format
@@ -701,7 +702,7 @@ async function callText(messages, { maxTokens = 1200, temperature = 0.0, apiToke
 
 // === ЭТАП 2. Ужать глоссарий (чанками) =======================================
 
-async function reduceGlossary(originalRequirements, glossaryRaw, maxItems, limitChars = LIMIT_GLS_OUT, apiToken = API_TOKEN) {
+async function reduceGlossary(originalRequirements, glossaryRaw, maxItems, limitChars = LIMIT_GLS_OUT, apiToken = API_TOKEN, model = config.cloudruModels[0]) {
     const glossary = hardClip(glossaryRaw || '', CLIP_GLS_IN);
     console.log(`[refiner] Stage#2 glossary in.len=${glossary.length}`);
     if (!glossary.trim()) return '';
@@ -756,7 +757,8 @@ ${chunks[i]}
                 schemaName: 'ReduceGlossary',
                 schemaProps: { mini_glossary_md: { type: 'string' } },
                 expectedKeys: ['mini_glossary_md'],
-                apiToken
+                apiToken,
+                model
             });
             out = result;
             part = String(out?.mini_glossary_md || '');
@@ -775,7 +777,7 @@ ${chunks[i]}
 
 // === ЭТАП 3. Ужать доп. контекст =============================================
 
-async function reduceContext(originalRequirements, contextRaw, hintText, maxItems, limitChars = LIMIT_CTX_OUT, apiToken = API_TOKEN) {
+async function reduceContext(originalRequirements, contextRaw, hintText, maxItems, limitChars = LIMIT_CTX_OUT, apiToken = API_TOKEN, model = config.cloudruModels[0]) {
     const raw = hardClip(contextRaw || '', CLIP_CTX_IN);
     console.log(`[refiner] Stage#3 context in.len=${raw.length}`);
     if (!raw.trim()) return '';
@@ -885,7 +887,8 @@ ${pageChunks[c]}
                     schemaName: 'ReduceContext',
                     schemaProps: { context_md: { type: 'string' } },
                     expectedKeys: ['context_md'],
-                    apiToken
+                    apiToken,
+                    model
                 });
                     out = result;
                     part = String(out?.context_md || '');
@@ -1020,13 +1023,14 @@ export async function prepareContextWithAI(p) {
     const maxGlossary = Number.isFinite(p.maxGlossary) ? p.maxGlossary : 40;  // Увеличено с 25 до 40
     const maxContext = Number.isFinite(p.maxContext) ? p.maxContext : 50;   // Увеличено с 16 до 50
     const apiToken = p.apiToken || API_TOKEN;
+    const model = p.model || config.cloudruModels[0];
 
     // Маскируем ключ для логирования
     const maskedKey = apiToken ? `${apiToken.slice(0, 10)}...${apiToken.slice(-4)}` : 'NONE';
     console.log('[refiner] === ORCHESTRATION START ===');
     console.log(`[refiner] inputs: req.len=${(p.requirements || '').length} gloss.len=${(p.glossary || '').length} ctx.len=${(p.context || '').length}`);
     console.log(`[refiner] limits: maxGlossary=${maxGlossary} maxContext=${maxContext}`);
-    console.log(`[refiner] model=${MODEL} toolsEnabled=${TOOLS_ENABLED} envToolsDisabled=${ENV_TOOLS_DISABLED}`);
+    console.log(`[refiner] model=${model || MODEL} toolsEnabled=${TOOLS_ENABLED} envToolsDisabled=${ENV_TOOLS_DISABLED}`);
     console.log(`[refiner] using API key: ${maskedKey}`);
 
     try {
@@ -1034,7 +1038,7 @@ export async function prepareContextWithAI(p) {
         const requirements_md = String(p.requirements || '');
 
         // 2) Глоссарий — выжимка
-        const mini_glossary_md = await reduceGlossary(requirements_md, p.glossary || '', maxGlossary, LIMIT_GLS_OUT, apiToken);
+        const mini_glossary_md = await reduceGlossary(requirements_md, p.glossary || '', maxGlossary, LIMIT_GLS_OUT, apiToken, model);
 
         // 3) Контекст — выжимка
         const ctxHint =
@@ -1048,7 +1052,8 @@ export async function prepareContextWithAI(p) {
             ctxHint,
             maxContext,
             LIMIT_CTX_OUT,
-            apiToken
+            apiToken,
+            model
         );
 
         console.log('[refiner] === ORCHESTRATION DONE ===');
