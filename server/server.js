@@ -223,6 +223,16 @@ import {
     multiHopStructuredSearch,
     deleteChunksByDocId
 } from './pgvectorStore.mjs';
+import { 
+    initNeo4j, isNeo4jAvailable, isNeo4jInitialized, 
+    upsertNodes, upsertRelationships,
+    createChunks, createChunkRelationships,
+    createEntities, createEntityRelationships,
+    getLocalContext, getContextForScenarioSeed, getContextForRequirementFragment,
+    getGraphStats, getAllNodes, getAllRelationships,
+    clearSession 
+} from './graphStore.mjs';
+import { extractEntitiesFromChunks, extractUIFromText, convertUIToEntities } from './entityExtractor.mjs';
 import { refineCodesWithSemanticSearch } from './semanticSearchRefiner.mjs';
 
 import { createContextSourceRegistry, createContextToolset } from './contextToolset.mjs';
@@ -260,7 +270,7 @@ import {
 runTestCaseLLMWithContext,
 validateFixedCases
 } from './llm-with-context.mjs';
-import { readFileSync } from 'fs';
+import { readFileSync, mkdirSync, writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import knexfile from './db/knexfile.js';
@@ -639,17 +649,16 @@ E2E тесты будут сгенерированы ОТДЕЛЬНО после
    - Если есть условия (например, "доступно только для юрлиц"), создай Scenario для "доступно" и Scenario для "недоступно".
    - В Scenario "недоступно" Code должен описывать отсутствие элемента или его неактивность.
 5. 🔄 DEDUPLICATION BY CODES (Дедупликация по реакциям):
-   Если два или более Scenario имеют ИДЕНТИЧНЫЕ Codes (одинаковое поведение системы),
-   объедини их в ОДИН Scenario с обобщённым названием.
+   Если внутри одного Scenario один и тот же Code повторяется несколько раз,
+   оставь только ОДИН экземпляр этого Code.
 
-   ❌ ПЛОХО (дубли по Codes):
-   Scenario 1: "Ввести сумму меньше 50 000 ₽" -> Codes: ["Поле красное", "Кнопка блокируется"]
-   Scenario 2: "Ввести сумму больше 5 000 000 ₽" -> Codes: ["Поле красное", "Кнопка блокируется"]
+   ❌ ПЛОХО (дубли внутри одного Scenario):
+   Scenario: "Ввести недопустимую сумму" -> Codes: ["Поле красное", "Кнопка блокируется", "Поле красное"]
 
-   ✅ ХОРОШО (объединено):
-   Scenario: "Ввести сумму вне допустимого диапазона" -> Codes: ["Поле красное", "Кнопка блокируется"]
+   ✅ ХОРОШО:
+   Scenario: "Ввести недопустимую сумму" -> Codes: ["Поле красное", "Кнопка блокируется"]
 
-   ПРАВИЛО: Если Codes идентичны — Scenario ОДИН. Детализация условий (меньше/больше) — на уровне тест-кейсов через параметризацию.
+   ПРАВИЛО: Дубли Code запрещены не только внутри одного Scenario, но и на уровне Story. Если две Story приводят к одному и тому же набору Scenario и Code, оставь только одну Story. Не создавай разные Story с одинаковой проверкой под разными названиями.
 6. 🚫 ЗАПРЕТ НА СМЕШИВАНИЕ ИСХОДОВ (ATOMICITY RULE):
    - Строго соблюдай принцип атомарности: Один Scenario = Один конкретный исход.
    - ЗАПРЕЩЕНО описывать в одном Scenario и успешное выполнение, и ошибку/недоступность.
@@ -860,7 +869,8 @@ function buildModelUserPrompt({
     previousContext,
     logicSection,
     interactiveInstructionBlock,
-    ragContext
+    ragContext,
+    graphContext
 }) {
     const chunkNotice = totalChunks > 1
         ? `ВАЖНО: Это ЧАСТЬ ${chunkIdx + 1} из ${totalChunks} большого документа.`
@@ -888,6 +898,7 @@ function buildModelUserPrompt({
     `
         : "";
 
+    const graphSection = formatGraphContextForPrompt(graphContext);
 
     return `
 ${chunkNotice}
@@ -933,8 +944,64 @@ ${ragContext ? `📚 КОНТЕКСТ ИЗ ДОКУМЕНТАЦИИ (RAG):\n${ra
   }
 ]
 
+${graphSection ? `GRAPH CONTEXT (NEO4J):\n${graphSection}\n` : ''}
 ${interactiveInstructionBlock || ''}
 `.trim();
+}
+
+/**
+ * Форматирует графовый контекст для включения в промпт LLM.
+ * @param {Object} graphContext - Контекст из Neo4j графа
+ * @returns {string} Отформатированная строка для промпта
+ */
+function formatGraphContextForPrompt(graphContext) {
+    if (!graphContext) return '';
+    
+    const { apiEndpoints, uiElements, businessRules, externalRefs, sessionId } = graphContext;
+    
+    let section = '';
+    
+    if (apiEndpoints && apiEndpoints.length > 0) {
+        section += '\n📡 API-ЭНДПОИНТЫ:\n';
+        apiEndpoints.forEach((ep, i) => {
+            section += `  ${i + 1}. ${ep.name || 'Неизвестно'}\n`;
+            if (ep.description) section += `     Описание: ${ep.description}\n`;
+            if (ep.properties?.method) section += `     Метод: ${ep.properties.method}\n`;
+            if (ep.properties?.url) section += `     URL: ${ep.properties.url}\n`;
+        });
+    }
+    
+    if (uiElements && uiElements.length > 0) {
+        section += '\n🖱️ UI-ЭЛЕМЕНТЫ:\n';
+        uiElements.forEach((el, i) => {
+            section += `  ${i + 1}. ${el.name || 'Неизвестно'}\n`;
+            if (el.relationship) section += `     Связь: ${el.relationship}\n`;
+            if (el.properties?.elementType) section += `     Тип: ${el.properties.elementType}\n`;
+            if (el.properties?.action) section += `     Действие: ${el.properties.action}\n`;
+        });
+    }
+    
+    if (businessRules && businessRules.length > 0) {
+        section += '\n📋 БИЗНЕС-ПРАВИЛА:\n';
+        businessRules.forEach((rule, i) => {
+            section += `  ${i + 1}. ${rule.name || 'Неизвестно'}\n`;
+            if (rule.description) section += `     ${rule.description}\n`;
+        });
+    }
+    
+    if (externalRefs && externalRefs.length > 0) {
+        section += '\n🔗 ВНЕШНИЕ ССЫЛКИ:\n';
+        externalRefs.forEach((ref, i) => {
+            section += `  ${i + 1}. ${ref.name || 'Неизвестно'}\n`;
+            if (ref.properties?.url) section += `     URL: ${ref.properties.url}\n`;
+        });
+    }
+    
+    if (!section) {
+        return '📊 Граф связей: сущности не извлечены';
+    }
+    
+    return section.trim();
 }
 
 /**
@@ -979,6 +1046,7 @@ function deduplicateModel(model) {
             dedupedFeature.stories.push(dedupedStory);
         }
 
+        deduplicateStoriesInFeature(dedupedFeature);
         deduped.push(dedupedFeature);
     }
 
@@ -1238,29 +1306,31 @@ async function indexConfluencePageChunksWithCache({
         title
     });
 
-    for (const chunk of chunks) {
+    const indexableChunks = chunks.filter(chunk => !(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval));
+
+    for (const chunk of indexableChunks) {
         chunk.source_type = sourceType;
     }
 
     await deleteChunksByDocId(String(docId));
-    const indexResult = await indexChunks(chunks, apiKey);
+    const indexResult = await indexChunks(indexableChunks, apiKey);
 
-    if ((indexResult.errors || 0) === 0 && indexResult.processed === chunks.length) {
+    if ((indexResult.errors || 0) === 0 && indexResult.processed === indexableChunks.length) {
         confluenceChunkIndexCache.set(String(docId), {
             contentHash,
-            chunkCount: chunks.length,
+            chunkCount: indexableChunks.length,
             updatedAt: Date.now()
         });
     } else {
         console.warn(
             `[generate-test-model-async] ⚠️ Не сохраняю индексный кэш для pageId=${docId}: ` +
-            `индексация неполная (${indexResult.processed}/${chunks.length}, errors=${indexResult.errors || 0})`
+            `индексация неполная (${indexResult.processed}/${indexableChunks.length}, errors=${indexResult.errors || 0})`
         );
     }
 
     return {
         ...indexResult,
-        chunkCount: chunks.length,
+        chunkCount: indexableChunks.length,
         cacheHit: false
     };
 }
@@ -1436,7 +1506,6 @@ async function contextRefiner({
 
     return { refinedArray, refinedText };
 }
-
 
 
 
@@ -1990,7 +2059,15 @@ function repairModelStructure(model) {
 function isNonCriticalStoryIssue(issue) {
     return typeof issue === 'string' &&
         issue.includes('Story') &&
-        (issue.includes('техническую формулировку') || issue.includes('описание контрола'));
+        (issue.includes('техническую формулировку') || issue.includes('описанием контрола'));
+}
+
+function isRepairableStoryStructureIssue(issue) {
+    const text = String(issue || '');
+    return text.includes('Story') && (
+        text.includes('техническую формулировку') ||
+        text.includes('описанием контрола')
+    );
 }
 
 function buildStructureIssueProfile(issues) {
@@ -2097,6 +2174,15 @@ function validateAndCleanModel(model) {
                     errors.push(`[CLEANED] Удалено поле 'requirement' из Scenario: ${scenario.text}`);
                 }
 
+                const originalCodeCount = Array.isArray(scenario.codes) ? scenario.codes.length : 0;
+                deduplicateCodesInScenario(scenario);
+                const cleanedCodeCount = Array.isArray(scenario.codes) ? scenario.codes.length : 0;
+                if (cleanedCodeCount < originalCodeCount) {
+                    errors.push(
+                        `[CLEANED] Удалено ${originalCodeCount - cleanedCodeCount} дубликат(ов) Code из Scenario: ${scenario.text}`
+                    );
+                }
+
                 const scenarioAnalysis = analyzeScenarioActionability(scenario.text);
                 if (scenarioAnalysis.valid && scenarioAnalysis.normalizedText !== scenario.text) {
                     scenario.text = scenarioAnalysis.normalizedText;
@@ -2135,6 +2221,15 @@ function validateAndCleanModel(model) {
                     warnings.push(`[WARNING] Scenario без Code: "${scenario.text}"`);
                 }
             }
+        }
+
+        const originalStoryCount = Array.isArray(feature.stories) ? feature.stories.length : 0;
+        deduplicateStoriesInFeature(feature);
+        const cleanedStoryCount = Array.isArray(feature.stories) ? feature.stories.length : 0;
+        if (cleanedStoryCount < originalStoryCount) {
+            errors.push(
+                `[CLEANED] Удалено ${originalStoryCount - cleanedStoryCount} дубликат(ов) Story по названию или содержимому из Feature: ${feature.text}`
+            );
         }
     }
 
@@ -2237,7 +2332,7 @@ function summarizeStructureIssuesForPrompt(issues, limit = 3) {
 }
 
 // Выделение релевантных секций из markdown страницы по ключам из цитаты
-function extractRelevantSections(markdown, mentionText, { maxSections = 6, maxChars = 50000 } = {}) {
+function extractRelevantSectionsLegacy(markdown, mentionText, { maxSections = 6, maxChars = 50000 } = {}) {
     const md = String(markdown || '');
     const mention = String(mentionText || '').toLowerCase();
     const tokens = new Set(
@@ -2268,6 +2363,350 @@ function extractRelevantSections(markdown, mentionText, { maxSections = 6, maxCh
     // если ранжирование пустое (нет совпадений) — вернём первые существенные 1-2 секции
     if (!out.trim()) out = sections.slice(0, Math.min(2, sections.length)).join('\n\n---\n\n');
     return out || md.slice(0, Math.min(maxChars, md.length));
+}
+
+const LINKED_SECTION_STOPWORDS = new Set([
+    'для', 'или', 'при', 'это', 'как', 'так', 'что', 'если', 'его', 'еще', 'ещё',
+    'над', 'под', 'без', 'с', 'со', 'в', 'во', 'на', 'по', 'к', 'ко', 'из', 'от',
+    'и', 'а', 'но', 'the', 'and', 'for', 'with', 'from', 'into', 'that'
+]);
+
+const PASSWORD_TOPIC_HINTS = [
+    'парол', 'password', 'passwd', 'смена пароля', 'новый пароль',
+    'рекомендац', 'надежност', 'надежность', 'simplepasslist', 'passwd/change'
+];
+
+const PASSWORD_TOPIC_NOISE_HINTS = [
+    'логин', 'login', 'подписк', 'push', 'touchid', 'rutoken',
+    'paycontrol', 'биометр', 'сертификат', 'уведомл', 'notification'
+];
+
+function normalizeRelevantSearchText(text = '') {
+    return String(text || '')
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\/]+/gu, ' ')
+        .trim();
+}
+
+function tokenizeRelevantSearchText(text = '') {
+    return Array.from(new Set(
+        normalizeRelevantSearchText(text)
+            .split(/\s+/)
+            .filter(token => token.length > 2 && !LINKED_SECTION_STOPWORDS.has(token))
+    ));
+}
+
+function extractQuotedSearchPhrases(text = '') {
+    return Array.from(
+        new Set(
+            Array.from(String(text || '').matchAll(/"([^"]{3,})"/g))
+                .map(match => match[1].trim().toLowerCase())
+                .filter(Boolean)
+        )
+    );
+}
+
+function extractEndpointHints(text = '') {
+    const source = String(text || '');
+    const methodMatches = Array.from(
+        source.matchAll(/\b(?:GET|POST|PUT|DELETE|PATCH)\b\s*([/A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+)/gi)
+    );
+    const directHints = methodMatches
+        .map(match => `${String(match[0] || '').trim().toLowerCase()}`)
+        .filter(Boolean);
+    const pathHints = Array.from(
+        source.matchAll(/((?:\/?rest|\/api)[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+)/gi)
+    )
+        .map(match => String(match[1] || '').trim().toLowerCase())
+        .filter(Boolean);
+
+    return Array.from(new Set([...directHints, ...pathHints])).slice(0, 8);
+}
+
+function splitMarkdownIntoSearchSections(markdown = '') {
+    const sections = String(markdown || '')
+        .split(/\n(?=#+\s)/)
+        .map(section => section.trim())
+        .filter(Boolean);
+
+    return sections.length ? sections : [String(markdown || '').trim()].filter(Boolean);
+}
+
+function hasAnyRelevantHint(text, hints = []) {
+    const normalized = normalizeRelevantSearchText(text);
+    return hints.some(hint => hint && normalized.includes(String(hint).toLowerCase()));
+}
+
+function isLinkedSectionNoise(sectionText = '') {
+    const text = String(sectionText || '');
+    return [
+        /^```/m,
+        /^-\s*\[[^\]]+\]\(#/m,
+        /table of contents/i,
+        /change\s*log|changelog|история изменений/i,
+        /вложения|attachments/i,
+        /актуальная уз/i,
+        /\.mp4\b/i
+    ].some(pattern => pattern.test(text));
+}
+
+function splitRelevantSearchBlocks(text = '', passwordFocused = false) {
+    const paragraphs = String(text || '')
+        .split(/\n{2,}/)
+        .map(part => part.trim())
+        .filter(Boolean);
+
+    if (!passwordFocused) {
+        return paragraphs;
+    }
+
+    const blocks = [];
+
+    for (const paragraph of paragraphs) {
+        if (!paragraph) {
+            continue;
+        }
+
+        const numberedBlocks = paragraph
+            .split(/\n(?=\d+\.\s+)/)
+            .map(part => part.trim())
+            .filter(Boolean);
+        const expandedNumberedBlocks = numberedBlocks.length > 1 ? numberedBlocks : [paragraph];
+
+        for (const block of expandedNumberedBlocks) {
+            const lines = block.split(/\n/).map(line => line.trim()).filter(Boolean);
+            const tableRows = lines.filter(line => /^\|/.test(line) && !/^\|\s*-{3,}/.test(line));
+
+            if (tableRows.length >= 3) {
+                blocks.push(...tableRows);
+                continue;
+            }
+
+            blocks.push(block);
+        }
+    }
+
+    return blocks;
+}
+
+function trimRelevantSection(sectionText, profile) {
+    const text = String(sectionText || '').trim();
+    if (!text) {
+        return '';
+    }
+
+    const paragraphs = splitRelevantSearchBlocks(text, profile.passwordFocused);
+    if (paragraphs.length <= 3) {
+        return text;
+    }
+
+    const kept = [];
+    let keepNeighbor = 0;
+
+    for (let index = 0; index < paragraphs.length; index++) {
+        const paragraph = paragraphs[index];
+        const isHeading = /^#+\s/.test(paragraph);
+        const hasStrongMatch =
+            hasAnyRelevantHint(paragraph, profile.quotedPhrases) ||
+            hasAnyRelevantHint(paragraph, profile.endpointHints) ||
+            hasAnyRelevantHint(paragraph, profile.tokens);
+        const hasTopicMatch = hasAnyRelevantHint(paragraph, profile.topicHints);
+        const looksIrrelevant =
+            profile.passwordFocused &&
+            hasAnyRelevantHint(paragraph, PASSWORD_TOPIC_NOISE_HINTS) &&
+            !hasTopicMatch;
+
+        if (isHeading || hasStrongMatch || (keepNeighbor > 0 && !looksIrrelevant)) {
+            kept.push(paragraph);
+            keepNeighbor = hasStrongMatch ? 1 : Math.max(0, keepNeighbor - 1);
+            continue;
+        }
+
+        if (hasTopicMatch && !looksIrrelevant) {
+            kept.push(paragraph);
+        }
+    }
+
+    const trimmed = kept.join('\n\n').trim();
+    return trimmed || text;
+}
+
+function buildRelevantSectionProfile(mentionText = '') {
+    const tokens = tokenizeRelevantSearchText(mentionText);
+    const quotedPhrases = extractQuotedSearchPhrases(mentionText);
+    const endpointHints = extractEndpointHints(mentionText);
+    const passwordFocused =
+        hasAnyRelevantHint(mentionText, PASSWORD_TOPIC_HINTS) ||
+        endpointHints.some(hint => /passwd|password|simplepasslist/.test(hint));
+
+    return {
+        tokens,
+        quotedPhrases,
+        endpointHints,
+        passwordFocused,
+        topicHints: passwordFocused ? PASSWORD_TOPIC_HINTS : tokens
+    };
+}
+
+function scoreRelevantSection(sectionText, profile) {
+    const text = String(sectionText || '');
+    if (!text || isLinkedSectionNoise(text)) {
+        return Number.NEGATIVE_INFINITY;
+    }
+
+    const headingLine = text.split('\n', 1)[0] || '';
+    let score = 0;
+
+    for (const phrase of profile.quotedPhrases) {
+        if (phrase && text.toLowerCase().includes(phrase)) {
+            score += 5;
+        }
+    }
+
+    for (const endpointHint of profile.endpointHints) {
+        if (endpointHint && text.toLowerCase().includes(endpointHint)) {
+            score += 4;
+        }
+    }
+
+    for (const token of profile.tokens) {
+        if (!token) continue;
+        if (headingLine.toLowerCase().includes(token)) {
+            score += 3;
+        }
+        if (text.toLowerCase().includes(token)) {
+            score += 1;
+        }
+    }
+
+    const hasPasswordMatch = hasAnyRelevantHint(text, PASSWORD_TOPIC_HINTS);
+    const hasIrrelevantTopic = hasAnyRelevantHint(text, PASSWORD_TOPIC_NOISE_HINTS);
+
+    if (profile.passwordFocused && hasPasswordMatch) {
+        score += 6;
+    }
+
+    if (profile.passwordFocused && hasIrrelevantTopic && !hasPasswordMatch) {
+        score -= 8;
+    }
+
+    return score;
+}
+
+function extractRelevantSections(markdown, mentionText, { maxSections = 6, maxChars = 50000 } = {}) {
+    const md = String(markdown || '');
+    const sections = splitMarkdownIntoSearchSections(md);
+    const profile = buildRelevantSectionProfile(mentionText);
+
+    const ranked = sections
+        .map(section => {
+            const score = scoreRelevantSection(section, profile);
+            const trimmed = trimRelevantSection(section, profile);
+            return { section, score, trimmed };
+        })
+        .filter(item => Number.isFinite(item.score))
+        .sort((a, b) => b.score - a.score);
+
+    const selected = ranked
+        .filter(item => item.score > 0)
+        .slice(0, Math.min(maxSections, profile.passwordFocused ? 8 : maxSections));
+
+    const fallbackSelected = selected.length
+        ? selected
+        : ranked.slice(0, Math.min(2, ranked.length));
+
+    let out = fallbackSelected
+        .map(item => item.trimmed || item.section)
+        .filter(Boolean)
+        .join('\n\n---\n\n');
+
+    if (!out.trim()) {
+        out = sections.slice(0, Math.min(2, sections.length)).join('\n\n---\n\n');
+    }
+
+    if (out.length > maxChars) {
+        out = out.slice(0, maxChars);
+    }
+
+    return out || md.slice(0, Math.min(maxChars, md.length));
+}
+
+function extractBestLinkedPageMention(markdown, linkedPageId, preferredText = '') {
+    const linkedId = String(linkedPageId || '').trim();
+    if (!linkedId) {
+        return '';
+    }
+
+    const lines = String(markdown || '').split(/\n/);
+    const profiles = buildRelevantSectionProfile(preferredText);
+    const markers = [
+        `pageId=${linkedId}`,
+        `viewpage.action?pageId=${linkedId}`,
+        `/pages/${linkedId}`
+    ];
+
+    const candidateIndexes = lines
+        .map((line, index) => (markers.some(marker => line.includes(marker)) ? index : -1))
+        .filter(index => index >= 0);
+
+    if (!candidateIndexes.length) {
+        return '';
+    }
+
+    let bestMention = '';
+    let bestScore = Number.NEGATIVE_INFINITY;
+
+    for (const index of candidateIndexes) {
+        const start = Math.max(0, index - 2);
+        const end = Math.min(lines.length, index + 3);
+        const candidate = lines.slice(start, end).join('\n').trim();
+        if (!candidate) {
+            continue;
+        }
+
+        const normalizedCandidate = normalizeRelevantSearchText(candidate);
+        let score = 0;
+
+        if (/change\s*log|источник требований|список изменений|версия/i.test(candidate)) {
+            score -= 10;
+        }
+
+        if (hasAnyRelevantHint(candidate, PASSWORD_TOPIC_HINTS)) {
+            score += 8;
+        }
+
+        if (/новый пароль|смен[аы]\s+парол|рекомендац|надежност|пароли не совпадают|simplepasslist|passwd\/change/i.test(normalizedCandidate)) {
+            score += 8;
+        }
+
+        if (profiles.passwordFocused && hasAnyRelevantHint(candidate, PASSWORD_TOPIC_HINTS)) {
+            score += 4;
+        }
+
+        if (profiles.tokens.length) {
+            for (const token of profiles.tokens.slice(0, 24)) {
+                if (token && normalizedCandidate.includes(token)) {
+                    score += 1;
+                }
+            }
+        }
+
+        if (
+            /логин|login|подписк|push|touchid|rutoken|paycontrol/i.test(candidate) &&
+            !/парол|password|passwd/i.test(candidate)
+        ) {
+            score -= 6;
+        }
+
+        score += index / Math.max(lines.length, 1);
+
+        if (score > bestScore) {
+            bestScore = score;
+            bestMention = candidate;
+        }
+    }
+
+    return bestMention;
 }
 
 
@@ -2969,6 +3408,571 @@ function normalizeContextInput(v) {
     return String(v);
 }
 
+function formatExplicitRefForDebug(ref) {
+    if (!ref) return '';
+    if (typeof ref === 'string') return ref;
+
+    const type = ref.type ? String(ref.type).trim() : 'ref';
+    const target = ref.target ? String(ref.target).trim() : '';
+    const original = ref.original ? String(ref.original).trim() : '';
+
+    if (target && original && original !== target) {
+        return `${type}:${target} <- ${original}`;
+    }
+    if (target) {
+        return `${type}:${target}`;
+    }
+    if (original) {
+        return `${type}:${original}`;
+    }
+
+    return JSON.stringify(ref);
+}
+
+function serializeDebugChunk(chunk, index, { includeFullText = true, maxPreviewLength = 1500 } = {}) {
+    const text = String(chunk?.cleaned_text || chunk?.content || '').trim();
+    const preview = text.length > maxPreviewLength
+        ? `${text.slice(0, maxPreviewLength)}...`
+        : text;
+
+    return {
+        index,
+        id: chunk?.id || `chunk-${index}`,
+        chunkType: chunk?.chunk_type || null,
+        heading: chunk?.heading || null,
+        sectionPath: Array.isArray(chunk?.section_path) ? chunk.section_path : [],
+        explicitRefs: Array.isArray(chunk?.explicit_refs) ? chunk.explicit_refs.map(formatExplicitRefForDebug).filter(Boolean) : [],
+        excludeFromRetrieval: Boolean(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval),
+        isAtomic: Boolean(chunk?.is_atomic),
+        isComposite: Boolean(chunk?.is_composite),
+        linkedChunkIds: Array.isArray(chunk?.linked_chunk_ids) ? chunk.linked_chunk_ids : [],
+        length: text.length,
+        preview,
+        ...(includeFullText ? { text } : {})
+    };
+}
+
+async function chunkDocumentForDebug(text, metadata = {}, options = {}) {
+    const normalizedText = String(text || '').trim();
+    if (!normalizedText) {
+        return {
+            title: metadata?.title || null,
+            length: 0,
+            chunkCount: 0,
+            chunks: []
+        };
+    }
+
+    const chunks = await chunkify(normalizedText, metadata);
+    return {
+        title: metadata?.title || null,
+        length: normalizedText.length,
+        chunkCount: chunks.length,
+        chunks: chunks.map((chunk, index) => serializeDebugChunk(chunk, index, options))
+    };
+}
+
+async function assembleRequirementChunkDebugPayload({
+    requirements,
+    text,
+    pageId,
+    glossary,
+    context,
+    reqStringForModel,
+    usedContextRefinerFallback = false,
+    graphDocumentId,
+    deriveTitleFromContent,
+    mainTitle = null,
+    baseRequirement = '',
+    autoPageDocs = [],
+    explicitContextPageDocs = [],
+    includeFullText = true,
+    includeSourceTexts = true,
+    precomputedModelInputChunks = null
+}) {
+    if (!reqStringForModel || !String(reqStringForModel).trim()) {
+        throw new Error('Не удалось получить текст требований для chunk debug payload');
+    }
+
+    const modelInputTitle = deriveTitleFromContent(
+        reqStringForModel,
+        'Requirements',
+        pageId || graphDocumentId
+    );
+    const requestContextText = normalizeContextInput(context);
+
+    const modelInput = precomputedModelInputChunks
+        ? {
+            title: modelInputTitle,
+            ...(includeSourceTexts ? { text: reqStringForModel } : {}),
+            length: String(reqStringForModel).length,
+            chunkCount: precomputedModelInputChunks.length,
+            chunks: precomputedModelInputChunks.map((chunk, index) => serializeDebugChunk(chunk, index, { includeFullText }))
+        }
+        : {
+            ...(includeSourceTexts ? { text: reqStringForModel } : {}),
+            ...(await chunkDocumentForDebug(reqStringForModel, {
+                pageId: graphDocumentId,
+                title: modelInputTitle
+            }, { includeFullText }))
+        };
+
+    const primarySourceText = baseRequirement && baseRequirement.trim()
+        ? baseRequirement
+        : (typeof requirements === 'string' && requirements.trim()
+            ? requirements.trim()
+            : (Array.isArray(requirements) && requirements.length
+                ? requirements.map(item => String(item || '').trim()).filter(Boolean).join('\n\n---\n\n')
+                : String(text || '').trim()));
+
+    const primarySource = await chunkDocumentForDebug(primarySourceText, {
+        pageId: graphDocumentId,
+        title: deriveTitleFromContent(primarySourceText, mainTitle || 'Primary requirement source', pageId || graphDocumentId)
+    }, { includeFullText });
+
+    const autoLinkedPages = [];
+    for (const page of autoPageDocs) {
+        const promptChunks = await chunkDocumentForDebug(page.promptText || '', {
+            pageId: page.pageId,
+            title: `${page.title} [prompt]`
+        }, { includeFullText });
+
+        const graphChunks = await chunkDocumentForDebug(page.graphText || '', {
+            pageId: page.pageId,
+            title: `${page.title} [graph]`
+        }, { includeFullText });
+
+        autoLinkedPages.push({
+            pageId: page.pageId,
+            title: page.title,
+            mention: page.mention || '',
+            error: page.error || null,
+            promptTextLength: String(page.promptText || '').length,
+            graphTextLength: String(page.graphText || '').length,
+            ...(includeSourceTexts ? {
+                promptText: page.promptText || '',
+                graphText: page.graphText || '',
+                sourceText: page.content || ''
+            } : {}),
+            promptChunks,
+            graphChunks
+        });
+    }
+
+    const explicitContextPages = [];
+    for (const page of explicitContextPageDocs) {
+        explicitContextPages.push({
+            pageId: page.pageId,
+            title: page.title,
+            error: page.error || null,
+            ...(includeSourceTexts ? { sourceText: page.content || '' } : {}),
+            chunks: await chunkDocumentForDebug(page.graphText || '', {
+                pageId: page.pageId,
+                title: page.title
+            }, { includeFullText })
+        });
+    }
+
+    return {
+        summary: {
+            pageId: pageId ? String(pageId) : null,
+            usedContextRefinerFallback,
+            mainRequirementLength: reqStringForModel.length,
+            mainChunkCount: modelInput.chunkCount,
+            autoLinkedPageCount: autoLinkedPages.length,
+            explicitContextPageCount: explicitContextPages.length,
+            note: 'По текущей логике генерации context pages обычно не входят в основной reqStringForModel. Они живут отдельно: как linked/context sources, graph context и fallback contextRefiner.'
+        },
+        modelInput,
+        primarySource: {
+            title: primarySource.title,
+            ...(includeSourceTexts ? { text: primarySourceText } : {}),
+            ...primarySource
+        },
+        requestContext: requestContextText
+            ? {
+                length: requestContextText.length,
+                ...(includeSourceTexts ? { text: requestContextText } : {})
+            }
+            : null,
+        glossary: glossary
+            ? {
+                length: String(glossary).length,
+                ...(includeSourceTexts ? { text: String(glossary) } : {})
+            }
+            : null,
+        autoLinkedPages,
+        explicitContextPages
+    };
+}
+
+async function buildRequirementChunkDebugPayload(inputData = {}, options = {}) {
+    const {
+        requirements,
+        text,
+        pageId,
+        glossary,
+        glossaryPageId,
+        context,
+        contextPageIds,
+        contextInstruction,
+        bearerToken
+    } = inputData;
+
+    const {
+        includeFullText = true,
+        includeSourceTexts = true
+    } = options;
+
+    const sourceRegistry = createContextSourceRegistry();
+    const { deriveTitleFromContent } = sourceRegistry;
+
+    let baseRequirement = '';
+    let mainTitle = null;
+    let usedContextRefinerFallback = false;
+    let autoPages = [];
+    const autoPageDocs = [];
+    const autoPageIds = new Set();
+    const explicitContextPageDocs = [];
+
+    const formatMention = (mention) => String(mention || '')
+        .replace(/\r?\n/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 200);
+
+    if (pageId) {
+        if (!bearerToken) {
+            throw new Error('bearerToken обязателен для загрузки страницы Confluence');
+        }
+
+        const { markdown, title } = await fetchConfluencePage(String(bearerToken).trim(), pageId, { inlineTextAttachments: true });
+        baseRequirement = markdown || '';
+        mainTitle = deriveTitleFromContent(baseRequirement, title || `Confluence page ${pageId}`, pageId);
+
+        const ids = new Set();
+        Array.from(String(markdown || '').matchAll(/pageId=(\d{4,})/g)).forEach(m => ids.add(m[1]));
+        Array.from(String(markdown || '').matchAll(/viewpage\.action\?pageId=(\d{4,})/gi)).forEach(m => ids.add(m[1]));
+        Array.from(String(markdown || '').matchAll(/\/pages\/(\d{4,})/g)).forEach(m => ids.add(m[1]));
+        ids.delete(String(pageId));
+
+        for (const linkedPageId of ids) {
+            try {
+                const { markdown: linkedMarkdown, title: linkedTitle } = await fetchConfluencePage(String(bearerToken).trim(), linkedPageId, { inlineTextAttachments: true });
+                const mention = extractBestLinkedPageMention(markdown, linkedPageId, baseRequirement);
+
+                const relevant = extractRelevantSections(linkedMarkdown, mention, { maxSections: 15, maxChars: 100000 });
+                const linkedPageTitle = deriveTitleFromContent(linkedMarkdown, linkedTitle || `Связанная страница ${linkedPageId}`, linkedPageId);
+                const promptText = [
+                    `### Контекст по ссылке из основной статьи (pageId=${linkedPageId})`,
+                    mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${linkedPageId})`,
+                    '',
+                    relevant
+                ].join('\n');
+
+                autoPages.push(promptText);
+                autoPageDocs.push({
+                    pageId: String(linkedPageId),
+                    title: linkedPageTitle,
+                    mention: formatMention(mention),
+                    content: linkedMarkdown,
+                    graphText: (relevant && relevant.trim()) ? relevant : linkedMarkdown,
+                    promptText
+                });
+                autoPageIds.add(String(linkedPageId));
+            } catch (error) {
+                autoPageDocs.push({
+                    pageId: String(linkedPageId),
+                    title: `Связанная страница ${linkedPageId}`,
+                    mention: '',
+                    error: error.message,
+                    content: '',
+                    graphText: '',
+                    promptText: ''
+                });
+            }
+        }
+    }
+
+    const explicitContextPageIds = normalizePageIds(contextPageIds)
+        .map(String)
+        .filter(Boolean)
+        .filter((cid) => cid !== String(pageId || ''))
+        .filter((cid, index, arr) => arr.indexOf(cid) === index);
+
+    if (explicitContextPageIds.length > 0 && bearerToken) {
+        for (const cid of explicitContextPageIds) {
+            if (autoPageIds.has(cid)) continue;
+
+            try {
+                const { markdown: contextMarkdown, title: contextTitle } = await fetchConfluencePage(String(bearerToken).trim(), cid, { inlineTextAttachments: true });
+                explicitContextPageDocs.push({
+                    pageId: cid,
+                    title: deriveTitleFromContent(contextMarkdown, contextTitle || `Context page ${cid}`, cid),
+                    content: contextMarkdown,
+                    graphText: contextMarkdown
+                });
+            } catch (error) {
+                explicitContextPageDocs.push({
+                    pageId: cid,
+                    title: `Context page ${cid}`,
+                    content: '',
+                    graphText: '',
+                    error: error.message
+                });
+            }
+        }
+    }
+
+    const requirementsPool = [];
+
+    if (Array.isArray(requirements) && requirements.length) {
+        requirementsPool.push(
+            requirements
+                .map((item) => String(item || '').trim())
+                .filter(Boolean)
+                .join('\n\n---\n\n')
+        );
+    } else if (typeof requirements === 'string' && requirements.trim()) {
+        requirementsPool.push(requirements.trim());
+    }
+
+    if (baseRequirement && baseRequirement.trim()) {
+        requirementsPool.push(baseRequirement.trim());
+    } else if (text && String(text).trim()) {
+        requirementsPool.push(String(text).trim());
+    }
+
+    let reqStringForModel = requirementsPool.filter(Boolean).join('\n\n---\n\n');
+
+    if (!reqStringForModel) {
+        const { refinedText, refinedArray } = await contextRefiner({
+            requirements,
+            text,
+            glossary,
+            glossaryPageId,
+            context,
+            contextInstruction,
+            contextPageIds,
+            bearerToken,
+            contextPages: autoPages
+        });
+        reqStringForModel = refinedText || (refinedArray?.join('\n\n') ?? '');
+        usedContextRefinerFallback = true;
+    }
+
+    if (!reqStringForModel || !reqStringForModel.trim()) {
+        throw new Error('Не удалось получить текст требований для debug chunk inspection');
+    }
+
+    const graphDocumentId = String(pageId || 'debug-inline-requirements');
+    return await assembleRequirementChunkDebugPayload({
+        requirements,
+        text,
+        pageId,
+        glossary,
+        context,
+        reqStringForModel,
+        usedContextRefinerFallback,
+        graphDocumentId,
+        deriveTitleFromContent,
+        mainTitle,
+        baseRequirement,
+        autoPageDocs,
+        explicitContextPageDocs,
+        includeFullText,
+        includeSourceTexts
+    });
+}
+
+app.post('/api/debug/requirement-chunks', async (req, res) => {
+    try {
+        const payload = await buildRequirementChunkDebugPayload(req.body || {}, {
+            includeFullText: req.body?.includeFullText !== false,
+            includeSourceTexts: req.body?.includeSourceTexts !== false
+        });
+        let dumpFiles = null;
+        if (req.body?.persistToFile !== false) {
+            const markdown = buildRequirementChunkDumpMarkdown(payload, {
+                taskId: req.body?.taskId || req.body?.pageId || 'manual'
+            });
+            dumpFiles = persistRequirementChunkDumpMarkdown(markdown, {
+                taskId: req.body?.taskId || req.body?.pageId || 'manual'
+            });
+        }
+
+        res.json({
+            ...payload,
+            dumpFiles
+        });
+    } catch (error) {
+        console.error('[debug/requirement-chunks]', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+function renderChunkMarkdownSection(title, chunkGroup, { includeSourceText = true } = {}) {
+    if (!chunkGroup) return `## ${title}\n\nНет данных.\n`;
+
+    const lines = [
+        `## ${title}`,
+        '',
+        `- title: ${chunkGroup.title || '—'}`,
+        `- length: ${chunkGroup.length || 0}`,
+        `- chunkCount: ${chunkGroup.chunkCount || 0}`,
+        ''
+    ];
+
+    if (includeSourceText && chunkGroup.text) {
+        lines.push('### Source Text');
+        lines.push('');
+        lines.push('```text');
+        lines.push(chunkGroup.text);
+        lines.push('```');
+        lines.push('');
+    }
+
+    for (const chunk of chunkGroup.chunks || []) {
+        lines.push(`### Chunk ${chunk.index + 1}`);
+        lines.push('');
+        lines.push(`- id: ${chunk.id}`);
+        lines.push(`- type: ${chunk.chunkType || '—'}`);
+        lines.push(`- heading: ${chunk.heading || '—'}`);
+        lines.push(`- length: ${chunk.length}`);
+        lines.push(`- sectionPath: ${(chunk.sectionPath || []).join(' > ') || '—'}`);
+        lines.push(`- explicitRefs: ${(chunk.explicitRefs || []).join(', ') || '—'}`);
+        lines.push(`- excludeFromRetrieval: ${chunk.excludeFromRetrieval ? 'yes' : 'no'}`);
+        lines.push('');
+        lines.push('```text');
+        lines.push(chunk.text || chunk.preview || '');
+        lines.push('```');
+        lines.push('');
+    }
+
+    return lines.join('\n');
+}
+
+function buildRequirementChunkDumpMarkdown(payload, { taskId = null } = {}) {
+    const lines = [
+        '# Requirement Chunk Dump',
+        '',
+        `- generatedAt: ${new Date().toISOString()}`,
+        `- taskId: ${taskId || '—'}`,
+        `- pageId: ${payload?.summary?.pageId || '—'}`,
+        `- usedContextRefinerFallback: ${payload?.summary?.usedContextRefinerFallback ? 'yes' : 'no'}`,
+        `- mainRequirementLength: ${payload?.summary?.mainRequirementLength || 0}`,
+        `- mainChunkCount: ${payload?.summary?.mainChunkCount || 0}`,
+        `- autoLinkedPageCount: ${payload?.summary?.autoLinkedPageCount || 0}`,
+        `- explicitContextPageCount: ${payload?.summary?.explicitContextPageCount || 0}`,
+        '',
+        payload?.summary?.note || '',
+        '',
+        renderChunkMarkdownSection('Model Input', payload?.modelInput),
+        '',
+        renderChunkMarkdownSection('Primary Source', payload?.primarySource),
+        ''
+    ];
+
+    if (payload?.requestContext) {
+        lines.push('## Request Context');
+        lines.push('');
+        lines.push(`- length: ${payload.requestContext.length || 0}`);
+        lines.push('');
+        lines.push('```text');
+        lines.push(payload.requestContext.text || '');
+        lines.push('```');
+        lines.push('');
+    }
+
+    if (payload?.glossary) {
+        lines.push('## Glossary');
+        lines.push('');
+        lines.push(`- length: ${payload.glossary.length || 0}`);
+        lines.push('');
+        lines.push('```text');
+        lines.push(payload.glossary.text || '');
+        lines.push('```');
+        lines.push('');
+    }
+
+    lines.push('## Auto-Linked Pages');
+    lines.push('');
+    if (!payload?.autoLinkedPages?.length) {
+        lines.push('Нет auto-linked pages.');
+        lines.push('');
+    } else {
+        for (const page of payload.autoLinkedPages) {
+            lines.push(`### Auto Page ${page.pageId || '—'}: ${page.title || '—'}`);
+            lines.push('');
+            lines.push(`- mention: ${page.mention || '—'}`);
+            lines.push(`- error: ${page.error || '—'}`);
+            lines.push(`- promptTextLength: ${page.promptTextLength || 0}`);
+            lines.push(`- graphTextLength: ${page.graphTextLength || 0}`);
+            lines.push('');
+            if (page.promptText) {
+                lines.push('#### Prompt Text');
+                lines.push('');
+                lines.push('```text');
+                lines.push(page.promptText);
+                lines.push('```');
+                lines.push('');
+            }
+            lines.push(renderChunkMarkdownSection(`Prompt Chunks for ${page.pageId || 'auto-page'}`, page.promptChunks, { includeSourceText: false }));
+            lines.push('');
+            if (page.graphText) {
+                lines.push('#### Graph Text');
+                lines.push('');
+                lines.push('```text');
+                lines.push(page.graphText);
+                lines.push('```');
+                lines.push('');
+            }
+            lines.push(renderChunkMarkdownSection(`Graph Chunks for ${page.pageId || 'auto-page'}`, page.graphChunks, { includeSourceText: false }));
+            lines.push('');
+        }
+    }
+
+    lines.push('## Explicit Context Pages');
+    lines.push('');
+    if (!payload?.explicitContextPages?.length) {
+        lines.push('Нет explicit context pages.');
+        lines.push('');
+    } else {
+        for (const page of payload.explicitContextPages) {
+            lines.push(`### Context Page ${page.pageId || '—'}: ${page.title || '—'}`);
+            lines.push('');
+            lines.push(`- error: ${page.error || '—'}`);
+            lines.push('');
+            if (page.sourceText) {
+                lines.push('#### Source Text');
+                lines.push('');
+                lines.push('```text');
+                lines.push(page.sourceText);
+                lines.push('```');
+                lines.push('');
+            }
+            lines.push(renderChunkMarkdownSection(`Chunks for context page ${page.pageId || 'context-page'}`, page.chunks, { includeSourceText: false }));
+            lines.push('');
+        }
+    }
+
+    return lines.join('\n');
+}
+
+function persistRequirementChunkDumpMarkdown(markdown, { taskId = null } = {}) {
+    const dumpDir = join(__dirname, '..', 'report', 'chunk-dumps');
+    mkdirSync(dumpDir, { recursive: true });
+
+    const safeTaskId = String(taskId || 'manual').replace(/[^a-zA-Z0-9._-]+/g, '_');
+    const taskFilePath = join(dumpDir, `test-model-chunks-${safeTaskId}.md`);
+    const latestFilePath = join(dumpDir, 'test-model-chunks-latest.md');
+
+    writeFileSync(taskFilePath, markdown, 'utf8');
+    writeFileSync(latestFilePath, markdown, 'utf8');
+
+    return { taskFilePath, latestFilePath };
+}
+
 // API для работы с правилами валидации
 
 /**
@@ -3151,15 +4155,9 @@ app.post('/api/analyze/solution', async (req, res) => {
                         try {
                             const { markdown: md } = await fetchConfluencePage(bearerToken, lid, { inlineTextAttachments: true });
                             if (autoIds.has(String(lid))) continue;
-                            // найдём строку(и) в основной статье, где эта ссылка упомянута, чтобы сохранить семантику отсылки
-                            const lines = String(markdown || '').split(/\n/);
-                            const refIdx = lines.findIndex(l => l.includes(`pageId=${lid}`));
-                            let mention = '';
-                            if (refIdx !== -1) {
-                                const start = Math.max(0, refIdx - 2);
-                                const end = Math.min(lines.length, refIdx + 3);
-                                mention = lines.slice(start, end).join('\n').trim();
-                            }
+                            // найдём наиболее содержательное упоминание ссылки в основной статье,
+                            // а не первое попавшееся changelog-совпадение
+                            const mention = extractBestLinkedPageMention(markdown, lid, markdown);
                             autoCtx.push([
                                 `### Контекст по ссылке из основной статьи (pageId=${lid})`,
                                 mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${lid})`,
@@ -4878,12 +5876,36 @@ function validateTestModel(model, reqStructure) {
             }
         }
 
-        // ✅ Проверка 6: Дубликаты Story
+        // ✅ Проверка 6: Дубликаты Story по названию
         const storyTexts = (generatedFeature.stories || []).map(s => normalizeText(s.text));
         const storyDuplicates = storyTexts.filter((text, index) => storyTexts.indexOf(text) !== index);
 
         if (storyDuplicates.length > 0) {
             report.errors.push(`Обнаружены дубликаты Story в Feature "${generatedFeature.text}": ${[...new Set(storyDuplicates)].join(', ')}`);
+            report.valid = false;
+        }
+
+        // ✅ Проверка 7: Дубликаты Story по содержимому Scenario + Code
+        const storyContentDuplicates = new Map();
+        for (const story of (generatedFeature.stories || [])) {
+            const signature = buildStoryContentSignature(story);
+            if (!signature) continue;
+
+            if (!storyContentDuplicates.has(signature)) {
+                storyContentDuplicates.set(signature, []);
+            }
+
+            storyContentDuplicates.get(signature).push(story.text || '(без названия)');
+        }
+
+        const duplicatedStoryGroups = Array.from(storyContentDuplicates.values())
+            .filter(group => group.length > 1)
+            .map(group => [...new Set(group)].join('", "'));
+
+        if (duplicatedStoryGroups.length > 0) {
+            report.errors.push(
+                `Обнаружены Story-дубликаты по содержимому в Feature "${generatedFeature.text}": "${duplicatedStoryGroups.join('"; "')}"`
+            );
             report.valid = false;
         }
     }
@@ -4915,6 +5937,130 @@ function normalizeDomainTokens(text = '') {
         .replace(/[^a-zа-я0-9\s]/gi, ' ')
         .split(/\s+/)
         .filter(token => token.length >= 4 && !STOP_WORDS.has(token));
+}
+
+function normalizeContentSignatureText(text = '') {
+    const rawText = String(text || '').trim();
+    if (!rawText) return '';
+    const normalizedTokens = normalizeDomainTokens(rawText);
+    return normalizedTokens.join(' ') || rawText.toLowerCase();
+}
+
+function buildCodeContentSignature(code) {
+    const normalizedText = normalizeCodeText(code?.text || '');
+    return normalizeContentSignatureText(normalizedText);
+}
+
+function buildScenarioContentSignature(scenario) {
+    if (!scenario) return '';
+
+    const scenarioAnalysis = analyzeScenarioActionability(scenario.text);
+    const scenarioText = scenarioAnalysis.normalizedText || String(scenario.text || '').trim();
+    const scenarioKey = normalizeContentSignatureText(scenarioText);
+    const codeKeys = (scenario.codes || [])
+        .map(buildCodeContentSignature)
+        .filter(Boolean)
+        .sort();
+
+    return `${scenarioKey}::${codeKeys.join('||')}`;
+}
+
+function buildStoryContentSignature(story) {
+    if (!story) return '';
+
+    const scenarioKeys = (story.scenarios || [])
+        .map(buildScenarioContentSignature)
+        .filter(Boolean)
+        .sort();
+
+    return scenarioKeys.join('###');
+}
+
+function scoreStoryTitleSpecificity(storyText = '') {
+    const text = String(storyText || '').trim();
+    if (!text) return Number.NEGATIVE_INFINITY;
+
+    let score = normalizeDomainTokens(text).length * 10 + Math.min(text.length, 120);
+
+    if (TECHNICAL_PREFIXES.test(text)) {
+        score -= 25;
+    }
+
+    if (CONTROL_PATTERNS.test(text)) {
+        score -= 25;
+    }
+
+    if (/^(story|история|сценарий|проверка|тест|действие)\b/i.test(text.toLowerCase())) {
+        score -= 10;
+    }
+
+    return score;
+}
+
+function mergeEquivalentStories(primaryStory, duplicateStory) {
+    const primaryTitleScore = scoreStoryTitleSpecificity(primaryStory?.text);
+    const duplicateTitleScore = scoreStoryTitleSpecificity(duplicateStory?.text);
+    const preferredText = duplicateTitleScore > primaryTitleScore
+        ? duplicateStory?.text
+        : primaryStory?.text;
+
+    const mergedStory = {
+        ...primaryStory,
+        text: preferredText || primaryStory?.text || duplicateStory?.text || 'Story',
+        id: primaryStory?.id || duplicateStory?.id || uuidv4(),
+        scenarios: [
+            ...(Array.isArray(primaryStory?.scenarios) ? primaryStory.scenarios : []),
+            ...(Array.isArray(duplicateStory?.scenarios) ? duplicateStory.scenarios : [])
+        ]
+    };
+
+    deduplicateScenariosInStory(mergedStory);
+    return mergedStory;
+}
+
+function deduplicateStoriesByContent(feature) {
+    if (!feature || !Array.isArray(feature.stories)) return 0;
+
+    const dedupedStories = [];
+    const storySignatures = new Map();
+    let removedCount = 0;
+
+    for (const story of feature.stories) {
+        if (!story || !story.text) continue;
+
+        deduplicateScenariosInStory(story);
+        const signature = buildStoryContentSignature(story);
+
+        if (!signature) {
+            dedupedStories.push(story);
+            continue;
+        }
+
+        if (!storySignatures.has(signature)) {
+            storySignatures.set(signature, story);
+            dedupedStories.push(story);
+            continue;
+        }
+
+        const existingStory = storySignatures.get(signature);
+        const mergedStory = mergeEquivalentStories(existingStory, story);
+        const existingIndex = dedupedStories.indexOf(existingStory);
+
+        if (existingIndex !== -1) {
+            dedupedStories[existingIndex] = mergedStory;
+        }
+
+        storySignatures.set(signature, mergedStory);
+        removedCount++;
+
+        console.log(
+            `[deduplicateStoriesByContent] Удален Story-дубликат "${story.text}" в Feature "${feature.text}" ` +
+            `(оставлена Story "${mergedStory.text}")`
+        );
+    }
+
+    feature.stories = dedupedStories;
+    return removedCount;
 }
 
 function detectDominantDomainToken(features) {
@@ -4981,6 +6127,7 @@ function deduplicateStoriesInFeature(feature) {
     }
 
     feature.stories = dedupedStories;
+    deduplicateStoriesByContent(feature);
 }
 
 // ✅ НОВАЯ ФУНКЦИЯ: Дедупликация scenarios внутри Story
@@ -6230,7 +7377,8 @@ async function regenerateSingleStoryBranch({
     systemPrompt,
     modelsToTry,
     logicSection,
-    ragContext
+    ragContext,
+    graphContext
 }) {
     const contextQuery = [featureName, storyName, issueSummary, ...(expectedRequirements || [])]
         .filter(Boolean)
@@ -6239,6 +7387,7 @@ async function regenerateSingleStoryBranch({
         maxSections: 12,
         maxChars: 70000
     });
+    const graphSection = formatGraphContextForPrompt(graphContext);
 
     const currentStoryBlock = currentStory
         ? `ТЕКУЩАЯ ВЕТКА STORY:\n\`\`\`json\n${JSON.stringify(currentStory, null, 2)}\n\`\`\`\n`
@@ -6275,8 +7424,10 @@ ${ragContext ? `RAG КОНТЕКСТ:\n${ragContext}\n` : ''}
 - Запрещены Scenario вида "Выполнить пользовательское действие", "Проверить состояние ...", "Просмотреть данные", "Удалить старый текст рекомендаций".
 - Если требование описывает состояние интерфейса, отсутствие текста, доступность или другую реакцию системы, это должен быть Code. Scenario в таком случае должен описывать путь пользователя к месту проверки.
 - Code должен описывать реакцию системы и иметь type "frontend" или "backend".
+- Внутри одного Scenario один и тот же Code не должен дублироваться: оставляй только один экземпляр каждой системной реакции.
 - Если Story отсутствует, создай её заново на основе контекста требований.
 - Ответ недопустим, если хотя бы один Scenario остался без Code.
+${graphSection ? `\nGRAPH CONTEXT (NEO4J):\n${graphSection}\n` : ''}
 `.trim();
 
     try {
@@ -6344,7 +7495,8 @@ async function repairModelHierarchyGaps({
     systemPrompt,
     modelsToTry,
     logicSection,
-    ragContext
+    ragContext,
+    graphContext
 }) {
     const targets = collectHierarchyRepairTargets(model, reqStructure);
     if (targets.length === 0) {
@@ -6369,7 +7521,8 @@ async function repairModelHierarchyGaps({
             systemPrompt,
             modelsToTry,
             logicSection,
-            ragContext
+            ragContext,
+            graphContext
         });
 
         if (!repaired?.story) {
@@ -6879,7 +8032,12 @@ async function generateTestModelAsync(taskId, inputData) {
 
         // 0) Если pageId передан — подтягиваем основную страницу и прямые ссылки
         let autoPages = [];
+        const autoPageDocs = [];
+        const autoPageIds = new Set();
+        const explicitContextPageDocs = [];
         let baseRequirement = '';
+        let mainRequirementTitle = null;
+        let usedContextRefinerFallback = false;
         const formatMention = (mention) => {
             if (!mention) return '';
             return mention
@@ -6904,6 +8062,7 @@ async function generateTestModelAsync(taskId, inputData) {
             try {
                 const { markdown, title: mainTitle } = await fetchConfluencePage(bearerToken.trim(), pageId, { inlineTextAttachments: true });
                 baseRequirement = markdown || '';
+                mainRequirementTitle = mainTitle || null;
                 console.log(`[generate-test-model-async] ✅ Страница загружена, размер: ${baseRequirement.length} символов`);
 
                 if (!baseRequirement || !baseRequirement.trim()) {
@@ -6936,25 +8095,29 @@ async function generateTestModelAsync(taskId, inputData) {
                 for (const lid of ids) {
                     try {
                         const { markdown: md, title: linkedTitle } = await fetchConfluencePage(bearerToken, lid, { inlineTextAttachments: true });
-                        const lines = String(markdown || '').split(/\n/);
-                        const refIdx = lines.findIndex(l => l.includes(`pageId=${lid}`));
-                        let mention = '';
-                        if (refIdx !== -1) {
-                            const start = Math.max(0, refIdx - 2);
-                            const end = Math.min(lines.length, refIdx + 3);
-                            mention = lines.slice(start, end).join('\n').trim();
-                        }
+                        const mention = extractBestLinkedPageMention(markdown, lid, baseRequirement);
                         const relevant = extractRelevantSections(md, mention, { maxSections: 15, maxChars: 100000 }); // Увеличено для полного контекста
-                        autoPages.push([
+                        const linkedPageTitleForSource = deriveTitleFromContent(md, linkedTitle || `Связанная страница ${lid}`, lid);
+                        const autoPagePrompt = [
                             `### Контекст по ссылке из основной статьи (pageId=${lid})`,
                             mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${lid})`,
                             '',
                             relevant
-                        ].join('\n'));
+                        ].join('\n');
+
+                        autoPages.push(autoPagePrompt);
+                        autoPageDocs.push({
+                            pageId: String(lid),
+                            title: linkedPageTitleForSource,
+                            content: md,
+                            graphText: (relevant && relevant.trim()) ? relevant : md,
+                            promptText: autoPagePrompt
+                        });
+                        autoPageIds.add(String(lid));
 
                         registerSource({
                             id: `page-${lid}`,
-                            title: deriveTitleFromContent(md, linkedTitle || `Связанная страница ${lid}`, lid),
+                            title: linkedPageTitleForSource,
                             description: mention ? `Упоминание: ${formatMention(mention)}` : 'Контекст из связанной страницы',
                             type: 'confluence',
                             pageId: String(lid),
@@ -7045,6 +8208,47 @@ async function generateTestModelAsync(taskId, inputData) {
             });
         }
 
+        const explicitContextPageIds = normalizePageIds(contextPageIds)
+            .map(String)
+            .filter(Boolean)
+            .filter((cid) => cid !== String(pageId || ''))
+            .filter((cid, index, arr) => arr.indexOf(cid) === index);
+
+        if (explicitContextPageIds.length > 0) {
+            if (!bearerToken) {
+                console.warn('[generate-test-model-async] contextPageIds переданы без bearerToken, пропускаем загрузку контекстных страниц для графа');
+            } else {
+                for (const cid of explicitContextPageIds) {
+                    if (autoPageIds.has(cid)) {
+                        continue;
+                    }
+
+                    try {
+                        const { markdown: contextMarkdown, title: contextTitle } = await fetchConfluencePage(bearerToken.trim(), cid, { inlineTextAttachments: true });
+                        const contextPageTitle = deriveTitleFromContent(contextMarkdown, contextTitle || `Context page ${cid}`, cid);
+
+                        explicitContextPageDocs.push({
+                            pageId: cid,
+                            title: contextPageTitle,
+                            content: contextMarkdown,
+                            graphText: contextMarkdown
+                        });
+
+                        registerSource({
+                            id: `context-page-${cid}`,
+                            title: contextPageTitle,
+                            description: contextInstruction ? `Контекстная страница из запроса. Инструкция: ${String(contextInstruction).trim()}` : 'Контекстная страница из запроса',
+                            type: 'confluence',
+                            pageId: cid,
+                            content: contextMarkdown
+                        });
+                    } catch (contextPageErr) {
+                        console.warn(`[generate-test-model-async] Не удалось загрузить contextPageId=${cid}:`, contextPageErr.message);
+                    }
+                }
+            }
+        }
+
         if (glossary && typeof glossary === 'string' && glossary.trim()) {
             registerSource({
                 id: 'user-glossary',
@@ -7092,13 +8296,14 @@ async function generateTestModelAsync(taskId, inputData) {
                     glossary,
                     context,
                     contextInstruction,
-                    contextPageIds: undefined,
+                    contextPageIds,
                     glossaryPageId: undefined,
                     bearerToken,
                     contextPages: autoPages
                 });
                 console.log(`[generate-test-model-async] contextRefiner fallback: refinedText.length=${(refinedText || '').length}, refinedArray.length=${refinedArray?.length || 0}`);
                 reqStringForModel = refinedText || (refinedArray?.join('\n\n') ?? '');
+                usedContextRefinerFallback = true;
             } catch (e) {
                 console.warn('[generate-test-model-async] contextRefiner fallback failed:', e.message);
                 reqStringForModel = baseRequirement || (typeof requirements === 'string'
@@ -7120,6 +8325,32 @@ async function generateTestModelAsync(taskId, inputData) {
         if (reqStringForModel.length < 100) {
             console.warn(`[generate-test-model-async] ⚠️ ВНИМАНИЕ: Требования очень короткие (${reqStringForModel.length} символов). Возможно, контент не загружен.`);
         }
+
+        const graphDocumentId = String(pageId || taskId || 'inline-requirements');
+        let rawChunks = await chunkify(reqStringForModel, {
+            pageId: graphDocumentId,
+            title: deriveTitleFromContent(reqStringForModel, 'Requirements', pageId || graphDocumentId)
+        });
+
+        let reqChunks = rawChunks
+            .filter(chunk => !(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval))
+            .map((chunk, index) => ({
+            text: chunk.cleaned_text || chunk.content,
+            content: chunk.cleaned_text || chunk.content,
+            chunkId: chunk.id || `chunk-${index}`,
+            position: index,
+            pageId: graphDocumentId,
+            sectionId: Array.isArray(chunk.section_path) && chunk.section_path.length
+                ? chunk.section_path.join(' > ')
+                : (chunk.heading || null),
+            documentId: chunk.doc_id || graphDocumentId,
+            metadata: {
+                chunk_type: chunk.chunk_type,
+                heading: chunk.heading,
+                section_path: chunk.section_path,
+                explicit_refs: chunk.explicit_refs
+            }
+        }));
 
         // RAG
         let ragContextForChunks = [];
@@ -7153,6 +8384,119 @@ async function generateTestModelAsync(taskId, inputData) {
             } catch (ragError) {
                 console.warn('[generate-test-model-async] Ошибка RAG:', ragError.message);
             }
+        }
+
+        // ✅ Neo4j Graph: Извлечение сущностей и связей из требований
+        let graphContextForChunks = null;
+        const neo4jAvailable = await isNeo4jAvailable();
+        if (neo4jAvailable) {
+            try {
+                console.log('[generate-test-model-async] 🌐 Извлечение сущностей в Neo4j граф...');
+                const sessionId = `testmodel-${taskId}-${Date.now()}`;
+                
+                // Формируем тексты для извлечения сущностей: основной документ + контекстные страницы
+                const mainTexts = reqChunks;
+                const graphContextPages = [...autoPageDocs, ...explicitContextPageDocs];
+                const contextTexts = graphContextPages
+                    .flatMap((page, index) => {
+                        const pageText = page.graphText || page.content || page.title || '';
+                        return pageText
+                            ? [{
+                                text: pageText,
+                                content: pageText,
+                                chunkId: `context-page-${page.pageId || index}`,
+                                position: index,
+                                pageId: String(page.pageId || `context-${index}`),
+                                sectionId: page.title || `Context page ${index + 1}`,
+                                documentId: String(page.pageId || `context-${index}`)
+                            }]
+                            : [];
+                    })
+                    .filter((chunk) => (chunk.text || chunk.content || '').length > 50);  // Фильтруем короткие тексты
+                
+                console.log(
+                    `[generate-test-model-async] 📄 Основной документ: ${mainTexts.length} чанков, ` +
+                    `auto-linked context pages: ${autoPageDocs.length}, explicit context pages: ${explicitContextPageDocs.length}, ` +
+                    `graph context texts: ${contextTexts.length}`
+                );
+
+                // Создаём chunk-узлы заранее, чтобы связи EXTRACTED_FROM не были висячими.
+                if (mainTexts.length > 0) {
+                    await createChunks(sessionId, mainTexts);
+                    const nextRelationships = mainTexts
+                        .slice(0, -1)
+                        .map((chunk, index) => ({
+                            fromChunkId: chunk.chunkId,
+                            toChunkId: mainTexts[index + 1]?.chunkId,
+                            toType: 'Chunk',
+                            relType: 'NEXT'
+                        }))
+                        .filter(rel => rel.fromChunkId && rel.toChunkId);
+
+                    if (nextRelationships.length > 0) {
+                        await createChunkRelationships(sessionId, nextRelationships);
+                    }
+                }
+                
+                // Извлекаем сущности из основного документа
+                const { entities, relationships } = await extractEntitiesFromChunks(mainTexts, {
+                    sessionId,
+                    documentId: graphDocumentId
+                });
+                
+                // Если есть контекстные страницы - извлекаем из них дополнительные сущности
+                if (contextTexts.length > 0) {
+                    console.log('[generate-test-model-async] 📄 Извлекаем сущности из контекстных страниц...');
+                    await createChunks(sessionId, contextTexts);
+                    const { entities: contextEntities, relationships: contextRel } = await extractEntitiesFromChunks(contextTexts, {
+                        sessionId,
+                        documentId: graphDocumentId
+                    });
+                    
+                    console.log(`[generate-test-model-async] 📊 Из контекста: ${contextEntities.length} сущностей, ${contextRel.length} связей`);
+                    // Записываем контекстные сущности в Neo4j
+                    if (contextEntities.length > 0) {
+                        await createEntities(sessionId, contextEntities);
+                        await createEntityRelationships(sessionId, contextRel);
+                    }
+                }
+                
+                if (entities.length > 0) {
+                    console.log(`[generate-test-model-async] 📊 Извлечено всего: ${entities.length} сущностей, ${relationships.length} связей`);
+                    
+                    // Записываем в Neo4j
+                    await createEntities(sessionId, entities);
+                    await createEntityRelationships(sessionId, relationships);
+                    
+                    // Также извлекаем UI-компоненты из текста
+                    const uiExtraction = await extractUIFromText(reqStringForModel);
+                    if (uiExtraction.uiElements?.length > 0 || uiExtraction.userPaths?.length > 0) {
+                        const { entities: uiEntities, relationships: uiRel } = convertUIToEntities(uiExtraction, {
+                            documentId: graphDocumentId
+                        });
+                        await createEntities(sessionId, uiEntities);
+                        await createEntityRelationships(sessionId, uiRel);
+                        console.log(`[generate-test-model-async] 📱 UI элементов: ${uiEntities.length}, путей: ${uiExtraction.userPaths?.length || 0}`);
+                    }
+                    
+                    // Формируем графовый контекст для промпта
+                    const graphNodes = await getAllNodes(sessionId, 500);
+                    graphContextForChunks = {
+                        sessionId,
+                        apiEndpoints: graphNodes.filter(node => node.type === 'APIEndpoint'),
+                        uiElements: graphNodes.filter(node => node.type === 'UIElement'),
+                        businessRules: graphNodes.filter(node => node.type === 'BusinessRule'),
+                        externalRefs: graphNodes.filter(node => node.type === 'ExternalRef')
+                    };
+                    console.log(`[generate-test-model-async] 🌐 Графовый контекст сформирован для сессии ${sessionId}`);
+                } else {
+                    console.log('[generate-test-model-async] ⚠️ Не удалось извлечь сущности, пропускаем граф');
+                }
+            } catch (graphError) {
+                console.warn('[generate-test-model-async] Ошибка Neo4j graph:', graphError.message);
+            }
+        } else {
+            console.log('[generate-test-model-async] ⚠️ Neo4j недоступен, пропускаем графовый контекст');
         }
 
         // ✅ ЭТАП 1: ПАРАЛЛЕЛЬНЫЙ ПРЕПРОЦЕССИНГ REQUIREMENTS
@@ -7382,13 +8726,15 @@ async function generateTestModelAsync(taskId, inputData) {
 
 
         // Семантическая чанкизация по логическим единицам (действия, правила, API, валидации)
-        const rawChunks = await chunkify(reqStringForModel, {
-            pageId: String(pageId),
-            title: deriveTitleFromContent(reqStringForModel, 'Requirements', pageId)
+        rawChunks = await chunkify(reqStringForModel, {
+            pageId: graphDocumentId,
+            title: deriveTitleFromContent(reqStringForModel, 'Requirements', pageId || graphDocumentId)
         });
         
         // Преобразуем в формат для генерации
-        const reqChunks = rawChunks.map(chunk => ({
+        reqChunks = rawChunks
+            .filter(chunk => !(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval))
+            .map(chunk => ({
             text: chunk.cleaned_text || chunk.content,
             metadata: {
                 chunk_type: chunk.chunk_type,
@@ -7397,10 +8743,37 @@ async function generateTestModelAsync(taskId, inputData) {
                 explicit_refs: chunk.explicit_refs
             }
         }));
+
+        try {
+            const chunkDumpPayload = await assembleRequirementChunkDebugPayload({
+                requirements,
+                text,
+                pageId,
+                glossary,
+                context,
+                reqStringForModel,
+                usedContextRefinerFallback,
+                graphDocumentId,
+                deriveTitleFromContent,
+                mainTitle: mainRequirementTitle,
+                baseRequirement,
+                autoPageDocs,
+                explicitContextPageDocs,
+                includeFullText: true,
+                includeSourceTexts: true,
+                precomputedModelInputChunks: rawChunks
+            });
+
+            const chunkDumpMarkdown = buildRequirementChunkDumpMarkdown(chunkDumpPayload, { taskId });
+            const chunkDumpPaths = persistRequirementChunkDumpMarkdown(chunkDumpMarkdown, { taskId });
+            console.log(`[generate-test-model-async] 📝 Дамп чанков сохранен: ${chunkDumpPaths.taskFilePath}`);
+        } catch (chunkDumpError) {
+            console.warn('[generate-test-model-async] Не удалось сохранить markdown-дамп чанков:', chunkDumpError.message);
+        }
         
         const totalSize = reqStringForModel.length;
 
-        console.log(`[generate-test-model-async] ✅ Семантическая чанкизация: ${reqChunks.length} чанков (${rawChunks.filter(c => c.chunk_type).length} с типами)`);
+        console.log(`[generate-test-model-async] ✅ Семантическая чанкизация: ${reqChunks.length} retrievable chunks / ${rawChunks.length} total (${rawChunks.filter(c => c.chunk_type).length} с типами)`);
 
         // ✅ ОПТИМИЗАЦИЯ: Для маленьких требований (< 5000 символов) отключаем инструменты контекста
         // чтобы избежать лишних итераций, когда весь контекст уже в промпте
@@ -7467,7 +8840,8 @@ ${contextSourcesSummary || '—'}
                 previousContext,
                 logicSection: logicSectionForChunk,
                 interactiveInstructionBlock,
-                ragContext: ragContextForChunks[0] || null
+                ragContext: ragContextForChunks[0] || null,
+                graphContext: graphContextForChunks
             });
 
             const baseUserPrompt = userPrompt;
@@ -8048,7 +9422,8 @@ ${contextSourcesSummary || '—'}
                 systemPrompt: SYSTEM_PROMPT,
                 modelsToTry,
                 logicSection: logicConstraints ? formatLogicConstraintsForPrompt(logicConstraints) : '',
-                ragContext: ragContextForChunks[0] || null
+                ragContext: ragContextForChunks[0] || null,
+                graphContext: graphContextForChunks
             });
 
             cleanedModel = repairResult.model;
@@ -8123,16 +9498,14 @@ ${contextSourcesSummary || '—'}
             console.warn(`[generate-test-model-async] ⚠️ Обнаружены структурные проблемы в финальной модели:`, finalStructureIssues);
 
             // ✅ ПОВТОРНАЯ ГЕНЕРАЦИЯ с уточняющим промптом для проблемных Story
-            const storyIssues = finalStructureIssues.filter(issue =>
-                issue.includes('Story') && (issue.includes('техническую формулировку') || issue.includes('описание контрола'))
-            );
+            const storyIssues = finalStructureIssues.filter(isRepairableStoryStructureIssue);
 
             if (storyIssues.length > 0 && reqStringForModel && SYSTEM_PROMPT) {
                 console.log(`[generate-test-model-async] 🔄 Попытка повторной генерации с исправлением ${storyIssues.length} проблемных Story...`);
 
                 // Формируем уточняющий промпт для исправления Story
                 const escalationPrompt = `
-🚨 КРИТИЧЕСКАЯ ОШИБКА: Обнаружены Story с техническими формулировками вместо пользовательских историй!
+🚨 КРИТИЧЕСКАЯ ОШИБКА: Обнаружены проблемные Story со структурными нарушениями!
 
 ПРОБЛЕМНЫЕ Story:
 ${storyIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}
@@ -8142,6 +9515,7 @@ ${storyIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}
 - ❌ "Реализация кнопки создания QR-кода" → ✅ "QR-коды для физических лиц"
 - ❌ "API метод получения данных" → ✅ "Получение данных о счетах"
 - ❌ "Чек-бокс УНК в другом банке" → ✅ "Работа с УНК в другом банке"
+- Внутри одного Scenario один и тот же Code не должен дублироваться: оставляй только один экземпляр каждой системной реакции
 
 ПЕРЕГЕНЕРИРУЙ модель, исправив все проблемные Story на пользовательские истории!
 `.trim();
@@ -8167,7 +9541,8 @@ ${storyIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}
                             previousContext,
                             logicSection: logicSectionForChunk,
                             interactiveInstructionBlock,
-                            ragContext: ragContextForChunks[0] || null
+                            ragContext: ragContextForChunks[0] || null,
+                graphContext: graphContextForChunks
                         });
 
                         // ✅ Добавляем escalation prompt к базовому промпту
@@ -8249,9 +9624,7 @@ ${escalationPrompt}`;
 
             // Если после повторной генерации проблемы остались, пытаемся перегенерировать проблемные Code
             const remainingIssues = detectModelStructureIssues(cleanedModel, 'final-after-retry');
-            const criticalIssues = remainingIssues.filter(issue =>
-                !issue.includes('Story') || (!issue.includes('техническую формулировку') && !issue.includes('описание контрола'))
-            );
+            const criticalIssues = remainingIssues.filter(issue => !isRepairableStoryStructureIssue(issue));
 
             // ✅ НОВОЕ: Перегенерация проблемных Code с пользовательскими действиями
             const codeIssues = criticalIssues.filter(issue =>
@@ -8293,9 +9666,7 @@ ${escalationPrompt}`;
 
                 // Повторная валидация
                 const remainingIssuesAfterFix = detectModelStructureIssues(cleanedModel, 'final-after-code-regeneration');
-                const stillCriticalIssues = remainingIssuesAfterFix.filter(issue =>
-                    !issue.includes('Story') || (!issue.includes('техническую формулировку') && !issue.includes('описание контрола'))
-                );
+                const stillCriticalIssues = remainingIssuesAfterFix.filter(issue => !isRepairableStoryStructureIssue(issue));
 
                 if (stillCriticalIssues.length > 0) {
                     console.warn(`[generate-test-model-async] ⚠️ После перегенерации и автоматического исправления остались проблемы:`);
@@ -8319,9 +9690,7 @@ ${escalationPrompt}`;
 
                     // Финальная проверка
                     const finalIssues = detectModelStructureIssues(cleanedModel, 'final-after-all-fixes');
-                    const finalCriticalIssues = finalIssues.filter(issue =>
-                        !issue.includes('Story') || (!issue.includes('техническую формулировку') && !issue.includes('описание контрола'))
-                    );
+                    const finalCriticalIssues = finalIssues.filter(issue => !isRepairableStoryStructureIssue(issue));
 
                     if (finalCriticalIssues.length > 0) {
                         console.warn(`[generate-test-model-async] ⚠️ После всех исправлений остались проблемы:`);
@@ -13662,7 +15031,10 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 // Функция buildSubmitCasesToolStrict работает и без reqStructure
                 let reqStructureForTool = null;
 
-                const submissionTool = buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios, reqStructureForTool);
+                const submissionTool = buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios, reqStructureForTool, {
+                    allowedFeatures: correctFeature ? [correctFeature] : [],
+                    allowedStories: correctStories || []
+                });
                 const ai = await runTestCaseLLM({
                     userPrompt,
                     submissionTool,
@@ -14899,14 +16271,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 for (const lid of ids) {
                     try {
                         const { markdown: md, title: linkedTitle } = await fetchConfluencePage(bearerToken, lid, { inlineTextAttachments: true });
-                        const lines = String(markdown || '').split(/\n/);
-                        const refIdx = lines.findIndex(l => l.includes(`pageId=${lid}`));
-                        let mention = '';
-                        if (refIdx !== -1) {
-                            const start = Math.max(0, refIdx - 2);
-                            const end = Math.min(lines.length, refIdx + 3);
-                            mention = lines.slice(start, end).join('\n').trim();
-                        }
+                        const mention = extractBestLinkedPageMention(markdown, lid, baseRequirement);
                         const relevant = extractRelevantSections(md, mention, { maxSections: 15, maxChars: 100000 }); // Увеличено для полного контекста
                         autoPages.push([
                             `### Контекст по ссылке из основной статьи (pageId=${lid})`,
@@ -15333,6 +16698,23 @@ ${existingE2E.length > 0 ? existingE2E.map(t => `  - ${t.title}`).join('\n') : '
                 for (const sc of (st.scenarios || []))
                     if (sc?.text?.trim()) set.add(sc.text.trim());
             return [...set];
+        }
+
+        function collectAllowedFeaturesAndStories(modelChunk) {
+            const featureSet = new Set();
+            const storySet = new Set();
+
+            for (const feature of (Array.isArray(modelChunk) ? modelChunk : [])) {
+                if (feature?.text?.trim()) featureSet.add(feature.text.trim());
+                for (const story of (feature.stories || [])) {
+                    if (story?.text?.trim()) storySet.add(story.text.trim());
+                }
+            }
+
+            return {
+                allowedFeatures: [...featureSet],
+                allowedStories: [...storySet]
+            };
         }
 
 
@@ -15765,6 +17147,36 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
             return `${trimmedInstruction}${corePrompt}`;
         };
 
+        let perfectExamplesCache = null;
+        let perfectExamplesPromise = null;
+
+        async function getCachedPerfectExamples() {
+            if (!projectId) return null;
+            if (perfectExamplesCache) return perfectExamplesCache;
+
+            if (!perfectExamplesPromise) {
+                perfectExamplesPromise = getAllPerfectExamplesByLayer(projectId, db)
+                    .then((examples) => {
+                        perfectExamplesCache = examples;
+                        console.log(
+                            `[generateTestCasesAsync] Загружено идеальных примеров из БД для проекта ${projectId}: ${
+                                Object.keys(examples || {}).map(layer => `${layer}: ${(examples?.[layer] || []).length}`).join(', ')
+                            }`
+                        );
+                        return perfectExamplesCache;
+                    })
+                    .catch((err) => {
+                        console.warn(`[generateTestCasesAsync] Ошибка загрузки идеальных примеров из БД:`, err.message);
+                        return null;
+                    })
+                    .finally(() => {
+                        perfectExamplesPromise = null;
+                    });
+            }
+
+            return await perfectExamplesPromise;
+        }
+
         async function runTestCaseLLM({
             taskContextId = taskId,
             systemPrompt = baseSystemPrompt,
@@ -15836,20 +17248,37 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
 
         // === tool-schema с жёстким enum для сценариев ===
         // ✅ ДОРАБОТКА 2: Обновлена функция для поддержки reqStructure
-        const buildSubmitCasesToolStrict = (allowedCodes = [], allowedScenarios = [], reqStructure = null) => {
-            // ✅ ИСПРАВЛЕНО: Извлекаем допустимые feature/story из modelStructure (не из reqStructure)
-            // reqStructure может быть устаревшим, всегда используем актуальную modelStructure
-            let allowedFeatures = [];
-            let allowedStories = [];
+        const buildSubmitCasesToolStrict = (allowedCodes = [], allowedScenarios = [], reqStructure = null, enumOptions = {}) => {
+            // Предпочитаем локальный scope (chunk / retry / targeted feature-story pair),
+            // а к полной модели откатываемся только если локальный scope не передан.
+            const scopedEnums = collectAllowedFeaturesAndStories(enumOptions.modelScope);
+            let allowedFeatures = Array.isArray(enumOptions.allowedFeatures)
+                ? enumOptions.allowedFeatures.filter(Boolean)
+                : [];
+            let allowedStories = Array.isArray(enumOptions.allowedStories)
+                ? enumOptions.allowedStories.filter(Boolean)
+                : [];
 
-            // ✅ ИСПРАВЛЕНО: Всегда используем modelStructure для enum, чтобы гарантировать точное соответствие
-            if (modelStructure && Array.isArray(modelStructure) && modelStructure.length > 0) {
-                allowedFeatures = modelStructure.map(f => f.text).filter(Boolean);
-                allowedStories = modelStructure.flatMap(f => (f.stories || []).map(s => s.text).filter(Boolean));
-            } else if (reqStructure && reqStructure.features && reqStructure.features.length > 0) {
-                // Fallback: только если modelStructure недоступна
-                allowedFeatures = reqStructure.features.map(f => f.name).filter(Boolean);
-                allowedStories = reqStructure.features.flatMap(f => f.stories.map(s => s.name).filter(Boolean));
+            if (!allowedFeatures.length && scopedEnums.allowedFeatures.length) {
+                allowedFeatures = scopedEnums.allowedFeatures;
+            }
+            if (!allowedStories.length && scopedEnums.allowedStories.length) {
+                allowedStories = scopedEnums.allowedStories;
+            }
+
+            if ((!allowedFeatures.length || !allowedStories.length) && reqStructure?.features?.length > 0) {
+                if (!allowedFeatures.length) {
+                    allowedFeatures = reqStructure.features.map(f => f.name).filter(Boolean);
+                }
+                if (!allowedStories.length) {
+                    allowedStories = reqStructure.features.flatMap(f => (f.stories || []).map(s => s.name).filter(Boolean));
+                }
+            }
+
+            if ((!allowedFeatures.length || !allowedStories.length) && Array.isArray(modelStructure) && modelStructure.length > 0) {
+                const fullModelEnums = collectAllowedFeaturesAndStories(modelStructure);
+                if (!allowedFeatures.length) allowedFeatures = fullModelEnums.allowedFeatures;
+                if (!allowedStories.length) allowedStories = fullModelEnums.allowedStories;
             }
 
             return {
@@ -15869,14 +17298,14 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
                                             ? {
                                                 type: "string",
                                                 enum: allowedFeatures,
-                                                description: `Feature из модели. Допустимые значения: ${allowedFeatures.join(', ')}`
+                                                description: "Feature из доступного scope модели"
                                             }
                                             : { type: "string", description: "Название фичи из modelStructure" },
                                         story: allowedStories.length > 0
                                             ? {
                                                 type: "string",
                                                 enum: allowedStories,
-                                                description: `Story из модели. Допустимые значения: ${allowedStories.join(', ')}`
+                                                description: "Story из доступного scope модели"
                                             }
                                             : { type: "string", description: "Название story из modelStructure" },
                                         scenario: allowedScenarios.length
@@ -16224,15 +17653,9 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
                 const scenariosCount = fullTestModel.reduce((sum, f) =>
                     sum + (f.stories || []).reduce((s, st) => s + (st.scenarios || []).length, 0), 0);
 
-                // ✅ Загружаем идеальные примеры E2E из БД
-                let perfectExamples = null;
-                if (projectId) {
-                    try {
-                        perfectExamples = await getAllPerfectExamplesByLayer(projectId, db);
-                        console.log(`[generateE2ETests] Загружено идеальных примеров E2E из БД: ${(perfectExamples['E2E Tests'] || []).length}`);
-                    } catch (err) {
-                        console.warn(`[generateE2ETests] Ошибка загрузки идеальных примеров:`, err.message);
-                    }
+                const perfectExamples = await getCachedPerfectExamples();
+                if (perfectExamples?.['E2E Tests']?.length) {
+                    console.log(`[generateE2ETests] Используем кэш идеальных примеров E2E: ${(perfectExamples['E2E Tests'] || []).length}`);
                 }
 
                 // Формируем примеры для E2E
@@ -16345,13 +17768,13 @@ ${Array.isArray(requirements) ? requirements.join('\n\n') : (requirements || '')
 `.trim();
 
                 // Собираем allowed codes/scenarios из полной модели
-                const allowedCodes = collectAllowedCodes(fullTestModel);
-                const allowedScenarios = collectAllowedScenarios(fullTestModel);
-                const allowedFeatures = fullTestModel.map(f => f.text).filter(Boolean);
-                const allowedStories = fullTestModel.flatMap(f => (f.stories || []).map(s => s.text).filter(Boolean));
+                const allowedCodes = [];
+                const allowedScenarios = [];
 
                 // Создаем tool для submit_cases
-                const submitTool = buildSubmitCasesToolStrict(allowedCodes, allowedScenarios, null);
+                const submitTool = buildSubmitCasesToolStrict(allowedCodes, allowedScenarios, null, {
+                    modelScope: fullTestModel
+                });
 
                 // Вызываем LLM для генерации E2E тестов
                 // ✅ Используем только Cloud.ru API (без fallback на OpenRouter)
@@ -16369,7 +17792,12 @@ ${Array.isArray(requirements) ? requirements.join('\n\n') : (requirements || '')
                     systemPrompt: e2eSystemPrompt,
                     userPrompt,
                     submissionTool: submitTool,
-                    persistContext: true,
+                    modelOverrides: {
+                        temperature: 0,
+                        top_p: 1,
+                        max_tokens: 12000
+                    },
+                    persistContext: false,
                     responseFormat: TEST_CASE_RESPONSE_FORMAT
                 });
 
@@ -16422,10 +17850,10 @@ ${Array.isArray(requirements) ? requirements.join('\n\n') : (requirements || '')
         async function genForChunkOptimized(chunk, requirements, existingE2E = [], modelStructure, reqStructure = null, contextId = null, existingCases = [], logicConstraints = null, isNegativePass = false, includeBackendTests = true, signatureRegistry = null) {
             const contextPrompt = buildContextPrompt(chunk, existingE2E);
             const relevantReqs = filterRelevantRequirements(requirements, chunk);
-            // ✅ ИСПРАВЛЕНО: Используем ПОЛНУЮ модель для enum, а не только chunk
-            // Это гарантирует, что все feature/story/scenario/code доступны в enum
-            const allowedForChunk = collectAllowedCodes(modelStructure); // Используем полную модель
-            const allowedScenarios = collectAllowedScenarios(modelStructure); // Используем полную модель
+            const chunkEnumScope = Array.isArray(chunk) ? chunk : [];
+            const allowedForChunk = collectAllowedCodes(chunkEnumScope);
+            const allowedScenarios = collectAllowedScenarios(chunkEnumScope);
+            const { allowedFeatures, allowedStories } = collectAllowedFeaturesAndStories(chunkEnumScope);
 
             // ✅ ЭТАП 3: Skeleton & Flesh - Чанки генерируют ТОЛЬКО Integration тесты (E2E будут сгенерированы отдельно)
             // Защита от undefined
@@ -16443,19 +17871,11 @@ ${Array.isArray(requirements) ? requirements.join('\n\n') : (requirements || '')
             }
 
             console.log(`[genForChunkOptimized] 🏗️ Режим генерации: ${mode} (${mode === 'CHUNK' ? 'только Integration тесты, E2E будут сгенерированы отдельно' : 'FULL/BATCH режим - генерируем все типы тестов'})`);
-            // ✅ Загружаем идеальные примеры из БД для улучшения генерации
-            let perfectExamples = null;
-            // projectId и skipAllureAPICalls уже объявлены в начале функции generateTestCasesAsync
-            if (projectId) {
-                try {
-                    perfectExamples = await getAllPerfectExamplesByLayer(projectId, db);
-                    console.log(`[generateTestCasesAsync] Загружено идеальных примеров из БД для проекта ${projectId}:`,
-                        Object.keys(perfectExamples).map(l => `${l}: ${perfectExamples[l].length}`).join(', '));
-                } catch (err) {
-                    console.warn(`[generateTestCasesAsync] Ошибка загрузки идеальных примеров из БД:`, err.message);
-                    perfectExamples = null;
-                }
-            }
+            console.log(
+                `[genForChunkOptimized] enum scope: features=${allowedFeatures.length}, stories=${allowedStories.length}, scenarios=${allowedScenarios.length}, codes=${allowedForChunk.length}`
+            );
+
+            const perfectExamples = await getCachedPerfectExamples();
 
             // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: ВСЕГДА загружаем примеры (статические + идеальные из БД)
             const examples = await selectExamples(chunk, mode, perfectExamples, db, projectId);
@@ -16653,7 +18073,11 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                     taskContextId: contextId || taskId, // ✅ Используем переданный contextId или дефолтный taskId
                     systemPrompt: systemPromptWithExamples,
                     userPrompt,
-                    submissionTool: buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios, reqStructure),
+                    submissionTool: buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios, reqStructure, {
+                        modelScope: chunkEnumScope,
+                        allowedFeatures,
+                        allowedStories
+                    }),
                     modelOverrides: {
                         temperature: 0,
                         top_p: 1,
@@ -17691,7 +19115,9 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                             const allowedCodes = collectAllowedCodes(matchingChunk);
                             const allowedScenarios = collectAllowedScenarios(matchingChunk);
 
-                            const submissionTool = buildSubmitCasesToolStrict(allowedCodes, allowedScenarios);
+                            const submissionTool = buildSubmitCasesToolStrict(allowedCodes, allowedScenarios, null, {
+                                modelScope: matchingChunk
+                            });
                             const retryPrompt = `${BASE_SYSTEM_PROMPT}\n\n${escalationPrompt}\n\n═══════════════════════════════════════════════════════════════
         🚨 КРИТИЧЕСКИ ВАЖНО: СОХРАНЕНИЕ ОРИГИНАЛЬНОГО ID
         ═══════════════════════════════════════════════════════════════
@@ -18385,6 +19811,14 @@ if (CLOUDRU_API_KEY) {
     }
 } else {
     console.warn('[startup] ⚠️ CLOUDRU_API_KEY не найден, используем contextRefiner');
+}
+
+// Инициализация Neo4j для графа сущностей
+try {
+    initNeo4j();
+    console.log('[startup] ✅ Neo4j driver инициализирован');
+} catch (e) {
+    console.warn('[startup] ⚠️ Не удалось инициализировать Neo4j:', e.message);
 }
 
 // Запуск сервера

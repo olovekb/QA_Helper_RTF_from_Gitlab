@@ -14,7 +14,7 @@ RUN chmod +x ./node_modules/.bin/react-scripts && npm run build
 FROM node:18-alpine AS backend-builder
 WORKDIR /usr/src/app
 
-RUN apk add --no-cache postgresql-client
+RUN apk add --no-cache postgresql-client curl
 
 # Копируем package.json, устанавливаем зависимости
 COPY package*.json ./

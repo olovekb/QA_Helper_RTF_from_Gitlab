@@ -123,21 +123,6 @@ const GlobalGenerationWindow = ({
     };
   }, []);
 
-
-  // Автоматически возобновляем проверку статуса, если есть активная генерация
-  useEffect(() => {
-    if (generationTaskId && generationStatus === 'processing') {
-      checkGenerationStatus(generationTaskId);
-    }
-  }, [generationTaskId, generationStatus, checkGenerationStatus]);
-
-  // Автоматически возобновляем проверку статуса генерации тестовой модели
-  useEffect(() => {
-    if (modelGenerationTaskId && modelGenerationStatus === 'processing') {
-      checkModelGenerationStatus(modelGenerationTaskId);
-    }
-  }, [modelGenerationTaskId, modelGenerationStatus, checkModelGenerationStatus]);
-
   // Обработчик генерации тест-кейсов
   const handleGenerateCases = async (modelStructure, includeBackendTests = true, selectedModel = '') => {
     trackEvent('generate_test_cases', { page: location.pathname, projectId: allureProject?.id });
@@ -179,7 +164,6 @@ const GlobalGenerationWindow = ({
       setGenerationTaskId(data.taskId);
       setGenerationProgress(0);
       setGenerationStatus('processing');
-      checkGenerationStatus(data.taskId);
     } catch (error) {
       console.error('Ошибка генерации тест-кейсов:', error);
       alert('Ошибка генерации тест-кейсов: ' + (error.response?.data?.error || error.message));

@@ -954,9 +954,7 @@ export default function SolutionPage ({ projects = [] })
   const checkGenerationStatus = async (taskId) =>
   {
     try {
-      // ✅ Добавляем параметр ?nocache=true для принудительной очистки кэша на сервере
-      // Это гарантирует, что мы получим актуальные данные, а не закэшированные
-      const { data } = await axios.get(`${config.serverUrl}/generate-test-cases-status/${taskId}?nocache=${Date.now()}`);
+      const { data } = await axios.get(`${config.serverUrl}/generate-test-cases-status/${taskId}`);
       setGenerationProgress(data.progress);
       setGenerationStatus(data.status);
 
@@ -1162,7 +1160,6 @@ export default function SolutionPage ({ projects = [] })
         setGenerationTaskId(data.taskId);
         setGenerationProgress(0);
         setGenerationStatus('processing');
-        checkGenerationStatus(data.taskId);
         return;
       } catch (asyncErr) {
         console.warn('Async API failed, falling back to sync:', asyncErr);

@@ -1,0 +1,32 @@
+2026-04-05 14:19:54.710+0000 INFO  Logging config in use: File '/var/lib/neo4j/conf/user-logs.xml'
+2026-04-05 14:19:54.718+0000 WARN  Use of deprecated setting 'dbms.memory.heap.max_size'. It is replaced by 'server.memory.heap.max_size'.
+2026-04-05 14:19:54.719+0000 WARN  Use of deprecated setting 'dbms.memory.heap.initial_size'. It is replaced by 'server.memory.heap.initial_size'.
+2026-04-05 14:19:54.726+0000 INFO  Starting...
+2026-04-05 14:19:55.691+0000 INFO  This instance is ServerId{82712402} (82712402-1dfa-4eb7-9403-c0cc4f15bb75)
+2026-04-05 14:19:56.274+0000 INFO  ======== Neo4j 5.16.0 ========
+2026-04-05 14:20:15.338+0000 INFO  Bolt enabled on 0.0.0.0:7687.
+2026-04-05 14:20:15.946+0000 INFO  HTTP enabled on 0.0.0.0:7474.
+2026-04-05 14:20:15.948+0000 INFO  Remote interface available at http://localhost:7474/
+2026-04-05 14:20:15.951+0000 INFO  id: 38A63FA4251834BF6FF799813D09ED21AB43477BCDE9AF2682672C18CEA81B43
+2026-04-05 14:20:15.952+0000 INFO  name: system
+2026-04-05 14:20:15.953+0000 INFO  creationDate: 2026-04-05T14:19:56.911Z
+2026-04-05 14:20:15.953+0000 INFO  Started.
+2026-04-05 14:46:46.046+0000 WARN  [bolt-159] The client is unauthorized due to authentication failure.
+2026-04-05 14:46:46.075+0000 WARN  [bolt-160] The client is unauthorized due to authentication failure.
+2026-04-05 14:46:46.091+0000 WARN  [bolt-161] The client is unauthorized due to authentication failure.
+2026-04-05 15:23:33.269+0000 INFO  Neo4j Server shutdown initiated by request
+2026-04-05 15:23:33.270+0000 INFO  Stopping...
+2026-04-05 15:23:38.420+0000 INFO  Stopped.
+2026-04-05 15:24:21.929+0000 INFO  Logging config in use: File '/var/lib/neo4j/conf/user-logs.xml'
+2026-04-05 15:24:21.937+0000 WARN  Use of deprecated setting 'dbms.memory.heap.max_size'. It is replaced by 'server.memory.heap.max_size'.
+2026-04-05 15:24:21.938+0000 WARN  Use of deprecated setting 'dbms.memory.heap.initial_size'. It is replaced by 'server.memory.heap.initial_size'.
+2026-04-05 15:24:21.945+0000 INFO  Starting...
+2026-04-05 15:24:22.833+0000 INFO  This instance is ServerId{82712402} (82712402-1dfa-4eb7-9403-c0cc4f15bb75)
+2026-04-05 15:24:23.496+0000 INFO  ======== Neo4j 5.16.0 ========
+2026-04-05 15:24:25.677+0000 INFO  Bolt enabled on 0.0.0.0:7687.
+2026-04-05 15:24:26.338+0000 INFO  HTTP enabled on 0.0.0.0:7474.
+2026-04-05 15:24:26.339+0000 INFO  Remote interface available at http://localhost:7474/
+2026-04-05 15:24:26.343+0000 INFO  id: 38A63FA4251834BF6FF799813D09ED21AB43477BCDE9AF2682672C18CEA81B43
+2026-04-05 15:24:26.343+0000 INFO  name: system
+2026-04-05 15:24:26.344+0000 INFO  creationDate: 2026-04-05T14:19:56.911Z
+2026-04-05 15:24:26.345+0000 INFO  Started.

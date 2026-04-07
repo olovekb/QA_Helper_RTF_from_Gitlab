@@ -4,6 +4,7 @@
 
 import { runAutomatedTest, analyzeResults, compareWithReference } from './debug-agent.mjs';
 import { analyzeProjectRules, debugRuleApplication, getRulesForProject } from './validation-engine.mjs';
+import { getGraphStats, getAllNodes, getAllRelationships, isNeo4jAvailable } from './graphStore.mjs';
 
 /**
  * Регистрирует debug маршруты на Express app
@@ -223,4 +224,105 @@ export function registerDebugRoutes(app) {
     console.log('[DEBUG]   POST /api/debug/analyze-rules');
     console.log('[DEBUG]   POST /api/debug/test-rule-application');
     console.log('[DEBUG]   GET  /api/debug/rules/:projectId');
+
+    // === Graph Debug Routes ===
+
+    /**
+     * GET /api/debug/graph-stats
+     * Получить статистику графа для сессии
+     * Query: ?sessionId=xxx
+     */
+    app.get('/api/debug/graph-stats', async (req, res) => {
+        try {
+            const { sessionId } = req.query;
+            
+            if (!sessionId) {
+                return res.status(400).json({ error: 'sessionId обязателен' });
+            }
+
+            const neo4jAvailable = await isNeo4jAvailable();
+            if (!neo4jAvailable) {
+                return res.status(503).json({ error: 'Neo4j недоступен' });
+            }
+
+            const stats = await getGraphStats(sessionId);
+            
+            res.json({
+                success: true,
+                sessionId,
+                stats
+            });
+        } catch (error) {
+            console.error('[DEBUG] Ошибка получения статистики графа:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/debug/graph-nodes
+     * Получить все узлы графа
+     * Query: ?sessionId=xxx&limit=100
+     */
+    app.get('/api/debug/graph-nodes', async (req, res) => {
+        try {
+            const { sessionId, limit = 100 } = req.query;
+            
+            if (!sessionId) {
+                return res.status(400).json({ error: 'sessionId обязателен' });
+            }
+
+            const neo4jAvailable = await isNeo4jAvailable();
+            if (!neo4jAvailable) {
+                return res.status(503).json({ error: 'Neo4j недоступен' });
+            }
+
+            const nodes = await getAllNodes(sessionId, parseInt(limit));
+            
+            res.json({
+                success: true,
+                sessionId,
+                count: nodes.length,
+                nodes
+            });
+        } catch (error) {
+            console.error('[DEBUG] Ошибка получения узлов графа:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/debug/graph-relationships
+     * Получить все связи графа
+     * Query: ?sessionId=xxx&limit=100
+     */
+    app.get('/api/debug/graph-relationships', async (req, res) => {
+        try {
+            const { sessionId, limit = 100 } = req.query;
+            
+            if (!sessionId) {
+                return res.status(400).json({ error: 'sessionId обязателен' });
+            }
+
+            const neo4jAvailable = await isNeo4jAvailable();
+            if (!neo4jAvailable) {
+                return res.status(503).json({ error: 'Neo4j недоступен' });
+            }
+
+            const relationships = await getAllRelationships(sessionId, parseInt(limit));
+            
+            res.json({
+                success: true,
+                sessionId,
+                count: relationships.length,
+                relationships
+            });
+        } catch (error) {
+            console.error('[DEBUG] Ошибка получения связей графа:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    console.log('[DEBUG]   GET  /api/debug/graph-stats');
+    console.log('[DEBUG]   GET  /api/debug/graph-nodes');
+    console.log('[DEBUG]   GET  /api/debug/graph-relationships');
 }
