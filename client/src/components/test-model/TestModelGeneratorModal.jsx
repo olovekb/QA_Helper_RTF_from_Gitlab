@@ -4,13 +4,12 @@ import { v4 as uuidv4 } from 'uuid';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import axios from 'axios';
-import { ReactFlow, MiniMap, Controls, Background, useNodesState, useEdgesState, MarkerType } from '@xyflow/react';
+import { ReactFlow, MiniMap, Controls, Background, Handle, Position, useNodesState, useEdgesState, MarkerType } from '@xyflow/react';
 import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
 import config from '../../config';
 import JSZip from 'jszip';
 import { trackEvent } from '../../analytics';
-import styles from '../../styles';
 
 // --- Component-specific styles ---
 export const StyleInjector = () => {
@@ -618,6 +617,308 @@ const TreeVisualizer = ({ treeData }) => {
     );
 };
 
+void TreeVisualizer;
+
+const FLOW_NODE_COLORS = {
+    feature: { background: '#16324f', border: '#58a6ff', label: 'Feature' },
+    story: { background: '#2f2615', border: '#d39d34', label: 'Story' },
+    scenario: { background: '#1f3a2d', border: '#3fb950', label: 'Scenario' },
+    code: { background: '#30223f', border: '#a371f7', label: 'Code' }
+};
+
+const getReadableNodeDimensions = (text = '', kind = 'story') => {
+    const normalizedLength = String(text || '').trim().length;
+    const minWidth = kind === 'feature' ? 240 : kind === 'code' ? 230 : 250;
+    const maxWidth = kind === 'code' ? 320 : 360;
+    const width = Math.min(maxWidth, Math.max(minWidth, 170 + normalizedLength * 1.4));
+    const rows = Math.min(kind === 'code' ? 4 : 3, Math.max(2, Math.ceil(normalizedLength / 34)));
+    return {
+        width,
+        height: 58 + rows * 18
+    };
+};
+
+const ReadableFlowNode = ({ data }) => {
+    const palette = FLOW_NODE_COLORS[data.kind] || FLOW_NODE_COLORS.story;
+
+    return (
+        <div
+            title={data.fullText || data.label}
+            style={{
+                width: '100%',
+                height: '100%',
+                padding: '10px 12px',
+                borderRadius: 14,
+                border: `1px solid ${data.isMatch ? '#f85149' : palette.border}`,
+                background: data.isMatch ? 'rgba(248, 81, 73, 0.16)' : palette.background,
+                color: 'var(--text-primary)',
+                boxSizing: 'border-box',
+                boxShadow: data.isMatch
+                    ? '0 0 0 2px rgba(248, 81, 73, 0.22)'
+                    : '0 8px 20px rgba(0, 0, 0, 0.18)',
+                cursor: data.kind === 'scenario' ? 'pointer' : 'default',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6
+            }}
+        >
+            <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
+            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)' }}>
+                {palette.label}
+            </div>
+            <div
+                style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    lineHeight: 1.3,
+                    overflow: 'hidden',
+                    display: '-webkit-box',
+                    WebkitLineClamp: data.kind === 'code' ? 3 : 2,
+                    WebkitBoxOrient: 'vertical',
+                    wordBreak: 'break-word'
+                }}
+            >
+                {data.label}
+            </div>
+            {data.meta ? (
+                <div
+                    style={{
+                        fontSize: 11,
+                        color: 'var(--text-secondary)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
+                    }}
+                >
+                    {data.meta}
+                </div>
+            ) : null}
+            <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
+        </div>
+    );
+};
+
+const readableTreeNodeTypes = {
+    modelNode: ReadableFlowNode
+};
+
+const ReadableTreeVisualizer = ({ treeData, modelSource = 'current_task' }) => {
+    const [searchQuery, setSearchQuery] = useState('');
+    const [expandedScenarioIds, setExpandedScenarioIds] = useState({});
+    const normalizedSearch = searchQuery.trim().toLowerCase();
+
+    const scenarioIdsMatchingCodes = useMemo(() => {
+        if (!normalizedSearch) return new Set();
+
+        const matches = new Set();
+        (treeData || []).forEach((feature) => {
+            for (const story of feature.stories || []) {
+                for (const scenario of story.scenarios || []) {
+                    if ((scenario.codes || []).some(code => String(code.text || '').toLowerCase().includes(normalizedSearch))) {
+                        matches.add(scenario.id);
+                    }
+                }
+            }
+        });
+        return matches;
+    }, [treeData, normalizedSearch]);
+
+    const visibleScenarioIds = useMemo(() => {
+        const expanded = Object.entries(expandedScenarioIds)
+            .filter(([, isExpanded]) => Boolean(isExpanded))
+            .map(([scenarioId]) => scenarioId);
+        return new Set([...expanded, ...Array.from(scenarioIdsMatchingCodes)]);
+    }, [expandedScenarioIds, scenarioIdsMatchingCodes]);
+
+    const { nodes: initialNodes, edges: initialEdges, matchCount } = useMemo(() => {
+        const allNodes = [];
+        const allEdges = [];
+        let yOffset = 0;
+        let matches = 0;
+
+        const matchesSearch = (value = '') => normalizedSearch && String(value || '').toLowerCase().includes(normalizedSearch);
+
+        (treeData || []).forEach((feature) => {
+            const dagreGraph = new dagre.graphlib.Graph();
+            dagreGraph.setDefaultEdgeLabel(() => ({}));
+            dagreGraph.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 90, marginx: 20, marginy: 20 });
+
+            const addNodeToGraph = (node, kind, parentId = null) => {
+                const nodeText = node.text || `Unnamed ${kind}`;
+                const { width, height } = getReadableNodeDimensions(nodeText, kind);
+                const isMatch = matchesSearch(nodeText) || (kind === 'scenario' && scenarioIdsMatchingCodes.has(node.id));
+
+                if (isMatch) matches++;
+
+                let meta = '';
+                if (kind === 'scenario' && Array.isArray(node.codes) && node.codes.length > 0) {
+                    meta = visibleScenarioIds.has(node.id)
+                        ? `Codes: ${node.codes.length} раскрыто`
+                        : `Codes: ${node.codes.length} скрыто`;
+                } else if (kind === 'story') {
+                    meta = `Scenarios: ${node.scenarios?.length || 0}`;
+                } else if (kind === 'feature') {
+                    meta = `Stories: ${node.stories?.length || 0}`;
+                }
+
+                dagreGraph.setNode(node.id, {
+                    width,
+                    height,
+                    originalNode: node,
+                    kind,
+                    isMatch,
+                    meta
+                });
+
+                if (parentId) {
+                    dagreGraph.setEdge(parentId, node.id);
+                }
+
+                const nextChildren =
+                    kind === 'feature' ? (node.stories || []) :
+                        kind === 'story' ? (node.scenarios || []) :
+                            kind === 'scenario' ? (visibleScenarioIds.has(node.id) ? (node.codes || []) : []) :
+                                [];
+
+                nextChildren.forEach(child => {
+                    const childKind = kind === 'feature'
+                        ? 'story'
+                        : kind === 'story'
+                            ? 'scenario'
+                            : 'code';
+                    addNodeToGraph(child, childKind, node.id);
+                });
+            };
+
+            addNodeToGraph(feature, 'feature');
+            dagre.layout(dagreGraph);
+
+            let maxY = 0;
+            dagreGraph.nodes().forEach(nodeId => {
+                const layoutNode = dagreGraph.node(nodeId);
+                const yPos = layoutNode.y - layoutNode.height / 2 + yOffset;
+
+                allNodes.push({
+                    id: nodeId,
+                    type: 'modelNode',
+                    data: {
+                        label: layoutNode.originalNode.text || `Unnamed ${layoutNode.kind}`,
+                        fullText: layoutNode.originalNode.text || `Unnamed ${layoutNode.kind}`,
+                        kind: layoutNode.kind,
+                        meta: layoutNode.meta,
+                        isMatch: layoutNode.isMatch
+                    },
+                    position: {
+                        x: layoutNode.x - layoutNode.width / 2,
+                        y: yPos
+                    },
+                    style: {
+                        width: layoutNode.width,
+                        height: layoutNode.height
+                    }
+                });
+
+                if (yPos + layoutNode.height > maxY) {
+                    maxY = yPos + layoutNode.height;
+                }
+            });
+
+            dagreGraph.edges().forEach(edge => {
+                allEdges.push({
+                    id: `e-${edge.v}-${edge.w}`,
+                    source: edge.v,
+                    target: edge.w,
+                    markerEnd: { type: MarkerType.ArrowClosed },
+                    type: 'smoothstep'
+                });
+            });
+
+            yOffset = maxY + 110;
+        });
+
+        return { nodes: allNodes, edges: allEdges, matchCount: matches };
+    }, [treeData, normalizedSearch, scenarioIdsMatchingCodes, visibleScenarioIds]);
+
+    const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+    const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+
+    useEffect(() => {
+        setNodes(initialNodes);
+        setEdges(initialEdges);
+    }, [initialNodes, initialEdges, setNodes, setEdges]);
+
+    const handleNodeClick = useCallback((_, node) => {
+        if (node?.data?.kind !== 'scenario') return;
+        setExpandedScenarioIds(prev => ({
+            ...prev,
+            [node.id]: !prev[node.id]
+        }));
+    }, []);
+
+    const sourceLabel = modelSource === 'local_cache'
+        ? 'Источник: восстановлено из локального кэша'
+        : 'Источник: текущая задача';
+
+    return (
+        <div style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}>
+            <div
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    padding: '12px 14px',
+                    borderBottom: '1px solid var(--border-primary)',
+                    background: 'rgba(22, 27, 34, 0.82)'
+                }}
+            >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+                    <input
+                        type="search"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Поиск по feature, story, scenario и code"
+                        style={{
+                            width: '100%',
+                            maxWidth: 360,
+                            padding: '9px 12px',
+                            borderRadius: 10,
+                            border: '1px solid var(--border-primary)',
+                            background: 'var(--bg-secondary)',
+                            color: 'var(--text-primary)',
+                            outline: 'none'
+                        }}
+                    />
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                        {normalizedSearch ? `Совпадений: ${matchCount}` : 'Показаны Feature → Story → Scenario'}
+                    </span>
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                    {sourceLabel}
+                </div>
+            </div>
+
+            <div style={{ flex: 1, minHeight: 0 }}>
+                <ReactFlow
+                    nodes={nodes}
+                    edges={edges}
+                    nodeTypes={readableTreeNodeTypes}
+                    onNodesChange={onNodesChange}
+                    onEdgesChange={onEdgesChange}
+                    onNodeClick={handleNodeClick}
+                    fitView
+                    fitViewOptions={{ padding: 0.15 }}
+                    proOptions={{ hideAttribution: true }}
+                >
+                    <MiniMap pannable zoomable />
+                    <Controls />
+                    <Background variant="dots" gap={18} size={1} color="#484848" />
+                </ReactFlow>
+            </div>
+        </div>
+    );
+};
+
 
 // --- Refactored TreeNode Component ---
 const TreeNode = ({ node, index, path, handlers }) => {
@@ -735,6 +1036,49 @@ export default function TestModelGeneratorModal({
     const [showDiffView, setShowDiffView] = useState(false);
     const [availableModels, setAvailableModels] = useState([]);
     const [selectedModel, setSelectedModel] = useState('');
+    const [modelDataSource, setModelDataSource] = useState('current_task');
+
+    const storagePageScope = useMemo(() => {
+        const rawValue = String(confluencePageId || '').trim();
+        if (/^\d+$/.test(rawValue)) return rawValue;
+
+        try {
+            const url = new URL(rawValue);
+            return url.searchParams.get('pageId') || rawValue || 'manual';
+        } catch {
+            const match = rawValue.match(/([0-9]{5,})/);
+            return match ? match[1] : 'manual';
+        }
+    }, [confluencePageId]);
+
+    const storageTaskScope = useMemo(
+        () => String(modelGenerationTaskId || 'latest'),
+        [modelGenerationTaskId]
+    );
+
+    const getScopedStorageKey = useCallback((baseKey, taskScope = storageTaskScope) => (
+        `${baseKey}:${storagePageScope}:${taskScope}`
+    ), [storagePageScope, storageTaskScope]);
+
+    const idbGetModelValue = useCallback(async (baseKey) => {
+        const scopedValue = await idbGet(getScopedStorageKey(baseKey)).catch(() => null);
+        return scopedValue !== undefined ? scopedValue : null;
+    }, [getScopedStorageKey]);
+
+    const idbSetModelValueForScope = useCallback((baseKey, taskScope, value) => (
+        idbSet(getScopedStorageKey(baseKey, taskScope), value)
+    ), [getScopedStorageKey]);
+
+    const idbSetModelValue = useCallback((baseKey, value) => {
+        if (storageTaskScope === 'latest') {
+            return idbSetModelValueForScope(baseKey, 'latest', value);
+        }
+
+        return Promise.all([
+            idbSetModelValueForScope(baseKey, storageTaskScope, value),
+            idbSetModelValueForScope(baseKey, 'latest', value)
+        ]);
+    }, [idbSetModelValueForScope, storageTaskScope]);
 
     // Функция для подсчета всех узлов в дереве
     const countAllNodes = (treeData) => {
@@ -1148,7 +1492,7 @@ export default function TestModelGeneratorModal({
      * @param {Array} items  — массив из фич или историй или сценариев в зависимости от depth
      * @param {number} depth — 1=features, 2=stories, 3=scenarios, 4=codes
      */
-    const buildTreeWithIds = (items, depth = 1) => {
+    const buildTreeWithIds = useCallback((items, depth = 1) => {
         return (items || []).map(item => {
             // Сначала задаём базовые поля
             const newItem = {
@@ -1177,7 +1521,7 @@ export default function TestModelGeneratorModal({
 
             return newItem;
         });
-    };
+    }, []);
 
     // ✅ Функция для преобразования treeData обратно в формат модели (удаляет служебные поля)
     const convertTreeToModel = (treeData) => {
@@ -1228,13 +1572,14 @@ export default function TestModelGeneratorModal({
 
     useEffect(() => {
         if (!isOpen) { setIsLoading(true); return; }
+        if (modelGenerationStatus === 'processing') { return; }
 
         // Загружаем сохраненные данные из IndexedDB при открытии модального окна
         const loadSavedData = async () => {
             try {
                 const [savedTree, savedModel] = await Promise.all([
-                    idbGet('testModelTree'),
-                    idbGet('generatedTestModel')
+                    idbGetModelValue('testModelTree'),
+                    idbGetModelValue('generatedTestModel')
                 ]);
                 
                 if (savedTree && savedTree.length > 0) {
@@ -1243,6 +1588,7 @@ export default function TestModelGeneratorModal({
                     console.log('TestModelGeneratorModal: savedTree features:', savedTree.length);
                     console.log('TestModelGeneratorModal: savedModel:', savedModel ? 'есть' : 'нет');
                     setTreeData(savedTree);
+                    setModelDataSource('local_cache');
                     if (savedModel) {
                         setLocalGeneratedModel(savedModel);
                         setModelGenerationStatus('completed'); // Устанавливаем статус как завершенный
@@ -1252,7 +1598,8 @@ export default function TestModelGeneratorModal({
         const dataToBuild = (initialCases && initialCases.length > 0) ? initialCases : [];
         const builtTree = buildTreeWithIds(dataToBuild);
         setTreeData(builtTree);
-        idbSet('testModelTree', builtTree).catch(console.warn);
+        setModelDataSource('current_task');
+        idbSetModelValue('testModelTree', builtTree).catch(console.warn);
                 }
             } catch (error) {
                 console.warn('Ошибка загрузки сохраненных данных:', error);
@@ -1260,20 +1607,23 @@ export default function TestModelGeneratorModal({
                 const dataToBuild = (initialCases && initialCases.length > 0) ? initialCases : [];
                 const builtTree = buildTreeWithIds(dataToBuild);
                 setTreeData(builtTree);
-                idbSet('testModelTree', builtTree).catch(console.warn);
+                setModelDataSource('current_task');
+                idbSetModelValue('testModelTree', builtTree).catch(console.warn);
             }
         setIsLoading(false);
         };
 
         loadSavedData();
-    }, [isOpen, initialCases]);
+    }, [buildTreeWithIds, idbGetModelValue, idbSetModelValue, initialCases, isOpen, modelGenerationStatus, setModelGenerationStatus, storagePageScope, storageTaskScope]);
 
 
     useEffect(() => {
-        if (isOpen && !isLoading) {
-            idbSet('testModelTree', treeData).catch(console.warn);
+        if (!isOpen || isLoading || isGeneratingModel || modelGenerationStatus === 'processing') {
+            return;
         }
-    }, [treeData, isOpen, isLoading]);
+
+        idbSetModelValue('testModelTree', treeData).catch(console.warn);
+    }, [treeData, isOpen, isLoading, isGeneratingModel, modelGenerationStatus, idbSetModelValue]);
 
     // Обработка завершения генерации тестовой модели
     useEffect(() => {
@@ -1282,6 +1632,7 @@ export default function TestModelGeneratorModal({
             const newTree = buildTreeWithIds(generatedModel);
             setTreeData(newTree);
             setLocalGeneratedModel(generatedModel);
+            setModelDataSource('current_task');
             
             // Сохраняем v1 в историю при первой генерации
             if (modelVersion === 1 && modelHistory.length === 0) {
@@ -1292,14 +1643,15 @@ export default function TestModelGeneratorModal({
                     comment: 'Первичная генерация'
                 };
                 setModelHistory([v1Snapshot]);
-                idbSet('modelHistory', [v1Snapshot]).catch(console.warn);
+                idbSetModelValue('modelHistory', [v1Snapshot]).catch(console.warn);
             }
             
             // Сохраняем в IndexedDB
-            idbSet('testModelTree', newTree).catch(console.warn);
+            idbSetModelValue('generatedTestModel', generatedModel).catch(console.warn);
+            idbSetModelValue('testModelTree', newTree).catch(console.warn);
             console.log('Тестовая модель загружена в редактор');
         }
-    }, [modelGenerationStatus, generatedModel, modelVersion, modelHistory.length]);
+    }, [buildTreeWithIds, generatedModel, idbSetModelValue, modelGenerationStatus, modelHistory.length, modelVersion]);
 
     const findNodeAndParent = (nodes, path, parent = null) => {
         const [head, ...tail] = path;
@@ -1372,9 +1724,11 @@ export default function TestModelGeneratorModal({
         setModelGenerationProgress(0);
         // ✅ Очищаем treeData и IndexedDB, чтобы не использовать старые данные
         setTreeData([]);
-        idbSet('generatedTestModel', null).catch(console.warn);
+        setModelDataSource('current_task');
+        idbSetModelValueForScope('generatedTestModel', 'latest', null).catch(console.warn);
         idbSet('modelGenerationProgress', 0).catch(console.warn);
-        idbSet('testModelTree', null).catch(console.warn); // ✅ Очищаем старый treeData
+        idbSetModelValueForScope('testModelTree', 'latest', null).catch(console.warn); // ✅ Очищаем старый treeData
+        idbSetModelValueForScope('modelHistory', 'latest', []).catch(console.warn);
         console.log('TestModelGeneratorModal: ✅ Очищены все данные перед новой генерацией модели');
         
         // Сбрасываем версию и историю при новой генерации
@@ -1423,6 +1777,7 @@ export default function TestModelGeneratorModal({
             setTreeData(newTree);
 
             setLocalGeneratedModel(data);
+            setModelDataSource('current_task');
             
             // Сохраняем v1 в историю
             const v1Snapshot = {
@@ -1432,7 +1787,9 @@ export default function TestModelGeneratorModal({
                 comment: 'Первичная генерация'
             };
             setModelHistory([v1Snapshot]);
-            idbSet('modelHistory', [v1Snapshot]).catch(console.warn);
+            idbSetModelValue('generatedTestModel', data).catch(console.warn);
+            idbSetModelValue('testModelTree', newTree).catch(console.warn);
+            idbSetModelValue('modelHistory', [v1Snapshot]).catch(console.warn);
 
         } catch (error) {
             console.error('Ошибка при генерации тестовой модели:', error);
@@ -1514,6 +1871,7 @@ export default function TestModelGeneratorModal({
             const newTree = buildTreeWithIds(data.refinedModel);
             setTreeData(newTree);
             setLocalGeneratedModel(data.refinedModel);
+            setModelDataSource('current_task');
 
             // Сохраняем v2 в историю
             const v2Snapshot = {
@@ -1528,9 +1886,9 @@ export default function TestModelGeneratorModal({
             setModelVersion(modelVersion + 1);
             
             // Сохраняем в IndexedDB
-            idbSet('generatedTestModel', data.refinedModel).catch(console.warn);
-            idbSet('testModelTree', newTree).catch(console.warn);
-            idbSet('modelHistory', [...modelHistory, v2Snapshot]).catch(console.warn);
+            idbSetModelValue('generatedTestModel', data.refinedModel).catch(console.warn);
+            idbSetModelValue('testModelTree', newTree).catch(console.warn);
+            idbSetModelValue('modelHistory', [...modelHistory, v2Snapshot]).catch(console.warn);
 
             // Показываем предупреждения, если есть
             const warnings = validation.errors.filter(e => e.type === 'warning');
@@ -2261,7 +2619,7 @@ export default function TestModelGeneratorModal({
 
                 <div className="visualizer-pane">
                     {treeData && treeData.length > 0 ? (
-                        <TreeVisualizer treeData={treeData} />
+                        <ReadableTreeVisualizer treeData={treeData} modelSource={modelDataSource} />
                     ) : (
                         <div style={{ padding: 20, color: 'var(--text-secondary)', textAlign: 'center' }}>
                             Нет данных для отображения диаграммы

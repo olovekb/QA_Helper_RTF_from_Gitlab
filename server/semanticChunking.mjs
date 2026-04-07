@@ -643,6 +643,9 @@ function createAtomicChunk(section, metadata) {
     const excludeFromRetrieval =
         Boolean(mergedMetadata.exclude_from_retrieval) ||
         shouldExcludeChunkTypeFromRetrieval(metadata.chunk_type);
+    const excludeFromGraph =
+        Boolean(mergedMetadata.exclude_from_graph) ||
+        excludeFromRetrieval;
     
     return {
         id: uuidv4(),
@@ -669,9 +672,16 @@ function createAtomicChunk(section, metadata) {
         feature_name: metadata.doc_title,
         metadata: {
             ...mergedMetadata,
-            exclude_from_retrieval: excludeFromRetrieval
+            exclude_from_retrieval: excludeFromRetrieval,
+            exclude_from_graph: excludeFromGraph,
+            source_scope: mergedMetadata.source_scope || metadata.source_scope || 'main',
+            graph_eligible: mergedMetadata.graph_eligible,
+            relevance_score: mergedMetadata.relevance_score,
+            canonical_key: mergedMetadata.canonical_key || null,
+            drop_reason: mergedMetadata.drop_reason || null
         },
         exclude_from_retrieval: excludeFromRetrieval,
+        exclude_from_graph: excludeFromGraph,
         
         source_location: {
             line_start: section.line_start,
@@ -710,6 +720,7 @@ function createCompositeChunk(firstAtomicChunk) {
         feature_name: firstAtomicChunk.feature_name,
         metadata: { ...(firstAtomicChunk.metadata || {}) },
         exclude_from_retrieval: Boolean(firstAtomicChunk.exclude_from_retrieval),
+        exclude_from_graph: Boolean(firstAtomicChunk.exclude_from_graph),
         
         source_location: firstAtomicChunk.source_location,
         token_count: firstAtomicChunk.token_count,

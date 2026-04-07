@@ -2225,6 +2225,7 @@ function validateAndCleanModel(model) {
 
         const originalStoryCount = Array.isArray(feature.stories) ? feature.stories.length : 0;
         deduplicateStoriesInFeature(feature);
+        consolidateDenseFeatureStories(feature);
         const cleanedStoryCount = Array.isArray(feature.stories) ? feature.stories.length : 0;
         if (cleanedStoryCount < originalStoryCount) {
             errors.push(
@@ -2709,6 +2710,305 @@ function extractBestLinkedPageMention(markdown, linkedPageId, preferredText = ''
     return bestMention;
 }
 
+const GRAPH_CONTEXT_ALLOWED_ENTITY_TYPES = new Set(['APIEndpoint', 'ResponseParam', 'ExternalRef']);
+const GRAPH_CONTEXT_NOISE_HINTS = Array.from(new Set([
+    ...PASSWORD_TOPIC_NOISE_HINTS,
+    'restore',
+    'восстанов',
+    '/rest/public/restore'
+]));
+const GRAPH_CONTEXT_PASSWORD_HINTS = Array.from(new Set([
+    ...PASSWORD_TOPIC_HINTS,
+    'пароли не совпадают',
+    'не совпадают',
+    'настройки'
+]));
+
+function normalizeGraphText(text = '') {
+    return String(text || '')
+        .toLowerCase()
+        .replace(/["'`«»„”“]/g, ' ')
+        .replace(/[^\p{L}\p{N}\/]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function normalizeEndpointCanonicalKey(text = '') {
+    const source = String(text || '')
+        .replace(/^отправляется\s+/i, '')
+        .replace(/^вызывается\s+/i, '')
+        .replace(/^выполняется\s+/i, '')
+        .trim();
+    const methodMatch = source.match(/\b(GET|POST|PUT|DELETE|PATCH)\b/i);
+    const pathMatch = source.match(/((?:\/?rest|\/api)[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+)/i);
+
+    if (!pathMatch) {
+        return '';
+    }
+
+    let normalizedPath = String(pathMatch[1] || '')
+        .trim()
+        .replace(/^\/+/, '/')
+        .replace(/^rest\b/i, '/rest')
+        .replace(/^api\b/i, '/api')
+        .replace(/\/{2,}/g, '/')
+        .toLowerCase();
+
+    return `${methodMatch ? methodMatch[1].toUpperCase() + ' ' : ''}${normalizedPath}`.trim();
+}
+
+function buildGraphCanonicalKey(text = '', prefix = 'chunk') {
+    const endpointKey = normalizeEndpointCanonicalKey(text);
+    if (endpointKey) {
+        return `${prefix}:${endpointKey}`;
+    }
+
+    const normalized = normalizeRelevantSearchText(text)
+        .replace(/\b(отображается|отправляется|вызывается|открыть|открывается|показать|показывается|должен|должна|должны)\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    return `${prefix}:${normalized || normalizeGraphText(text) || 'empty'}`;
+}
+
+function hasGraphPasswordIntent(text = '') {
+    return hasAnyRelevantHint(text, GRAPH_CONTEXT_PASSWORD_HINTS) ||
+        /парол|password|passwd|simplepasslist|passwd\/change|change\/v2|рекомендац|надежност/i.test(String(text || ''));
+}
+
+function hasGraphNoiseOnly(text = '') {
+    return hasAnyRelevantHint(text, GRAPH_CONTEXT_NOISE_HINTS) && !hasGraphPasswordIntent(text);
+}
+
+function looksLikeClauseFragment(text = '') {
+    const normalized = String(text || '').trim().toLowerCase();
+    if (!normalized) {
+        return false;
+    }
+
+    const shortFragment = normalized.split(/\s+/).length <= 20;
+    return shortFragment &&
+        /^(если|при|когда|в случае|после|для|чтобы)\b/.test(normalized) &&
+        !/(отображ|вызыва|отправ|возвращ|показыва|скрыва|очища|удаля|станов|подсвеч|блокир)/.test(normalized);
+}
+
+function summarizeModelCounts(model = []) {
+    const featuresCount = Array.isArray(model) ? model.length : 0;
+    let storiesCount = 0;
+    let scenariosCount = 0;
+    let codesCount = 0;
+
+    for (const feature of model || []) {
+        storiesCount += feature?.stories?.length || 0;
+        for (const story of feature?.stories || []) {
+            scenariosCount += story?.scenarios?.length || 0;
+            for (const scenario of story?.scenarios || []) {
+                codesCount += scenario?.codes?.length || 0;
+            }
+        }
+    }
+
+    return { featuresCount, storiesCount, scenariosCount, codesCount };
+}
+
+function evaluateGraphContextChunk(chunk, profile, scope = 'linked') {
+    const text = String(chunk?.cleaned_text || chunk?.content || chunk?.text || '').trim();
+    const explicitEndpoint = extractEndpointHints(text).length > 0;
+    const passwordDomainIntent = hasGraphPasswordIntent(text);
+    const noiseOnly = hasGraphNoiseOnly(text);
+    const clauseFragment = looksLikeClauseFragment(text);
+    let relevanceScore = scoreRelevantSection(text, profile);
+
+    if (!Number.isFinite(relevanceScore)) {
+        relevanceScore = -100;
+    }
+    if (passwordDomainIntent) {
+        relevanceScore += 6;
+    }
+    if (explicitEndpoint) {
+        relevanceScore += 4;
+    }
+    if (noiseOnly) {
+        relevanceScore -= 10;
+    }
+
+    let graphEligible = true;
+    let dropReason = null;
+
+    if (chunk?.exclude_from_graph || chunk?.metadata?.exclude_from_graph || chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval) {
+        graphEligible = false;
+        dropReason = 'excluded_by_chunk_metadata';
+    } else if (clauseFragment && !passwordDomainIntent && !explicitEndpoint) {
+        graphEligible = false;
+        dropReason = 'clause_fragment';
+    } else if (profile.passwordFocused && noiseOnly && !explicitEndpoint) {
+        graphEligible = false;
+        dropReason = 'password_noise';
+    } else if (profile.passwordFocused && !passwordDomainIntent && relevanceScore <= 0 && !explicitEndpoint) {
+        graphEligible = false;
+        dropReason = 'low_password_relevance';
+    } else if (!profile.passwordFocused && relevanceScore < 0) {
+        graphEligible = false;
+        dropReason = 'negative_relevance';
+    }
+
+    return {
+        graphEligible,
+        dropReason,
+        relevanceScore,
+        passwordDomainIntent,
+        explicitEndpoint,
+        canonicalKey: buildGraphCanonicalKey(text, scope),
+        entityScope: scope === 'main' || passwordDomainIntent ? 'full' : 'api_only'
+    };
+}
+
+async function buildGraphContextChunks({ pages = [], requirementText = '' } = {}) {
+    const profile = buildRelevantSectionProfile(requirementText);
+    const eligibleChunks = [];
+    const rejectedChunks = [];
+    const pageSummaries = [];
+
+    for (const [pageIndex, page] of (pages || []).entries()) {
+        const pageText = String(page?.graphText || page?.content || page?.title || '').trim();
+        const sourceScope = page?.sourceScope || 'linked';
+
+        if (!pageText) {
+            pageSummaries.push({
+                pageId: page?.pageId || `context-${pageIndex}`,
+                title: page?.title || `Context page ${pageIndex + 1}`,
+                sourceScope,
+                totalChunks: 0,
+                eligibleChunks: 0,
+                rejectedChunks: 0
+            });
+            continue;
+        }
+
+        const rawChunks = await chunkify(pageText, {
+            pageId: String(page?.pageId || `context-${pageIndex}`),
+            title: page?.title || `Context page ${pageIndex + 1}`,
+            source_scope: sourceScope
+        });
+
+        let eligibleForPage = 0;
+        let rejectedForPage = 0;
+
+        rawChunks.forEach((rawChunk, chunkIndex) => {
+            const evaluation = evaluateGraphContextChunk(rawChunk, profile, sourceScope);
+            const chunkText = String(rawChunk?.cleaned_text || rawChunk?.content || '').trim();
+            const normalizedChunk = {
+                text: chunkText,
+                content: chunkText,
+                chunkId: rawChunk?.id || `context-page-${page?.pageId || pageIndex}-chunk-${chunkIndex}`,
+                position: chunkIndex,
+                pageId: String(page?.pageId || `context-${pageIndex}`),
+                sectionId: Array.isArray(rawChunk?.section_path) && rawChunk.section_path.length
+                    ? rawChunk.section_path.join(' > ')
+                    : (rawChunk?.heading || page?.title || `Context page ${pageIndex + 1}`),
+                documentId: rawChunk?.doc_id || String(page?.pageId || `context-${pageIndex}`),
+                metadata: {
+                    ...(rawChunk?.metadata || {}),
+                    chunk_type: rawChunk?.chunk_type,
+                    heading: rawChunk?.heading,
+                    section_path: rawChunk?.section_path,
+                    explicit_refs: rawChunk?.explicit_refs,
+                    source_scope: sourceScope,
+                    graph_eligible: evaluation.graphEligible,
+                    relevance_score: evaluation.relevanceScore,
+                    canonical_key: evaluation.canonicalKey,
+                    drop_reason: evaluation.dropReason,
+                    password_domain_intent: evaluation.passwordDomainIntent,
+                    entity_scope: evaluation.entityScope
+                },
+                exclude_from_graph: !evaluation.graphEligible
+            };
+
+            if (evaluation.graphEligible && chunkText.length >= 50) {
+                eligibleChunks.push(normalizedChunk);
+                eligibleForPage++;
+            } else {
+                rejectedChunks.push(normalizedChunk);
+                rejectedForPage++;
+            }
+        });
+
+        pageSummaries.push({
+            pageId: String(page?.pageId || `context-${pageIndex}`),
+            title: page?.title || `Context page ${pageIndex + 1}`,
+            sourceScope,
+            totalChunks: rawChunks.length,
+            eligibleChunks: eligibleForPage,
+            rejectedChunks: rejectedForPage
+        });
+    }
+
+    const dropReasons = rejectedChunks.reduce((acc, chunk) => {
+        const reason = chunk?.metadata?.drop_reason || 'unknown';
+        acc[reason] = (acc[reason] || 0) + 1;
+        return acc;
+    }, {});
+
+    return {
+        eligibleChunks,
+        rejectedChunks,
+        summary: {
+            totalPages: pageSummaries.length,
+            totalChunks: eligibleChunks.length + rejectedChunks.length,
+            eligibleChunks: eligibleChunks.length,
+            rejectedChunks: rejectedChunks.length,
+            dropReasons,
+            pageSummaries
+        }
+    };
+}
+
+function filterContextGraphExtraction(entities = [], relationships = [], contextChunks = []) {
+    const chunkMetadataById = new Map(
+        (contextChunks || []).map(chunk => [String(chunk?.chunkId || ''), chunk?.metadata || {}])
+    );
+    const keptEntities = [];
+    const keptEntityKeys = new Set();
+
+    for (const entity of entities || []) {
+        const chunkMetadata = chunkMetadataById.get(String(entity?.sourceChunkId || '')) || {};
+        const entityScope = chunkMetadata?.entity_scope || 'api_only';
+        const keepEntity = entityScope === 'full' || GRAPH_CONTEXT_ALLOWED_ENTITY_TYPES.has(entity?.type);
+        if (!keepEntity) {
+            continue;
+        }
+
+        keptEntities.push(entity);
+        keptEntityKeys.add(`${entity?.type}:${entity?.name}`);
+    }
+
+    const keptRelationships = (relationships || []).filter((relationship) => {
+        const fromKey = `${relationship?.fromType}:${relationship?.fromName}`;
+        const toKey = `${relationship?.toType}:${relationship?.toName}`;
+
+        if (relationship?.toType === 'Chunk') {
+            return keptEntityKeys.has(fromKey);
+        }
+
+        if (relationship?.fromType === 'Chunk') {
+            return keptEntityKeys.has(toKey);
+        }
+
+        return keptEntityKeys.has(fromKey) && keptEntityKeys.has(toKey);
+    });
+
+    return {
+        entities: keptEntities,
+        relationships: keptRelationships,
+        stats: {
+            inputEntities: entities.length,
+            keptEntities: keptEntities.length,
+            inputRelationships: relationships.length,
+            keptRelationships: keptRelationships.length
+        }
+    };
+}
+
 
 async function fetchJiraMeta(pat, projectKey, issueTypeId) {
     const body = { pat, projectKey };
@@ -2847,8 +3147,15 @@ function extractJsonArray(text) {
                         break;
                     }
                 }
+
+                deduplicateCodesInScenario(scenario);
+                trimScenarioCodesByIntentFamily(scenario);
             }
+
+            deduplicateScenariosInStory(story);
         }
+
+        consolidateDenseFeatureStories(feature);
     }
 
     // 3) Если найдено несколько массивов, объединяем их
@@ -3443,9 +3750,15 @@ function serializeDebugChunk(chunk, index, { includeFullText = true, maxPreviewL
         sectionPath: Array.isArray(chunk?.section_path) ? chunk.section_path : [],
         explicitRefs: Array.isArray(chunk?.explicit_refs) ? chunk.explicit_refs.map(formatExplicitRefForDebug).filter(Boolean) : [],
         excludeFromRetrieval: Boolean(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval),
+        excludeFromGraph: Boolean(chunk?.exclude_from_graph || chunk?.metadata?.exclude_from_graph),
         isAtomic: Boolean(chunk?.is_atomic),
         isComposite: Boolean(chunk?.is_composite),
         linkedChunkIds: Array.isArray(chunk?.linked_chunk_ids) ? chunk.linked_chunk_ids : [],
+        sourceScope: chunk?.metadata?.source_scope || chunk?.source_scope || 'main',
+        graphEligible: chunk?.metadata?.graph_eligible,
+        relevanceScore: Number.isFinite(chunk?.metadata?.relevance_score) ? Number(chunk.metadata.relevance_score) : null,
+        canonicalKey: chunk?.metadata?.canonical_key || null,
+        dropReason: chunk?.metadata?.drop_reason || null,
         length: text.length,
         preview,
         ...(includeFullText ? { text } : {})
@@ -3677,7 +3990,8 @@ async function buildRequirementChunkDebugPayload(inputData = {}, options = {}) {
                     mention: formatMention(mention),
                     content: linkedMarkdown,
                     graphText: (relevant && relevant.trim()) ? relevant : linkedMarkdown,
-                    promptText
+                    promptText,
+                    sourceScope: 'linked'
                 });
                 autoPageIds.add(String(linkedPageId));
             } catch (error) {
@@ -3710,7 +4024,8 @@ async function buildRequirementChunkDebugPayload(inputData = {}, options = {}) {
                     pageId: cid,
                     title: deriveTitleFromContent(contextMarkdown, contextTitle || `Context page ${cid}`, cid),
                     content: contextMarkdown,
-                    graphText: contextMarkdown
+                    graphText: contextMarkdown,
+                    sourceScope: 'explicit_context'
                 });
             } catch (error) {
                 explicitContextPageDocs.push({
@@ -3842,6 +4157,12 @@ function renderChunkMarkdownSection(title, chunkGroup, { includeSourceText = tru
         lines.push(`- sectionPath: ${(chunk.sectionPath || []).join(' > ') || '—'}`);
         lines.push(`- explicitRefs: ${(chunk.explicitRefs || []).join(', ') || '—'}`);
         lines.push(`- excludeFromRetrieval: ${chunk.excludeFromRetrieval ? 'yes' : 'no'}`);
+        lines.push(`- excludeFromGraph: ${chunk.excludeFromGraph ? 'yes' : 'no'}`);
+        lines.push(`- sourceScope: ${chunk.sourceScope || 'вЂ”'}`);
+        lines.push(`- graphEligible: ${chunk.graphEligible == null ? 'вЂ”' : (chunk.graphEligible ? 'yes' : 'no')}`);
+        lines.push(`- relevanceScore: ${chunk.relevanceScore == null ? 'вЂ”' : chunk.relevanceScore}`);
+        lines.push(`- canonicalKey: ${chunk.canonicalKey || 'вЂ”'}`);
+        lines.push(`- dropReason: ${chunk.dropReason || 'вЂ”'}`);
         lines.push('');
         lines.push('```text');
         lines.push(chunk.text || chunk.preview || '');
@@ -5939,30 +6260,76 @@ function normalizeDomainTokens(text = '') {
         .filter(token => token.length >= 4 && !STOP_WORDS.has(token));
 }
 
+function canonicalizeIntentText(text = '') {
+    return String(text || '')
+        .toLowerCase()
+        .replace(/["'`«»„”“]/g, ' ')
+        .replace(/\bотображ\w*\b/g, ' отображение ')
+        .replace(/\bпоказ\w*\b/g, ' отображение ')
+        .replace(/\bоткры\w*\b/g, ' открыть ')
+        .replace(/\bсмен\w*\b/g, ' смена ')
+        .replace(/\bизмен\w*\b/g, ' смена ')
+        .replace(/\bрекомендац\w*\b/g, ' рекомендац ')
+        .replace(/\bпарол\w*\b/g, ' пароль ')
+        .replace(/\bнадежн\w*\b/g, ' надежность ')
+        .replace(/\bмодальн\w*\b/g, ' модальное ')
+        .replace(/\bокн\w*\b/g, ' окно ')
+        .replace(/\bнастро\w*\b/g, ' настройки ')
+        .replace(/\bошибк\w*\b/g, ' ошибка ')
+        .replace(/\balert\b/g, ' алерт ')
+        .replace(/\bsimplepasslist\b/g, ' simplepasslist ')
+        .replace(/\bpasswd\/change\b/g, ' passwd change ')
+        .replace(/\bпароли\s+не\s+совпад\w*\b/g, ' пароли не совпадают ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
 function normalizeContentSignatureText(text = '') {
     const rawText = String(text || '').trim();
     if (!rawText) return '';
-    const normalizedTokens = normalizeDomainTokens(rawText);
+    const normalizedTokens = normalizeDomainTokens(canonicalizeIntentText(rawText));
     return normalizedTokens.join(' ') || rawText.toLowerCase();
 }
 
-function buildCodeContentSignature(code) {
+function buildCodeIntentSignature(code) {
     const normalizedText = normalizeCodeText(code?.text || '');
+    const endpointKey = normalizeEndpointCanonicalKey(normalizedText);
+    if (endpointKey) {
+        return `endpoint:${endpointKey}`;
+    }
     return normalizeContentSignatureText(normalizedText);
+}
+
+function buildCodeContentSignature(code) {
+    return buildCodeIntentSignature(code);
+}
+
+function buildScenarioIntentSignature(scenario) {
+    const scenarioAnalysis = analyzeScenarioActionability(scenario?.text);
+    const scenarioText = scenarioAnalysis.normalizedText || String(scenario?.text || '').trim();
+    return normalizeContentSignatureText(canonicalizeIntentText(scenarioText));
 }
 
 function buildScenarioContentSignature(scenario) {
     if (!scenario) return '';
 
-    const scenarioAnalysis = analyzeScenarioActionability(scenario.text);
-    const scenarioText = scenarioAnalysis.normalizedText || String(scenario.text || '').trim();
-    const scenarioKey = normalizeContentSignatureText(scenarioText);
+    const scenarioKey = buildScenarioIntentSignature(scenario);
     const codeKeys = (scenario.codes || [])
-        .map(buildCodeContentSignature)
+        .map(buildCodeIntentSignature)
         .filter(Boolean)
         .sort();
 
     return `${scenarioKey}::${codeKeys.join('||')}`;
+}
+
+function buildStoryIntentSignature(story) {
+    const storyKey = normalizeContentSignatureText(canonicalizeIntentText(story?.text || ''));
+    const scenarioIntentKeys = (story?.scenarios || [])
+        .map(buildScenarioIntentSignature)
+        .filter(Boolean)
+        .sort();
+
+    return [storyKey, ...scenarioIntentKeys.slice(0, 4)].join('::');
 }
 
 function buildStoryContentSignature(story) {
@@ -5995,6 +6362,79 @@ function scoreStoryTitleSpecificity(storyText = '') {
     }
 
     return score;
+}
+
+function mergeNearDuplicateStoriesInFeature(feature) {
+    if (!feature || !Array.isArray(feature.stories)) return 0;
+
+    const storiesByIntent = new Map();
+    const mergedStories = [];
+    let removedCount = 0;
+
+    for (const story of feature.stories) {
+        if (!story || !story.text) continue;
+
+        const storyIntent = buildStoryIntentSignature(story);
+        if (!storyIntent) {
+            mergedStories.push(story);
+            continue;
+        }
+
+        if (!storiesByIntent.has(storyIntent)) {
+            storiesByIntent.set(storyIntent, story);
+            mergedStories.push(story);
+            continue;
+        }
+
+        const existingStory = storiesByIntent.get(storyIntent);
+        const mergedStory = mergeEquivalentStories(existingStory, story);
+        const existingIndex = mergedStories.indexOf(existingStory);
+
+        if (existingIndex !== -1) {
+            mergedStories[existingIndex] = mergedStory;
+        }
+
+        storiesByIntent.set(storyIntent, mergedStory);
+        removedCount++;
+    }
+
+    feature.stories = mergedStories;
+    return removedCount;
+}
+
+function trimScenarioCodesByIntentFamily(scenario, maxCodes = 10) {
+    if (!scenario || !Array.isArray(scenario.codes) || scenario.codes.length <= maxCodes) return 0;
+
+    const dedupedCodes = [];
+    const seenFamilies = new Set();
+    let removedCount = 0;
+
+    for (const code of scenario.codes) {
+        const family = buildCodeIntentSignature(code);
+        if (!family || seenFamilies.has(family)) {
+            removedCount++;
+            continue;
+        }
+
+        seenFamilies.add(family);
+        dedupedCodes.push(code);
+        if (dedupedCodes.length >= maxCodes) {
+            break;
+        }
+    }
+
+    removedCount += Math.max(0, scenario.codes.length - dedupedCodes.length - removedCount);
+    scenario.codes = dedupedCodes;
+    return removedCount;
+}
+
+function consolidateDenseFeatureStories(feature, { maxStories = 8 } = {}) {
+    if (!feature || !Array.isArray(feature.stories) || feature.stories.length <= maxStories) return 0;
+
+    const beforeCount = feature.stories.length;
+    mergeNearDuplicateStoriesInFeature(feature);
+    deduplicateStoriesByContent(feature);
+    return Math.max(0, beforeCount - (feature.stories?.length || 0));
 }
 
 function mergeEquivalentStories(primaryStory, duplicateStory) {
@@ -6094,7 +6534,7 @@ function deduplicateStoriesInFeature(feature) {
 
     for (const story of feature.stories) {
         if (!story || !story.text) continue;
-        const key = normalizeDomainTokens(story.text).join(' ') || story.text.trim().toLowerCase();
+        const key = buildStoryIntentSignature(story) || normalizeDomainTokens(story.text).join(' ') || story.text.trim().toLowerCase();
 
         // ✅ ИСПРАВЛЯЕМ ДУБЛИРУЮЩИЕСЯ ID: Если ID уже использован, генерируем новый
         let storyId = story.id;
@@ -6127,6 +6567,7 @@ function deduplicateStoriesInFeature(feature) {
     }
 
     feature.stories = dedupedStories;
+    mergeNearDuplicateStoriesInFeature(feature);
     deduplicateStoriesByContent(feature);
 }
 
@@ -6139,7 +6580,7 @@ function deduplicateScenariosInStory(story) {
 
     for (const scenario of story.scenarios) {
         if (!scenario || !scenario.text) continue;
-        const key = normalizeDomainTokens(scenario.text).join(' ') || scenario.text.trim().toLowerCase();
+        const key = buildScenarioContentSignature(scenario) || buildScenarioIntentSignature(scenario) || normalizeDomainTokens(scenario.text).join(' ') || scenario.text.trim().toLowerCase();
 
         // ✅ ИСПРАВЛЯЕМ ДУБЛИРУЮЩИЕСЯ ID: Если ID уже использован, генерируем новый
         let scenarioId = scenario.id;
@@ -6183,7 +6624,7 @@ function deduplicateCodesInScenario(scenario) {
 
     for (const code of scenario.codes) {
         if (!code || !code.text) continue;
-        const key = normalizeDomainTokens(code.text).join(' ') || code.text.trim().toLowerCase();
+        const key = buildCodeIntentSignature(code) || normalizeDomainTokens(code.text).join(' ') || code.text.trim().toLowerCase();
 
         // ✅ ИСПРАВЛЯЕМ ДУБЛИРУЮЩИЕСЯ ID: Если ID уже использован, генерируем новый
         let codeId = code.id;
@@ -6200,6 +6641,7 @@ function deduplicateCodesInScenario(scenario) {
     }
 
     scenario.codes = dedupedCodes;
+    trimScenarioCodesByIntentFamily(scenario);
 }
 
 function mergeFeaturesByDomain(model) {
@@ -6284,7 +6726,8 @@ function postProcessModel(model) {
             const storyText = (story.text || '').toLowerCase();
             const technicalKeywords = ['загрузка страницы', 'переключение между'];
             const isTechnical = technicalKeywords.some(keyword => storyText.includes(keyword));
-            if (isTechnical) {
+            const isClauseFragment = looksLikeClauseFragment(story.text);
+            if (isTechnical || isClauseFragment) {
                 console.warn(`[postProcessModel] ⚠️ Удаляю техническую Story: "${story.text}"`);
                 cleanedCount++;
                 return false;
@@ -6425,6 +6868,7 @@ function postProcessModel(model) {
     // Дедуплицируем Story внутри каждой Feature
     for (const feature of model) {
         deduplicateStoriesInFeature(feature);
+        consolidateDenseFeatureStories(feature);
     }
 
     // Если все Feature описывают один домен, объединяем их
@@ -6460,7 +6904,10 @@ function deduplicateScenariosAcrossStories(model) {
         for (let storyIdx = 0; storyIdx < (feature.stories || []).length; storyIdx++) {
             const story = feature.stories[storyIdx];
             for (const scenario of (story.scenarios || [])) {
-                const normalized = normalizeScenarioText(scenario.text);
+                const normalized =
+                    buildScenarioContentSignature(scenario) ||
+                    buildScenarioIntentSignature(scenario) ||
+                    normalizeScenarioText(scenario.text);
                 if (!allScenarios.has(normalized)) {
                     allScenarios.set(normalized, []);
                 }
@@ -6490,7 +6937,11 @@ function deduplicateScenariosAcrossStories(model) {
             for (const { storyIdx, scenario } of duplicatesToRemove) {
                 const story = feature.stories[storyIdx];
                 const scenarioIndex = story.scenarios.findIndex(s =>
-                    normalizeScenarioText(s.text) === normalizedText
+                    (
+                        buildScenarioContentSignature(s) ||
+                        buildScenarioIntentSignature(s) ||
+                        normalizeScenarioText(s.text)
+                    ) === normalizedText
                 );
                 if (scenarioIndex !== -1) {
                     story.scenarios.splice(scenarioIndex, 1);
@@ -8111,7 +8562,8 @@ async function generateTestModelAsync(taskId, inputData) {
                             title: linkedPageTitleForSource,
                             content: md,
                             graphText: (relevant && relevant.trim()) ? relevant : md,
-                            promptText: autoPagePrompt
+                            promptText: autoPagePrompt,
+                            sourceScope: 'linked'
                         });
                         autoPageIds.add(String(lid));
 
@@ -8231,7 +8683,8 @@ async function generateTestModelAsync(taskId, inputData) {
                             pageId: cid,
                             title: contextPageTitle,
                             content: contextMarkdown,
-                            graphText: contextMarkdown
+                            graphText: contextMarkdown,
+                            sourceScope: 'explicit_context'
                         });
 
                         registerSource({
@@ -8348,7 +8801,13 @@ async function generateTestModelAsync(taskId, inputData) {
                 chunk_type: chunk.chunk_type,
                 heading: chunk.heading,
                 section_path: chunk.section_path,
-                explicit_refs: chunk.explicit_refs
+                explicit_refs: chunk.explicit_refs,
+                source_scope: 'main',
+                graph_eligible: true,
+                relevance_score: 100,
+                canonical_key: buildGraphCanonicalKey(chunk.cleaned_text || chunk.content || '', 'main'),
+                drop_reason: null,
+                entity_scope: 'full'
             }
         }));
 
@@ -8368,7 +8827,18 @@ async function generateTestModelAsync(taskId, inputData) {
                 if (ragResults.length > 0) {
                     console.log("[generate-test-model-async] Найдено " + ragResults.length + " чанков через multi-hop");
                     const mainChunks = ragResults.filter(r => r.source_type === 'main' || r.hop_distance === 0);
-                    const linkedChunks = ragResults.filter(r => r.source_type === 'linked' || r.hop_distance > 0);
+                    const ragProfile = buildRelevantSectionProfile(reqStringForModel);
+                    const linkedChunks = ragResults
+                        .filter(r => r.source_type === 'linked' || r.hop_distance > 0)
+                        .filter((chunk) => {
+                            if (chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval) {
+                                return false;
+                            }
+
+                            const evaluation = evaluateGraphContextChunk(chunk, ragProfile, 'linked');
+                            const chunkText = String(chunk?.content || chunk?.metadata?.cleaned_text || chunk?.text || '').trim();
+                            return evaluation.graphEligible && chunkText.length >= 50;
+                        });
                     let contextText = '';
                     if (mainChunks.length > 0) {
                         contextText += '=== КОНТЕКСТ ИЗ ОСНОВНОГО ДОКУМЕНТА ===\n';
@@ -8388,16 +8858,20 @@ async function generateTestModelAsync(taskId, inputData) {
 
         // ✅ Neo4j Graph: Извлечение сущностей и связей из требований
         let graphContextForChunks = null;
+        let graphSessionId = null;
+        let graphChunkSummary = null;
+        let graphFilterStats = null;
         const neo4jAvailable = await isNeo4jAvailable();
         if (neo4jAvailable) {
             try {
                 console.log('[generate-test-model-async] 🌐 Извлечение сущностей в Neo4j граф...');
                 const sessionId = `testmodel-${taskId}-${Date.now()}`;
+                graphSessionId = sessionId;
                 
                 // Формируем тексты для извлечения сущностей: основной документ + контекстные страницы
                 const mainTexts = reqChunks;
                 const graphContextPages = [...autoPageDocs, ...explicitContextPageDocs];
-                const contextTexts = graphContextPages
+                let contextTexts = graphContextPages
                     .flatMap((page, index) => {
                         const pageText = page.graphText || page.content || page.title || '';
                         return pageText
@@ -8414,6 +8888,13 @@ async function generateTestModelAsync(taskId, inputData) {
                     })
                     .filter((chunk) => (chunk.text || chunk.content || '').length > 50);  // Фильтруем короткие тексты
                 
+                const graphContextSelection = await buildGraphContextChunks({
+                    pages: graphContextPages,
+                    requirementText: reqStringForModel
+                });
+                contextTexts = graphContextSelection.eligibleChunks;
+                graphChunkSummary = graphContextSelection.summary;
+
                 console.log(
                     `[generate-test-model-async] 📄 Основной документ: ${mainTexts.length} чанков, ` +
                     `auto-linked context pages: ${autoPageDocs.length}, explicit context pages: ${explicitContextPageDocs.length}, ` +
@@ -8452,12 +8933,14 @@ async function generateTestModelAsync(taskId, inputData) {
                         sessionId,
                         documentId: graphDocumentId
                     });
+                    const filteredContextGraph = filterContextGraphExtraction(contextEntities, contextRel, contextTexts);
+                    graphFilterStats = filteredContextGraph.stats;
                     
                     console.log(`[generate-test-model-async] 📊 Из контекста: ${contextEntities.length} сущностей, ${contextRel.length} связей`);
                     // Записываем контекстные сущности в Neo4j
-                    if (contextEntities.length > 0) {
-                        await createEntities(sessionId, contextEntities);
-                        await createEntityRelationships(sessionId, contextRel);
+                    if (filteredContextGraph.entities.length > 0) {
+                        await createEntities(sessionId, filteredContextGraph.entities);
+                        await createEntityRelationships(sessionId, filteredContextGraph.relationships);
                     }
                 }
                 
@@ -9334,6 +9817,7 @@ ${contextSourcesSummary || '—'}
 
         const finalModel = addUniqueIds(mergedModel);
         const { model: repairedFinalModel } = sanitizeModelForValidation(finalModel);
+        const initialModelStats = summarizeModelCounts(repairedFinalModel);
 
         // ✅ ФАЗА 3: ВАЛИДАЦИЯ МОДЕЛИ
         console.log('[generateTestModelAsync] Фаза 3: Валидация модели');
@@ -9736,6 +10220,15 @@ ${escalationPrompt}`;
         );
 
         // Получаем coverage report если он был рассчитан (используем уже рассчитанные данные)
+        const finalModelStats = summarizeModelCounts(cleanedModel);
+        const dedupeStats = {
+            storiesRemoved: Math.max(0, (initialModelStats?.storiesCount || 0) - (finalModelStats?.storiesCount || 0)),
+            scenariosRemoved: Math.max(0, (initialModelStats?.scenariosCount || 0) - (finalModelStats?.scenariosCount || 0)),
+            codesRemoved: Math.max(0, (initialModelStats?.codesCount || 0) - (finalModelStats?.codesCount || 0)),
+            graphFilter: graphFilterStats,
+            initialModelStats,
+            finalModelStats
+        };
         const reqCoverage = coverageReportData?.requirementsCoverage || { coveragePercent: 0 };
         const finalCoverageReport = coverageReportData || { coveragePercent: 0 };
 
@@ -9758,6 +10251,10 @@ ${escalationPrompt}`;
             progress: 100,
             result: {
                 testModel: cleanedModel,
+                modelStats: finalModelStats,
+                dedupeStats,
+                graphSessionId,
+                chunkSummary: graphChunkSummary,
                 testModelId: taskId  // ✅ Сохраняем ID задачи для последующей загрузки модели
             },
             completed_at: new Date(),
