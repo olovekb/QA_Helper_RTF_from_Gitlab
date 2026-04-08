@@ -181,7 +181,8 @@ import
     generatePairwiseExamples,
     createSharedStep,
     addStepToSharedStep,
-    getSharedStepDetails
+    getSharedStepDetails,
+    findTestCaseByName
 } from './http-service.mjs';
 import { spinningLoader } from './spinning-loader.mjs';
 import pLimit from 'p-limit';
