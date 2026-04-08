@@ -2243,7 +2243,9 @@ export default function SolutionPage ({ projects = [] })
           generatedModel={ generatedModel }
           cancelGeneration={ cancelGeneration }
           jiraProject={ jiraProject }
-          allureProject={ allureProject ? (typeof allureProject === 'string' ? { id: allureProject } : allureProject) : null }
+          allureProject={
+            allureProject == null || allureProject === '' ? null : { id: allureProject }
+          }
           jiraPat={ jiraPat }
           reviewModalOpen={ isReviewModalOpen }
           setReviewModalOpen={ setReviewModalOpen }
