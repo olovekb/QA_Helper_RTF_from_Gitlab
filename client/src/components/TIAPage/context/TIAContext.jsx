@@ -253,13 +253,20 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
             setComponents(extractedComp);
             const existingMappings = await fetchExistingMappings(projectId);
 
+            const mappingLookup = new Map();
+            if (Array.isArray(existingMappings)) {
+                existingMappings.forEach(m => {
+                    const name = m.component_name;
+                    if (!mappingLookup.has(name)) mappingLookup.set(name, []);
+                    mappingLookup.get(name).push(m);
+                });
+            }
+
             const initialMappings = {};
             const autoMapped = {};
 
             extractedComp.forEach(component => {
-                const mappingsForComponent = (Array.isArray(existingMappings) ? existingMappings : []).filter(
-                    m => m.component_name === component.name
-                );
+                const mappingsForComponent = mappingLookup.get(component.name) || [];
                 const folderIds = mappingsForComponent
                     .map(m => findFolderById(folders, m.functional_block_allure_id)?.id?.toString() || '')
                     .filter(id => id);
@@ -268,6 +275,14 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
             });
 
             const pageDeps = buildPageDependencies(extractedComp, frontendJSON, backendJSON);
+
+            const depLookup = new Map();
+            pageDeps.forEach(dep => {
+                const name = dep.componentName;
+                if (!depLookup.has(name)) depLookup.set(name, []);
+                depLookup.get(name).push(dep.pageName?.trim());
+            });
+
             const allRelatedNames = new Set();
             pageDeps.forEach(dep => { if (dep.pageName?.trim()) allRelatedNames.add(dep.pageName.trim()); });
             extractedComp.forEach(comp => { if (comp.name?.trim()) allRelatedNames.add(comp.name.trim()); });
@@ -284,7 +299,7 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
                 extractedComp.forEach(component => {
                     const componentId = component.id;
                     const relatedPageNames = new Set(
-                        pageDeps.filter(dep => dep.componentName === component.name).map(dep => dep.pageName?.trim()).filter(name => name)
+                        (depLookup.get(component.name) || []).filter(name => name)
                     );
                     if (component.name?.trim()) relatedPageNames.add(component.name.trim());
 
@@ -315,6 +330,7 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
             setError('Произошла ошибка при обработке компонентов. Проверьте данные и повторите попытку.');
             logError('Component mapping setup error', err.message, config.TIAUrl);
         } finally {
+            console.timeEnd('handleOpenMappingModal');
             setIsLoading(false);
         }
     }, [mode, projectId, frontendJSON, backendJSON, tiaReport, jiraLink, folders, fetchExistingMappings]);
@@ -324,23 +340,27 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
      * @param {boolean} [force=false] - Принудительное открытие без проверки незамапленных
      */
     const handleOpenSplitModal = useCallback(async (force = false) => {
+        console.time('handleOpenSplitModal');
         setIsMappingLoading(true);
         const allComponents = extractComponents(frontendJSON, backendJSON, tiaReport);
         const allPageDependencies = buildPageDependencies(allComponents, frontendJSON, backendJSON);
 
         if (!force) {
+            const depLookup = new Map();
+            allPageDependencies.forEach(dep => {
+                if (!depLookup.has(dep.componentName)) depLookup.set(dep.componentName, []);
+                depLookup.get(dep.componentName).push(dep.pageName);
+            });
+
             const unmapped = components.filter(c => {
                 if (componentMappings[c.id] && componentMappings[c.id].length > 0) return false;
 
                 if (disabledInheritance[c.id]) return true;
 
-                const relatedPageNames = allPageDependencies
-                    .filter(dep => dep.componentName === c.name)
-                    .map(dep => dep.pageName);
+                const relatedPageNames = depLookup.get(c.name) || [];
+                const searchNames = [...relatedPageNames, c.name];
 
-                relatedPageNames.push(c.name);
-
-                const hasInheritance = relatedPageNames.some(pn => pageMappings[pn] && pageMappings[pn].length > 0);
+                const hasInheritance = searchNames.some(pn => pageMappings[pn] && pageMappings[pn].length > 0);
 
                 return !hasInheritance;
             });
@@ -401,7 +421,10 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
             setError(err.message);
             logError('Error preparing split modal', err.message, config.TIAUrl);
         } finally {
+            setLoadingState(prev => ({ ...prev, launch: false }));
             setSplitProgress(null);
+            setIsMappingLoading(false);
+            console.timeEnd('handleOpenSplitModal');
         }
     }, [components, componentMappings, disabledInheritance, pageMappings, frontendJSON, backendJSON, tiaReport, jiraLink, saveComponentMapping, dirtyComponents]);
 
@@ -644,15 +667,12 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
         }
     }, [projectId, emptyGroupsData, launchGroups, jiraLink, createMultipleLaunches, handleOpenMappingModal]);
 
-    /**
-     * Обработка завершения перетаскивания днд
-     */
     const onDragEnd = useCallback((result) => {
         const { source, destination, draggableId } = result;
         if (!destination) return;
         if (source.droppableId === destination.droppableId && source.index === destination.index) return;
 
-        const folderId = draggableId.split('::').pop();
+        const folderId = draggableId.replace('folder-', '');
         const node = findFolderById(folders, folderId);
 
         const sourceIds = source.droppableId === 'unassigned-pool'

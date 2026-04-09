@@ -1,6 +1,5 @@
-import React from 'react';
 import { useTIA } from '../context/TIAContext';
-import { styles } from '../styles/TIAStyles';
+import { styles, setupStyles } from '../styles/TIAStyles';
 
 /**
  * Модальное окно подтверждения при наличии незамапленных компонентов
@@ -21,84 +20,80 @@ const TIAUnmappedModal = () => {
     const filtered = unmappedComponentsList.filter(c => c.type === activeUnmappedTab);
 
     return (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(12px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 11000, padding: '24px', animation: 'fadeIn 0.2s ease-out' }}>
-            <div style={{ backgroundColor: 'var(--bg-content)', width: '100%', maxWidth: '650px', borderRadius: '32px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)', display: 'flex', flexDirection: 'column', border: '1px solid var(--border-color)', animation: 'slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1)', overflow: 'hidden' }}>
+        <div style={styles.mappingModalOverlay}>
+            <div style={{ ...styles.mappingModalContent, maxWidth: '750px', height: 'auto', maxHeight: '90vh' }}>
                 {/* Header */}
-                <div style={{ padding: '40px 48px', borderBottom: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '8px', backgroundColor: 'var(--bg-input)' }}>
-                    <h3 style={{ fontSize: '24px', fontWeight: 800, color: 'var(--text-primary)', margin: 0, display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ ...styles.mappingModalHeader, padding: '32px 40px', flexDirection: 'column', alignItems: 'flex-start', gap: '8px' }}>
+                    <h3 style={{ ...styles.title, fontSize: '24px' }}>
                         Незамапленные компоненты
                     </h3>
-                    <p style={{ fontSize: '15px', color: 'var(--text-muted)', margin: 0, lineHeight: '1.6' }}>
+                    <p style={{ fontSize: '15px', color: 'var(--text-muted)', margin: 0, lineHeight: '1.6', maxWidth: '600px' }}>
                         Следующие компоненты не привязаны ни к одному функциональному блоку Allure. Они будут пропущены при создании запуска тестирования.
                     </p>
                 </div>
 
-                {/* Tabs */}
-                <div style={{ display: 'flex', padding: '16px 48px 0', gap: '12px', backgroundColor: 'var(--bg-input)' }}>
-                    {['frontend', 'backend'].map(tab => (
+                {/* Tabs / Filter */}
+                <div style={{ padding: '24px 40px 0', backgroundColor: 'var(--bg-input)' }}>
+                    <div style={setupStyles.modeToggleContainer}>
                         <button
-                            key={tab}
-                            onClick={() => setActiveUnmappedTab(tab)}
-                            style={{
-                                padding: '10px 24px',
-                                borderRadius: '14px',
-                                border: 'none',
-                                fontSize: '14px',
-                                fontWeight: 700,
-                                cursor: 'pointer',
-                                backgroundColor: activeUnmappedTab === tab ? 'var(--primary-accent)' : 'transparent',
-                                color: activeUnmappedTab === tab ? '#fff' : 'var(--text-muted)',
-                                transition: 'all 0.2s'
-                            }}
+                            onClick={() => setActiveUnmappedTab('frontend')}
+                            style={setupStyles.modeToggleButton(activeUnmappedTab === 'frontend')}
                         >
-                            {tab === 'frontend' ? 'Frontend' : 'Backend'}
+                            Frontend ({unmappedComponentsList.filter(c => c.type === 'frontend').length})
                         </button>
-                    ))}
+                        <button
+                            onClick={() => setActiveUnmappedTab('backend')}
+                            style={setupStyles.modeToggleButton(activeUnmappedTab === 'backend')}
+                        >
+                            Backend ({unmappedComponentsList.filter(c => c.type === 'backend').length})
+                        </button>
+                    </div>
                 </div>
 
                 {/* List Container */}
-                <div style={{ padding: '24px 48px 40px', backgroundColor: 'var(--bg-input)' }}>
-                    <div style={{ maxHeight: '350px', overflowY: 'auto', padding: '4px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ padding: '24px 40px 32px', backgroundColor: 'var(--bg-input)' }}>
+                    <div style={{
+                        maxHeight: '400px',
+                        overflowY: 'auto',
+                        padding: '4px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '12px',
+                        paddingRight: '12px'
+                    }}>
                         {filtered.length > 0 ? (
                             filtered.map((comp, idx) => (
                                 <div key={idx} style={{
-                                    padding: '14px 20px',
+                                    padding: '16px 24px',
                                     backgroundColor: 'var(--bg-content)',
                                     borderRadius: '16px',
                                     border: '1px solid var(--border-color)',
-                                    fontSize: '14px',
+                                    fontSize: '15px',
                                     color: 'var(--text-primary)',
                                     fontWeight: 600,
-                                    boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+                                    boxShadow: 'var(--shadow-sm)',
                                     display: 'flex',
                                     alignItems: 'center',
-                                    gap: '12px'
+                                    gap: '14px',
+                                    transition: 'all 0.2s ease'
                                 }}>
-                                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--warning-accent, #f59e0b)' }} />
+                                    <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: 'var(--warning)', boxShadow: '0 0 8px color-mix(in srgb, var(--warning) 40%, transparent)' }} />
                                     {comp.name}
                                 </div>
                             ))
                         ) : (
-                            <div style={{ padding: '60px 40px', textAlign: 'center', backgroundColor: 'var(--bg-content)', borderRadius: '24px', border: '2px dashed var(--border-color)' }}>
-                                <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '16px' }}>Все компоненты замаплены.</div>
+                            <div style={{ padding: '60px 40px', textAlign: 'center', backgroundColor: 'var(--bg-content)', borderRadius: '24px', border: '1px dashed var(--border-color)' }}>
+                                <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '18px' }}>Все компоненты замаплены</div>
                             </div>
                         )}
                     </div>
                 </div>
 
                 {/* Footer */}
-                <div style={{ padding: '32px 48px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', gap: '16px', backgroundColor: 'var(--bg-content)' }}>
+                <div style={styles.mappingModalFooter}>
                     <button
                         onClick={() => setShowUnmappedModal(false)}
-                        style={{
-                            ...styles.modalButtonCancel,
-                            backgroundColor: 'transparent',
-                            border: '1px solid var(--border-color)',
-                            color: 'var(--text-secondary)',
-                            fontWeight: 700,
-                            padding: '14px 28px',
-                            borderRadius: '16px'
-                        }}
+                        style={styles.backButton}
                     >
                         Вернуться к маппингу
                     </button>
@@ -108,12 +103,9 @@ const TIAUnmappedModal = () => {
                             handleOpenSplitModal(true);
                         }}
                         style={{
-                            ...styles.modalButtonConfirm,
-                            background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
-                            boxShadow: '0 10px 20px -5px rgba(245, 158, 11, 0.4)',
-                            fontWeight: 800,
-                            padding: '14px 32px',
-                            borderRadius: '16px'
+                            ...styles.primaryButton,
+                            background: 'linear-gradient(135deg, var(--warning) 0%, #d97706 100%)',
+                            boxShadow: '0 8px 16px color-mix(in srgb, var(--warning) 30%, transparent)'
                         }}
                     >
                         Продолжить без них

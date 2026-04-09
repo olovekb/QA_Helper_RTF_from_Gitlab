@@ -6,6 +6,8 @@ import { useNavigate } from 'react-router-dom';
 import config from './config';
 import styles from './styles';
 import { trackEvent } from './analytics';
+import setupStyles from './components/TIAPage/styles/TIAStyles';
+
 
 const COLORS = [
     '#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d',
@@ -39,6 +41,7 @@ const HeatmapPage = ({ projects }) => {
     const [issueTimeMap, setIssueTimeMap] = useState({});
     const [syncingJira, setSyncingJira] = useState(false);
     const [activeMetric, setActiveMetric] = useState('incidents');
+    const [loadingStructure, setLoadingStructure] = useState(false);
 
     const [showMappingModal, setShowMappingModal] = useState(false);
     const [unmappedComponents, setUnmappedComponents] = useState([]);
@@ -250,7 +253,7 @@ const HeatmapPage = ({ projects }) => {
 
     const fetchFolders = async () => {
         if (!projectId) return;
-        setLoading(true);
+        setLoadingStructure(true);
         try {
             const response = await axios.get(`${config.TIAUrl}/api/structure`, {
                 params: { projectId },
@@ -271,7 +274,7 @@ const HeatmapPage = ({ projects }) => {
             console.error('Ошибка при загрузке функциональных блоков:', err);
             setFolders([]);
         } finally {
-            setLoading(false);
+            setLoadingStructure(false);
         }
     };
 
@@ -780,7 +783,7 @@ const HeatmapPage = ({ projects }) => {
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <div style={{ fontSize: '10px', color: hasMapping ? 'var(--success)' : 'var(--error)', display: 'flex', flexDirection: 'column', gap: '4px', fontWeight: 600 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                {hasMapping ? '✓ Связан' : '⚠️ Не связан'}
+                                {hasMapping ? 'Связан' : 'Не связан'}
                             </div>
                             {hasMapping && (
                                 <div style={{ fontSize: '9px', color: 'var(--text-muted)', fontWeight: 500, paddingLeft: '14px' }}>
@@ -1003,14 +1006,7 @@ const HeatmapPage = ({ projects }) => {
     };
 
     const MetricToggle = () => (
-        <div style={{
-            display: 'flex',
-            backgroundColor: 'var(--bg-input)',
-            padding: '4px',
-            borderRadius: '12px',
-            border: '1px solid var(--border-color)',
-            width: 'fit-content'
-        }}>
+        <div style={setupStyles.modeToggleContainer}>
             {[
                 { id: 'incidents', label: 'Инциденты' },
                 { id: 'touches', label: 'Касания' },
@@ -1019,18 +1015,7 @@ const HeatmapPage = ({ projects }) => {
                 <button
                     key={m.id}
                     onClick={() => setActiveMetric(m.id)}
-                    style={{
-                        padding: '8px 16px',
-                        border: 'none',
-                        borderRadius: '8px',
-                        backgroundColor: activeMetric === m.id ? 'var(--bg-content)' : 'transparent',
-                        color: activeMetric === m.id ? 'var(--text-primary)' : 'var(--text-muted)',
-                        fontSize: '12px',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        transition: 'all 0.2s',
-                        boxShadow: activeMetric === m.id ? '0 2px 4px rgba(0,0,0,0.05)' : 'none',
-                    }}
+                    style={setupStyles.modeToggleButton(activeMetric === m.id)}
                 >
                     {m.label}
                 </button>
@@ -1221,50 +1206,17 @@ const HeatmapPage = ({ projects }) => {
                 </div>
             </div>
 
-            {/*  */}
-            <div style={{
-                display: 'flex',
-                gap: '8px',
-                marginBottom: '32px',
-                backgroundColor: 'var(--bg-input)',
-                padding: '6px',
-                borderRadius: '16px',
-                width: 'fit-content',
-                border: '1px solid var(--border-color)'
-            }}>
+            {/* Табы Code/Test Coverage */}
+            <div style={{ ...setupStyles.modeToggleContainer, marginBottom: '32px' }}>
                 <button
                     onClick={() => setActiveTab('code')}
-                    style={{
-                        padding: '12px 28px',
-                        border: 'none',
-                        borderRadius: '12px',
-                        backgroundColor: activeTab === 'code' ? 'var(--bg-content)' : 'transparent',
-                        color: activeTab === 'code' ? 'var(--text-primary)' : 'var(--text-muted)',
-                        fontSize: '14px',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        transition: 'all 0.2s ease',
-                        boxShadow: activeTab === 'code' ? '0 4px 12px rgba(0,0,0,0.08)' : 'none',
-                        marginTop: 0
-                    }}
+                    style={setupStyles.modeToggleButton(activeTab === 'code')}
                 >
                     Code Coverage
                 </button>
                 <button
                     onClick={() => setActiveTab('test')}
-                    style={{
-                        padding: '12px 28px',
-                        border: 'none',
-                        borderRadius: '12px',
-                        backgroundColor: activeTab === 'test' ? 'var(--bg-content)' : 'transparent',
-                        color: activeTab === 'test' ? 'var(--text-primary)' : 'var(--text-muted)',
-                        fontSize: '14px',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        transition: 'all 0.2s ease',
-                        boxShadow: activeTab === 'test' ? '0 4px 12px rgba(0,0,0,0.08)' : 'none',
-                        marginTop: 0
-                    }}
+                    style={setupStyles.modeToggleButton(activeTab === 'test')}
                 >
                     Test Coverage
                 </button>
@@ -1501,10 +1453,10 @@ const HeatmapPage = ({ projects }) => {
             </div>
 
             {/* График и легенда */}
-            {loading && (
+            {loadingStructure && (
                 <div style={{ textAlign: 'center', padding: '100px', color: 'var(--text-muted)' }}>
                     <div style={{ width: '40px', height: '40px', border: '3px solid var(--bg-input)', borderTopColor: 'var(--primary-accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 16px' }} />
-                    <div style={{ fontWeight: 600 }}>Загрузка данных...</div>
+                    <div style={{ fontWeight: 600 }}>Загрузка структуры из ТестОпс...</div>
                 </div>
             )}
 

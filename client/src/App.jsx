@@ -1,4 +1,3 @@
-// src/App.jsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useShowScrollTop } from './hooks/useShowScrollTop';
 import { useDebounce } from './hooks/useDebounce';
@@ -8,13 +7,15 @@ import './style.css';
 import config from './config';
 import { parseXmindFile } from './parce-xmind/parce.xmind.mjs';
 import { useNavigate } from 'react-router-dom';
-import { marked } from 'marked'; // Импорт библиотеки marked
+import { marked } from 'marked';
 import GlobalBackgroundProgress from './components/GlobalBackgroundProgress';
 import ErrorBoundary from './components/ErrorBoundary';
 import RulesModal from './components/RulesModal';
 import ArrowUpIcon from './components/ArrowUpIcon';
-import { HiOutlineQuestionMarkCircle } from 'react-icons/hi';
+import { HiOutlineQuestionMarkCircle, HiOutlineSearch, HiOutlineUpload, HiChevronDown, HiOutlineLightningBolt, HiOutlineDocumentText, HiOutlineTerminal, HiOutlinePresentationChartBar } from 'react-icons/hi';
+import { motion, AnimatePresence } from 'framer-motion';
 import { trackEvent } from './analytics';
+import setupStyles from './components/TIAPage/styles/TIAStyles';
 
 const STORAGE_HTML_CASES = 'htmlReportCases';
 const STORAGE_HTML_MODEL = 'htmlReportModel';
@@ -23,8 +24,7 @@ const STORAGE_JIRA_MODEL = 'jiraIssueModel';
 const STORAGE_LAST_REPORT_JIRA_CASES = 'lastReportJiraCases';
 const STORAGE_LAST_REPORT_JIRA_MODEL = 'lastReportJiraModel';
 
-function readInitialJiraCases ()
-{
+function readInitialJiraCases() {
   try {
     return sessionStorage.getItem(STORAGE_JIRA_CASES)
       || config.jiraIssue
@@ -34,8 +34,7 @@ function readInitialJiraCases ()
   }
 }
 
-function readInitialJiraModel ()
-{
+function readInitialJiraModel() {
   try {
     return sessionStorage.getItem(STORAGE_JIRA_MODEL) || '';
   } catch {
@@ -43,8 +42,7 @@ function readInitialJiraModel ()
   }
 }
 
-const App = ({ projects }) =>
-{
+const App = ({ projects }) => {
   const [projectId, setProjectId] = useState(config.projectId || '');
   const [jiraIssueCases, setJiraIssueCases] = useState(readInitialJiraCases);
   const [jiraIssueModel, setJiraIssueModel] = useState(readInitialJiraModel);
@@ -64,6 +62,8 @@ const App = ({ projects }) =>
   const [showTestModelRulesModal, setShowTestModelRulesModal] = useState(false);
   const [lastReviewInfoCases, setLastReviewInfoCases] = useState(null);
   const [lastReviewInfoModel, setLastReviewInfoModel] = useState(null);
+  const [showServicesDropdown, setShowServicesDropdown] = useState(false);
+  const dropdownRef = useRef(null);
 
   const debouncedJiraIssueCases = useDebounce(jiraIssueCases.trim(), 400);
   const debouncedJiraIssueModel = useDebounce(jiraIssueModel.trim(), 400);
@@ -74,21 +74,26 @@ const App = ({ projects }) =>
   const tooltipHideTimeoutRef = useRef(null);
 
   // Функция для преобразования Markdown-текста в HTML
-  const parseMarkdown = (markdownText) =>
-  {
+  const parseMarkdown = (markdownText) => {
     return marked(markdownText);
   };
 
-  useEffect(() =>
-  {
+  useEffect(() => {
     const savedFixStatus = sessionStorage.getItem('fixStatus');
     if (savedFixStatus) {
       setFixStatus(JSON.parse(savedFixStatus));
     }
+
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowServicesDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  useEffect(() =>
-  {
+  useEffect(() => {
     if (analysisType === 'cases') {
       setHtmlReport(sessionStorage.getItem(STORAGE_HTML_CASES) || '');
     } else {
@@ -96,8 +101,7 @@ const App = ({ projects }) =>
     }
   }, [analysisType]);
 
-  useEffect(() =>
-  {
+  useEffect(() => {
     if (analysisType !== 'cases') {
       return;
     }
@@ -107,8 +111,7 @@ const App = ({ projects }) =>
     }
     let cancelled = false;
     axios.get(`${config.serverUrl}/analyze/status`, { params: { jiraIssue: debouncedJiraIssueCases, analysisType: 'cases' } })
-      .then((res) =>
-      {
+      .then((res) => {
         if (cancelled) return;
         if (res.data?.hasReview && res.data?.createdAt) {
           setLastReviewInfoCases({ createdAt: res.data.createdAt });
@@ -120,8 +123,7 @@ const App = ({ projects }) =>
     return () => { cancelled = true; };
   }, [debouncedJiraIssueCases, analysisType]);
 
-  useEffect(() =>
-  {
+  useEffect(() => {
     if (analysisType !== 'model') {
       return;
     }
@@ -131,8 +133,7 @@ const App = ({ projects }) =>
     }
     let cancelled = false;
     axios.get(`${config.serverUrl}/analyze/status`, { params: { jiraIssue: debouncedJiraIssueModel, analysisType: 'model' } })
-      .then((res) =>
-      {
+      .then((res) => {
         if (cancelled) return;
         if (res.data?.hasReview && res.data?.createdAt) {
           setLastReviewInfoModel({ createdAt: res.data.createdAt });
@@ -144,22 +145,19 @@ const App = ({ projects }) =>
     return () => { cancelled = true; };
   }, [debouncedJiraIssueModel, analysisType]);
 
-  useEffect(() =>
-  {
+  useEffect(() => {
     try {
       sessionStorage.setItem(STORAGE_JIRA_CASES, jiraIssueCases);
     } catch { /* ignore */ }
   }, [jiraIssueCases]);
 
-  useEffect(() =>
-  {
+  useEffect(() => {
     try {
       sessionStorage.setItem(STORAGE_JIRA_MODEL, jiraIssueModel);
     } catch { /* ignore */ }
   }, [jiraIssueModel]);
 
-  const syncProjectFromJiraPrefix = (value) =>
-  {
+  const syncProjectFromJiraPrefix = (value) => {
     const prefix = value.split('-')[0]?.trim().toUpperCase();
     if (!prefix) return;
     const matched = projects?.find(
@@ -171,8 +169,7 @@ const App = ({ projects }) =>
     }
   };
 
-  const renderJiraIssueBlock = (variant) =>
-  {
+  const renderJiraIssueBlock = (variant) => {
     const isCases = variant === 'cases';
     const value = isCases ? jiraIssueCases : jiraIssueModel;
     const setValue = isCases ? setJiraIssueCases : setJiraIssueModel;
@@ -185,12 +182,11 @@ const App = ({ projects }) =>
     return (
       <div className="jira-issue-field">
         <div className="jira-issue-header">
-          <label htmlFor={ inputId }>Номер задачи из Jira:</label>
-          { reviewHint && (
+          <label htmlFor={inputId}>Номер задачи из Jira:</label>
+          {reviewHint && (
             <span
               className="jira-review-trigger"
-              onMouseEnter={ (e) =>
-              {
+              onMouseEnter={(e) => {
                 if (tooltipHideTimeoutRef.current) {
                   clearTimeout(tooltipHideTimeoutRef.current);
                   tooltipHideTimeoutRef.current = null;
@@ -198,55 +194,49 @@ const App = ({ projects }) =>
                 tooltipShownAtRef.current = Date.now();
                 const tt = e.currentTarget.querySelector('.jira-review-tooltip');
                 if (tt) tt.style.visibility = 'visible';
-              } }
-              onMouseLeave={ (e) =>
-              {
+              }}
+              onMouseLeave={(e) => {
                 const tt = e.currentTarget.querySelector('.jira-review-tooltip');
                 if (tt) {
-                  tooltipHideTimeoutRef.current = setTimeout(() =>
-                  {
+                  tooltipHideTimeoutRef.current = setTimeout(() => {
                     tt.style.visibility = 'hidden';
                     tooltipHideTimeoutRef.current = null;
                   }, 150);
                 }
-              } }
+              }}
             >
-              <HiOutlineQuestionMarkCircle size={ 16 } />
+              <HiOutlineQuestionMarkCircle size={16} />
               <span
                 className="jira-review-tooltip"
-                onMouseEnter={ (e) =>
-                {
+                onMouseEnter={(e) => {
                   if (tooltipHideTimeoutRef.current) {
                     clearTimeout(tooltipHideTimeoutRef.current);
                     tooltipHideTimeoutRef.current = null;
                   }
                   e.currentTarget.style.visibility = 'visible';
-                } }
-                onMouseLeave={ (e) =>
-                {
+                }}
+                onMouseLeave={(e) => {
                   const el = e.currentTarget;
-                  tooltipHideTimeoutRef.current = setTimeout(() =>
-                  {
+                  tooltipHideTimeoutRef.current = setTimeout(() => {
                     el.style.visibility = 'hidden';
                     tooltipHideTimeoutRef.current = null;
                   }, 150);
-                } }
+                }}
               >
                 <span>
-                  { reviewHintLabel }{ ' ' }
-                  { new Date(reviewHint.createdAt).toLocaleString('ru-RU', {
+                  {reviewHintLabel}{' '}
+                  {new Date(reviewHint.createdAt).toLocaleString('ru-RU', {
                     day: '2-digit',
                     month: '2-digit',
                     year: 'numeric',
                     hour: '2-digit',
                     minute: '2-digit'
-                  }) }
+                  })}
                 </span>
                 <button
                   type="button"
                   className="btn-link jira-review-tooltip-btn"
-                  onClick={ async (e) =>
-                  {
+                  onClick={async (e) => {
                     e.stopPropagation();
                     if (Date.now() - tooltipShownAtRef.current < 300) return;
                     const confirmMsg = isCases
@@ -270,25 +260,24 @@ const App = ({ projects }) =>
                     } catch (err) {
                       console.error('Ошибка очистки результатов:', err);
                     }
-                  } }
+                  }}
                 >
                   Очистить результат
                 </button>
               </span>
             </span>
-          ) }
+          )}
         </div>
         <input
-          id={ inputId }
+          id={inputId}
           type="text"
-          value={ value }
-          onChange={ (e) =>
-          {
+          value={value}
+          onChange={(e) => {
             const v = e.target.value;
             setValue(v);
             syncProjectFromJiraPrefix(v);
-          } }
-          style={ {
+          }}
+          style={{
             width: '100%',
             padding: '12px 16px',
             fontSize: '15px',
@@ -299,22 +288,20 @@ const App = ({ projects }) =>
             outline: 'none',
             transition: 'all 0.2s',
             boxSizing: 'border-box'
-          } }
-          onFocus={ (e) => e.target.style.borderColor = 'var(--border-focus)' }
-          onBlur={ (e) => e.target.style.borderColor = 'var(--border-color)' }
+          }}
+          onFocus={(e) => e.target.style.borderColor = 'var(--border-focus)'}
+          onBlur={(e) => e.target.style.borderColor = 'var(--border-color)'}
         />
       </div>
     );
   };
 
   // Делегирование кликов внутри контейнера, обработка кнопок AI-рекомендаций
-  useEffect(() =>
-  {
+  useEffect(() => {
     const container = reportContainerRef.current;
     if (!container) return;
 
-    const handleButtonClick = async (event) =>
-    {
+    const handleButtonClick = async (event) => {
       const btn = event.target.closest('.ai-recommend-btn');
       if (!btn) return;
       if (btn.disabled) return;
@@ -360,28 +347,24 @@ const App = ({ projects }) =>
     };
 
     container.addEventListener('click', handleButtonClick);
-    return () =>
-    {
+    return () => {
       container.removeEventListener('click', handleButtonClick);
     };
   }, [htmlReport, projectId]);
 
   // Фильтрация по категориям и дропдауны в структуре
-  useEffect(() =>
-  {
+  useEffect(() => {
     const container = reportContainerRef.current;
     if (!container || !htmlReport) return;
     const tree = container.querySelector('#nav-tree');
     if (!tree) return;
     const select = container.querySelector('#category-select');
 
-    const applyFilter = () =>
-    {
+    const applyFilter = () => {
       if (!select) return;
       const val = select.value;
       const leaves = tree.querySelectorAll('.tree-leaf');
-      leaves.forEach((li) =>
-      {
+      leaves.forEach((li) => {
         const cats = (li.getAttribute('data-categories') || '').split(',').map((s) => s.trim());
         const show = val === '_all' || cats.indexOf(val) >= 0;
         li.classList.toggle('filtered-out', !show);
@@ -394,12 +377,10 @@ const App = ({ projects }) =>
         const hasVisible = Array.prototype.some.call(childrenUl.children, (c) => !c.classList.contains('filtered-out'));
         n.classList.toggle('filtered-out', !hasVisible);
       }
-      const countVisibleLeaves = (node) =>
-      {
+      const countVisibleLeaves = (node) => {
         return node.querySelectorAll('.tree-leaf:not(.filtered-out)').length;
       };
-      nodes.forEach((n) =>
-      {
+      nodes.forEach((n) => {
         const countSpan = n.querySelector(':scope > .tree-row .tree-count');
         if (countSpan) {
           const visibleCount = countVisibleLeaves(n);
@@ -415,13 +396,11 @@ const App = ({ projects }) =>
 
     const svgChevronRight = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2l4 3-4 3"/></svg>';
     const svgChevronDown = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3l3 4 3-4"/></svg>';
-    const setToggleIcon = (el, expanded) =>
-    {
+    const setToggleIcon = (el, expanded) => {
       el.innerHTML = expanded ? svgChevronDown : svgChevronRight;
     };
     const toggleBtns = container.querySelectorAll('.tree-toggle');
-    toggleBtns.forEach((btn) =>
-    {
+    toggleBtns.forEach((btn) => {
       const targetId = btn.getAttribute('data-target');
       if (!targetId) return;
       const ul = document.getElementById(targetId);
@@ -429,22 +408,19 @@ const App = ({ projects }) =>
       const treeRow = btn.closest('.tree-row');
       if (!treeRow) return;
 
-      const toggleNode = () =>
-      {
+      const toggleNode = () => {
         ul.classList.toggle('collapsed');
         setToggleIcon(btn, !ul.classList.contains('collapsed'));
       };
 
       // Клик на иконку
-      btn.addEventListener('click', (e) =>
-      {
+      btn.addEventListener('click', (e) => {
         e.stopPropagation();
         toggleNode();
       });
 
       // Клик на всю строку
-      treeRow.addEventListener('click', (e) =>
-      {
+      treeRow.addEventListener('click', (e) => {
         if (e.target.closest('.tree-checkbox') || e.target.closest('.fix-checkbox') || e.target.closest('a')) return;
         toggleNode();
       });
@@ -459,14 +435,12 @@ const App = ({ projects }) =>
       }
     });
 
-    return () =>
-    {
+    return () => {
       if (select) select.removeEventListener('change', applyFilter);
     };
   }, [htmlReport]);
 
-  useEffect(() =>
-  {
+  useEffect(() => {
     const container = reportContainerRef.current;
     if (!container || !htmlReport) return;
 
@@ -531,12 +505,10 @@ const App = ({ projects }) =>
       document.head.appendChild(styleElement);
     }
 
-    // Модифицируем структуру DOM
     const testLists = container.querySelector('.test-lists');
     const testDetails = container.querySelector('.test-cases-details');
 
     if (testLists && testDetails && !container.querySelector('.main-layout')) {
-      // Создаем новую структуру
       const mainLayout = document.createElement('div');
       mainLayout.className = 'main-layout';
       mainLayout.id = 'main-layout';
@@ -547,12 +519,10 @@ const App = ({ projects }) =>
       resizerElement.id = 'resizer';
       resizerElement.style.cssText = 'flex: 0 0 4px; flex-shrink: 0; align-self: stretch; background: var(--border-color); cursor: col-resize; position: relative; transition: background-color 0.2s; margin: 0 8px;';
 
-      resizerElement.addEventListener('mouseenter', () =>
-      {
+      resizerElement.addEventListener('mouseenter', () => {
         resizerElement.style.background = 'var(--border-focus)';
       });
-      resizerElement.addEventListener('mouseleave', () =>
-      {
+      resizerElement.addEventListener('mouseleave', () => {
         resizerElement.style.background = 'var(--border-color)';
       });
 
@@ -568,10 +538,8 @@ const App = ({ projects }) =>
     const testCases = container.querySelectorAll('.test-case');
     const treeLinks = container.querySelectorAll('.tree-leaf a');
 
-    const showTestCase = (testId) =>
-    {
-      testCases.forEach((tc) =>
-      {
+    const showTestCase = (testId) => {
+      testCases.forEach((tc) => {
         tc.classList.remove('active');
       });
 
@@ -580,8 +548,7 @@ const App = ({ projects }) =>
       if (targetCase) {
         targetCase.classList.add('active');
 
-        treeLinks.forEach((link) =>
-        {
+        treeLinks.forEach((link) => {
           link.classList.remove('active-link');
         });
         const activeLink = container.querySelector(`.tree-leaf a[href="#${testId}"]`);
@@ -591,10 +558,8 @@ const App = ({ projects }) =>
       }
     };
 
-    treeLinks.forEach((link) =>
-    {
-      link.addEventListener('click', (e) =>
-      {
+    treeLinks.forEach((link) => {
+      link.addEventListener('click', (e) => {
         e.preventDefault();
         const href = link.getAttribute('href');
         if (href && href.startsWith('#')) {
@@ -612,8 +577,7 @@ const App = ({ projects }) =>
     if (resizer && leftPanel) {
       let isResizing = false;
 
-      const handleMouseDown = (e) =>
-      {
+      const handleMouseDown = (e) => {
         isResizing = true;
         document.body.style.cursor = 'col-resize';
         document.body.style.userSelect = 'none';
@@ -621,8 +585,7 @@ const App = ({ projects }) =>
         e.stopPropagation();
       };
 
-      const handleMouseMove = (e) =>
-      {
+      const handleMouseMove = (e) => {
         if (!isResizing) return;
 
         const containerLeft = leftPanel.parentElement.getBoundingClientRect().left;
@@ -637,8 +600,7 @@ const App = ({ projects }) =>
         e.preventDefault();
       };
 
-      const handleMouseUp = (e) =>
-      {
+      const handleMouseUp = (e) => {
         if (isResizing) {
           isResizing = false;
           document.body.style.cursor = '';
@@ -651,8 +613,7 @@ const App = ({ projects }) =>
       document.addEventListener('mousemove', handleMouseMove);
       document.addEventListener('mouseup', handleMouseUp);
 
-      cleanupResize = () =>
-      {
+      cleanupResize = () => {
         resizer.removeEventListener('mousedown', handleMouseDown);
         document.removeEventListener('mousemove', handleMouseMove);
         document.removeEventListener('mouseup', handleMouseUp);
@@ -700,8 +661,7 @@ const App = ({ projects }) =>
         const header = iframeWrapper.querySelector('.feedback-dropdown-header');
         const content = iframeWrapper.querySelector('.feedback-dropdown-content');
         const iconEl = iframeWrapper.querySelector('.feedback-dropdown-icon');
-        header.addEventListener('click', () =>
-        {
+        header.addEventListener('click', () => {
           const expanded = header.getAttribute('data-expanded') === 'true';
           const newExpanded = !expanded;
           header.setAttribute('data-expanded', newExpanded);
@@ -713,16 +673,14 @@ const App = ({ projects }) =>
     }
 
     // Общий cleanup
-    return () =>
-    {
+    return () => {
       if (cleanupResize) cleanupResize();
       const iframeWrapper = container?.querySelector('.feedback-iframe-wrapper');
       if (iframeWrapper) iframeWrapper.remove();
     };
   }, [htmlReport]);
 
-  const downloadHtml = useCallback(() =>
-  {
+  const downloadHtml = useCallback(() => {
     const isModel = analysisType === 'model';
     let htmlContent = isModel
       ? sessionStorage.getItem(STORAGE_HTML_MODEL)
@@ -751,12 +709,10 @@ const App = ({ projects }) =>
       );
       return;
     }
-    // удаление кнопки AI-рекомендаций, замена iframe на ссылку
     const parser = new DOMParser();
     const doc = parser.parseFromString(htmlContent, 'text/html');
     doc.querySelectorAll('.ai-recommendations').forEach(el => el.remove());
-    doc.querySelectorAll('.allure-iframe-wrapper').forEach(wrapper =>
-    {
+    doc.querySelectorAll('.allure-iframe-wrapper').forEach(wrapper => {
       const fallbackLink = wrapper.querySelector('.allure-iframe-fallback a[href]');
       const iframe = wrapper.querySelector('iframe');
       const href = fallbackLink?.getAttribute('href') || iframe?.getAttribute('src') || '#';
@@ -778,12 +734,8 @@ const App = ({ projects }) =>
     link.click();
   }, [analysisType]);
 
-  // клавиатурные события
-  useEffect(() =>
-  {
-    const handleKeyDown = (e) =>
-    {
-      // закрыть модальное окно правил
+  useEffect(() => {
+    const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
         if (showRulesModal) {
           setShowRulesModal(false);
@@ -796,7 +748,6 @@ const App = ({ projects }) =>
         }
       }
 
-      // скачать репорт
       if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
         e.preventDefault();
         if (htmlReport && !loading && (analysisType === 'cases' || analysisType === 'model')) {
@@ -804,7 +755,6 @@ const App = ({ projects }) =>
         }
       }
 
-      // фокус на фильтр категорий
       if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const activeElement = document.activeElement;
         if (activeElement?.tagName !== 'INPUT' && activeElement?.tagName !== 'TEXTAREA') {
@@ -818,28 +768,24 @@ const App = ({ projects }) =>
     };
 
     document.addEventListener('keydown', handleKeyDown);
-    return () =>
-    {
+    return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [showTestModelRulesModal, showCleanupModal, projectId, htmlReport, loading, analysisType, downloadHtml]);
 
-  useEffect(() =>
-  {
+  useEffect(() => {
     const handler = () => downloadHtml();
     window.addEventListener('downloadReport', handler);
     return () => window.removeEventListener('downloadReport', handler);
   }, [downloadHtml]);
 
-  const toggleFixStatus = () =>
-  {
+  const toggleFixStatus = () => {
     const newFixStatus = !fixStatus;
     setFixStatus(newFixStatus);
     sessionStorage.setItem('fixStatus', JSON.stringify(newFixStatus));
   };
 
-  const handleSubmit = async (e) =>
-  {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     trackEvent('static_analysis', {
       page: '/',
@@ -894,24 +840,21 @@ const App = ({ projects }) =>
     }
   };
 
-  const handleXmindFileChange = (e) =>
-  {
+  const handleXmindFileChange = (e) => {
     const file = e.target.files[0];
     if (file) {
       setXmindFile(file);
     }
   };
 
-  const handleModelFileChange = (e) =>
-  {
+  const handleModelFileChange = (e) => {
     const file = e.target.files[0];
     if (file) {
       setModelFile(file);
     }
   };
 
-  const handleExportClick = async () =>
-  {
+  const handleExportClick = async () => {
     trackEvent('export_xmind_to_allure', { page: '/', projectId });
     setLoading(true);
     if (!xmindFile) {
@@ -945,24 +888,25 @@ const App = ({ projects }) =>
   };
 
   // Обработчик для перехода на страницу "Test impact analysis"
-  const handleTIAClick = () =>
-  {
+  const handleTIAClick = () => {
     navigate('/tia');
   };
 
   // Новый обработчик для перехода на страницу "Тестирование требований"
-  const handleSolutionClick = () =>
-  {
+  const handleSolutionClick = () => {
     navigate('/solution');
   };
 
-  const handleTabChange = (tab) =>
-  {
+  // Обработчик для перехода на страницу "Тепловая карта дефектов"
+  const handleHeatmapClick = () => {
+    navigate('/heatmap');
+  };
+
+  const handleTabChange = (tab) => {
     setActiveTab(tab);
   };
 
-  const handleCleanupDuplicates = async () =>
-  {
+  const handleCleanupDuplicates = async () => {
     if (!projectId) {
       alert('Пожалуйста, выберите проект.');
       return;
@@ -987,601 +931,638 @@ const App = ({ projects }) =>
       });
     } finally {
       setCleanupLoading(false);
-      // Не закрываем модалку - пользователь сам закроет после просмотра результатов
     }
   };
 
   return (
     <ErrorBoundary>
-      <style>{ `
+      <style>{`
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
       `}</style>
       <div className="App">
-        {/* Глобальный фоновый прогресс-бар */ }
+        {/* Глобальный фоновый прогресс-бар */}
         <GlobalBackgroundProgress />
 
         <div className="header-wrapper">
-          <h1>QA-helper</h1>
-          <div className="header-buttons">
-            <button onClick={ handleTIAClick } className="tia-button">
-              Test impact analysis
+          <div className="header-left">
+            <h1 onClick={() => {
+              setActiveTab('analysis');
+              navigate('/');
+            }}>QA-helper</h1>
+          </div>
+
+          <nav className="header-center">
+            <button
+              className={`nav-tab ${activeTab === 'analysis' ? 'active' : ''}`}
+              onClick={() => handleTabChange('analysis')}
+              style={{ position: 'relative' }}
+            >
+              {activeTab === 'analysis' && (
+                <motion.div
+                  layoutId="active-tab"
+                  className="active-tab-indicator"
+                  transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                />
+              )}
+              <span style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '2px', paddingRight: '4px' }}>
+                <HiOutlineSearch /> Анализ
+              </span>
             </button>
-            <button onClick={ handleSolutionClick } className="tia-button">
-              Тестирование требований
+            <button
+              className={`nav-tab ${activeTab === 'export' ? 'active' : ''}`}
+              onClick={() => handleTabChange('export')}
+              style={{ position: 'relative' }}
+            >
+              {activeTab === 'export' && (
+                <motion.div
+                  layoutId="active-tab"
+                  className="active-tab-indicator"
+                  transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                />
+              )}
+              <span style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '2px', paddingRight: '4px' }}>
+                <HiOutlineUpload /> Экспорт Xmind
+              </span>
             </button>
-            <button onClick={ () => navigate('/code-error') } className="tia-button">
-              Завести набор ошибок кода на эпик
-            </button>
+            <div className="services-dropdown-container" ref={dropdownRef}>
+              <button
+                className="nav-tab services-nav-btn"
+                onClick={() => setShowServicesDropdown(!showServicesDropdown)}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '2px' }}>
+                  Сервисы <HiChevronDown style={{ transform: showServicesDropdown ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+                </span>
+              </button>
+
+              <AnimatePresence>
+                {showServicesDropdown && (
+                  <motion.div
+                    className="services-dropdown"
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    transition={{ duration: 0.2, ease: "easeOut" }}
+                  >
+                    <button onClick={() => { handleSolutionClick(); setShowServicesDropdown(false); }} className="dropdown-item">
+                      <HiOutlineDocumentText /> Тестирование требований
+                    </button>
+                    <button onClick={() => { handleTIAClick(); setShowServicesDropdown(false); }} className="dropdown-item">
+                      <HiOutlineLightningBolt /> Test impact analysis
+                    </button>
+                    <button onClick={() => { navigate('/code-error'); setShowServicesDropdown(false); }} className="dropdown-item">
+                      <HiOutlineTerminal /> Завести ошибки на эпик
+                    </button>
+                    <button onClick={() => { handleHeatmapClick(); setShowServicesDropdown(false); }} className="dropdown-item">
+                      <HiOutlinePresentationChartBar /> Тепловая карта дефектов
+                    </button>
+
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </nav>
+
+          <div className="header-right">
+
           </div>
         </div>
 
-        <div className="tabs">
-          <button onClick={ () => handleTabChange('analysis') } className={ activeTab === 'analysis' ? 'active' : '' }>
-            Анализ
-          </button>
-          <button onClick={ () => handleTabChange('export') } className={ activeTab === 'export' ? 'active' : '' }>
-            Экспорт Xmind в Allure
-          </button>
-        </div>
-        { activeTab === 'analysis' && (
-          <div style={ {
-            maxWidth: '90vw',
-            margin: '0 auto',
-            padding: '40px 20px'
-          } }>
-            <div style={ {
-              display: 'flex',
-              gap: '8px',
-              marginBottom: '24px',
-              flexWrap: 'wrap'
-            } }>
-              <button
-                type="button"
-                onClick={ () => setAnalysisType('cases') }
-                style={ {
-                  padding: '10px 18px',
-                  fontSize: '14px',
-                  fontWeight: '600',
-                  borderRadius: '999px',
-                  border: '1px solid var(--border-color)',
-                  cursor: 'pointer',
-                  backgroundColor: analysisType === 'cases' ? 'var(--primary-accent)' : 'transparent',
-                  color: analysisType === 'cases' ? 'white' : 'var(--text-primary)',
-                  transition: 'all 0.2s'
-                } }
-              >
-                Тест-кейсы
-              </button>
-              <button
-                type="button"
-                onClick={ () => setAnalysisType('model') }
-                style={ {
-                  padding: '10px 18px',
-                  fontSize: '14px',
-                  fontWeight: '600',
-                  borderRadius: '999px',
-                  border: '1px solid var(--border-color)',
-                  cursor: 'pointer',
-                  backgroundColor: analysisType === 'model' ? 'var(--primary-accent)' : 'transparent',
-                  color: analysisType === 'model' ? 'white' : 'var(--text-primary)',
-                  transition: 'all 0.2s'
-                } }
-              >
-                Тестовая модель
-              </button>
+        {activeTab === 'analysis' && (
+          <div className="app-page-container">
+            <div style={{ marginBottom: '16px' }}>
+              <div style={setupStyles.modeToggleContainer}>
+                <button
+                  type="button"
+                  onClick={() => setAnalysisType('cases')}
+                  style={setupStyles.modeToggleButton(analysisType === 'cases')}
+                >
+                  Тест-кейсы
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAnalysisType('model')}
+                  style={setupStyles.modeToggleButton(analysisType === 'model')}
+                >
+                  Тестовая модель
+                </button>
+              </div>
             </div>
 
-            { analysisType === 'cases' && (
+            {analysisType === 'cases' && (
               <>
-                <form className="analysis-form" onSubmit={ handleSubmit } style={ {
-                  backgroundColor: 'var(--bg-content)',
-                  padding: '32px',
-                  borderRadius: '12px',
-                  border: '1px solid var(--border-color)',
-                  marginBottom: '32px',
-                  boxShadow: 'none'
-                } }>
-                  <div style={ { display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' } }>
-                    <div style={ { flex: '1', minWidth: '200px' } }>
-                      <label style={ {
+                <h2 style={{
+                  fontSize: '24px',
+                  fontWeight: '800',
+                  color: 'var(--text-primary)',
+                  marginBottom: '24px',
+                  textAlign: 'center'
+                }}>
+                  Анализ тест-кейсов
+                </h2>
+                <form className="analysis-form" onSubmit={handleSubmit} style={setupStyles.setupCard}>
+                  <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
+                    <div style={{ flex: '1', minWidth: '200px' }}>
+                      <label style={{
                         display: 'block',
                         marginBottom: '8px',
                         fontSize: '14px',
                         fontWeight: '600',
                         color: 'var(--text-secondary)'
-                      } }>
+                      }}>
                         Выберите проект:
                       </label>
                       <Select
                         classNamePrefix="select"
                         placeholder="Выберите проект"
-                        options={ projects.map(p => ({ value: p.id, label: p.name })) }
-                        value={ (() => { const p = projects.find(pr => pr.id === projectId); return p ? { value: p.id, label: p.name } : null; })() }
-                        onChange={ opt => setProjectId(opt?.value ?? '') }
-                        menuPortalTarget={ document.body }
+                        options={projects.map(p => ({ value: p.id, label: p.name }))}
+                        value={(() => { const p = projects.find(pr => pr.id === projectId); return p ? { value: p.id, label: p.name } : null; })()}
+                        onChange={opt => setProjectId(opt?.value ?? '')}
+                        menuPortalTarget={document.body}
                         menuPosition="fixed"
                         menuPlacement="auto"
-                        styles={ { menuPortal: base => ({ ...base, zIndex: 9999 }) } }
+                        styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
                       />
                     </div>
-                    { renderJiraIssueBlock('cases') }
+                    {renderJiraIssueBlock('cases')}
                   </div>
-                  {/* Кнопка просмотра правил */ }
-                  { projectId && (
+                  {/* Кнопка просмотра правил */}
+                  {projectId && (
                     <button
                       type="button"
-                      onClick={ () => setShowRulesModal(true) }
+                      onClick={() => setShowRulesModal(true)}
                       className="rules-trigger-btn"
                     >
                       Правила статанализа
                     </button>
-                  ) }
+                  )}
 
                   <button
                     type="submit"
-                    disabled={ loading || !projectId || !jiraIssueCases.trim() }
-                    style={ {
+                    disabled={loading || !projectId || !jiraIssueCases.trim()}
+                    style={{
                       width: '100%',
-                      padding: '14px 24px',
-
+                      padding: '16px 24px',
                       fontSize: '16px',
-                      fontWeight: '600',
-                      color: 'white',
-                      backgroundColor: (loading || !projectId || !jiraIssueCases.trim()) ? 'var(--border-color)' : 'var(--primary-accent)',
-                      border: 'none',
-                      borderRadius: '6px',
+                      fontWeight: '700',
+                      color: (loading || !projectId || !jiraIssueCases.trim()) ? 'var(--text-muted)' : 'var(--text-primary)',
+                      backgroundColor: (loading || !projectId || !jiraIssueCases.trim()) ? 'var(--bg-input)' : 'var(--bg-content)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '14px',
                       cursor: (loading || !projectId || !jiraIssueCases.trim()) ? 'default' : 'pointer',
-                      transition: 'all 0.2s',
-                    } }
-                    onMouseEnter={ (e) =>
-                    {
+                      transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                      boxShadow: (loading || !projectId || !jiraIssueCases.trim()) ? 'none' : 'var(--shadow-sm)'
+                    }}
+                    onMouseEnter={(e) => {
                       if (!loading && projectId && jiraIssueCases.trim()) {
-                        e.target.style.backgroundColor = 'var(--primary-hover)';
+                        e.target.style.backgroundColor = 'var(--bg-hover)';
+                        e.target.style.boxShadow = 'var(--shadow-md)';
                       }
-                    } }
-                    onMouseLeave={ (e) =>
-                    {
+                    }}
+                    onMouseLeave={(e) => {
                       if (!loading && projectId && jiraIssueCases.trim()) {
-                        e.target.style.backgroundColor = 'var(--primary-accent)';
+                        e.target.style.backgroundColor = 'var(--bg-content)';
+                        e.target.style.boxShadow = 'var(--shadow-sm)';
                       }
-                    } }
+                    }}
                   >
-                    { loading ? 'Анализ запущен...' : !projectId ? 'Выберите проект' : !jiraIssueCases.trim() ? 'Введите номер задачи' : 'Запустить анализ' }
+                    {loading ? 'Анализ запущен...' : !projectId ? 'Выберите проект' : !jiraIssueCases.trim() ? 'Введите номер задачи' : 'Запустить анализ'}
                   </button>
                 </form>
               </>
-            ) }
+            )}
 
-            { analysisType === 'model' && (
-              <form className="analysis-form" onSubmit={ handleSubmit } style={ {
-                backgroundColor: 'var(--bg-content)',
-                padding: '32px',
-                borderRadius: '12px',
-                border: '1px solid var(--border-color)',
-                marginBottom: '32px',
-                boxShadow: 'none'
-              } }>
-                <h2 style={ {
-                  fontSize: '22px',
-                  fontWeight: '600',
+            {analysisType === 'model' && (
+              <>
+                <h2 style={{
+                  fontSize: '24px',
+                  fontWeight: '800',
                   color: 'var(--text-primary)',
-                  marginBottom: '24px'
-                } }>
-                  Тестовая модель
+                  marginBottom: '24px',
+                  textAlign: 'center'
+                }}>
+                  Анализ тестовой модели
                 </h2>
+                <form className="analysis-form" onSubmit={handleSubmit} style={setupStyles.setupCard}>
+                  <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
+                    <div style={{ flex: '1', minWidth: '200px' }}>
+                      <label style={{
+                        display: 'block',
+                        marginBottom: '8px',
+                        fontSize: '14px',
+                        fontWeight: '600',
+                        color: 'var(--text-secondary)'
+                      }}>
+                        Выберите проект:
+                      </label>
+                      <Select
+                        classNamePrefix="select"
+                        placeholder="Выберите проект"
+                        options={projects.map(p => ({ value: p.id, label: p.name }))}
+                        value={(() => { const p = projects.find(pr => pr.id === projectId); return p ? { value: p.id, label: p.name } : null; })()}
+                        onChange={opt => setProjectId(opt?.value ?? '')}
+                        menuPortalTarget={document.body}
+                        menuPosition="fixed"
+                        menuPlacement="auto"
+                        styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
+                      />
+                    </div>
+                    {renderJiraIssueBlock('model')}
+                  </div>
 
-                <div style={ { display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' } }>
-                  <div style={ { flex: '1', minWidth: '200px' } }>
-                    <label style={ {
+                  <div style={{ marginBottom: '32px' }}>
+                    <label style={{
                       display: 'block',
                       marginBottom: '8px',
                       fontSize: '14px',
                       fontWeight: '600',
                       color: 'var(--text-secondary)'
-                    } }>
-                      Выберите проект:
+                    }}>
+                      Выберите файл модели:
                     </label>
-                    <Select
-                      classNamePrefix="select"
-                      placeholder="Выберите проект"
-                      options={ projects.map(p => ({ value: p.id, label: p.name })) }
-                      value={ (() => { const p = projects.find(pr => pr.id === projectId); return p ? { value: p.id, label: p.name } : null; })() }
-                      onChange={ opt => setProjectId(opt?.value ?? '') }
-                      menuPortalTarget={ document.body }
-                      menuPosition="fixed"
-                      menuPlacement="auto"
-                      styles={ { menuPortal: base => ({ ...base, zIndex: 9999 }) } }
-                    />
-                  </div>
-                  { renderJiraIssueBlock('model') }
-                </div>
-
-                <div style={ { marginBottom: '24px' } }>
-                  <label style={ {
-                    display: 'block',
-                    marginBottom: '8px',
-                    fontSize: '14px',
-                    fontWeight: '600',
-                    color: 'var(--text-secondary)'
-                  } }>
-                    Загрузить файл тестовой модели (XMind):
-                  </label>
-                  <div style={ {
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px',
-                    flexWrap: 'wrap'
-                  } }>
-                    <label style={ {
-                      padding: '12px 24px',
-                      fontSize: '15px',
-                      fontWeight: '500',
-                      color: 'white',
-                      backgroundColor: 'var(--primary-accent)',
-                      border: 'none',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s',
-                      display: 'inline-block'
-                    } }
-                      onMouseEnter={ (e) =>
-                      {
-                        e.target.style.backgroundColor = 'var(--primary-hover)';
-                      } }
-                      onMouseLeave={ (e) =>
-                      {
-                        e.target.style.backgroundColor = 'var(--primary-accent)';
-                      } }
-                    >
-                      Выберите файл
-                      <input
-                        type="file"
-                        accept=".xmind"
-                        onChange={ handleModelFileChange }
-                        style={ { display: 'none' } }
-                      />
-                    </label>
-                    <span style={ {
-                      fontSize: '14px',
-                      color: modelFile ? 'var(--success)' : 'var(--error)',
-                      fontWeight: modelFile ? '500' : '400'
-                    } }>
-                      { modelFile ? modelFile.name : 'Файл не выбран' }
-                    </span>
-                  </div>
-                </div>
-
-                { projectId && (
-                  <button
-                    type="button"
-                    onClick={ () => setShowTestModelRulesModal(true) }
-                    className="rules-trigger-btn"
-                  >
-                    Правила тестовой модели
-                  </button>
-                ) }
-
-                <button
-                  type="submit"
-                  disabled={ loading || !projectId || !jiraIssueModel.trim() || !modelFile }
-                  style={ {
-                    width: '100%',
-                    padding: '14px 24px',
-                    fontSize: '16px',
-                    fontWeight: '600',
-                    color: 'white',
-                    backgroundColor: (loading || !projectId || !jiraIssueModel.trim() || !modelFile) ? 'var(--border-color)' : 'var(--primary-accent)',
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: (loading || !projectId || !jiraIssueModel.trim() || !modelFile) ? 'default' : 'pointer',
-                    transition: 'all 0.2s',
-                  } }
-                  onMouseEnter={ (e) =>
-                  {
-                    if (!loading && projectId && jiraIssueModel.trim() && modelFile) {
-                      e.target.style.backgroundColor = 'var(--primary-hover)';
-                    }
-                  } }
-                  onMouseLeave={ (e) =>
-                  {
-                    if (!loading && projectId && jiraIssueModel.trim() && modelFile) {
-                      e.target.style.backgroundColor = 'var(--primary-accent)';
-                    }
-                  } }
-                >
-                  { loading ? (
-                    <div style={ { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' } }>
-                      <div className="spinner" style={ {
-                        width: '18px', height: '18px', border: '2px solid rgba(255,255,255,0.3)',
-                        borderTop: '2px solid white', borderRadius: '50%', animation: 'spin 0.8s linear infinite'
-                      } }></div>
-                      Идет анализ...
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      flexWrap: 'wrap'
+                    }}>
+                      <label style={{
+                        padding: '10px 20px',
+                        fontSize: '14px',
+                        fontWeight: '600',
+                        color: 'var(--text-primary)',
+                        backgroundColor: 'var(--bg-input)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '12px',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                        boxShadow: 'var(--shadow-sm)'
+                      }}
+                        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; e.currentTarget.style.borderColor = 'var(--primary-accent)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-input)'; e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+                      >
+                        <HiOutlineDocumentText style={{ fontSize: '18px', color: 'var(--primary-accent)' }} />
+                        Выбрать файл
+                        <input
+                          type="file"
+                          accept=".json,.md"
+                          onChange={handleModelFileChange}
+                          style={{ display: 'none' }}
+                        />
+                      </label>
+                      <span style={{
+                        fontSize: '13px',
+                        color: modelFile ? 'var(--success)' : 'var(--text-muted)',
+                        fontWeight: modelFile ? '600' : '400'
+                      }}>
+                        {modelFile ? modelFile.name : 'Файл не выбран'}
+                      </span>
                     </div>
-                  ) : (
-                    !projectId ? 'Выберите проект' : !jiraIssueModel.trim() ? 'Введите номер задачи' : !modelFile ? 'Выберите файл модели' : 'Запустить анализ'
-                  ) }
-                </button>
-              </form>
-            ) }
+                  </div>
 
-            { htmlReport && !loading && showScrollTop && (
-              <div className="floating-buttons analysis-floating">
+                  {projectId && (
+                    <button
+                      type="button"
+                      onClick={() => setShowTestModelRulesModal(true)}
+                      className="rules-trigger-btn"
+                    >
+                      Правила тестовой модели
+                    </button>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={loading || !projectId || !jiraIssueModel.trim() || !modelFile}
+                    style={{
+                      width: '100%',
+                      padding: '16px 24px',
+                      fontSize: '16px',
+                      fontWeight: '700',
+                      color: (loading || !projectId || !jiraIssueModel.trim() || !modelFile) ? 'var(--text-muted)' : 'var(--text-primary)',
+                      backgroundColor: (loading || !projectId || !jiraIssueModel.trim() || !modelFile) ? 'var(--bg-input)' : 'var(--bg-content)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '14px',
+                      cursor: (loading || !projectId || !jiraIssueModel.trim() || !modelFile) ? 'default' : 'pointer',
+                      transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                      boxShadow: (loading || !projectId || !jiraIssueModel.trim() || !modelFile) ? 'none' : 'var(--shadow-sm)'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!loading && projectId && jiraIssueModel.trim() && modelFile) {
+                        e.target.style.backgroundColor = 'var(--bg-hover)';
+                        e.target.style.boxShadow = 'var(--shadow-md)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!loading && projectId && jiraIssueModel.trim() && modelFile) {
+                        e.target.style.backgroundColor = 'var(--bg-content)';
+                        e.target.style.boxShadow = 'var(--shadow-sm)';
+                      }
+                    }}
+                  >
+                    {loading ? (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+                        <div className="spinner" style={{
+                          width: '18px', height: '18px', border: '2px solid rgba(0,0,0,0.1)',
+                          borderTop: '2px solid var(--primary-accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite'
+                        }}></div>
+                        Идет анализ...
+                      </div>
+                    ) : (
+                      !projectId ? 'Выберите проект' : !jiraIssueModel.trim() ? 'Введите номер задачи' : !modelFile ? 'Выберите файл модели' : 'Запустить анализ'
+                    )}
+                  </button>
+                </form>
+              </>
+            )}
+
+            {htmlReport && !loading && showScrollTop && (
+              <div className="floating-buttons floating-buttons--top-only">
                 <span />
                 <button
                   type="button"
                   className="btn btn-secondary btn-top"
-                  onClick={ () => window.scrollTo({ top: 0, behavior: 'smooth' }) }
+                  onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
                 >
                   <ArrowUpIcon />
                 </button>
               </div>
-            ) }
+            )}
             <div
-              ref={ reportContainerRef }
+              ref={reportContainerRef}
               className="static-analysis-report-host"
-              style={ {
+              style={{
                 backgroundColor: 'var(--bg-content)',
                 padding: '32px',
-                borderRadius: '12px',
+                borderRadius: '16px',
                 border: '1px solid var(--border-color)',
                 minHeight: '200px'
-              } }
+              }}
             >
-              { loading ? (
-                <div style={ {
+              {loading ? (
+                <div style={{
                   display: 'flex',
                   justifyContent: 'center',
                   alignItems: 'center',
                   padding: '60px 20px'
-                } }>
+                }}>
                   <div className="spinner"></div>
                 </div>
               ) : htmlReport ? (
-                <div dangerouslySetInnerHTML={ { __html: htmlReport } } />
+                <div dangerouslySetInnerHTML={{ __html: htmlReport }} />
               ) : (
-                <p style={ {
+                <p style={{
                   textAlign: 'center',
                   color: 'var(--text-muted)',
                   fontSize: '16px',
                   padding: '40px 20px'
-                } }>
-                  { analysisType === 'cases' ? 'Не найдено тест-кейсов для анализа' : 'Загрузите модель для выполнения анализа' }
+                }}>
+                  {analysisType === 'cases' ? 'Не найдено тест-кейсов для анализа' : 'Загрузите модель для выполнения анализа'}
                 </p>
-              ) }
+              )}
             </div>
           </div>
-        ) }
-        { activeTab === 'export' && (
-          <div style={ {
-            maxWidth: '800px',
-            margin: '0 auto',
-            padding: '40px 20px'
-          } }>
-            <h2 style={ {
-              fontSize: '28px',
-              fontWeight: '600',
+        )}
+        {activeTab === 'export' && (
+          <div className="app-page-container">
+            <h2 style={{
+              fontSize: '24px',
+              fontWeight: '800',
               color: 'var(--text-primary)',
               marginBottom: '32px',
               textAlign: 'center'
-            } }>
-              Экспорт XMind в Allure
+            }}>
+              Экспорт XMind в ТестОпс
             </h2>
-            <div style={ {
+            <div style={{
               backgroundColor: 'var(--bg-content)',
               padding: '32px',
-              borderRadius: '12px',
-              boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.2)',
+              borderRadius: '16px',
+              border: '1px solid var(--border-color)',
+              boxShadow: 'none',
               marginBottom: '24px'
-            } }>
-              <div style={ { marginBottom: '24px' } }>
-                <label style={ {
+            }}>
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{
                   display: 'block',
                   marginBottom: '8px',
                   fontSize: '14px',
                   fontWeight: '600',
                   color: 'var(--text-secondary)'
-                } }>
+                }}>
                   Выберите проект:
                 </label>
                 <Select
                   classNamePrefix="select"
                   placeholder="Выберите проект"
-                  options={ projects.map(p => ({ value: p.id, label: p.name })) }
-                  value={ (() => { const p = projects.find(pr => pr.id === projectId); return p ? { value: p.id, label: p.name } : null; })() }
-                  onChange={ opt => setProjectId(opt?.value ?? '') }
-                  menuPortalTarget={ document.body }
+                  options={projects.map(p => ({ value: p.id, label: p.name }))}
+                  value={(() => { const p = projects.find(pr => pr.id === projectId); return p ? { value: p.id, label: p.name } : null; })()}
+                  onChange={opt => setProjectId(opt?.value ?? '')}
+                  menuPortalTarget={document.body}
                   menuPosition="fixed"
                   menuPlacement="auto"
-                  styles={ { menuPortal: base => ({ ...base, zIndex: 9999 }) } }
+                  styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
                 />
               </div>
-              <div style={ { marginBottom: '32px' } }>
-                <label style={ {
+              <div style={{ marginBottom: '32px' }}>
+                <label style={{
                   display: 'block',
                   marginBottom: '8px',
                   fontSize: '14px',
                   fontWeight: '600',
                   color: 'var(--text-secondary)'
-                } }>
+                }}>
                   Загрузить XMind файл:
                 </label>
-                <div style={ {
+                <div style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: '12px',
                   flexWrap: 'wrap'
-                } }>
-                  <label style={ {
-                    padding: '12px 24px',
-                    fontSize: '15px',
-                    fontWeight: '500',
-                    color: 'white',
-                    backgroundColor: 'var(--primary-accent)',
-                    border: 'none',
-                    borderRadius: '8px',
+                }}>
+                  <label style={{
+                    padding: '10px 20px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    color: 'var(--text-primary)',
+                    backgroundColor: 'var(--bg-input)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '12px',
                     cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    display: 'inline-block'
-                  } }
-                    onMouseEnter={ (e) =>
-                    {
-                      e.target.style.backgroundColor = 'var(--primary-hover)';
-                    } }
-                    onMouseLeave={ (e) =>
-                    {
-                      e.target.style.backgroundColor = 'var(--primary-accent)';
-                    } }
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                    boxShadow: 'var(--shadow-sm)'
+                  }}
+                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; e.currentTarget.style.borderColor = 'var(--primary-accent)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-input)'; e.currentTarget.style.borderColor = 'var(--border-color)'; }}
                   >
-                    Выберите файл
+                    <HiOutlineDocumentText style={{ fontSize: '18px', color: 'var(--primary-accent)' }} />
+                    Выбрать файл
                     <input
                       type="file"
                       accept=".xmind"
-                      onChange={ handleXmindFileChange }
-                      style={ { display: 'none' } }
+                      onChange={handleXmindFileChange}
+                      style={{ display: 'none' }}
                     />
                   </label>
-                  <span style={ {
-                    fontSize: '14px',
-                    color: xmindFile ? 'var(--success)' : 'var(--error)',
-                    fontWeight: xmindFile ? '500' : '400'
-                  } }>
-                    { xmindFile ? xmindFile.name : 'Файл не выбран' }
+                  <span style={{
+                    fontSize: '13px',
+                    color: xmindFile ? 'var(--success)' : 'var(--text-muted)',
+                    fontWeight: xmindFile ? '600' : '400'
+                  }}>
+                    {xmindFile ? xmindFile.name : 'Файл не выбран'}
                   </span>
                 </div>
               </div>
               <button
-                onClick={ handleExportClick }
-                disabled={ loading || !xmindFile }
-                style={ {
+                onClick={handleExportClick}
+                disabled={loading || !xmindFile}
+                style={{
                   width: '100%',
                   padding: '14px 24px',
                   fontSize: '16px',
                   fontWeight: '600',
-                  color: 'var(--text-primary)',
-                  backgroundColor: (loading || !xmindFile) ? 'var(--border-color)' : 'var(--success)',
+                  color: 'white',
+                  background: (loading || !xmindFile) ? 'var(--border-color)' : 'linear-gradient(135deg, var(--primary-accent), #a855f7)',
                   border: 'none',
-                  borderRadius: '8px',
+                  borderRadius: '12px',
                   cursor: (loading || !xmindFile) ? 'default' : 'pointer',
-                  transition: 'all 0.2s',
+                  transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: '10px'
-                } }
+                  gap: '10px',
+                  boxShadow: (loading || !xmindFile) ? 'none' : '0 4px 15px rgba(99, 102, 241, 0.3)'
+                }}
+                onMouseEnter={(e) => {
+                  if (!loading && xmindFile) {
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                    e.currentTarget.style.boxShadow = '0 6px 20px rgba(99, 102, 241, 0.4)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!loading && xmindFile) {
+                    e.currentTarget.style.transform = 'translateY(0)';
+                    e.currentTarget.style.boxShadow = '0 4px 15px rgba(99, 102, 241, 0.3)';
+                  }
+                }}
               >
-                { loading ? (
+                {loading ? (
                   <>
-                    <div className="spinner" style={ {
+                    <div className="spinner" style={{
                       width: '18px',
                       height: '18px',
                       border: '2px solid rgba(255,255,255,0.3)',
                       borderTop: '2px solid white',
                       borderRadius: '50%',
                       animation: 'spin 0.8s linear infinite'
-                    } }></div>
+                    }}></div>
                     Экспорт...
                   </>
                 ) : (
                   'Экспорт'
-                ) }
+                )}
               </button>
             </div>
 
-            { exportMessage && (
-              <div style={ {
-                backgroundColor: 'var(--success-bg)',
+            {exportMessage && (
+              <div style={{
+                backgroundColor: 'var(--bg-input)',
                 border: '1px solid var(--border-color)',
-                borderRadius: '8px',
+                borderRadius: '16px',
                 padding: '16px 20px',
                 marginBottom: '24px'
-              } }>
-                <p style={ {
+              }}>
+                <p style={{
                   margin: 0,
                   fontSize: '15px',
                   color: 'var(--primary-accent)',
                   lineHeight: '1.5'
-                } }>
-                  { exportMessage }
+                }}>
+                  {exportMessage}
                 </p>
               </div>
-            ) }
+            )}
 
-            { exportResult && (
-              <div style={ {
+            {exportResult && (
+              <div style={{
                 textAlign: 'center',
                 marginBottom: '24px'
-              } }>
+              }}>
                 <a
-                  href={ exportResult }
+                  href={exportResult}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={ {
+                  style={{
                     display: 'inline-block',
                     padding: '12px 24px',
                     fontSize: '15px',
                     fontWeight: '500',
-                    color: 'var(--text-primary)',
-                    backgroundColor: 'var(--success)',
+                    color: 'white',
+                    backgroundColor: 'var(--primary-accent)',
                     textDecoration: 'none',
-                    borderRadius: '8px',
+                    borderRadius: '12px',
                     transition: 'all 0.2s',
-                    boxShadow: '0 2px 4px rgba(16, 185, 129, 0.3)'
-                  } }
-                  onMouseEnter={ (e) =>
-                  {
-                    e.target.style.backgroundColor = '#059669'; /* success hover */
-                  } }
-                  onMouseLeave={ (e) =>
-                  {
-                    e.target.style.backgroundColor = 'var(--success)';
-                  } }
+                    boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                    e.currentTarget.style.boxShadow = '0 6px 16px rgba(99, 102, 241, 0.3)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'translateY(0)';
+                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(99, 102, 241, 0.2)';
+                  }}
                 >
-                  Открыть проект в Allure
+                  Открыть проект в ТестОпс
                 </a>
               </div>
-            ) }
+            )}
 
-            <div style={ {
+            <div style={{
               textAlign: 'center',
               marginTop: '32px'
-            } }>
+            }}>
               <button
-                onClick={ () => setShowCleanupModal(true) }
-                disabled={ loading || !projectId }
-                style={ {
+                onClick={() => setShowCleanupModal(true)}
+                disabled={loading || !projectId}
+                style={{
                   padding: '12px 24px',
                   fontSize: '15px',
                   fontWeight: '500',
-                  color: 'white',
-                  backgroundColor: (loading || !projectId) ? 'var(--border-color)' : 'var(--error)',
-                  border: 'none',
-                  borderRadius: '8px',
+                  color: (loading || !projectId) ? 'var(--text-muted)' : 'var(--text-secondary)',
+                  backgroundColor: (loading || !projectId) ? 'var(--border-color)' : 'var(--bg-input)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '12px',
                   cursor: (loading || !projectId) ? 'default' : 'pointer',
-                  transition: 'all 0.2s',
-                } }
-                onMouseEnter={ (e) =>
-                {
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
                   if (!loading && projectId) {
-                    e.target.style.backgroundColor = '#c82333';
+                    e.currentTarget.style.backgroundColor = 'var(--bg-hover)';
+                    e.currentTarget.style.color = 'var(--text-primary)';
                   }
-                } }
-                onMouseLeave={ (e) =>
-                {
+                }}
+                onMouseLeave={(e) => {
                   if (!loading && projectId) {
-                    e.target.style.backgroundColor = '#dc3545';
+                    e.currentTarget.style.backgroundColor = 'var(--bg-input)';
+                    e.currentTarget.style.color = 'var(--text-secondary)';
                   }
-                } }
+                }}
               >
                 Очистить дубли тест-кейсов
               </button>
             </div>
           </div>
-        ) }
-        { showCleanupModal && (
-          <div style={ {
+        )}
+        {showCleanupModal && (
+          <div style={{
             position: 'fixed',
             top: 0,
             left: 0,
@@ -1593,8 +1574,8 @@ const App = ({ projects }) =>
             justifyContent: 'center',
             zIndex: 1000,
             backdropFilter: 'blur(2px)'
-          } }>
-            <div style={ {
+          }}>
+            <div style={{
               backgroundColor: 'var(--bg-content)',
               padding: '40px',
               borderRadius: '16px',
@@ -1604,31 +1585,31 @@ const App = ({ projects }) =>
               overflowY: 'auto',
               boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.2)',
               position: 'relative'
-            } }>
-              <h2 style={ {
+            }}>
+              <h2 style={{
                 marginTop: 0,
                 marginBottom: '28px',
                 fontSize: '26px',
                 fontWeight: '600',
                 color: 'var(--text-primary)',
                 letterSpacing: '-0.5px'
-              } }>
+              }}>
                 Подтверждение очистки дублей
               </h2>
 
-              { !cleanupResult && (
+              {!cleanupResult && (
                 <>
-                  <p style={ {
+                  <p style={{
                     marginBottom: '16px',
                     fontSize: '15px',
                     color: 'var(--text-secondary)',
                     lineHeight: '1.5'
-                  } }>
-                    Вы уверены, что хотите удалить дубли тест-кейсов в проекте <strong style={ { color: 'var(--text-primary)' } }>
-                      { projects.find(p => String(p.id) === String(projectId))?.name || projectId }
+                  }}>
+                    Вы уверены, что хотите удалить дубли тест-кейсов в проекте <strong style={{ color: 'var(--text-primary)' }}>
+                      {projects.find(p => String(p.id) === String(projectId))?.name || projectId}
                     </strong>?
                   </p>
-                  <div style={ {
+                  <div style={{
                     marginBottom: '24px',
                     padding: '18px',
                     color: 'var(--error)',
@@ -1636,221 +1617,220 @@ const App = ({ projects }) =>
                     backgroundColor: 'var(--error-bg)',
                     border: '1px solid var(--error)',
                     borderRadius: '8px'
-                  } }>
-                    <p style={ {
+                  }}>
+                    <p style={{
                       margin: 0,
                       fontSize: '14px',
                       lineHeight: '1.6'
-                    } }>
+                    }}>
                       Тест-кейсы с одинаковыми названиями и тегами будут удалены, останутся только самые полные по содержанию.
                     </p>
-                    <p style={ {
+                    <p style={{
                       margin: 0,
                       fontSize: '18px',
                       lineHeight: '1.6'
-                    } }>Это действие нельзя отменить</p>
+                    }}>Это действие нельзя отменить</p>
                   </div>
                 </>
-              ) }
+              )}
 
-              { cleanupLoading && (
-                <div style={ {
+              {cleanupLoading && (
+                <div style={{
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
                   padding: '40px 20px',
                   gap: '16px'
-                } }>
-                  <div className="spinner" style={ {
+                }}>
+                  <div className="spinner" style={{
                     width: '48px',
                     height: '48px',
                     border: '4px solid #f3f3f3',
                     borderTop: '4px solid #dc3545',
                     borderRadius: '50%',
                     animation: 'spin 1s linear infinite'
-                  } }></div>
-                  <p style={ {
+                  }}></div>
+                  <p style={{
                     margin: 0,
                     color: '#666',
                     fontSize: '15px',
                     fontWeight: '500'
-                  } }>
+                  }}>
                     Выполняется очистка дублей...
                   </p>
-                  <p style={ {
+                  <p style={{
                     margin: 0,
                     color: '#999',
                     fontSize: '13px'
-                  } }>
+                  }}>
                     Пожалуйста, подождите
                   </p>
                 </div>
-              ) }
+              )}
 
-              { cleanupResult && !cleanupLoading && (
-                <div style={ {
+              {cleanupResult && !cleanupLoading && (
+                <div style={{
                   marginBottom: '24px'
-                } }>
-                  { cleanupResult.success ? (
+                }}>
+                  {cleanupResult.success ? (
                     <div>
-                      <div style={ {
+                      <div style={{
                         marginBottom: '20px',
                         paddingBottom: '16px',
                         borderBottom: '1px solid #e0e0e0'
-                      } }>
-                        <h3 style={ {
+                      }}>
+                        <h3 style={{
                           margin: 0,
                           fontSize: '18px',
                           fontWeight: '600',
                           color: 'var(--text-primary)'
-                        } }>
+                        }}>
                           Очистка завершена
                         </h3>
                       </div>
-                      <div style={ {
+                      <div style={{
                         display: 'grid',
                         gridTemplateColumns: '1fr 1fr',
                         gap: '16px'
-                      } }>
-                        <div style={ {
+                      }}>
+                        <div style={{
                           padding: '16px',
                           backgroundColor: '#f8f9fa',
                           borderRadius: '8px',
                           border: '1px solid #e9ecef'
-                        } }>
-                          <div style={ {
+                        }}>
+                          <div style={{
                             fontSize: '13px',
                             color: '#6c757d',
                             marginBottom: '8px',
                             fontWeight: '500'
-                          } }>
+                          }}>
                             Всего тест-кейсов
                           </div>
-                          <div style={ {
+                          <div style={{
                             fontSize: '28px',
                             fontWeight: '700',
                             color: '#212529',
                             lineHeight: '1.2'
-                          } }>
-                            { cleanupResult.totalCases }
+                          }}>
+                            {cleanupResult.totalCases}
                           </div>
                         </div>
-                        <div style={ {
+                        <div style={{
                           padding: '16px',
                           backgroundColor: '#f8f9fa',
                           borderRadius: '8px',
                           border: '1px solid #e9ecef'
-                        } }>
-                          <div style={ {
+                        }}>
+                          <div style={{
                             fontSize: '13px',
                             color: '#6c757d',
                             marginBottom: '8px',
                             fontWeight: '500'
-                          } }>
+                          }}>
                             Групп дублей
                           </div>
-                          <div style={ {
+                          <div style={{
                             fontSize: '28px',
                             fontWeight: '700',
                             color: '#212529',
                             lineHeight: '1.2'
-                          } }>
-                            { cleanupResult.duplicatesFound }
+                          }}>
+                            {cleanupResult.duplicatesFound}
                           </div>
                         </div>
-                        <div style={ {
+                        <div style={{
                           padding: '16px',
                           backgroundColor: '#fff5f5',
                           borderRadius: '8px',
                           border: '1px solid #fed7d7'
-                        } }>
-                          <div style={ {
+                        }}>
+                          <div style={{
                             fontSize: '13px',
                             color: '#6c757d',
                             marginBottom: '8px',
                             fontWeight: '500'
-                          } }>
+                          }}>
                             Удалено дублей
                           </div>
-                          <div style={ {
+                          <div style={{
                             fontSize: '28px',
                             fontWeight: '700',
                             color: '#c53030',
                             lineHeight: '1.2'
-                          } }>
-                            { cleanupResult.deleted }
+                          }}>
+                            {cleanupResult.deleted}
                           </div>
                         </div>
-                        <div style={ {
+                        <div style={{
                           padding: '16px',
                           backgroundColor: '#f0fff4',
                           borderRadius: '8px',
                           border: '1px solid #c6f6d5'
-                        } }>
-                          <div style={ {
+                        }}>
+                          <div style={{
                             fontSize: '13px',
                             color: '#6c757d',
                             marginBottom: '8px',
                             fontWeight: '500'
-                          } }>
+                          }}>
                             Оставлено
                           </div>
-                          <div style={ {
+                          <div style={{
                             fontSize: '28px',
                             fontWeight: '700',
                             color: '#22543d',
                             lineHeight: '1.2'
-                          } }>
-                            { cleanupResult.kept }
+                          }}>
+                            {cleanupResult.kept}
                           </div>
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <div style={ {
+                    <div style={{
                       padding: '20px',
                       backgroundColor: 'var(--error-bg)',
                       border: '1px solid var(--error)',
                       borderRadius: '8px'
-                    } }>
-                      <h3 style={ {
+                    }}>
+                      <h3 style={{
                         margin: '0 0 12px 0',
                         fontSize: '18px',
                         fontWeight: '600',
                         color: 'var(--error)'
-                      } }>
+                      }}>
                         Ошибка
                       </h3>
-                      <p style={ {
+                      <p style={{
                         margin: 0,
                         fontSize: '14px',
                         color: 'var(--text-primary)',
                         lineHeight: '1.5'
-                      } }>
-                        { cleanupResult.error || 'Неизвестная ошибка' }
+                      }}>
+                        {cleanupResult.error || 'Неизвестная ошибка'}
                       </p>
                     </div>
-                  ) }
+                  )}
                 </div>
-              ) }
+              )}
 
-              <div style={ {
+              <div style={{
                 display: 'flex',
                 gap: '12px',
                 justifyContent: 'flex-end',
                 marginTop: '32px',
                 paddingTop: '24px',
                 borderTop: '1px solid #e9ecef'
-              } }>
+              }}>
                 <button
-                  onClick={ () =>
-                  {
+                  onClick={() => {
                     setShowCleanupModal(false);
                     setCleanupResult(null);
-                  } }
-                  disabled={ cleanupLoading }
-                  style={ {
+                  }}
+                  disabled={cleanupLoading}
+                  style={{
                     minWidth: '120px',
                     padding: '12px 24px',
                     backgroundColor: cleanupLoading ? '#e9ecef' : '#6c757d',
@@ -1863,27 +1843,25 @@ const App = ({ projects }) =>
                     transition: 'all 0.2s ease',
                     opacity: cleanupLoading ? 0.6 : 1,
                     boxShadow: cleanupLoading ? 'none' : '0 2px 4px rgba(0,0,0,0.1)'
-                  } }
-                  onMouseEnter={ (e) =>
-                  {
+                  }}
+                  onMouseEnter={(e) => {
                     if (!cleanupLoading && !cleanupResult) {
                       e.target.style.backgroundColor = '#5a6268';
                     }
-                  } }
-                  onMouseLeave={ (e) =>
-                  {
+                  }}
+                  onMouseLeave={(e) => {
                     if (!cleanupLoading) {
                       e.target.style.backgroundColor = cleanupResult ? '#6c757d' : '#6c757d';
                     }
-                  } }
+                  }}
                 >
-                  { cleanupResult ? 'Закрыть' : 'Отмена' }
+                  {cleanupResult ? 'Закрыть' : 'Отмена'}
                 </button>
-                { !cleanupResult && (
+                {!cleanupResult && (
                   <button
-                    onClick={ handleCleanupDuplicates }
-                    disabled={ cleanupLoading }
-                    style={ {
+                    onClick={handleCleanupDuplicates}
+                    disabled={cleanupLoading}
+                    style={{
                       minWidth: '180px',
                       padding: '12px 24px',
                       backgroundColor: cleanupLoading ? '#c82333' : '#dc3545',
@@ -1896,39 +1874,37 @@ const App = ({ projects }) =>
                       transition: 'all 0.2s ease',
                       opacity: cleanupLoading ? 0.7 : 1,
                       boxShadow: cleanupLoading ? 'none' : '0 2px 4px rgba(220,53,69,0.3)'
-                    } }
-                    onMouseEnter={ (e) =>
-                    {
+                    }}
+                    onMouseEnter={(e) => {
                       if (!cleanupLoading) {
                         e.target.style.backgroundColor = '#c82333';
                       }
-                    } }
-                    onMouseLeave={ (e) =>
-                    {
+                    }}
+                    onMouseLeave={(e) => {
                       if (!cleanupLoading) {
                         e.target.style.backgroundColor = '#dc3545';
                       }
-                    } }
+                    }}
                   >
-                    { cleanupLoading ? 'Очистка...' : 'Подтвердить удаление' }
+                    {cleanupLoading ? 'Очистка...' : 'Подтвердить удаление'}
                   </button>
-                ) }
+                )}
               </div>
             </div>
           </div>
-        ) }
+        )}
       </div>
 
-      {/* Модалка с правилами валидации */ }
+      {/* Модалка с правилами валидации */}
       <RulesModal
-        isOpen={ showRulesModal }
-        onClose={ () => setShowRulesModal(false) }
-        projectId={ projectId }
+        isOpen={showRulesModal}
+        onClose={() => setShowRulesModal(false)}
+        projectId={projectId}
       />
       <RulesModal
-        isOpen={ showTestModelRulesModal }
-        onClose={ () => setShowTestModelRulesModal(false) }
-        projectId={ projectId }
+        isOpen={showTestModelRulesModal}
+        onClose={() => setShowTestModelRulesModal(false)}
+        projectId={projectId}
         exportUrlSuffix="validation/test-model-rules/export"
         emptyTitleFallback="Правила ревью тестовой модели"
       />

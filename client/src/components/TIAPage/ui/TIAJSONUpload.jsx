@@ -21,12 +21,18 @@ const TIAJSONUpload = ({ type }) => {
         setTiaReport
     } = useTIA();
 
+    const fileInputRef = React.useRef(null);
+
     const isFrontend = type === 'frontend';
     const currentJSON = isFrontend ? frontendJSON : backendJSON;
     const currentFileName = isFrontend ? frontendFileName : backendFileName;
     const uploadHandler = isFrontend ? handleFrontendJSONUpload : handleBackendJSONUpload;
 
     const handleRemove = () => {
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
+
         if (isFrontend) {
             setFrontendJSON(null);
             setFrontendFileName('');
@@ -49,6 +55,7 @@ const TIAJSONUpload = ({ type }) => {
         }}>
             <div style={{ width: '130px', overflow: 'hidden', flexShrink: 0 }}>
                 <input
+                    ref={fileInputRef}
                     type="file"
                     accept=".json"
                     onChange={uploadHandler}
@@ -69,10 +76,12 @@ const TIAJSONUpload = ({ type }) => {
                         onClick={handleRemove}
                         style={TIAStyles.removeButton}
                         onMouseEnter={(e) => {
-                            e.currentTarget.style.backgroundColor = '#fecaca';
+                            e.currentTarget.style.backgroundColor = 'var(--error)';
+                            e.currentTarget.style.color = '#fff';
                         }}
                         onMouseLeave={(e) => {
-                            e.currentTarget.style.backgroundColor = '#fee2e2';
+                            e.currentTarget.style.backgroundColor = 'var(--error-bg)';
+                            e.currentTarget.style.color = 'var(--error)';
                         }}
                     >
                         ✕

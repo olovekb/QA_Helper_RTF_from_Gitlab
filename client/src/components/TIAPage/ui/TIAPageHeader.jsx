@@ -13,17 +13,16 @@ const TIAPageHeader = () => {
             <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                 <button
                     style={styles.backButton}
+                    onMouseOver={(e) => (e.currentTarget.style.borderColor = 'var(--border-focus)', e.currentTarget.style.color = 'var(--text-secondary)')}
+                    onMouseOut={(e) => (e.currentTarget.style.borderColor = 'var(--border-color)', e.currentTarget.style.color = 'var(--text-muted)')}
                     onClick={() => navigate('/')}
                 >
                     Назад
                 </button>
                 <button
-                    style={{
-                        ...styles.backButton,
-                        backgroundColor: '#007bff',
-                        color: '#fff',
-                        borderColor: '#007bff',
-                    }}
+                    style={styles.primaryButton}
+                    onMouseOver={(e) => (e.currentTarget.style.backgroundColor = 'var(--primary-hover)')}
+                    onMouseOut={(e) => (e.currentTarget.style.backgroundColor = 'var(--primary-accent)')}
                     onClick={() => navigate('/heatmap')}
                 >
                     Тепловая карта дефектов

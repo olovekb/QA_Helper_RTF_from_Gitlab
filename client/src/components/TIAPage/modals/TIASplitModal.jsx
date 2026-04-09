@@ -1,7 +1,7 @@
 import React from 'react';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import { useTIA } from '../context/TIAContext';
-import TIAStyles from '../styles/TIAStyles';
+import { styles } from '../styles/TIAStyles';
 import Loader from '../../../Loader';
 import { findFolderById, formatCustomFieldName } from '../utils/tiaUtils';
 import TIASplitFolderTree from './TIASplitFolderTree';
@@ -235,7 +235,7 @@ const TIASplitModal = () => {
                                                             const folder = findFolderById(folders || [], id);
                                                             if (!folder) return null;
                                                             return (
-                                                                <Draggable key={id.toString()} draggableId={`launch-${group.id}::${id}`} index={index}>
+                                                                <Draggable key={id.toString()} draggableId={`folder-${id}`} index={index}>
                                                                     {(provided, snapshot) => (
                                                                         <div
                                                                             ref={provided.innerRef}
@@ -244,12 +244,13 @@ const TIASplitModal = () => {
                                                                             style={{
                                                                                 ...provided.draggableProps.style,
                                                                                 padding: '10px 14px',
-                                                                                backgroundColor: '#fff',
+                                                                                backgroundColor: 'var(--bg-content)',
+                                                                                color: 'var(--text-primary)',
                                                                                 borderRadius: '12px',
                                                                                 border: '1px solid var(--border-color)',
                                                                                 boxShadow: snapshot.isDragging ? '0 10px 15px -3px rgba(0, 0, 0, 0.1)' : '0 1px 2px rgba(0,0,0,0.02)',
                                                                                 fontSize: '12px',
-                                                                                fontWeight: 600,
+                                                                                fontWeight: 700,
                                                                                 lineHeight: '1.2',
                                                                                 whiteSpace: 'nowrap',
                                                                                 overflow: 'hidden',
@@ -257,7 +258,11 @@ const TIASplitModal = () => {
                                                                                 minHeight: '44px',
                                                                                 display: 'flex',
                                                                                 alignItems: 'center',
-                                                                                flexShrink: 0
+                                                                                justifyContent: 'flex-start',
+                                                                                padding: '0 16px',
+                                                                                flexShrink: 0,
+                                                                                width: '100%',
+                                                                                boxSizing: 'border-box'
                                                                             }}
                                                                             title={formatCustomFieldName(folder)}
                                                                         >
@@ -323,7 +328,7 @@ const TIASplitModal = () => {
                                     <button
                                         onClick={handleSplitModalCancel}
                                         style={{
-                                            ...TIAStyles.backButton,
+                                            ...styles.backButton,
                                             padding: '14px 32px',
                                             height: 'auto',
                                             display: 'flex',
@@ -338,19 +343,17 @@ const TIASplitModal = () => {
                                         onClick={() => handleMappingConfirm('split')}
                                         disabled={loadingState.launch || activeGroupsCount === 0}
                                         style={{
-                                            ...TIAStyles.backButton,
+                                            ...styles.primaryButton,
                                             margin: 0,
                                             padding: '14px 32px',
-                                            backgroundColor: '#fff',
-                                            color: '#6366f1',
-                                            borderColor: '#6366f1',
+                                            height: 'auto',
                                             opacity: (loadingState.launch || activeGroupsCount === 0) ? 0.6 : 1,
                                             cursor: (loadingState.launch || activeGroupsCount === 0) ? 'not-allowed' : 'pointer'
                                         }}
                                     >
                                         {loadingState.launch ? (
                                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-                                                <Loader size="18px" color="#6366f1" />
+                                                <Loader size="18px" color="#fff" />
                                                 <span>Создание ({splitProgress?.current}/{splitProgress?.total})...</span>
                                             </div>
                                         ) : (

@@ -114,13 +114,11 @@ const TIAComponentList = ({ componentsOverride }) => {
                         {/* Заголовок компонента */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
                             <div style={{ flex: 1 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                                    <h3 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
-                                        {comp.name}
-                                    </h3>
-                                    {isHighRisk && <span style={TIAStyles.badge('var(--error)')}>HIGH RISK</span>}
-                                    <span style={TIAStyles.badge('var(--text-muted)')}>{comp.type || 'component'}</span>
+                                <div style={{ fontWeight: 700, margin: 0, fontSize: '18px', color: 'var(--text-primary)' }}>
+                                    {comp.name}
                                 </div>
+                                {isHighRisk && <span style={TIAStyles.badge('var(--error)')}>HIGH RISK</span>}
+                                <span style={TIAStyles.badge('var(--text-muted)')}>{comp.type || 'component'}</span>
                                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
                                     {comp.filePath || comp.serviceName || 'No path'}
                                 </div>

@@ -1,33 +1,33 @@
 
 export const TIA_COLORS = {
-    primary: '#3b82f6',
-    primaryHover: '#2563eb',
-    success: '#10b981',
-    successBg: '#f0fdf4',
-    error: '#ef4444',
-    errorBg: '#fef2f2',
-    warning: '#f59e0b',
-    warningBg: '#fffbeb',
-    textPrimary: '#1e293b',
-    textSecondary: '#475569',
-    textMuted: '#94a3b8',
-    border: '#e2e8f0',
-    bgContent: '#ffffff',
-    bgInput: '#f8fafc',
-    shadowSm: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
-    shadowMd: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-    shadowLg: '0 10px 15px -3px rgba(0, 0, 0, 0.1)'
+    primary: 'var(--primary-accent)',
+    primaryHover: 'var(--primary-hover)',
+    success: 'var(--success)',
+    successBg: 'var(--success-bg)',
+    error: 'var(--error)',
+    errorBg: 'var(--error-bg)',
+    warning: 'var(--warning)',
+    warningBg: 'var(--warning-bg)',
+    textPrimary: 'var(--text-primary)',
+    textSecondary: 'var(--text-secondary)',
+    textMuted: 'var(--text-muted)',
+    border: 'var(--border-color)',
+    bgContent: 'var(--bg-content)',
+    bgInput: 'var(--bg-input)',
+    shadowSm: 'var(--shadow-sm)',
+    shadowMd: 'var(--shadow-md)',
+    shadowLg: 'var(--shadow-lg)'
 };
 
 // Бейджи
 export const badge = (color) => ({
     padding: '4px 10px',
-    backgroundColor: `${color}15`,
+    backgroundColor: `color-mix(in srgb, ${color} 15%, transparent)`,
     color: color,
     borderRadius: '20px',
     fontSize: '11px',
     fontWeight: 800,
-    border: `1px solid ${color}33`,
+    border: `1px solid color-mix(in srgb, ${color} 25%, transparent)`,
     whiteSpace: 'nowrap',
     textTransform: 'uppercase'
 });
@@ -59,17 +59,17 @@ export const mappingTag = (type) => {
     switch (type) {
         case 'direct':
             colors = {
-                backgroundColor: '#f0fdf4',
-                border: '1px solid #dcfce7',
-                color: '#166534'
+                backgroundColor: 'var(--success-bg)',
+                border: '1px solid var(--success)',
+                color: 'var(--success)'
             };
             break;
         case 'page':
         case 'auto':
             colors = {
-                backgroundColor: '#fefce8',
-                border: '1px solid #fef08a',
-                color: '#854d0e'
+                backgroundColor: 'var(--warning-bg)',
+                border: '1px solid var(--warning)',
+                color: 'var(--warning)'
             };
             break;
         default:
@@ -84,8 +84,8 @@ export const removeButton = {
     height: '32px',
     borderRadius: '12px',
     border: 'none',
-    backgroundColor: '#fee2e2',
-    color: '#dc2626',
+    backgroundColor: 'var(--error-bg)',
+    color: 'var(--error)',
     fontSize: '10px',
     fontWeight: 800,
     cursor: 'pointer',
@@ -101,10 +101,10 @@ export const removeButton = {
 export const componentCard = (isSelected, hasMapping) => ({
     padding: '20px',
     borderRadius: '16px',
-    backgroundColor: '#ffffff',
-    border: `2px solid ${isSelected ? TIA_COLORS.primary : (hasMapping ? '#86efac' : '#e2e8f0')}`,
+    backgroundColor: 'var(--bg-content)',
+    border: `2px solid ${isSelected ? TIA_COLORS.primary : (hasMapping ? 'var(--success)' : 'var(--border-color)')}`,
     marginBottom: '16px',
-    boxShadow: isSelected ? '0 10px 25px -5px rgba(59, 130, 246, 0.1)' : '0 4px 6px -1px rgba(0,0,0,0.05)',
+    boxShadow: isSelected ? 'var(--shadow-md)' : 'var(--shadow-sm)',
     transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
     position: 'relative',
     overflow: 'hidden',
@@ -114,59 +114,84 @@ export const componentCard = (isSelected, hasMapping) => ({
 // Стили воркспейса и модалок
 export const styles = {
     container: {
-        padding: '24px',
-        maxWidth: '1000px',
-        margin: '0 auto',
+        width: '100%',
         minHeight: '100vh',
         display: 'flex',
         flexDirection: 'column',
         boxSizing: 'border-box',
-        backgroundColor: '#ffffff',
-        borderRadius: '6px',
-        boxShadow: TIA_COLORS.shadowLg,
-        fontFamily: 'Inter, sans-serif',
-        border: `1px solid ${TIA_COLORS.border}`,
-        overflow: 'hidden',
+        backgroundColor: 'var(--bg-main)',
+        fontFamily: 'var(--font-main), "Inter", "Outfit", "Roboto", sans-serif',
+        color: 'var(--text-primary)',
     },
     headerSection: {
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: '32px',
-        borderBottom: `2px solid ${TIA_COLORS.border}`,
-        paddingBottom: '20px'
+        padding: '0',
+        marginBottom: '40px',
     },
     title: {
         fontSize: '32px',
-        color: TIA_COLORS.textPrimary,
+        color: 'var(--text-primary)',
         margin: 0,
         fontWeight: 800,
-        background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)',
+        letterSpacing: '-0.02em',
+        background: 'linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%)',
         WebkitBackgroundClip: 'text',
         WebkitTextFillColor: 'transparent',
+        textShadow: 'none'
     },
     backButton: {
-        padding: '10px 18px',
-        backgroundColor: '#fff',
-        border: `1px solid ${TIA_COLORS.border}`,
-        borderRadius: '12px',
-        fontSize: '14px',
-        fontWeight: 700,
-        color: TIA_COLORS.textSecondary,
+        padding: '0 20px',
+        height: '52px',
+        backgroundColor: 'var(--bg-content)',
+        color: 'var(--text-muted)',
+        border: '1px solid var(--border-color)',
+        borderRadius: '14px',
+        fontWeight: 600,
+        fontSize: '15px',
         cursor: 'pointer',
-        transition: 'all 0.2s'
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+    },
+    primaryButton: {
+        padding: '0 28px',
+        height: '52px',
+        backgroundColor: 'var(--primary-accent)',
+        color: '#fff',
+        border: 'none',
+        borderRadius: '14px',
+        fontWeight: 600,
+        fontSize: '15px',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+        boxShadow: '0 4px 14px rgba(99, 102, 241, 0.3)',
+    },
+    setupCard: {
+        backgroundColor: 'var(--bg-content)',
+        padding: '32px',
+        borderRadius: '24px',
+        marginBottom: '40px',
+        border: '1px solid var(--border-color)',
+        boxShadow: '0 4px 24px rgba(0,0,0,0.02)',
     },
     card: {
-        padding: '24px',
-        backgroundColor: '#fff',
-        border: `1px solid ${TIA_COLORS.border}`,
+        backgroundColor: 'var(--bg-content)',
+        border: '1px solid var(--border-color)',
         borderRadius: '16px',
-        boxShadow: TIA_COLORS.shadowSm
+        boxShadow: 'var(--shadow-sm)',
+        padding: '24px',
     },
     cardSectionTitle: {
         fontSize: '12px',
         fontWeight: 800,
-        color: TIA_COLORS.textMuted,
+        color: 'var(--text-muted)',
         textTransform: 'uppercase',
         letterSpacing: '0.05em',
         marginBottom: '12px'
@@ -191,10 +216,10 @@ export const styles = {
     },
     riskAlert: {
         padding: '16px 20px',
-        backgroundColor: '#fffbeb',
-        border: '1px solid #fef3c7',
+        backgroundColor: 'var(--warning-bg)',
+        border: '1px solid var(--warning)',
         borderRadius: '12px',
-        color: '#92400e',
+        color: 'var(--text-primary)',
         display: 'flex',
         flexDirection: 'column',
         gap: '8px'
@@ -210,21 +235,21 @@ export const styles = {
         zIndex: 10000,
     },
     mappingModalContent: {
-        backgroundColor: '#ffffff',
+        backgroundColor: 'var(--bg-content)',
         borderRadius: '24px',
-        width: '95vw',
-        maxWidth: '1750px',
-        height: '90vh',
+        width: '98vw',
+        maxWidth: '1920px',
+        height: '95vh',
         display: 'flex',
         flexDirection: 'column',
-        boxShadow: '0 25px 70px -10px rgba(0, 0, 0, 0.4)',
-        border: '1px solid #334155',
+        boxShadow: '0 20px 50px rgba(0,0,0,0.5)',
+        border: 'none',
         overflow: 'hidden',
     },
     mappingModalHeader: {
         padding: '18px 28px',
-        borderBottom: `1px solid ${TIA_COLORS.border}`,
-        backgroundColor: '#f1f5f9',
+        borderBottom: '1px solid var(--border-color)',
+        backgroundColor: 'var(--bg-input)',
         flexShrink: 0,
         display: 'flex',
         justifyContent: 'space-between',
@@ -232,8 +257,8 @@ export const styles = {
     },
     mappingModalFooter: {
         padding: '16px 28px',
-        borderTop: `1px solid ${TIA_COLORS.border}`,
-        backgroundColor: '#f8fafc',
+        borderTop: '1px solid var(--border-color)',
+        backgroundColor: 'var(--bg-input)',
         display: 'flex',
         justifyContent: 'flex-end',
         gap: '12px',
@@ -244,14 +269,14 @@ export const styles = {
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
-        backgroundColor: '#ffffff',
-        borderRight: `1px solid ${TIA_COLORS.border}`,
+        backgroundColor: 'var(--bg-content)',
+        borderRight: '1px solid var(--border-color)',
         overflow: 'hidden'
     },
     columnHeader: {
         padding: '16px 20px',
-        backgroundColor: '#f8fafc',
-        borderBottom: `1px solid ${TIA_COLORS.border}`,
+        backgroundColor: 'var(--bg-input)',
+        borderBottom: '1px solid var(--border-color)',
         display: 'flex',
         flexDirection: 'column',
         minHeight: 'auto',
@@ -266,8 +291,8 @@ export const styles = {
     mappingTabsContainer: {
         display: 'flex',
         padding: '12px 20px',
-        backgroundColor: '#f8fafc',
-        borderBottom: `1px solid ${TIA_COLORS.border}`,
+        backgroundColor: 'var(--bg-input)',
+        borderBottom: '1px solid var(--border-color)',
         gap: '8px'
     },
     mappingTabButton: (isActive) => ({
@@ -284,7 +309,7 @@ export const styles = {
     footer: {
         marginTop: '40px',
         paddingTop: '24px',
-        borderTop: `1px solid ${TIA_COLORS.border}`,
+        borderTop: '1px solid var(--border-color)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -295,17 +320,20 @@ export const styles = {
         fontSize: '16px',
         fontWeight: 700,
         color: '#ffffff',
-        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+        background: 'linear-gradient(135deg, var(--success) 0%, #059669 100%)',
         border: 'none',
         borderRadius: '16px',
         cursor: 'pointer',
-        transition: 'all 0.3s'
+        transition: 'all 0.3s',
+        boxShadow: '0 10px 25px -5px color-mix(in srgb, var(--success) 40%, transparent)',
+        width: '100%',
+        maxWidth: '400px',
     },
     error: {
         padding: '14px 20px',
-        backgroundColor: '#fef2f2',
-        border: '1px solid #ef4444',
-        color: '#ef4444',
+        backgroundColor: 'var(--error-bg)',
+        border: '1px solid var(--error)',
+        color: 'var(--error)',
         borderRadius: '12px',
         fontSize: '14px',
         fontWeight: 500,
@@ -314,9 +342,9 @@ export const styles = {
     },
     success: {
         padding: '14px 20px',
-        backgroundColor: '#f0fdf4',
-        border: '1px solid #10b981',
-        color: '#10b981',
+        backgroundColor: 'var(--success-bg)',
+        border: '1px solid var(--success)',
+        color: 'var(--success)',
         borderRadius: '12px',
         fontSize: '14px',
         fontWeight: 500,
@@ -329,42 +357,36 @@ export const styles = {
         padding: '14px 16px',
         fontSize: '15px',
         borderRadius: '14px',
-        border: '1px solid #e2e8f0',
-        color: '#1e293b',
-        backgroundColor: '#f8fafc',
+        border: '1px solid var(--border-color)',
+        color: 'var(--text-primary)',
+        backgroundColor: 'var(--bg-input)',
         transition: 'all 0.2s ease',
         cursor: 'pointer',
         outline: 'none',
     },
-    /**
-     * Кнопка отмены в модальных окнах
-     */
     modalButtonCancel: {
         padding: '12px 24px',
         borderRadius: '14px',
-        border: '1px solid #e2e8f0',
-        backgroundColor: '#f8fafc',
-        color: '#475569',
+        border: '1px solid var(--border-color)',
+        backgroundColor: 'var(--bg-input)',
+        color: 'var(--text-secondary)',
         fontSize: '14px',
         fontWeight: 700,
         cursor: 'pointer',
         transition: 'all 0.2s ease',
         whiteSpace: 'nowrap',
     },
-    /**
-     * Главная кнопка подтверждения в модальных окнахв
-     */
     modalButtonConfirm: {
         padding: '12px 28px',
         borderRadius: '14px',
         border: 'none',
-        background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+        background: 'linear-gradient(135deg, var(--primary-accent) 0%, var(--primary-hover) 100%)',
         color: '#ffffff',
         fontSize: '14px',
         fontWeight: 700,
         cursor: 'pointer',
         transition: 'all 0.2s ease',
-        boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)',
+        boxShadow: '0 4px 12px color-mix(in srgb, var(--primary-accent) 30%, transparent)',
         whiteSpace: 'nowrap',
     },
 };
@@ -376,7 +398,7 @@ export const setupStyles = {
     label: {
         fontSize: '14px',
         fontWeight: 600,
-        color: TIA_COLORS.textSecondary,
+        color: 'var(--text-secondary)',
         textTransform: 'uppercase',
         letterSpacing: '0.05em',
         marginBottom: '4px',
@@ -387,9 +409,9 @@ export const setupStyles = {
         padding: '14px 16px',
         fontSize: '15px',
         borderRadius: '14px',
-        border: `1px solid ${TIA_COLORS.border}`,
-        color: TIA_COLORS.textPrimary,
-        backgroundColor: '#f8fafc',
+        border: '1px solid var(--border-color)',
+        color: 'var(--text-primary)',
+        backgroundColor: 'var(--bg-input)',
         transition: 'all 0.2s ease',
         cursor: 'pointer',
     },
@@ -398,23 +420,23 @@ export const setupStyles = {
         alignItems: 'center',
         gap: '16px',
         padding: '10px 20px',
-        backgroundColor: '#f8fafc',
+        backgroundColor: 'var(--bg-input)',
         borderRadius: '16px',
-        border: `2px dashed ${TIA_COLORS.border}`,
+        border: '1px solid var(--border-color)',
         cursor: 'pointer',
         width: '100%',
         boxSizing: 'border-box',
         minHeight: '54px'
     },
-    fileInput: { fontSize: '14px', color: TIA_COLORS.textSecondary, cursor: 'pointer' },
+    fileInput: { fontSize: '14px', color: 'var(--text-secondary)', cursor: 'pointer' },
     fileName: {
         fontSize: '13px',
         fontWeight: 600,
-        color: TIA_COLORS.primary,
-        backgroundColor: '#eff6ff',
+        color: 'var(--primary-accent)',
+        backgroundColor: 'color-mix(in srgb, var(--primary-accent) 15%, transparent)',
         padding: '0 16px',
         borderRadius: '10px',
-        border: '1px solid #dbeafe',
+        border: '1px solid var(--border-color)',
         maxWidth: '220px',
         overflow: 'hidden',
         textOverflow: 'ellipsis',
@@ -426,7 +448,7 @@ export const setupStyles = {
     },
     modeToggleContainer: {
         display: 'flex',
-        backgroundColor: '#f1f5f9',
+        backgroundColor: 'var(--bg-input)',
         borderRadius: '16px',
         padding: '4px',
         width: 'fit-content',
@@ -440,12 +462,12 @@ export const setupStyles = {
         fontWeight: 700,
         cursor: 'pointer',
         transition: 'all 0.2s ease',
-        backgroundColor: isActive ? '#ffffff' : 'transparent',
-        color: isActive ? TIA_COLORS.primary : TIA_COLORS.textMuted,
-        boxShadow: isActive ? '0 4px 6px -1px rgba(0, 0, 0, 0.1)' : 'none',
+        backgroundColor: isActive ? 'var(--bg-content)' : 'transparent',
+        color: isActive ? 'var(--primary-accent)' : 'var(--text-muted)',
+        boxShadow: isActive ? 'var(--shadow-sm)' : 'none',
         marginTop: 0
     }),
-    modeToggleLabel: { fontSize: '14px', fontWeight: 600, color: TIA_COLORS.textSecondary, marginBottom: '10px' }
+    modeToggleLabel: { fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '10px' }
 };
 
 const TIAStyles = {
@@ -459,3 +481,4 @@ const TIAStyles = {
 };
 
 export default TIAStyles;
+

@@ -10,13 +10,24 @@
 }
 
 .app-footer {
+  position: sticky;
+  bottom: 0;
+  background: color-mix(in srgb, var(--bg-main) 80%, transparent);
+  backdrop-filter: blur(12px);
   border-top: 1px solid var(--border-color);
-  padding: 12px 24px;
+  padding: 12px 32px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
+  z-index: 1000;
+}
+
+@media (max-width: 768px) {
+  .app-footer {
+    padding: 12px 16px;
+  }
 }
 
 .app-footer__links {

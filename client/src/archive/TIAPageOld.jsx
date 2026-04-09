@@ -2805,7 +2805,7 @@ const TIAPage = ({ projects }) => {
                         </div>
                         {allureLink && (
                             <a href={allureLink} target="_blank" rel="noopener noreferrer" style={{ ...styles.successLink, color: '#fff', backgroundColor: '#10b981', padding: '6px 12px', borderRadius: '8px', marginTop: '10px', display: 'inline-block', fontWeight: 600 }}>
-                                Перейти к запуску в Allure
+                                Перейти к запуску в ТестОпс
                             </a>
                         )}
                     </div>
@@ -4737,7 +4737,7 @@ const TIAPage = ({ projects }) => {
 
                                 <div style={{ padding: '0 32px 32px' }}>
                                     <p style={{ margin: '0 0 24px', fontSize: '16px', lineHeight: '1.4', color: '#fff', opacity: 0.95 }}>
-                                        Вы не связали некоторые компоненты с функциональными блоками Allure.
+                                        Вы не связали некоторые компоненты с функциональными блоками ТестОпс.
                                         Это может привести к неполному покрытию тестами в созданном запуске.
                                         <br />
                                         <strong style={{ fontSize: '17px' }}>Вы уверены, что хотите продолжить?</strong>
@@ -4877,7 +4877,7 @@ const TIAPage = ({ projects }) => {
                                             Обнаружены пустые группы
                                         </h3>
                                         <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: '14px' }}>
-                                            Allure не нашел тест-кейсов в следующих папках:
+                                            ТестОпс не нашел тест-кейсов в следующих папках:
                                         </p>
                                     </div>
                                 </div>
@@ -4910,7 +4910,7 @@ const TIAPage = ({ projects }) => {
                                 </div>
 
                                 <p style={{ fontSize: '14px', color: '#475569', lineHeight: '1.5' }}>
-                                    Вы можете создать автоматические заглушки (Stub Test Cases) в этих группах, чтобы Allure смог запустить их.
+                                    Вы можете создать автоматические заглушки (Stub Test Cases) в этих группах, чтобы ТестОпс смог запустить их.
                                 </p>
 
                                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '32px' }}>

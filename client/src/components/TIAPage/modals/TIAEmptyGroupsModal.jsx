@@ -24,10 +24,10 @@ const TIAEmptyGroupsModal = () => {
                 {/* Header */}
                 <div style={{ padding: '32px 40px', borderBottom: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <h3 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
-                        Пустые группы Allure
+                        Пустые группы ТестОпс
                     </h3>
                     <p style={{ fontSize: '14px', color: 'var(--text-muted)', margin: 0 }}>
-                        Следующие блоки не содержат ни одного теста. Allure не позволяет создавать запуски с пустыми группами.
+                        Следующие блоки не содержат ни одного теста. ТестОпс не позволяет создавать запуски с пустыми группами.
                     </p>
                 </div>
 

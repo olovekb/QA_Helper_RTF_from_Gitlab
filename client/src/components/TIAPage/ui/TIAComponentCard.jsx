@@ -59,9 +59,9 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
         component.risk_score > 0.4 ? 'HIGH' :
             component.risk_score > 0.1 ? 'MEDIUM' : 'LOW';
 
-    const riskColor = riskLevel === 'CRITICAL' ? '#991b1b' :
-        riskLevel === 'HIGH' ? '#dc2626' :
-            riskLevel === 'MEDIUM' ? '#d97706' : '#059669';
+    const riskColor = riskLevel === 'CRITICAL' ? 'var(--error)' :
+        riskLevel === 'HIGH' ? 'var(--error)' :
+            riskLevel === 'MEDIUM' ? 'var(--warning)' : 'var(--success)';
 
     /**
      * Отрисовка трассировки UI
@@ -93,26 +93,26 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                 marginTop: '12px',
                 marginBottom: '12px',
                 padding: '12px',
-                backgroundColor: '#fff3cd',
-                border: '1px solid #ffc107',
-                borderRadius: '6px'
+                backgroundColor: 'var(--warning-bg)',
+                border: '1px solid var(--warning)',
+                borderRadius: '12px'
             }}>
-                <div style={{ fontSize: '13px', fontWeight: 600, color: '#856404', marginBottom: '8px' }}>
+                <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--warning)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                     UI Trace
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {comp.uiContext.uiElements.map((element, eidx) => (
                         <div key={`ui-element-${eidx}`} style={{
-                            display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '8px',
-                            backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #ffc107'
+                            display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '10px',
+                            backgroundColor: 'var(--bg-content)', borderRadius: '8px', border: '1px solid var(--border-color)'
                         }}>
-                            <div style={{ flex: 1, fontSize: '13px', color: '#111' }}>
-                                <div style={{ fontWeight: 600, marginBottom: '2px' }}>
+                            <div style={{ flex: 1, fontSize: '13px', color: 'var(--text-primary)' }}>
+                                <div style={{ fontWeight: 700, marginBottom: '2px' }}>
                                     {getElementTypeLabel(element.type)}
                                     {element.label && ` "${getElementLabel(element)}"`}
                                 </div>
                                 {element.method && (
-                                    <div style={{ fontSize: '11px', color: '#6c757d', fontFamily: 'monospace' }}>
+                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
                                         Метод: {element.method}
                                     </div>
                                 )}
@@ -151,8 +151,8 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                         <h4 style={{
                             margin: 0,
                             fontSize: '16px',
-                            fontWeight: 700,
-                            color: '#1e293b',
+                            fontWeight: 800,
+                            color: 'var(--text-primary)',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap'
@@ -161,13 +161,14 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                         </h4>
                         <span style={{
                             padding: '4px 8px',
-                            backgroundColor: '#f1f5f9',
-                            borderRadius: '6px',
-                            fontSize: '11px',
-                            color: '#64748b',
-                            fontWeight: 600,
+                            backgroundColor: 'var(--bg-input)',
+                            borderRadius: '8px',
+                            fontSize: '10px',
+                            color: 'var(--text-muted)',
+                            fontWeight: 800,
                             textTransform: 'uppercase',
-                            letterSpacing: '0.5px'
+                            letterSpacing: '0.05em',
+                            border: '1px solid var(--border-color)'
                         }}>
                             {component.type}
                         </span>
@@ -177,10 +178,11 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                     padding: '4px 12px',
                     backgroundColor: riskColor,
                     color: '#fff',
-                    borderRadius: '4px',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                    borderRadius: '8px',
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    boxShadow: '0 4px 12px color-mix(in srgb, var(--text-primary) 10%, transparent)',
+                    textTransform: 'uppercase'
                 }}>
                     {riskLevel}
                 </div>
@@ -190,12 +192,12 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
                     {component.envs?.map((env, i) => (
-                        <span key={i} style={{ padding: '3px 8px', backgroundColor: '#6c757d', color: '#fff', borderRadius: '3px', fontSize: '11px', fontWeight: 500 }}>
+                        <span key={i} style={{ padding: '3px 8px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', borderRadius: '6px', fontSize: '11px', fontWeight: 600 }}>
                             {env}
                         </span>
                     ))}
                     {component.jsdoc && (
-                        <span style={{ fontSize: '12px', color: '#495057', fontStyle: 'italic', padding: '4px 8px', backgroundColor: '#f8f9fa', borderRadius: '4px', border: '1px solid #dee2e6' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontStyle: 'italic', padding: '4px 10px', backgroundColor: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
                             {component.jsdoc}
                         </span>
                     )}
@@ -254,7 +256,25 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                 if (!summaryOutput) return null;
 
                 return (
-                    <div style={{ fontSize: '13px', color: '#475569', lineHeight: 1.5, margin: '8px 0' }}>
+                    <div style={{ 
+                        margin: '12px 0',
+                        padding: '12px 16px',
+                        backgroundColor: 'var(--bg-input)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '12px',
+                        fontSize: '13px',
+                        lineHeight: 1.5,
+                        color: 'var(--text-primary)'
+                    }}>
+                        <div style={{ 
+                            fontSize: '11px', 
+                            fontWeight: 800, 
+                            color: 'var(--primary-accent)', 
+                            marginBottom: '6px',
+                            letterSpacing: '0.5px'
+                        }}>
+                            СВОДКА AI
+                        </div>
                         {summaryOutput}
                     </div>
                 );
@@ -273,46 +293,45 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                         }}
                         style={{
                             width: '100%',
-                            padding: '10px 16px',
-                            backgroundColor: expandedScenarios[component.id] ? '#10b981' : '#f0fdf4',
-                            color: expandedScenarios[component.id] ? '#fff' : '#059669',
-                            border: `1px solid ${expandedScenarios[component.id] ? '#10b981' : '#bcf0da'}`,
-                            borderRadius: '12px',
+                            padding: '12px 16px',
+                            backgroundColor: expandedScenarios[component.id] ? 'var(--success)' : 'var(--success-bg)',
+                            color: expandedScenarios[component.id] ? '#fff' : 'var(--success)',
+                            border: `1px solid var(--success)`,
+                            borderRadius: '14px',
                             fontSize: '13px',
-                            fontWeight: 700,
+                            fontWeight: 800,
                             textAlign: 'left',
                             cursor: 'pointer',
                             display: 'flex',
                             justifyContent: 'space-between',
                             alignItems: 'center',
-                            transition: 'all 0.2s ease',
-                            boxShadow: expandedScenarios[component.id] ? '0 4px 12px rgba(16, 185, 129, 0.2)' : 'none'
+                            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                            boxShadow: expandedScenarios[component.id] ? '0 4px 12px color-mix(in srgb, var(--success) 30%, transparent)' : 'none'
                         }}
                     >
                         <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <span style={{ transition: 'transform 0.2s ease', transform: expandedScenarios[component.id] ? 'rotate(180deg)' : 'rotate(0deg)', display: 'inline-block' }}>▼</span>
-                            Сценарии тестирования
-                            <span style={{ fontSize: '11px', backgroundColor: expandedScenarios[component.id] ? 'rgba(255, 255, 255, 0.3)' : 'rgba(16, 185, 129, 0.1)', padding: '2px 8px', borderRadius: '20px', marginLeft: '4px' }}>
+                            СЦЕНАРИИ ТЕСТИРОВАНИЯ
+                            <span style={{ fontSize: '11px', backgroundColor: expandedScenarios[component.id] ? 'rgba(255, 255, 255, 0.3)' : 'color-mix(in srgb, var(--success) 10%, transparent)', padding: '2px 8px', borderRadius: '20px', marginLeft: '4px' }}>
                                 {component.qaAdvice.reduce((sum, advice) => sum + (advice.scenarios?.length || 0), 0)}
                             </span>
                         </span>
                     </button>
                     {expandedScenarios[component.id] && (
-                        <div style={{ marginTop: '12px', padding: '16px', backgroundColor: '#f8fafc', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
+                        <div style={{ marginTop: '12px', padding: '16px', backgroundColor: 'var(--bg-input)', borderRadius: '16px', border: '1px solid var(--border-color)' }}>
                             {component.qaAdvice.map((advice, i) => {
                                 const priorityColor = advice.priority === 'HIGH' ? '#dc3545' : advice.priority === 'MEDIUM' ? '#ffc107' : '#28a745';
                                 return (
-                                    <div key={i} style={{ marginBottom: i < component.qaAdvice.length - 1 ? '16px' : '0', paddingBottom: i < component.qaAdvice.length - 1 ? '16px' : '0', borderBottom: i < component.qaAdvice.length - 1 ? '1px solid #b3d9ff' : 'none' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                                            <span style={{ padding: '3px 8px', backgroundColor: priorityColor, color: '#fff', borderRadius: '3px', fontSize: '11px', fontWeight: 600 }}>{advice.priority}</span>
-                                            <span style={{ fontSize: '12px', fontWeight: 600, color: '#111' }}>{advice.area}</span>
-                                            {advice.scenarios && <span style={{ fontSize: '11px', color: '#6c757d' }}>({advice.scenarios.length} сценариев)</span>}
+                                    <div key={i} style={{ marginBottom: i < component.qaAdvice.length - 1 ? '16px' : '0', paddingBottom: i < component.qaAdvice.length - 1 ? '16px' : '0', borderBottom: i < component.qaAdvice.length - 1 ? '1px solid var(--border-color)' : 'none' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                                            <span style={{ padding: '3px 10px', backgroundColor: priorityColor, color: '#fff', borderRadius: '6px', fontSize: '10px', fontWeight: 800 }}>{advice.priority}</span>
+                                            <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>{advice.area}</span>
                                         </div>
                                         {advice.scenarios?.length > 0 && (
                                             <ol style={{ margin: '8px 0 0 0', paddingLeft: '0', listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                                 {advice.scenarios.map((s, si) => (
-                                                    <li key={si} style={{ fontSize: '13px', color: '#334155', lineHeight: 1.5, padding: '10px 14px', backgroundColor: '#ffffff', borderRadius: '10px', border: '1px solid #e2e8f0', display: 'flex', gap: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
-                                                        <span style={{ fontWeight: 800, color: '#94a3b8', minWidth: '18px' }}>{si + 1}.</span>
+                                                    <li key={si} style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.5, padding: '12px 16px', backgroundColor: 'var(--bg-content)', borderRadius: '12px', border: '1px solid var(--border-color)', display: 'flex', gap: '12px', boxShadow: 'var(--shadow-sm)' }}>
+                                                        <span style={{ fontWeight: 800, color: 'var(--text-muted)', minWidth: '18px' }}>{si + 1}.</span>
                                                         <span>{s}</span>
                                                     </li>
                                                 ))}
@@ -337,10 +356,10 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                                 [component.id]: !prev[component.id]
                             }));
                         }}
-                        style={{ padding: '6px 12px', backgroundColor: '#6c757d', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}
+                        style={{ padding: '8px 16px', backgroundColor: 'var(--bg-input)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: '10px', cursor: 'pointer', fontSize: '12px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', transition: 'all 0.2s' }}
                     >
-                        {expandedTechnicalDetails[component.id] ? '▼' : '▶  '}
-                        Показать код
+                        {expandedTechnicalDetails[component.id] ? '▼    ' : '▶  '}
+                        ПОКАЗАТЬ КОД
                     </button>
                     {expandedTechnicalDetails[component.id] && (
                         <div style={{ marginTop: '8px', padding: '12px', backgroundColor: '#f8f9fa', borderRadius: '8px', border: '1px solid #dee2e6' }}>
@@ -361,9 +380,9 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
 
             {/* Используется на страницах */}
             {pages.length > 0 && (
-                <div style={{ padding: '12px', backgroundColor: '#f8fafc', borderRadius: '12px', marginBottom: '16px', border: '1px solid #f1f5f9' }}>
+                <div style={{ padding: '16px', backgroundColor: 'var(--bg-input)', borderRadius: '16px', marginBottom: '16px', border: '1px solid var(--border-color)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                        <h5 style={{ margin: 0, fontSize: '13px', fontWeight: 600, color: '#64748b' }}>
+                        <h5 style={{ margin: 0, fontSize: '12px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                             Используется на страницах:
                         </h5>
                         {pages.length > 10 && (
@@ -372,13 +391,13 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                                     e.stopPropagation();
                                     setExpandedPageLists(prev => ({ ...prev, [component.id]: !prev[component.id] }));
                                 }}
-                                style={{ background: 'none', border: 'none', color: '#6366f1', fontSize: '11px', cursor: 'pointer', padding: 0, fontWeight: 600 }}
+                                style={{ background: 'none', border: 'none', color: 'var(--primary-accent)', fontSize: '11px', cursor: 'pointer', padding: 0, fontWeight: 700 }}
                             >
-                                {expandedPageLists[component.id] ? 'Скрыть' : `Показать все (${pages.length})`}
+                                {expandedPageLists[component.id] ? 'Скрыть' : `Все страницы (${pages.length})`}
                             </button>
                         )}
                     </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                         {(expandedPageLists[component.id] ? pages : pages.slice(0, 10)).map((page, idx) => {
                             const pageName = page.page_meta?.name || 'Unknown';
                             const pageRoute = page.page_meta?.route;
@@ -394,22 +413,23 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                                     key={`${component.id}-page-${idx}`}
                                     title={tooltipText}
                                     style={{
-                                        padding: '4px 10px',
-                                        backgroundColor: hasPageMappingForTag ? '#d1fae5' : '#e9ecef',
-                                        borderRadius: '4px',
+                                        padding: '5px 12px',
+                                        backgroundColor: hasPageMappingForTag ? 'var(--success-bg)' : 'var(--bg-content)',
+                                        borderRadius: '8px',
                                         fontSize: '12px',
-                                        color: hasPageMappingForTag ? '#065f46' : '#111',
-                                        border: hasPageMappingForTag ? '1px solid #6ee7b7' : '1px solid transparent',
-                                        fontWeight: 500,
+                                        color: hasPageMappingForTag ? 'var(--success)' : 'var(--text-primary)',
+                                        border: `1px solid ${hasPageMappingForTag ? 'var(--success)' : 'var(--border-color)'}`,
+                                        fontWeight: 600,
                                         cursor: 'help',
                                         display: 'inline-flex',
                                         alignItems: 'center',
-                                        gap: '6px'
+                                        gap: '6px',
+                                        boxShadow: 'var(--shadow-sm)'
                                     }}
                                 >
                                     <span>{pageName}</span>
                                     {pageRoute && (
-                                        <span style={{ fontSize: '11px', color: '#6c757d', fontFamily: 'monospace', backgroundColor: '#dee2e6', padding: '2px 6px', borderRadius: '3px' }}>
+                                        <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'monospace', backgroundColor: 'var(--bg-input)', padding: '1px 5px', borderRadius: '4px' }}>
                                             {pageRoute}
                                         </span>
                                     )}
@@ -438,18 +458,20 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                                 }
                             }}
                             style={{
-                                padding: '4px 10px',
-                                backgroundColor: '#fff1f2',
-                                color: '#e11d48',
-                                border: '1px solid #fecdd3',
-                                borderRadius: '8px',
+                                padding: '6px 12px',
+                                backgroundColor: 'var(--error-bg)',
+                                color: 'var(--error)',
+                                border: '1px solid var(--error)',
+                                borderRadius: '10px',
                                 fontSize: '11px',
-                                fontWeight: 700,
+                                fontWeight: 800,
                                 cursor: 'pointer',
                                 display: 'flex',
                                 alignItems: 'center',
-                                gap: '4px',
-                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+                                gap: '6px',
+                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                                textTransform: 'uppercase',
+                                marginTop: '1px'
                             }}
                             onMouseEnter={(e) => {
                                 e.currentTarget.style.backgroundColor = '#ffe4e6';

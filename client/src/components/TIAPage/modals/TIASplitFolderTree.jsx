@@ -42,10 +42,10 @@ const TIASplitFolderTree = ({ folders, level = 0, unassignedIds = [] }) => {
                             display: 'flex',
                             alignItems: 'center',
                             padding: '8px 12px',
-                            backgroundColor: snapshot?.isDragging ? '#6366f1' : '#fff',
-                            color: snapshot?.isDragging ? '#fff' : '#334155',
+                            backgroundColor: snapshot?.isDragging ? 'var(--primary-accent)' : 'var(--bg-content)',
+                            color: snapshot?.isDragging ? '#fff' : 'var(--text-primary)',
                             borderRadius: '10px',
-                            border: `1px solid ${snapshot?.isDragging ? 'none' : '#f1f5f9'}`,
+                            border: `1px solid ${snapshot?.isDragging ? 'transparent' : 'var(--border-color)'}`,
                             marginLeft: `${level * 12}px`,
                             fontSize: '14px',
                             fontWeight: hasChildren ? 600 : 400,
@@ -55,14 +55,14 @@ const TIASplitFolderTree = ({ folders, level = 0, unassignedIds = [] }) => {
                         }}
                         onMouseEnter={(e) => {
                             if (!snapshot?.isDragging) {
-                                e.currentTarget.style.backgroundColor = '#f8fafc';
-                                e.currentTarget.style.borderColor = '#e2e8f0';
+                                e.currentTarget.style.backgroundColor = 'var(--bg-input)';
+                                e.currentTarget.style.borderColor = 'var(--primary-accent)';
                             }
                         }}
                         onMouseLeave={(e) => {
                             if (!snapshot?.isDragging) {
-                                e.currentTarget.style.backgroundColor = '#fff';
-                                e.currentTarget.style.borderColor = '#f1f5f9';
+                                e.currentTarget.style.backgroundColor = 'var(--bg-content)';
+                                e.currentTarget.style.borderColor = 'var(--border-color)';
                             }
                         }}
                     >
@@ -117,7 +117,7 @@ const TIASplitFolderTree = ({ folders, level = 0, unassignedIds = [] }) => {
                 return (
                     <div key={folder.id} style={{ marginBottom: '4px' }}>
                         {isUnassigned ? (
-                            <Draggable draggableId={`pool::${folderId}`} index={unassignedIds.indexOf(folderId)}>
+                            <Draggable draggableId={`folder-${folderId}`} index={unassignedIds.indexOf(folderId)}>
                                 {(provided, snapshot) => content(provided, snapshot)}
                             </Draggable>
                         ) : content()}

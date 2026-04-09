@@ -43,7 +43,8 @@
 /* Основное оформление */
 body {
     font-family: var(--font-main), Arial, sans-serif;
-    padding: 20px;
+    padding: 0;
+    margin: 0;
     background-color: var(--bg-main);
     color: var(--text-primary);
 }
@@ -173,7 +174,7 @@ a:hover {
 form {
     display: flex;
     flex-direction: column;
-    max-width: 70vw;
+    max-width: 100%;
     margin: 0 auto;
     padding: 20px;
     background-color: var(--bg-content);
@@ -344,61 +345,228 @@ button:disabled {
 
 .header-wrapper {
     display: flex;
-    /* включаем flex-контейнер */
     align-items: center;
-    /* выравниваем элементы по вертикали */
+    justify-content: space-between;
+    padding: 12px 32px;
+    background: color-mix(in srgb, var(--bg-main) 80%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border-color);
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    margin-bottom: 0;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    height: 100%;
+}
+
+.header-left h1 {
+    font-size: 24px;
+    margin: 0;
+    line-height: 1;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    padding-top: 2px;
+}
+
+[data-theme="light"] .header-left h1 {
+    background: linear-gradient(135deg, var(--primary-accent), #a855f7);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.header-center {
+    display: flex;
+    gap: 4px;
+    background: var(--bg-input);
+    padding: 4px;
+    border-radius: 16px;
+    border: 1px solid var(--border-color);
+}
+
+.nav-tab {
     padding: 10px 20px;
-    /* отступы по желанию */
+    min-width: 140px;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: transparent;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+}
+
+.nav-tab:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.nav-tab.active {
+    color: white;
+}
+
+.active-tab-indicator {
+    position: absolute;
+    inset: 0;
+    background: var(--primary-accent);
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    z-index: 0;
+}
+
+.services-nav-btn {
+    min-width: unset;
+    padding: 10px 20px;
+    color: var(--text-secondary);
+}
+
+.services-nav-btn:hover {
+    color: var(--text-primary);
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.services-dropdown-container {
+    position: relative;
+}
+
+.services-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.services-btn:hover {
+    background: var(--bg-elevated);
+    border-color: var(--primary-accent);
+}
+
+.services-dropdown {
+    position: absolute;
+    top: calc(100% + 12px);
+    right: 50%;
+    transform: translateX(50%);
+    width: 280px;
+    background: color-mix(in srgb, var(--bg-content) 98%, transparent);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 8px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    z-index: 1001;
+}
+
+.dropdown-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    background: transparent;
+    border: none;
+    border-radius: 12px;
+    color: var(--text-secondary);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: left;
+    margin: 0;
+}
+
+.dropdown-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+}
+
+.dropdown-item svg {
+    font-size: 18px;
+    color: var(--primary-accent);
+}
+
+.tabs {
+    display: none !important;
 }
 
 .header-buttons {
-    margin-left: auto;
-    /* сдвигает контейнер кнопок вправо */
-    display: flex;
-    /* располагает кнопки в строку */
-    gap: 10px;
-    /* добавляет промежуток между кнопками */
+    display: none !important;
 }
 
-.tia-button {
-    padding: 8px 12px;
-    background-color: var(--primary-accent);
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    color: #fff;
-    font-size: 14px;
-}
+@media (max-width: 768px) {
+    .header-wrapper {
+        padding: 12px 16px;
+    }
 
-.tia-button:hover {
-    background-color: var(--primary-hover);
-}
+    .header-left h1 {
+        font-size: 18px;
+    }
 
-.tia-button:focus {
-    outline: none;
-    box-shadow: 0 0 5px color-mix(in srgb, var(--primary-accent) 50%, transparent);
-}
+    .nav-tab {
+        padding: 8px 12px;
+        font-size: 13px;
+    }
 
-.floating-buttons.analysis-floating {
-    position: fixed;
-    bottom: 70px;
-    left: 0;
-    right: 0;
-    display: flex;
-    justify-content: flex-end;
-    padding: 0 24px;
-    pointer-events: none;
-    z-index: 2000;
+    .services-btn {
+        padding: 8px 12px;
+        font-size: 13px;
+    }
 }
 
 .page-nav-back {
     position: fixed;
     top: 16px;
-    left: 24px;
+    left: 32px;
     z-index: 2000;
 }
 
-.floating-buttons.analysis-floating .btn {
+.floating-buttons {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 12px;
+    z-index: 2000;
+    pointer-events: none;
+}
+
+.floating-buttons.floating-buttons--top-only {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 12px;
+    pointer-events: none;
+    z-index: 2000;
+}
+
+.floating-buttons .btn {
     pointer-events: all;
 }
 

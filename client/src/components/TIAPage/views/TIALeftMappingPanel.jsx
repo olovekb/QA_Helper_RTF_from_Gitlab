@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useTIA } from '../context/TIAContext';
+import { setupStyles } from '../styles/TIAStyles';
 import TIAComponentCard from '../ui/TIAComponentCard';
 
 const TIALeftMappingPanel = () => {
@@ -19,65 +20,64 @@ const TIALeftMappingPanel = () => {
     const filteredComponents = components.filter(comp => comp.type === selectedComponentType);
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            {/*  */}
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-content)' }}>
+            {/* Статистика изменений */}
             <div style={{
-                padding: '12px 16px',
-                backgroundColor: '#ffffff',
-                borderBottom: '1px solid #e2e8f0',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
+                padding: '20px 24px',
+                backgroundColor: 'var(--bg-input)',
+                borderBottom: '1px solid var(--border-color)',
+                boxShadow: 'var(--shadow-sm)'
             }}>
-                <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', fontWeight: 700, color: '#1e293b' }}>Что затронуто</h3>
+                <h3 style={{
+                    margin: '0 0 12px 0',
+                    fontSize: '16px',
+                    fontWeight: 800,
+                    color: 'var(--text-primary)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                }}>
+                    Анализ влияния
+                </h3>
                 <div style={{
                     display: 'flex',
-                    gap: '12px',
+                    gap: '16px',
                     flexWrap: 'wrap',
-                    fontSize: '12px',
-                    color: '#6c757d',
+                    fontSize: '13px',
+                    color: 'var(--text-secondary)',
                     alignItems: 'center'
                 }}>
-                    <span>
-                        <strong style={{ color: '#111' }}>Фронтенд компонентов:</strong> {components.filter(c => c.type === 'frontend').length}
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--primary-accent)' }}></span>
+                        <strong>Компонент:</strong> {components.filter(c => c.type === 'frontend').length + components.filter(c => c.type === 'backend').length}
+                    </div>
 
                     {summary.test_coverage_percent !== undefined && (
-                        <>
-                            <span>•</span>
-                            <span>
-                                <strong>Coverage:</strong> {summary.test_coverage_percent.toFixed(1)}%
-                            </span>
-                        </>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--success)' }}></span>
+                            <strong>Покрытие:</strong> {summary.test_coverage_percent.toFixed(1)}%
+                        </div>
                     )}
 
                     {summary.risk_counts && (
-                        <>
-                            <span>•</span>
-                            <span>
-                                <strong style={{ color: '#dc3545' }}>HIGH:</strong> {summary.risk_counts.HIGH || 0}
-                            </span>
-                            <span>•</span>
-                            <span>
-                                <strong style={{ color: '#ffc107' }}>MEDIUM:</strong> {summary.risk_counts.MEDIUM || 0}
-                            </span>
-                            <span>•</span>
-                            <span>
-                                <strong style={{ color: '#28a745' }}>LOW:</strong> {summary.risk_counts.LOW || 0}
-                            </span>
-                        </>
+                        <div style={{ display: 'flex', gap: '8px', marginLeft: 'auto' }}>
+                            <span style={{ color: 'var(--error)', fontWeight: 800 }}>H: {summary.risk_counts.HIGH || 0}</span>
+                            <span style={{ color: 'var(--warning)', fontWeight: 800 }}>M: {summary.risk_counts.MEDIUM || 0}</span>
+                            <span style={{ color: 'var(--success)', fontWeight: 800 }}>L: {summary.risk_counts.LOW || 0}</span>
+                        </div>
                     )}
                 </div>
             </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: '16px', backgroundColor: '#f8fafc' }}>
-                {/* */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '24px', backgroundColor: 'var(--bg-content)' }}>
+                {/* Глобальные риски */}
                 {summary.global_risks?.length > 0 && (
                     <div style={{
-                        padding: '14px',
-                        backgroundColor: '#fff5f5',
-                        border: '2px solid #dc3545',
-                        borderRadius: '12px',
-                        marginBottom: '20px',
-                        boxShadow: '0 4px 12px rgba(220, 53, 69, 0.08)'
+                        padding: '16px 20px',
+                        backgroundColor: 'var(--error-bg)',
+                        border: '1px solid var(--error)',
+                        borderRadius: '16px',
+                        marginBottom: '24px',
+                        boxShadow: '0 4px 12px color-mix(in srgb, var(--error) 10%, transparent)'
                     }}>
                         <div
                             onClick={() => setIsGlobalRisksExpanded(!isGlobalRisksExpanded)}
@@ -85,36 +85,39 @@ const TIALeftMappingPanel = () => {
                                 display: 'flex',
                                 alignItems: 'center',
                                 gap: '8px',
-                                color: '#dc3545',
-                                fontWeight: 700,
+                                color: 'var(--error)',
+                                fontWeight: 800,
                                 fontSize: '13px',
                                 cursor: 'pointer',
                                 userSelect: 'none',
-                                marginBottom: isGlobalRisksExpanded ? '10px' : '0'
+                                marginBottom: isGlobalRisksExpanded ? '12px' : '0'
                             }}
                         >
-                            Глобальные риски: {summary.global_risks.length}
+                            ГЛОБАЛЬНЫЕ РИСКИ ({summary.global_risks.length})
                             <span style={{
                                 marginLeft: 'auto',
+                                width: '8px',
+                                height: '8px',
+                                borderLeft: '2px solid var(--error)',
+                                borderBottom: '2px solid var(--error)',
                                 transition: 'transform 0.2s',
-                                transform: isGlobalRisksExpanded ? 'rotate(0deg)' : 'rotate(-90deg)'
-                            }}>
-                                ▼
-                            </span>
+                                transform: isGlobalRisksExpanded ? 'rotate(-45deg)' : 'rotate(-135deg)',
+                                marginBottom: isGlobalRisksExpanded ? '4px' : '2px'
+                            }} />
                         </div>
 
                         {isGlobalRisksExpanded && summary.global_risks.map((risk, i) => (
                             <div key={i} style={{
                                 fontSize: '12px',
-                                color: '#111',
-                                marginTop: i > 0 ? '10px' : '0',
-                                paddingTop: i > 0 ? '10px' : '0',
-                                borderTop: i > 0 ? '1px solid #fecaca' : 'none'
+                                color: 'var(--text-primary)',
+                                marginTop: i > 0 ? '12px' : '0',
+                                paddingTop: i > 0 ? '12px' : '0',
+                                borderTop: i > 0 ? '1px solid color-mix(in srgb, var(--error) 20%, transparent)' : 'none'
                             }}>
-                                <div style={{ fontWeight: 600, marginBottom: '4px' }}>
-                                    {risk.source} <span style={{ color: '#dc3545' }}>({risk.risk_level})</span>
+                                <div style={{ fontWeight: 700, marginBottom: '4px', textTransform: 'uppercase' }}>
+                                    {risk.source} <span style={{ color: 'var(--error)' }}>[{risk.risk_level}]</span>
                                 </div>
-                                <div style={{ fontSize: '11px', color: '#64748b', lineHeight: 1.4 }}>
+                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                                     {risk.description}
                                 </div>
                             </div>
@@ -122,63 +125,38 @@ const TIALeftMappingPanel = () => {
                     </div>
                 )}
 
-                {/* */}
-                <div style={{
-                    display: 'flex',
-                    gap: '4px',
-                    marginBottom: '16px',
-                    borderBottom: '2px solid #e2e8f0',
-                    paddingBottom: '0'
-                }}>
-                    <button
-                        onClick={() => setSelectedComponentType('frontend')}
-                        style={{
-                            padding: '10px 16px',
-                            fontSize: '13px',
-                            fontWeight: 700,
-                            color: selectedComponentType === 'frontend' ? '#3b82f6' : '#64748b',
-                            backgroundColor: 'transparent',
-                            border: 'none',
-                            borderBottom: selectedComponentType === 'frontend' ? '3px solid #3b82f6' : '3px solid transparent',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s',
-                            marginBottom: '-2px'
-                        }}
-                    >
-                        Фронтенд ({components.filter(c => c.type === 'frontend').length})
-                    </button>
-                    <button
-                        onClick={() => setSelectedComponentType('backend')}
-                        style={{
-                            padding: '10px 16px',
-                            fontSize: '13px',
-                            fontWeight: 700,
-                            color: selectedComponentType === 'backend' ? '#3b82f6' : '#64748b',
-                            backgroundColor: 'transparent',
-                            border: 'none',
-                            borderBottom: selectedComponentType === 'backend' ? '3px solid #3b82f6' : '3px solid transparent',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s',
-                            marginBottom: '-2px'
-                        }}
-                    >
-                        Бэкенд ({components.filter(c => c.type === 'backend').length})
-                    </button>
+                <div style={{ ...setupStyles.formGroup, marginBottom: '24px' }}>
+                    <label style={setupStyles.label}>Тип компонентов</label>
+                    <div style={setupStyles.modeToggleContainer}>
+                        <button
+                            onClick={() => setSelectedComponentType('frontend')}
+                            style={setupStyles.modeToggleButton(selectedComponentType === 'frontend')}
+                        >
+                            Frontend ({components.filter(c => c.type === 'frontend').length})
+                        </button>
+                        <button
+                            onClick={() => setSelectedComponentType('backend')}
+                            style={setupStyles.modeToggleButton(selectedComponentType === 'backend')}
+                        >
+                            Backend ({components.filter(c => c.type === 'backend').length})
+                        </button>
+                    </div>
                 </div>
 
                 {filteredComponents.length === 0 ? (
                     <div style={{
-                        padding: '24px',
-                        backgroundColor: '#ffffff',
-                        borderRadius: '16px',
-                        border: '1px solid #e2e8f0',
+                        padding: '40px 20px',
+                        backgroundColor: 'var(--bg-input)',
+                        borderRadius: '20px',
+                        border: '1px dashed var(--border-color)',
                         textAlign: 'center',
-                        color: '#64748b'
+                        color: 'var(--text-muted)',
+                        fontSize: '14px'
                     }}>
-                        Компоненты не найдены
+                        Нет затронутых компонентов этого типа
                     </div>
                 ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                         {filteredComponents.map(comp => (
                             <TIAComponentCard
                                 key={comp.id}

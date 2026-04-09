@@ -83,14 +83,15 @@ const TIAMappingFolderTree = ({ folders, level = 0, componentId = null }) => {
                             style={{
                                 display: 'flex',
                                 alignItems: 'center',
-                                padding: '6px 10px',
-                                backgroundColor: isDirectlySelected ? '#f5f3ff' : isPartiallySelected ? '#f8fafc' : '#ffffff',
-                                borderRadius: '8px',
+                                padding: '8px 12px',
+                                backgroundColor: isDirectlySelected ? 'color-mix(in srgb, var(--primary-accent) 10%, transparent)' : isPartiallySelected ? 'var(--bg-input)' : 'var(--bg-content)',
+                                borderRadius: '10px',
                                 cursor: 'pointer',
-                                transition: 'all 0.15s ease',
-                                marginLeft: `${level * 16}px`,
-                                border: `1px solid ${isDirectlySelected ? '#818cf8' : isPartiallySelected ? '#e2e8f0' : '#f1f5f9'}`,
-                                boxShadow: isDirectlySelected ? '0 2px 8px rgba(99, 102, 241, 0.08)' : 'none',
+                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                                marginLeft: `${level * 18}px`,
+                                border: `1px solid ${isDirectlySelected ? 'var(--primary-accent)' : isPartiallySelected ? 'var(--border-color)' : 'transparent'}`,
+                                boxShadow: isDirectlySelected ? '0 4px 12px color-mix(in srgb, var(--primary-accent) 15%, transparent)' : 'none',
+                                position: 'relative'
                             }}
                             onClick={(e) => {
                                 e.stopPropagation();
@@ -128,33 +129,33 @@ const TIAMappingFolderTree = ({ folders, level = 0, componentId = null }) => {
                                 markComponentAsDirty(targetComponentId);
                             }}
                             onMouseEnter={(e) => {
-                                e.currentTarget.style.backgroundColor = isDirectlySelected ? '#eff6ff' : '#f8fafc';
-                                e.currentTarget.style.transform = 'translateX(2px)';
+                                e.currentTarget.style.backgroundColor = isDirectlySelected ? 'color-mix(in srgb, var(--primary-accent) 15%, transparent)' : 'var(--bg-input)';
+                                e.currentTarget.style.transform = 'translateX(4px)';
                             }}
                             onMouseLeave={(e) => {
-                                e.currentTarget.style.backgroundColor = isDirectlySelected ? '#f5f3ff' : isPartiallySelected ? '#f8fafc' : '#ffffff';
+                                e.currentTarget.style.backgroundColor = isDirectlySelected ? 'color-mix(in srgb, var(--primary-accent) 10%, transparent)' : isPartiallySelected ? 'var(--bg-input)' : 'var(--bg-content)';
                                 e.currentTarget.style.transform = 'translateX(0)';
                             }}
                             title={folder.customFieldName || folder.name}
                         >
                             <div style={{
-                                width: '18px',
-                                height: '18px',
-                                borderRadius: '5px',
-                                border: `2px solid ${isDirectlySelected ? '#6366f1' : '#cbd5e1'}`,
-                                backgroundColor: isDirectlySelected ? '#6366f1' : isPartiallySelected ? '#eef2ff' : '#fff',
-                                marginRight: '10px',
+                                width: '20px',
+                                height: '20px',
+                                borderRadius: '6px',
+                                border: `2px solid ${isDirectlySelected ? 'var(--primary-accent)' : 'var(--border-color)'}`,
+                                backgroundColor: isDirectlySelected ? 'var(--primary-accent)' : isPartiallySelected ? 'var(--bg-input)' : 'var(--bg-content)',
+                                marginRight: '12px',
                                 display: 'flex',
                                 alignItems: 'center',
-                                justifyContent: 'center',
+                                justifyCenter: 'center',
                                 transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
                                 flexShrink: 0
                             }}>
                                 {isDirectlySelected && (
-                                    <span style={{ color: '#fff', fontSize: '11px', fontWeight: 900 }}>✓</span>
+                                    <span style={{ color: '#fff', fontSize: '11px', fontWeight: 900, width: '100%', textAlign: 'center' }}>✓</span>
                                 )}
                                 {!isDirectlySelected && isPartiallySelected && (
-                                    <div style={{ width: '8px', height: '2px', backgroundColor: '#6366f1', borderRadius: '1px' }} />
+                                    <div style={{ width: '10px', height: '3px', backgroundColor: 'var(--primary-accent)', borderRadius: '2px', margin: '0 auto' }} />
                                 )}
                             </div>
 
@@ -169,7 +170,7 @@ const TIAMappingFolderTree = ({ folders, level = 0, componentId = null }) => {
                                     }}
                                     style={{
                                         fontSize: '10px',
-                                        color: isExpanded ? '#6366f1' : '#94a3b8',
+                                        color: isExpanded ? 'var(--primary-accent)' : 'var(--text-muted)',
                                         width: '24px',
                                         height: '24px',
                                         display: 'flex',
@@ -177,11 +178,11 @@ const TIAMappingFolderTree = ({ folders, level = 0, componentId = null }) => {
                                         justifyContent: 'center',
                                         transition: 'all 0.2s',
                                         transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
-                                        marginRight: '4px',
+                                        marginRight: '6px',
                                         cursor: 'pointer',
-                                        borderRadius: '4px'
+                                        borderRadius: '6px'
                                     }}
-                                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(99, 102, 241, 0.08)'}
+                                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--primary-accent) 10%, transparent)'}
                                     onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                                 >
                                     ▶
@@ -190,8 +191,8 @@ const TIAMappingFolderTree = ({ folders, level = 0, componentId = null }) => {
 
                             <span style={{
                                 fontSize: '13px',
-                                fontWeight: hasChildren ? 700 : 500,
-                                color: isDirectlySelected ? '#1e1b4b' : '#334155',
+                                fontWeight: hasChildren ? 800 : 600,
+                                color: isDirectlySelected ? 'var(--text-primary)' : 'var(--text-secondary)',
                                 flex: 1,
                                 userSelect: 'none',
                                 overflow: 'hidden',
@@ -204,13 +205,15 @@ const TIAMappingFolderTree = ({ folders, level = 0, componentId = null }) => {
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 {hasChildren && areAllSelected && !isDirectlySelected && (
                                     <span style={{
-                                        color: '#059669',
-                                        fontSize: '10px',
-                                        fontWeight: 700,
-                                        backgroundColor: '#ecfdf5',
-                                        padding: '2px 6px',
+                                        color: 'var(--success)',
+                                        fontSize: '9px',
+                                        fontWeight: 800,
+                                        backgroundColor: 'var(--success-bg)',
+                                        padding: '2px 8px',
                                         borderRadius: '12px',
-                                        textTransform: 'uppercase'
+                                        textTransform: 'uppercase',
+                                        letterSpacing: '0.05em',
+                                        border: '1px solid var(--success)'
                                     }}>
                                         ALL
                                     </span>
@@ -219,12 +222,13 @@ const TIAMappingFolderTree = ({ folders, level = 0, componentId = null }) => {
                                 {isAutoMapped && (
                                     <span style={{
                                         fontSize: '9px',
-                                        padding: '2px 6px',
-                                        backgroundColor: '#e0e7ff',
-                                        color: '#4338ca',
-                                        borderRadius: '4px',
+                                        padding: '2px 8px',
+                                        backgroundColor: 'color-mix(in srgb, var(--primary-accent) 10%, transparent)',
+                                        color: 'var(--primary-accent)',
+                                        borderRadius: '6px',
                                         fontWeight: 800,
-                                        letterSpacing: '0.05em'
+                                        letterSpacing: '0.05em',
+                                        border: '1px solid var(--primary-accent)'
                                     }}>
                                         AUTO
                                     </span>

@@ -106,16 +106,20 @@ export const getAllDescendantIds = (folder) => {
 /**
  * Проверка, выбраны ли все потомки узла
  * @param {Object} folder - Узел
- * @param {string[]} mappings - Список замапленных ID
+ * @param {string[]|Set} mappings - Список замапленных ID
  * @returns {boolean}
  */
 export const areAllDescendantsSelected = (folder, mappings) => {
+    const mappingsSet = mappings instanceof Set ? mappings : new Set(mappings);
     const folderId = folder.id.toString();
-    if (mappings.includes(folderId)) return true;
+
+    if (mappingsSet.has(folderId)) return true;
+
     if (!folder.children || folder.children.length === 0) {
-        return mappings.includes(folderId);
+        return mappingsSet.has(folderId);
     }
-    return folder.children.every(child => areAllDescendantsSelected(child, mappings));
+
+    return folder.children.every(child => areAllDescendantsSelected(child, mappingsSet));
 };
 
 /**
@@ -126,20 +130,35 @@ export const areAllDescendantsSelected = (folder, mappings) => {
  * @returns {Array}
  */
 export const extractComponents = (frontendJSON, backendJSON, tiaReport) => {
+    console.time('extractComponents');
     const componentsMap = new Map();
 
     const processReport = (report, defaultType) => {
         if (!report || !isNewTiaFormat(report)) return;
-        const uniqueMap = report.unique_affected_components || {};
+        const uniqueDetails = report.unique_affected_components || {};
 
-        const addComponent = (name, pageRisk, pageSummary, qaAdvice, detail, pageEnv, index) => {
+        const addComponent = (name, pageRisk, pageSummary, qaAdvice, detail, pageEnv) => {
             if (!name) return;
-            const compKey = (report.type === 'backend' || detail?.type === 'backend') ? `${detail?.file_path || ''}::${name}` : `${name}-${index}`;
+
+            const isBackend = report.type === 'backend' || detail?.type === 'backend' || defaultType === 'backend';
+            const compKey = isBackend
+                ? `${detail?.file_path || report.service_name || 'unknown'}::${name}`
+                : name;
+
             const existing = componentsMap.get(compKey);
+
             const riskOrder = { HIGH: 3, MEDIUM: 2, LOW: 1, '': 0 };
-            const bestRisk = (existing && riskOrder[existing.riskLevel] > riskOrder[pageRisk]) ? existing.riskLevel : (pageRisk || '');
-            const mergedAdvice = [...(existing?.qaAdvice || []), ...(qaAdvice || [])];
-            const nested = detail ? [{
+            const bestRisk = (existing && riskOrder[existing.riskLevel] > riskOrder[pageRisk])
+                ? existing.riskLevel
+                : (pageRisk || '');
+
+            const mergedAdvice = Array.from(new Set([
+                ...(existing?.qaAdvice || []),
+                ...(qaAdvice || []),
+                ...(detail?.qa_advice || [])
+            ]));
+
+            const newNested = detail ? {
                 component_name: name,
                 change_source: detail.change_source,
                 changed_methods: detail.changed_methods || [],
@@ -147,24 +166,36 @@ export const extractComponents = (frontendJSON, backendJSON, tiaReport) => {
                 file_path: detail.file_path,
                 method_jsdoc: detail.method_jsdoc || {},
                 type: detail.type || defaultType
-            }] : (existing?.nestedComponents || []);
+            } : null;
+
+            const mergedNested = existing?.nestedComponents || [];
+            if (newNested && !mergedNested.some(n => n.file_path === newNested.file_path && n.change_source === newNested.change_source)) {
+                mergedNested.push(newNested);
+            }
 
             const envs = new Set(existing?.envs || []);
             if (pageEnv) envs.add(pageEnv);
+            if (detail?.envs) detail.envs.forEach(e => envs.add(e));
 
-            let compType = defaultType;
-            if (report.type === 'backend' || detail?.type === 'backend') compType = 'backend';
-            else if (report.type === 'frontend' || detail?.type === 'frontend') compType = 'frontend';
+            let compType = existing?.type || defaultType;
+            if (isBackend) compType = 'backend';
+
+            let bestSummary = existing?.summaryText || '';
+            const componentSummary = detail?.ai_analysis?.summary || detail?.summary || '';
+
+            if (componentSummary) {
+                bestSummary = componentSummary;
+            }
 
             componentsMap.set(compKey, {
                 id: compKey,
                 name,
                 type: compType,
                 riskLevel: bestRisk,
-                summaryText: pageSummary || existing?.summaryText || '',
-                qaAdvice: Array.from(new Set(mergedAdvice)),
-                nestedComponents: nested,
-                serviceName: detail?.file_path || existing?.serviceName || '',
+                summaryText: bestSummary,
+                qaAdvice: mergedAdvice,
+                nestedComponents: mergedNested,
+                serviceName: detail?.file_path || report.service_name || existing?.serviceName || '',
                 envs: Array.from(envs),
                 jsdoc: detail?.jsdoc || detail?.class_description || detail?.description || existing?.jsdoc || null,
                 uiContext: detail?.ui_context || existing?.uiContext || null,
@@ -172,35 +203,22 @@ export const extractComponents = (frontendJSON, backendJSON, tiaReport) => {
             });
         };
 
-        (report.pages || []).forEach((page, pageIdx) => {
+        (report.pages || []).forEach((page) => {
             const pageRisk = page.ai_analysis?.risk_level || '';
             const pageSummary = page.ai_analysis?.summary || '';
             const qaAdvice = page.ai_analysis?.qa_advice || [];
             const pageEnv = page.page_meta?.env;
-            (page.depends_on_components || []).forEach((compName, compIdx) => {
-                const detail = uniqueMap[compName];
-                addComponent(compName, pageRisk, pageSummary, qaAdvice, detail, pageEnv, `${pageIdx}-${compIdx}`);
+
+            (page.depends_on_components || []).forEach((compName) => {
+                const detail = uniqueDetails[compName];
+                addComponent(compName, pageRisk, pageSummary, qaAdvice, detail, pageEnv);
             });
         });
 
         if (report.backend_components && Array.isArray(report.backend_components)) {
             report.backend_components.forEach((bc) => {
-                const key = `${bc.service_name || 'unknown'}::${bc.controller_name || bc.name}`;
-                if (!componentsMap.has(key)) {
-                    componentsMap.set(key, {
-                        id: key,
-                        name: bc.controller_name || bc.name,
-                        serviceName: bc.service_name || '',
-                        type: 'backend',
-                        endpoints: bc.endpoints || [],
-                        riskLevel: bc.risk_level || '',
-                        summaryText: bc.summary || '',
-                        qaAdvice: bc.qa_advice || [],
-                        nestedComponents: [],
-                        envs: bc.envs || [],
-                        jsdoc: bc.description || bc.jsdoc || null,
-                    });
-                }
+                const bcName = bc.controller_name || bc.name;
+                addComponent(bcName, bc.risk_level, bc.summary, bc.qa_advice, bc, null);
             });
         }
     };
@@ -209,7 +227,10 @@ export const extractComponents = (frontendJSON, backendJSON, tiaReport) => {
     if (backendJSON) processReport(backendJSON, 'backend');
     if (tiaReport && !frontendJSON && !backendJSON) processReport(tiaReport, 'frontend');
 
-    return Array.from(componentsMap.values());
+    const result = Array.from(componentsMap.values());
+    console.timeEnd('extractComponents');
+    console.log(`TIA Performance: Extracted ${result.length} unique components`);
+    return result;
 };
 
 /**
@@ -234,19 +255,23 @@ export const isSubfolderOf = (folders, parentId, childId) => {
  * @returns {Array}
  */
 export const buildPageDependencies = (components = [], frontendJSON, backendJSON) => {
+    console.time('buildPageDependencies');
     const dependencies = [];
     const componentTypeMap = new Map();
     components.forEach(comp => componentTypeMap.set(comp.name, comp.type));
 
     const processPages = (report) => {
         if (!report || !isNewTiaFormat(report)) return;
+
+        const pageNamesSet = new Set((report.pages || []).map(p => p.page_meta?.name).filter(Boolean));
+
         (report.pages || []).forEach((page) => {
             const pageName = page.page_meta?.name;
             const pageRoute = page.page_meta?.route;
             if (pageName && page.depends_on_components) {
                 page.depends_on_components.forEach((compName) => {
                     const realCompType = componentTypeMap.get(compName) || 'frontend';
-                    const isPage = report.pages.some(p => p.page_meta?.name === compName);
+                    const isPage = pageNamesSet.has(compName);
                     dependencies.push({
                         pageName,
                         pageRoute: pageRoute || '',
@@ -261,6 +286,8 @@ export const buildPageDependencies = (components = [], frontendJSON, backendJSON
 
     processPages(frontendJSON);
     processPages(backendJSON);
+
+    console.timeEnd('buildPageDependencies');
     return dependencies;
 };
 

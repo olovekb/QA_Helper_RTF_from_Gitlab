@@ -1,5 +1,6 @@
 import { useTIA } from '../context/TIAContext';
 import { setupStyles } from '../styles/TIAStyles';
+import Loader from '../../../Loader';
 
 /**
  * Компонент выбора проекта
@@ -31,6 +32,28 @@ const TIAProjectSelect = () => {
                         </option>
                     ))}
                 </select>
+                {structureLoading && (
+                    <div style={{
+                        position: 'absolute',
+                        right: '40px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        pointerEvents: 'none'
+                    }}>
+                        <Loader size="16px" />
+                        <span style={{ 
+                            fontSize: '12px', 
+                            color: 'var(--primary-accent)', 
+                            fontWeight: 600,
+                            whiteSpace: 'nowrap'
+                        }}>
+                            Загрузка структуры...
+                        </span>
+                    </div>
+                )}
             </div>
         </div>
     );

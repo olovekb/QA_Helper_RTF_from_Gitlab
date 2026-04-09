@@ -15,15 +15,21 @@ const TIAMappingView = () => {
             height: '100%',
             width: '100%',
             overflow: 'hidden',
-            backgroundColor: '#ffffff'
+            backgroundColor: 'var(--bg-content)'
         }}>
             {/* Левая колонка (Аналитика и компоненты) */}
-            <div style={{ flex: 1, height: '100%', borderRight: '1px solid #e2e8f0' }}>
+            <div style={{
+                flex: 1,
+                height: '100%',
+                borderRight: '1px solid var(--border-color)',
+                display: 'flex',
+                flexDirection: 'column'
+            }}>
                 <TIALeftMappingPanel />
             </div>
 
             {/* Правая колонка (Дерево функциональности) */}
-            <div style={{ flex: 1, height: '100%' }}>
+            <div style={{ flex: 1, height: '100%', display: 'flex', flexDirection: 'column' }}>
                 <TIAMappingPanel />
             </div>
         </div>

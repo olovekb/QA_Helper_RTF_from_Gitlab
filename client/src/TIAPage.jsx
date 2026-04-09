@@ -28,7 +28,6 @@ const TIAPageContent = () => {
         setComponents,
         mode,
         isLoading,
-        structureLoading,
         showMappingModal,
         isMappingLoading,
         handleMappingCancel,
@@ -38,7 +37,8 @@ const TIAPageContent = () => {
         partialSaveMessage,
         handleCreateTestPlan,
         isCreateButtonDisabled,
-        getCreateButtonDisabledReason
+        getCreateButtonDisabledReason,
+        structureLoading
     } = useTIA();
 
     useEffect(() => {
@@ -49,53 +49,52 @@ const TIAPageContent = () => {
     }, [frontendJSON, backendJSON, tiaReport, setComponents]);
 
     return (
-        <div style={TIAStyles.container}>
+        <div style={TIAStyles.container} className="app-page-container">
             {/* Глобальный фоновый прогресс-бар */}
             <GlobalBackgroundProgress />
 
-            {/* Хедер страницы (Заголовок + Кнопки навигации) */}
             <TIAPageHeader />
 
-            {/* Форма настройки (Setup Form) */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '28px', marginBottom: '28px' }}>
-                <TIAModeToggle />
-                <TIAProjectSelect />
+            {/* Форма настройки */}
+            <div style={TIAStyles.setupCard}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+                    <TIAModeToggle />
+                    <TIAProjectSelect />
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <label style={{ fontSize: '14px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>
-                        Загрузить JSON фронтенда (опционально):
-                    </label>
-                    <TIAJSONUpload type="frontend" />
-                </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <label style={TIAStyles.label}>
+                            Загрузить JSON фронтенда (опционально)
+                        </label>
+                        <TIAJSONUpload type="frontend" />
+                    </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <label style={{ fontSize: '14px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>
-                        Загрузить JSON бэкенда (опционально):
-                    </label>
-                    <TIAJSONUpload type="backend" />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <label style={TIAStyles.label}>
+                            Загрузить JSON бэкенда (опционально)
+                        </label>
+                        <TIAJSONUpload type="backend" />
+                    </div>
                 </div>
             </div>
 
-            {/* Сводка в лайт-режиме (если есть отчет) */}
             <TIALightSummary />
 
-            {/* Футер страницы (Ошибки, Успех, Лоадер и Кнопка действия) */}
-            <div style={{ marginTop: '40px', paddingTop: '24px', borderTop: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
-                {error && !showMappingModal && <div style={{ padding: '14px 20px', backgroundColor: '#fef2f2', border: '1px solid #ef4444', color: '#ef4444', borderRadius: '12px', fontSize: '14px', fontWeight: 500, textAlign: 'center', width: '100%' }}>{error}</div>}
+            <div style={{ marginTop: '48px', paddingTop: '32px', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '24px' }}>
+                {error && !showMappingModal && <div style={{ padding: '16px 24px', backgroundColor: 'var(--error-bg)', border: '1px solid var(--error)', color: 'var(--error)', borderRadius: '16px', fontSize: '14px', fontWeight: 600, textAlign: 'center', width: '100%', boxShadow: '0 4px 12px color-mix(in srgb, var(--error) 10%, transparent)' }}>{error}</div>}
                 {successMessage && (
                     <div style={{
-                        padding: '16px 24px',
-                        backgroundColor: '#fff',
-                        border: '1px solid #e2e8f0',
-                        color: '#334155',
-                        borderRadius: '16px',
-                        fontSize: '14px',
-                        fontWeight: 600,
+                        padding: '20px 28px',
+                        backgroundColor: 'var(--bg-content)',
+                        border: '1px solid var(--success)',
+                        color: 'var(--text-primary)',
+                        borderRadius: '20px',
+                        fontSize: '15px',
+                        fontWeight: 700,
                         textAlign: 'center',
                         width: '100%',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.03)'
+                        boxShadow: 'var(--shadow-md)'
                     }}>
-                        <div style={{ marginBottom: allureLink ? '12px' : '0' }}>
+                        <div style={{ marginBottom: allureLink ? '16px' : '0', color: 'var(--success)' }}>
                             {successMessage}
                         </div>
                         {allureLink && (
@@ -105,32 +104,33 @@ const TIAPageContent = () => {
                                 rel="noopener noreferrer"
                                 style={{
                                     color: '#fff',
-                                    backgroundColor: '#6366f1',
-                                    padding: '8px 20px',
-                                    borderRadius: '10px',
+                                    backgroundColor: 'var(--primary-accent)',
+                                    padding: '10px 28px',
+                                    borderRadius: '14px',
                                     display: 'inline-block',
-                                    fontWeight: 600,
+                                    fontWeight: 800,
                                     textDecoration: 'none',
-                                    transition: 'all 0.2s',
-                                    boxShadow: '0 4px 10px rgba(99, 102, 241, 0.2)'
+                                    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                                    boxShadow: '0 8px 20px color-mix(in srgb, var(--primary-accent) 30%, transparent)',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.02em',
+                                    fontSize: '13px'
                                 }}
-                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#4f46e5'}
-                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#6366f1'}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.transform = 'translateY(-2px)';
+                                    e.currentTarget.style.boxShadow = '0 12px 24px color-mix(in srgb, var(--primary-accent) 40%, transparent)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.transform = 'translateY(0)';
+                                    e.currentTarget.style.boxShadow = '0 8px 20px color-mix(in srgb, var(--primary-accent) 30%, transparent)';
+                                }}
                             >
-                                Перейти к запуску в Allure
+                                Перейти к запуску в ТестОпс
                             </a>
                         )}
                     </div>
                 )}
 
-                {(isLoading || structureLoading) && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center' }}>
-                        <Loader />
-                        <div style={{ fontSize: '14px', color: '#64748b', fontWeight: 500 }}>
-                            {structureLoading ? 'Загрузка структуры проекта...' : 'Анализ изменений...'}
-                        </div>
-                    </div>
-                )}
 
                 {mode === 'mapping' && (
                     <button
@@ -138,24 +138,26 @@ const TIAPageContent = () => {
                         disabled={isCreateButtonDisabled()}
                         title={getCreateButtonDisabledReason()}
                         style={{
-                            padding: '16px 40px',
+                            padding: '18px 48px',
                             fontSize: '16px',
-                            fontWeight: 700,
+                            fontWeight: 800,
                             color: '#ffffff',
-                            background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                            background: isCreateButtonDisabled() ? 'var(--border-color)' : 'linear-gradient(135deg, var(--success) 0%, var(--primary-accent) 100%)',
                             border: 'none',
-                            borderRadius: '16px',
+                            borderRadius: '18px',
                             cursor: isCreateButtonDisabled() ? 'not-allowed' : 'pointer',
-                            transition: 'all 0.3s ease',
-                            boxShadow: '0 10px 25px -5px rgba(16, 185, 129, 0.4)',
+                            transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+                            boxShadow: isCreateButtonDisabled() ? 'none' : '0 12px 30px -5px color-mix(in srgb, var(--primary-accent) 40%, transparent)',
                             width: '100%',
-                            maxWidth: '400px',
+                            maxWidth: '450px',
                             opacity: isCreateButtonDisabled() ? 0.6 : 1,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em'
                         }}
                     >
                         {isLoading ? (
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                                <Loader style={{ width: '20px', height: '20px' }} />
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
+                                <Loader color="#fff" size="24px" />
                                 <span>Обработка...</span>
                             </div>
                         ) : 'Создать запуски тестирования'}
@@ -163,48 +165,48 @@ const TIAPageContent = () => {
                 )}
             </div>
 
-            {/* МОДАЛЬНОЕ ОКНО МАППИНГА (1:1 Overlay) */}
             {showMappingModal && (
                 <div style={TIAStyles.mappingModalOverlay}>
                     <div style={TIAStyles.mappingModalContent}>
-                        {/* Хедер модалки */}
-                        {/* Хедер модалки */}
                         <div style={{
-                            padding: '18px 28px',
-                            borderBottom: '1px solid #e2e8f0',
-                            backgroundColor: '#f1f5f9',
+                            padding: '24px 32px',
+                            borderBottom: '1px solid var(--border-color)',
+                            backgroundColor: 'var(--bg-input)',
                             flexShrink: 0,
                             zIndex: 10
                         }}>
                             <h2 style={{
                                 ...TIAStyles.title,
-                                margin: 0
+                                margin: 0,
+                                fontSize: '24px'
                             }}>
                                 Сопоставление компонентов
                             </h2>
                             {(partialSaveMessage || error) && (
-                                <div style={{ marginTop: '12px' }}>
+                                <div style={{ marginTop: '16px' }}>
                                     {partialSaveMessage && (
                                         <div style={{
-                                            padding: '8px 12px',
-                                            backgroundColor: '#ffffff',
-                                            border: '1px solid #e2e8f0',
-                                            borderRadius: '12px',
-                                            color: '#64748b',
+                                            padding: '10px 16px',
+                                            backgroundColor: 'var(--bg-content)',
+                                            border: '1px solid var(--border-color)',
+                                            borderRadius: '14px',
+                                            color: 'var(--text-muted)',
                                             fontSize: '14px',
-                                            fontWeight: 600,
-                                            boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
+                                            fontWeight: 700,
+                                            boxShadow: 'var(--shadow-sm)'
                                         }}>
                                             {partialSaveMessage}
                                         </div>
                                     )}
                                     {error && (
                                         <div style={{
-                                            padding: '8px 12px',
-                                            backgroundColor: '#ffeef0',
-                                            borderRadius: '4px',
-                                            color: '#cb2431',
-                                            fontSize: '14px'
+                                            padding: '10px 16px',
+                                            backgroundColor: 'var(--error-bg)',
+                                            borderRadius: '14px',
+                                            border: '1px solid var(--error)',
+                                            color: 'var(--error)',
+                                            fontSize: '14px',
+                                            fontWeight: 700
                                         }}>
                                             {error}
                                         </div>
@@ -213,23 +215,22 @@ const TIAPageContent = () => {
                             )}
                         </div>
 
-                        {/* Воркспейс маппинга (50/50 Split) */}
                         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
                             <TIAMappingView />
                         </div>
 
                         {/* Футер модалки */}
                         <div style={{
-                            padding: '18px 28px',
-                            borderTop: '1px solid #e2e8f0',
+                            padding: '20px 32px',
+                            borderTop: '1px solid var(--border-color)',
                             display: 'flex',
                             justifyContent: 'flex-end',
-                            gap: '12px',
-                            backgroundColor: '#f1f5f9',
+                            gap: '16px',
+                            backgroundColor: 'var(--bg-input)',
                             flexShrink: 0,
                             zIndex: 10
                         }}>
-                            <div style={{ flex: 1, color: '#64748b', fontSize: '13px', fontWeight: 500, display: 'flex', alignItems: 'center' }}>
+                            <div style={{ flex: 1, color: 'var(--text-muted)', fontSize: '13px', fontWeight: 700, display: 'flex', alignItems: 'center', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                                 {isPartialSaving && <span>Сохраняем изменения...</span>}
                             </div>
                             <button
@@ -237,13 +238,15 @@ const TIAPageContent = () => {
                                 style={{
                                     padding: '12px 28px',
                                     borderRadius: '16px',
-                                    fontWeight: 700,
-                                    fontSize: '14px',
+                                    fontWeight: 800,
+                                    fontSize: '13px',
                                     cursor: 'pointer',
                                     transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
                                     backgroundColor: 'transparent',
-                                    border: '1px solid #cbd5e1',
-                                    color: '#64748b'
+                                    border: '1px solid var(--border-color)',
+                                    color: 'var(--text-muted)',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.05em'
                                 }}
                                 disabled={isPartialSaving || isMappingLoading}
                             >
@@ -254,39 +257,44 @@ const TIAPageContent = () => {
                                 style={{
                                     padding: '12px 28px',
                                     borderRadius: '16px',
-                                    fontWeight: 700,
-                                    fontSize: '14px',
+                                    fontWeight: 800,
+                                    fontSize: '13px',
                                     cursor: 'pointer',
                                     transition: 'all 0.2s',
-                                    backgroundColor: '#cbd5e1',
-                                    border: 'none',
-                                    color: '#334155'
+                                    backgroundColor: 'var(--bg-content)',
+                                    border: '1px solid var(--border-color)',
+                                    color: 'var(--text-primary)',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.05em',
+                                    boxShadow: 'var(--shadow-sm)'
                                 }}
                                 disabled={isPartialSaving || isMappingLoading}
                             >
                                 {isPartialSaving
-                                    ? <Loader style={{ width: '100%', height: 20 }} />
+                                    ? <Loader color="var(--primary-accent)" size="20px" />
                                     : 'Сохранить маппинг'}
                             </button>
                             <button
                                 onClick={() => handleMappingConfirm('launch')}
                                 style={{
-                                    padding: '12px 28px',
+                                    padding: '12px 32px',
                                     borderRadius: '16px',
-                                    fontWeight: 700,
-                                    fontSize: '14px',
+                                    fontWeight: 800,
+                                    fontSize: '13px',
                                     cursor: 'pointer',
-                                    transition: 'all 0.2s',
-                                    backgroundColor: '#3b82f6',
+                                    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                                    backgroundColor: 'var(--primary-accent)',
                                     border: 'none',
                                     color: '#ffffff',
-                                    boxShadow: '0 4px 6px -1px rgba(59, 130, 246, 0.2)'
+                                    boxShadow: '0 8px 20px color-mix(in srgb, var(--primary-accent) 30%, transparent)',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.05em'
                                 }}
                                 disabled={isPartialSaving || isMappingLoading || isCreateButtonDisabled()}
                                 title={getCreateButtonDisabledReason()}
                             >
                                 {isMappingLoading
-                                    ? <Loader style={{ width: '100%', height: 20 }} />
+                                    ? <Loader color="#fff" size="20px" />
                                     : 'Создать запуск'}
                             </button>
                         </div>
