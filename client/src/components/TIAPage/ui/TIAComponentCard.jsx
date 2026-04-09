@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import TIAStyles from '../styles/TIAStyles';
 import { useTIA } from '../context/TIAContext';
-import { isNewTiaFormat, formatCustomFieldName } from '../utils/tiaUtils';
+import { isNewTiaFormat, formatCustomFieldName, findFolderById } from '../utils/tiaUtils';
 
 /**
  * Компонент карточки компонента для интерфейса маппинга
@@ -18,7 +18,7 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
         componentMappings,
         setComponentMappings,
         handleRemoveMapping,
-        findFolderAllureId,
+        folders,
         expandedScenarios,
         setExpandedScenarios,
         toggleInheritance,
@@ -471,7 +471,7 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                                     const pName = page.page_meta?.name?.trim();
                                     const mappings = pageMappings[pName] || [];
                                     mappings.forEach(m => {
-                                        const folder = findFolderAllureId(m.functional_block_allure_id);
+                                        const folder = findFolderById(folders, m.functional_block_allure_id);
                                         if (folder) {
                                             const fId = folder.id.toString();
                                             if (!folderToPages[fId]) folderToPages[fId] = new Set();
@@ -489,7 +489,7 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                             return (
                                 <>
                                     {displayIds.map(folderId => {
-                                        const folder = findFolderAllureId(folderId);
+                                        const folder = findFolderById(folders, folderId);
                                         const isAutoMapped = autoMappedBlocks[component.id]?.includes(folderId.toString());
                                         const isPageLevel = !directIds.includes(folderId.toString());
 

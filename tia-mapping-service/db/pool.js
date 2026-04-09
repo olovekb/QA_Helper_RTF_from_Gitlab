@@ -1,5 +1,5 @@
 import knex from 'knex';
-import config from '../config/index.js'; // Импорт конфигурации базы данных
+import config from '../config/index.js';
 
 /**
  * Создаёт пул подключений к базе данных с использованием строки подключения DATABASE_URL

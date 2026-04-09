@@ -120,10 +120,13 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
      * Синхронизация сброса состояний при размонтировании
      */
     const resetStates = useCallback(() => {
-        setProjectId('');
+        setProjectId(config.projectId || '');
+        setFrontendJSON(null);
         setBackendJSON(null);
+        setTiaReport(null);
         setFrontendFileName('');
         setBackendFileName('');
+        setJiraLink('');
         setHasStarted(false);
         setFolders([]);
         setExpandedFolders({});
@@ -133,6 +136,7 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
         setComponents([]);
         setComponentMappings({});
         setAutoMappedBlocks({});
+        setDirtyComponents({});
         setShowMappingModal(false);
         setIsMappingLoading(false);
     }, []);
@@ -211,6 +215,197 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
             throw new Error(`Не удалось сохранить маппинг для компонента ${component.name}.`);
         }
     }, [projectId, frontendJSON, backendJSON]);
+
+    /**
+     * Обработка открытия модального окна маппинга
+     */
+    const handleOpenMappingModal = useCallback(async () => {
+        if (mode === 'light') {
+            setError('Переключитесь в режим маппинга для создания запуска.');
+            return;
+        }
+        if (!projectId) {
+            setError('Пожалуйста, выберите проект.');
+            return;
+        }
+        if (!frontendJSON && !backendJSON) {
+            setError('Пожалуйста, загрузите JSON-файл (старый или новый формат TIA).');
+            return;
+        }
+
+        if (jiraLink && !jiraLink.match(/^https?:\/\/jira\.abanking\.ru\/browse\/[A-Z]+-\d+$/)) {
+            setError('Пожалуйста, введите корректную ссылку на задачу в Jira (например, https://jira.abanking.ru/browse/CTMM-528) или оставьте поле подчеркнутым.');
+            return;
+        }
+
+        setIsLoading(true);
+        setError('');
+        setSuccessMessage('');
+
+        try {
+            const extractedComp = extractComponents(frontendJSON, backendJSON, tiaReport);
+            if (extractedComp.length === 0) {
+                setError('Компоненты не найдены в загруженных JSON-файлах. Проверьте структуру файлов.');
+                setIsLoading(false);
+                return;
+            }
+
+            setComponents(extractedComp);
+            const existingMappings = await fetchExistingMappings(projectId);
+
+            const initialMappings = {};
+            const autoMapped = {};
+
+            extractedComp.forEach(component => {
+                const mappingsForComponent = (Array.isArray(existingMappings) ? existingMappings : []).filter(
+                    m => m.component_name === component.name
+                );
+                const folderIds = mappingsForComponent
+                    .map(m => findFolderById(folders, m.functional_block_allure_id)?.id?.toString() || '')
+                    .filter(id => id);
+                initialMappings[component.id] = folderIds.length > 0 ? folderIds : [];
+                autoMapped[component.id] = [];
+            });
+
+            const pageDeps = buildPageDependencies(extractedComp, frontendJSON, backendJSON);
+            const allRelatedNames = new Set();
+            pageDeps.forEach(dep => { if (dep.pageName?.trim()) allRelatedNames.add(dep.pageName.trim()); });
+            extractedComp.forEach(comp => { if (comp.name?.trim()) allRelatedNames.add(comp.name.trim()); });
+
+            const pageNames = Array.from(allRelatedNames);
+            if (pageNames.length > 0) {
+                const response = await axios.post(`${config.TIAUrl}/api/components/page-mappings`, {
+                    projectId,
+                    pageNames
+                });
+                const fetchedPageMappings = response.data.pageMappings || {};
+                setPageMappings(fetchedPageMappings);
+
+                extractedComp.forEach(component => {
+                    const componentId = component.id;
+                    const relatedPageNames = new Set(
+                        pageDeps.filter(dep => dep.componentName === component.name).map(dep => dep.pageName?.trim()).filter(name => name)
+                    );
+                    if (component.name?.trim()) relatedPageNames.add(component.name.trim());
+
+                    const autoFolderIds = new Set(initialMappings[componentId] || []);
+                    const currentAuto = new Set();
+
+                    relatedPageNames.forEach(pageName => {
+                        const pageMapping = fetchedPageMappings[pageName] || [];
+                        pageMapping.forEach(mapping => {
+                            const folderId = findFolderById(folders, mapping.functional_block_allure_id)?.id?.toString();
+                            if (folderId && !autoFolderIds.has(folderId)) {
+                                autoFolderIds.add(folderId);
+                                currentAuto.add(folderId);
+                            }
+                        });
+                    });
+
+                    initialMappings[componentId] = Array.from(autoFolderIds);
+                    autoMapped[componentId] = Array.from(currentAuto);
+                });
+            }
+
+            setComponentMappings(initialMappings);
+            setAutoMappedBlocks(autoMapped);
+            setDirtyComponents({});
+            setShowMappingModal(true);
+        } catch (err) {
+            setError('Произошла ошибка при обработке компонентов. Проверьте данные и повторите попытку.');
+            logError('Component mapping setup error', err.message, config.TIAUrl);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [mode, projectId, frontendJSON, backendJSON, tiaReport, jiraLink, folders, fetchExistingMappings]);
+
+    /**
+     * Открытие сплит модалки с предзаполненными данными 
+     * @param {boolean} [force=false] - Принудительное открытие без проверки незамапленных
+     */
+    const handleOpenSplitModal = useCallback(async (force = false) => {
+        setIsMappingLoading(true);
+        const allComponents = extractComponents(frontendJSON, backendJSON, tiaReport);
+        const allPageDependencies = buildPageDependencies(allComponents, frontendJSON, backendJSON);
+
+        if (!force) {
+            const unmapped = components.filter(c => {
+                if (componentMappings[c.id] && componentMappings[c.id].length > 0) return false;
+
+                if (disabledInheritance[c.id]) return true;
+
+                const relatedPageNames = allPageDependencies
+                    .filter(dep => dep.componentName === c.name)
+                    .map(dep => dep.pageName);
+
+                relatedPageNames.push(c.name);
+
+                const hasInheritance = relatedPageNames.some(pn => pageMappings[pn] && pageMappings[pn].length > 0);
+
+                return !hasInheritance;
+            });
+
+            if (unmapped.length > 0) {
+                setUnmappedComponentsList(unmapped);
+                const hasFrontend = unmapped.some(c => c.type === 'frontend');
+                const hasBackend = unmapped.some(c => c.type === 'backend');
+                if (hasFrontend) setActiveUnmappedTab('frontend');
+                else if (hasBackend) setActiveUnmappedTab('backend');
+                setShowUnmappedModal(true);
+                setIsMappingLoading(false);
+                return;
+            }
+        }
+
+        setLoadingState(prev => ({ ...prev, launch: true }));
+
+        try {
+            const dirtyComponentsList = components.filter(c => dirtyComponents[c.id]);
+            const chunkSize = 5;
+            for (let i = 0; i < dirtyComponentsList.length; i += chunkSize) {
+                const chunk = dirtyComponentsList.slice(i, i + chunkSize);
+                await Promise.all(chunk.map(component => {
+                    const folderIds = componentMappings[component.id] || [];
+                    return saveComponentMapping(component, folderIds, allComponents, allPageDependencies, disabledInheritance);
+                }));
+            }
+            setDirtyComponents({});
+
+            const allFolderIds = new Set();
+            Object.values(componentMappings).forEach(ids => {
+                if (Array.isArray(ids)) ids.forEach(id => allFolderIds.add(id.toString()));
+            });
+            const uniqueFolderIds = Array.from(allFolderIds);
+
+            if (uniqueFolderIds.length === 0) {
+                setError('Не выбрано ни одного функционального блока для запуска.');
+                return;
+            }
+
+            let defaultName = 'Регресс тестирование';
+            if (jiraLink) {
+                const match = jiraLink.match(/\/browse\/([A-Z]+-\d+)$/);
+                defaultName = `Регресс тестирование ${match ? match[1] : jiraLink.split('/').pop()}`;
+            } else {
+                defaultName = `Регресс тестирование ${new Date().toLocaleDateString('ru-RU')}`;
+            }
+
+            setUnassignedFolderIds(uniqueFolderIds);
+
+            setLaunchGroups([{ id: 'launch-1', name: defaultName, folderIds: [], jiraLink: jiraLink || '' }]);
+
+            setShowMappingModal(false);
+            setShowUnmappedModal(false);
+            setShowSplitModal(true);
+        } catch (err) {
+            setError(err.message);
+            logError('Error preparing split modal', err.message, config.TIAUrl);
+        } finally {
+            setSplitProgress(null);
+        }
+    }, [components, componentMappings, disabledInheritance, pageMappings, frontendJSON, backendJSON, tiaReport, jiraLink, saveComponentMapping, dirtyComponents]);
+
+
 
     /**
      * Обработка смены проекта
@@ -447,7 +642,7 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
         } finally {
             setIsCreatingStubs(false);
         }
-    }, [projectId, emptyGroupsData, launchGroups, jiraLink, createMultipleLaunches]);
+    }, [projectId, emptyGroupsData, launchGroups, jiraLink, createMultipleLaunches, handleOpenMappingModal]);
 
     /**
      * Обработка завершения перетаскивания днд
@@ -573,7 +768,7 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
         } finally {
             setIsPartialSaving(false);
         }
-    }, [projectId, components, componentMappings, frontendJSON, backendJSON, tiaReport, saveComponentMapping, disabledInheritance]);
+    }, [projectId, components, componentMappings, frontendJSON, backendJSON, tiaReport, saveComponentMapping, disabledInheritance, dirtyComponents]);
 
     /**
      * Переключение блокировки наследования
@@ -587,218 +782,7 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
         markComponentAsDirty(compId);
     }, [markComponentAsDirty]);
 
-    /**
-     * Поиск папки по Allure ID (вспомогательная для маппинга)
-     * @param {string|number} allureId 
-     * @returns {Object|null}
-     */
-    const findFolderAllureId = useCallback((allureId) => {
-        if (!allureId || !folders) return null;
-        const idStr = allureId.toString().trim();
 
-        const traverse = (nodes) => {
-            for (const node of nodes) {
-                if (node.id?.toString().trim() === idStr) return node;
-                if (node.children) {
-                    const found = traverse(node.children);
-                    if (found) return found;
-                }
-            }
-            return null;
-        };
-
-        return traverse(folders);
-    }, [folders]);
-
-    /**
-     * Обработка открытия модального окна маппинга
-     */
-    const handleOpenMappingModal = useCallback(async () => {
-        if (mode === 'light') {
-            setError('Переключитесь в режим маппинга для создания запуска.');
-            return;
-        }
-        if (!projectId) {
-            setError('Пожалуйста, выберите проект.');
-            return;
-        }
-        if (!frontendJSON && !backendJSON) {
-            setError('Пожалуйста, загрузите JSON-файл (старый или новый формат TIA).');
-            return;
-        }
-
-        if (jiraLink && !jiraLink.match(/^https?:\/\/jira\.abanking\.ru\/browse\/[A-Z]+-\d+$/)) {
-            setError('Пожалуйста, введите корректную ссылку на задачу в Jira (например, https://jira.abanking.ru/browse/CTMM-528) или оставьте поле пустым.');
-            return;
-        }
-
-        setIsLoading(true);
-        setError('');
-        setSuccessMessage('');
-
-        try {
-            const extractedComp = extractComponents(frontendJSON, backendJSON, tiaReport);
-            if (extractedComp.length === 0) {
-                setError('Компоненты не найдены в загруженных JSON-файлах. Проверьте структуру файлов.');
-                setIsLoading(false);
-                return;
-            }
-
-            setComponents(extractedComp);
-            const existingMappings = await fetchExistingMappings(projectId);
-
-            const initialMappings = {};
-            const autoMapped = {};
-
-            extractedComp.forEach(component => {
-                const mappingsForComponent = (Array.isArray(existingMappings) ? existingMappings : []).filter(
-                    m => m.component_name === component.name
-                );
-                const folderIds = mappingsForComponent
-                    .map(m => findFolderAllureId(m.functional_block_allure_id)?.id?.toString() || '')
-                    .filter(id => id);
-                initialMappings[component.id] = folderIds.length > 0 ? folderIds : [];
-                autoMapped[component.id] = [];
-            });
-
-            const pageDeps = buildPageDependencies(extractedComp, frontendJSON, backendJSON);
-            const allRelatedNames = new Set();
-            pageDeps.forEach(dep => { if (dep.pageName?.trim()) allRelatedNames.add(dep.pageName.trim()); });
-            extractedComp.forEach(comp => { if (comp.name?.trim()) allRelatedNames.add(comp.name.trim()); });
-
-            const pageNames = Array.from(allRelatedNames);
-            if (pageNames.length > 0) {
-                const response = await axios.post(`${config.TIAUrl}/api/components/page-mappings`, {
-                    projectId,
-                    pageNames
-                });
-                const fetchedPageMappings = response.data.pageMappings || {};
-                setPageMappings(fetchedPageMappings);
-
-                extractedComp.forEach(component => {
-                    const componentId = component.id;
-                    const relatedPageNames = new Set(
-                        pageDeps.filter(dep => dep.componentName === component.name).map(dep => dep.pageName?.trim()).filter(name => name)
-                    );
-                    if (component.name?.trim()) relatedPageNames.add(component.name.trim());
-
-                    const autoFolderIds = new Set(initialMappings[componentId] || []);
-                    const currentAuto = new Set();
-
-                    relatedPageNames.forEach(pageName => {
-                        const pageMapping = fetchedPageMappings[pageName] || [];
-                        pageMapping.forEach(mapping => {
-                            const folderId = findFolderAllureId(mapping.functional_block_allure_id)?.id?.toString();
-                            if (folderId && !autoFolderIds.has(folderId)) {
-                                autoFolderIds.add(folderId);
-                                currentAuto.add(folderId);
-                            }
-                        });
-                    });
-
-                    initialMappings[componentId] = Array.from(autoFolderIds);
-                    autoMapped[componentId] = Array.from(currentAuto);
-                });
-            }
-
-            setComponentMappings(initialMappings);
-            setAutoMappedBlocks(autoMapped);
-            setDirtyComponents({});
-            setShowMappingModal(true);
-        } catch (err) {
-            setError('Произошла ошибка при обработке компонентов. Проверьте данные и повторите попытку.');
-            logError('Component mapping setup error', err.message, config.TIAUrl);
-        } finally {
-            setIsLoading(false);
-        }
-    }, [mode, projectId, frontendJSON, backendJSON, tiaReport, jiraLink, findFolderAllureId, fetchExistingMappings]);
-
-    /**
-     * Открытие сплит модалки с предзаполненными данными 
-     * @param {boolean} [force=false] - Принудительное открытие без проверки незамапленных
-     */
-    const handleOpenSplitModal = useCallback(async (force = false) => {
-        setIsMappingLoading(true);
-        const allComponents = extractComponents(frontendJSON, backendJSON, tiaReport);
-        const allPageDependencies = buildPageDependencies(allComponents, frontendJSON, backendJSON);
-
-        if (!force) {
-            const unmapped = components.filter(c => {
-                if (componentMappings[c.id] && componentMappings[c.id].length > 0) return false;
-
-                if (disabledInheritance[c.id]) return true;
-
-                const relatedPageNames = allPageDependencies
-                    .filter(dep => dep.componentName === c.name)
-                    .map(dep => dep.pageName);
-
-                relatedPageNames.push(c.name);
-
-                const hasInheritance = relatedPageNames.some(pn => pageMappings[pn] && pageMappings[pn].length > 0);
-
-                return !hasInheritance;
-            });
-
-            if (unmapped.length > 0) {
-                setUnmappedComponentsList(unmapped);
-                const hasFrontend = unmapped.some(c => c.type === 'frontend');
-                const hasBackend = unmapped.some(c => c.type === 'backend');
-                if (hasFrontend) setActiveUnmappedTab('frontend');
-                else if (hasBackend) setActiveUnmappedTab('backend');
-                setShowUnmappedModal(true);
-                setIsMappingLoading(false);
-                return;
-            }
-        }
-
-        setLoadingState(prev => ({ ...prev, launch: true }));
-
-        try {
-            const dirtyComponentsList = components.filter(c => dirtyComponents[c.id]);
-            const chunkSize = 5;
-            for (let i = 0; i < dirtyComponentsList.length; i += chunkSize) {
-                const chunk = dirtyComponentsList.slice(i, i + chunkSize);
-                await Promise.all(chunk.map(component => {
-                    const folderIds = componentMappings[component.id] || [];
-                    return saveComponentMapping(component, folderIds, allComponents, allPageDependencies, disabledInheritance);
-                }));
-            }
-            setDirtyComponents({});
-
-            const allFolderIds = new Set();
-            Object.values(componentMappings).forEach(ids => {
-                if (Array.isArray(ids)) ids.forEach(id => allFolderIds.add(id.toString()));
-            });
-            const uniqueFolderIds = Array.from(allFolderIds);
-
-            if (uniqueFolderIds.length === 0) {
-                setError('Не выбрано ни одного функционального блока для запуска.');
-                return;
-            }
-
-            let defaultName = 'Регресс тестирование';
-            if (jiraLink) {
-                const match = jiraLink.match(/\/browse\/([A-Z]+-\d+)$/);
-                defaultName = `Регресс тестирование ${match ? match[1] : jiraLink.split('/').pop()}`;
-            } else {
-                defaultName = `Регресс тестирование ${new Date().toLocaleDateString('ru-RU')}`;
-            }
-
-            setUnassignedFolderIds(uniqueFolderIds);
-
-            setLaunchGroups([{ id: 'launch-1', name: defaultName, folderIds: [], jiraLink: jiraLink || '' }]);
-
-            setShowMappingModal(false);
-            setShowUnmappedModal(false);
-            setShowSplitModal(true);
-        } catch (err) {
-            setError(err.message);
-            logError('Error preparing split modal', err.message, config.TIAUrl);
-        } finally {
-            setIsMappingLoading(false);
-            setLoadingState(prev => ({ ...prev, launch: false }));
-        }
-    }, [components, componentMappings, disabledInheritance, pageMappings, frontendJSON, backendJSON, tiaReport, jiraLink, saveComponentMapping]);
 
     /**
      * Подтверждение маппинга и переход к созданию запусков
@@ -926,7 +910,6 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
         createMultipleLaunches,
         isCreateButtonDisabled,
         getCreateButtonDisabledReason,
-        findFolderAllureId,
         markComponentAsDirty
     };
 

@@ -39,17 +39,7 @@ const TIAMappingFolderTree = ({ folders, level = 0, componentId = null }) => {
         return ids;
     };
 
-    /**
-     * Проверяет, выбраны ли все потомки
-     */
-    const areAllDescendantsSelected = (folder, mappings) => {
-        const folderId = folder.id.toString();
-        if (mappings.includes(folderId)) return true;
-        if (!folder.children || folder.children.length === 0) {
-            return mappings.includes(folderId);
-        }
-        return folder.children.every(child => areAllDescendantsSelected(child, mappings));
-    };
+
 
     /**
      * Проверка видимости узла при поиске

@@ -179,7 +179,6 @@ app.get('*', (req, res) => {
     });
 });
 
-// Запуск сервера на указанном порту
 app.listen(config.port, async () => {
     logInfo(`TIA Mapping Service запущен на http://localhost:${config.port}`);
     logInfo(`Allure base url ${process.env.ALLURE_BASE_URL}`)

@@ -132,9 +132,10 @@ export const extractComponents = (frontendJSON, backendJSON, tiaReport) => {
         if (!report || !isNewTiaFormat(report)) return;
         const uniqueMap = report.unique_affected_components || {};
 
-        const addComponent = (name, pageRisk, pageSummary, qaAdvice, detail, pageEnv) => {
+        const addComponent = (name, pageRisk, pageSummary, qaAdvice, detail, pageEnv, index) => {
             if (!name) return;
-            const existing = componentsMap.get(name);
+            const compKey = (report.type === 'backend' || detail?.type === 'backend') ? `${detail?.file_path || ''}::${name}` : `${name}-${index}`;
+            const existing = componentsMap.get(compKey);
             const riskOrder = { HIGH: 3, MEDIUM: 2, LOW: 1, '': 0 };
             const bestRisk = (existing && riskOrder[existing.riskLevel] > riskOrder[pageRisk]) ? existing.riskLevel : (pageRisk || '');
             const mergedAdvice = [...(existing?.qaAdvice || []), ...(qaAdvice || [])];
@@ -155,8 +156,8 @@ export const extractComponents = (frontendJSON, backendJSON, tiaReport) => {
             if (report.type === 'backend' || detail?.type === 'backend') compType = 'backend';
             else if (report.type === 'frontend' || detail?.type === 'frontend') compType = 'frontend';
 
-            componentsMap.set(name, {
-                id: name,
+            componentsMap.set(compKey, {
+                id: compKey,
                 name,
                 type: compType,
                 riskLevel: bestRisk,
@@ -171,14 +172,14 @@ export const extractComponents = (frontendJSON, backendJSON, tiaReport) => {
             });
         };
 
-        (report.pages || []).forEach((page) => {
+        (report.pages || []).forEach((page, pageIdx) => {
             const pageRisk = page.ai_analysis?.risk_level || '';
             const pageSummary = page.ai_analysis?.summary || '';
             const qaAdvice = page.ai_analysis?.qa_advice || [];
             const pageEnv = page.page_meta?.env;
-            (page.depends_on_components || []).forEach((compName) => {
+            (page.depends_on_components || []).forEach((compName, compIdx) => {
                 const detail = uniqueMap[compName];
-                addComponent(compName, pageRisk, pageSummary, qaAdvice, detail, pageEnv);
+                addComponent(compName, pageRisk, pageSummary, qaAdvice, detail, pageEnv, `${pageIdx}-${compIdx}`);
             });
         });
 

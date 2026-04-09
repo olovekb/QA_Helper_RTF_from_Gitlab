@@ -1,6 +1,6 @@
-import axios from 'axios'; // Импорт библиотеки для HTTP-запросов
-import config from '../config/index.js'; // Импорт конфигурации проекта (через ES-модули)
-import { logInfo, logError } from './logger.js'; // Импорт функций логирования
+import axios from 'axios';
+import config from '../config/index.js';
+import { logInfo, logError } from './logger.js';
 
 /**
  * Глобальные переменные для управления состоянием токена
@@ -15,8 +15,8 @@ let tokenPromise = null;
  * @type {Object}
  */
 export const authHeaders = {
-    'Authorization': '', // Инициализируем пустой токен, он будет обновлён при первом запросе
-    'Content-Type': 'application/json', // Тип контента для запросов
+    'Authorization': '',
+    'Content-Type': 'application/json',
 };
 
 /**
@@ -182,7 +182,7 @@ export function getTestCaseTreeEntityContent(data) {
 }
 
 /**
- * Логирование предупреждений (можно добавить в logger.js, если нужно)
+ * Логирование предупреждений
  * @param {string} message - Сообщение для логирования
  */
 function logWarn(message) {

@@ -10,8 +10,7 @@ const cache = new Map();
 let currentProjectId = null;
 
 /**
- * Получает иерархическую структуру проекта (только папки) из Allure API, включая все уровни вложенности,
- * с оптимизацией для скорости и сохранением всех функциональных блоков (Feature, Story, Scenario и т.д.) в БД
+ * Получает иерархическую структуру проекта (только папки) из Allure API, включая все уровни вложенности
  * @param {string} projectId - Идентификатор проекта в Allure
  * @param {Object} [skipCriteria] - Критерии для пропуска узлов (например, { customFieldIdsToSkip: [], namePatternsToSkip: [] })
  * @returns {Promise<Object>} - Структура проекта с папками, содержащими name, customFieldId, их названия и вложенные дети

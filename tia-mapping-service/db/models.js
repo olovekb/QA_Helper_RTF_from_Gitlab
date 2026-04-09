@@ -1,4 +1,4 @@
-import databasePool from './connection.js'; // Импорт пула подключений к PostgreSQL
+import databasePool from './connection.js';
 
 /**
  * Получение всех функциональных блоков для указанного проекта
@@ -6,9 +6,9 @@ import databasePool from './connection.js'; // Импорт пула подкл�
  * @returns {Promise<Array>} - Массив объектов функциональных блоков
  */
 export async function getFunctionalBlocks(projectId) {
-  const query = 'SELECT * FROM functional_blocks WHERE project_id = $1'; // SQL-запрос для выборки блоков
-  const result = await databasePool.query(query, [projectId]); // Выполнение запроса с параметром
-  return result.rows; // Возвращаем строки результата
+  const query = 'SELECT * FROM functional_blocks WHERE project_id = $1';
+  const result = await databasePool.query(query, [projectId]);
+  return result.rows;
 }
 
 /**
@@ -17,9 +17,9 @@ export async function getFunctionalBlocks(projectId) {
  * @returns {Promise<Array>} - Массив объектов компонентов
  */
 export async function getComponents(projectId) {
-  const query = 'SELECT * FROM components WHERE project_id = $1'; // SQL-запрос для выборки компонентов
-  const result = await databasePool.query(query, [projectId]); // Выполнение запроса
-  return result.rows; // Возвращаем строки результата
+  const query = 'SELECT * FROM components WHERE project_id = $1';
+  const result = await databasePool.query(query, [projectId]);
+  return result.rows;
 }
 
 /**
@@ -37,7 +37,7 @@ export async function createComponent(projectId, componentType, name, functional
     RETURNING id
   `;
   const result = await databasePool.query(query, [projectId, componentType, name, functionalBlockId]);
-  return result.rows[0].id; // Возвращаем ID созданного компонента
+  return result.rows[0].id;
 }
 
 /**
@@ -54,7 +54,7 @@ export async function updateComponent(componentId, functionalBlockId) {
     RETURNING *
   `;
   const result = await databasePool.query(query, [functionalBlockId, componentId]);
-  return result.rows[0]; // Возвращаем обновлённую запись
+  return result.rows[0];
 }
 
 /**
@@ -65,7 +65,7 @@ export async function updateComponent(componentId, functionalBlockId) {
 export async function deleteComponent(componentId) {
   const query = 'DELETE FROM components WHERE id = $1 RETURNING *';
   const result = await databasePool.query(query, [componentId]);
-  return result.rows[0]; // Возвращаем удалённую запись или null
+  return result.rows[0];
 }
 
 /**
@@ -82,5 +82,5 @@ export async function createTestPlan(projectId, jiraTaskUrl, functionalBlocks) {
     RETURNING id
   `;
   const result = await databasePool.query(query, [projectId, jiraTaskUrl, JSON.stringify(functionalBlocks)]);
-  return result.rows[0].id; // Возвращаем ID созданного тест-плана
+  return result.rows[0].id;
 }
