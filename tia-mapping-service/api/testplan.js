@@ -5,7 +5,6 @@ import { savePageComponentDependencies } from './components.js';
 import { resolveGroupPathFromDb } from '../utils/testCaseTreeEntity.js';
 import pLimit from 'p-limit';
 
-// Кеш и лимит для параллельных запросов
 const cache = new Map();
 const limit = pLimit(5);
 
@@ -198,17 +197,16 @@ export async function createTestPlanAPI(req, res) {
             throw new Error('Не найдено ни одного тест-кейса в выбранных папках');
         }
 
-        // Шотган подход: плоский groupsInclude (как в launch.js) + подробные списки тест-кейсов
         const requestBody = {
             selection: {
                 projectId: parseInt(projectId, 10),
                 treeId: parseInt(treeId, 10),
                 inverted: false,
-                groupsInclude: folderIds,        // ПЛОСКИЙ МАССИВ (как в launch.js!)
+                groupsInclude: folderIds,
                 groupsExclude: [],
-                leavesInclude: finalNodeIds,     // Node IDs
-                leafsInclude: finalNodeIds,      // Alias
-                testCasesInclude: finalTestCaseIds, // Global TestCase IDs
+                leavesInclude: finalNodeIds,
+                leafsInclude: finalNodeIds,
+                testCasesInclude: finalTestCaseIds,
                 leavesExclude: [],
                 testCasesExclude: [],
                 path: [],
@@ -216,7 +214,6 @@ export async function createTestPlanAPI(req, res) {
                 search: ""
             },
             testPlanName: testPlanName,
-            // Для bulk testplan create некоторые версии ожидают tree в корне
             tree: { id: parseInt(treeId, 10) }
         };
 

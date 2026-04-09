@@ -1,10 +1,10 @@
 # Stage 1: Build client
-FROM node:18-alpine AS frontend-builder
+FROM node:20-alpine AS frontend-builder
 WORKDIR /usr/src/app/client
 
 # Копируем package.json и package-lock.json, устанавливаем зависимости
 COPY client/package*.json ./
-RUN npm install --legacy-peer-deps --production
+RUN npm install --legacy-peer-deps
 
 # Копируем исходники и собираем React-приложение
 COPY client/ ./
@@ -20,7 +20,7 @@ ENV REACT_APP_BDD_SERVER_URL=$REACT_APP_BDD_SERVER_URL
 RUN chmod +x ./node_modules/.bin/react-scripts && npm run build
 
 # Stage 2: Build backend and serve static files
-FROM node:18-alpine AS backend-builder
+FROM node:20-alpine AS backend-builder
 WORKDIR /usr/src/app
 
 RUN apk add --no-cache postgresql-client python3 py3-pip && \

@@ -2,7 +2,7 @@
 .page-nav-back {
   position: fixed;
   top: 16px;
-  left: 24px;
+  left: 32px;
   z-index: 2000;
 }
 
@@ -14,7 +14,7 @@
   right: 0;
   display: flex;
   justify-content: flex-end;
-  padding: 0 24px;
+  padding: 0 32px;
   pointer-events: none;
   z-index: 2000;
 }
@@ -33,10 +33,7 @@
 }
 
 .solution-page {
-  padding: 24px;
-  padding-top: 52px;
-  max-width: 1200px;
-  margin: 0 auto;
+  /* Layout is handled by .app-page-container */
 }
 
 .solution-page h1,

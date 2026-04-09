@@ -241,7 +241,7 @@ export async function handleComponentMapping(req, res) {
 
         let normalizedReleaseVersions = [];
         if (releaseVersions && Array.isArray(releaseVersions)) {
-            normalizedReleaseVersions = releaseVersions.filter(v => v); // Убираем пустые значения
+            normalizedReleaseVersions = releaseVersions.filter(v => v);
         } else if (releaseVersion) {
             if (Array.isArray(releaseVersion)) {
                 normalizedReleaseVersions = releaseVersion.filter(v => v);
@@ -326,6 +326,7 @@ export async function handleComponentMapping(req, res) {
                     newLinks.push({
                         component_id: component.id,
                         functional_block_id: functionalBlockData.id,
+                        mapping_type: 'direct',
                         created_at: databasePool.fn.now(),
                     });
                 }
@@ -334,7 +335,10 @@ export async function handleComponentMapping(req, res) {
                     await databasePool('component_functional_blocks')
                         .insert(newLinks)
                         .onConflict(['component_id', 'functional_block_id'])
-                        .ignore();
+                        .merge({
+                            mapping_type: databasePool.raw('EXCLUDED.mapping_type'),
+                            updated_at: databasePool.fn.now()
+                        });
                     logInfo(`Создано ${newLinks.length} новых связей для компонента ${componentName} в проекте ${projectId}`);
                 }
             } else {
@@ -371,7 +375,7 @@ export async function handleComponentMapping(req, res) {
                             project_id: projectId,
                             component_name: pageName
                         })
-                        .orderByRaw("CASE WHEN component_type = 'page' THEN 0 ELSE 1 END") // Приоритет 'page'
+                        .orderByRaw("CASE WHEN component_type = 'page' THEN 0 ELSE 1 END")
                         .first();
 
                     if (pageComponent) {
@@ -379,6 +383,7 @@ export async function handleComponentMapping(req, res) {
                             .join('functional_blocks', 'component_functional_blocks.functional_block_id', 'functional_blocks.id')
                             .where({
                                 'component_functional_blocks.component_id': pageComponent.id,
+                                'component_functional_blocks.mapping_type': 'direct',
                                 'functional_blocks.project_id': projectId
                             })
                             .select('functional_blocks.id', 'functional_blocks.allure_id');
@@ -399,7 +404,7 @@ export async function handleComponentMapping(req, res) {
                                 'component_mappings.component_name': pageName,
                                 'functional_blocks.project_id': projectId
                             })
-                            .orderByRaw("CASE WHEN component_type = 'page' THEN 0 ELSE 1 END") // Приоритет 'page'
+                            .orderByRaw("CASE WHEN component_type = 'page' THEN 0 ELSE 1 END")
                             .select('functional_blocks.id', 'functional_blocks.allure_id');
 
                         for (const fb of oldPageMappings) {
@@ -422,7 +427,7 @@ export async function handleComponentMapping(req, res) {
 
                     if (autoLinks.length > 0) {
                         await databasePool('component_functional_blocks')
-                            .insert(autoLinks)
+                            .insert(autoLinks.map(link => ({ ...link, mapping_type: 'auto' })))
                             .onConflict(['component_id', 'functional_block_id'])
                             .ignore();
                         logInfo(`Автоматически создано ${autoLinks.length} связей компонент-функциональные блоки для компонента ${componentName} из связанных Page в проекте ${projectId}`);
@@ -461,7 +466,6 @@ export async function handleComponentMapping(req, res) {
                 return res.status(400).json({ error: 'Не указан componentId для обновления.' });
             }
 
-            // Для PATCH используем только первый функциональный блок из массива
             const blockId = functionalBlocks[0];
             const functionalBlockData = await databasePool('functional_blocks')
                 .where({ allure_id: blockId, project_id: projectId })
@@ -471,7 +475,6 @@ export async function handleComponentMapping(req, res) {
                 return res.status(404).json({ error: `Функциональный блок с allure_id ${blockId} не найден для проекта ${projectId}.` });
             }
 
-            // Обновляем связь в component_functional_blocks
             await databasePool('component_functional_blocks')
                 .where({ component_id: component.id })
                 .del();
@@ -549,6 +552,7 @@ export async function getPageMappings(req, res) {
             allNewMappings = await databasePool('component_functional_blocks')
                 .join('functional_blocks', 'component_functional_blocks.functional_block_id', 'functional_blocks.id')
                 .whereIn('component_functional_blocks.component_id', pageComponentIds)
+                .andWhere('component_functional_blocks.mapping_type', 'direct')
                 .select(
                     'component_functional_blocks.component_id',
                     'functional_blocks.allure_id',

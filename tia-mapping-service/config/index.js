@@ -4,7 +4,6 @@
  * 
  */
 const config = {
-    // Порт, на котором будет запускаться микросервис (по умолчанию 5001, если не указан в .env)
     port: process.env.PORT || 5001,
 
     databaseUrl: process.env.DATABASE_URL || null,
@@ -16,7 +15,7 @@ const config = {
     dbPassword: process.env.DB_PASSWORD || 'password',
     dbName: process.env.DB_NAME || 'tia_mapping_db',
 
-    allureBaseUrl: process.env.ALLURE_BASE_URL || 'https://abanking.qatools.cloud',
+    allureBaseUrl: (process.env.ALLURE_BASE_URL || 'https://abanking.qatools.cloud').replace(/\/api$/, '').replace(/\/$/, ''),
 
     allureToken: process.env.ALLURE_TOKEN || 'cc865667-ca13-4f69-a5c9-77579586f571',
 };
