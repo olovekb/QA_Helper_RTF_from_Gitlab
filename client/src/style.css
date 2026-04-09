@@ -41,12 +41,18 @@
 }
 
 /* Основное оформление */
+html {
+    overflow-y: scroll;
+}
+
 body {
     font-family: var(--font-main), Arial, sans-serif;
     padding: 0;
     margin: 0;
-    background-color: var(--bg-main);
+    font-family: var(--font-main);
+    background-color: var(--bg-page);
     color: var(--text-primary);
+    overflow-y: scroll;
 }
 
 h1,
@@ -345,16 +351,11 @@ button:disabled {
 
 .header-wrapper {
     display: flex;
+    justify-content: flex-start;
     align-items: center;
-    justify-content: space-between;
+    max-width: 1440px;
+    margin: 0 auto;
     padding: 12px 32px;
-    background: color-mix(in srgb, var(--bg-main) 80%, transparent);
-    backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--border-color);
-    position: sticky;
-    top: 0;
-    z-index: 1000;
-    margin-bottom: 0;
 }
 
 .header-left {
@@ -381,6 +382,8 @@ button:disabled {
 }
 
 .header-center {
+    margin-left: 60px;
+    margin-right: auto;
     display: flex;
     gap: 4px;
     background: var(--bg-input);
