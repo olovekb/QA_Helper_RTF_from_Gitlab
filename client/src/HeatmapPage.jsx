@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
-import { BarChart, Bar, XAxis, YAxis, PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, Label } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import Select from 'react-select';
 import { useNavigate } from 'react-router-dom';
-import config from './config.json';
+import config from './config';
 import styles from './styles';
 import { trackEvent } from './analytics';
 
@@ -40,7 +40,6 @@ const HeatmapPage = ({ projects }) => {
     const [syncingJira, setSyncingJira] = useState(false);
     const [activeMetric, setActiveMetric] = useState('incidents');
 
-    // Для маппинга
     const [showMappingModal, setShowMappingModal] = useState(false);
     const [unmappedComponents, setUnmappedComponents] = useState([]);
     const [componentMappings, setComponentMappings] = useState({});
@@ -48,11 +47,9 @@ const HeatmapPage = ({ projects }) => {
     const [folderNamesCache, setFolderNamesCache] = useState({});
     const [parsedHistoryItems, setParsedHistoryItems] = useState([]);
 
-    // Состояния для подтверждения незамапленных
     const [showUnmappedConfirmation, setShowUnmappedConfirmation] = useState(false);
     const [unmappedList, setUnmappedList] = useState([]);
 
-    // Состояния для нового UI маппинга (Split View)
     const [selectedComponentForMapping, setSelectedComponentForMapping] = useState(null);
     const [mappingFilter, setMappingFilter] = useState('');
     const [folderSearchTerm, setFolderSearchTerm] = useState('');
@@ -64,17 +61,14 @@ const HeatmapPage = ({ projects }) => {
     const [showAllPages, setShowAllPages] = useState(false);
     const [showAllFb, setShowAllFb] = useState(false);
 
-    // Состояние группировки для бэкенда (controller / method)
     const [groupingType, setGroupingType] = useState('controller');
 
-    // Загрузка доступных версий при изменении проекта или дат
     useEffect(() => {
         if (projectId) {
             loadAvailableVersions();
         }
     }, [projectId, startDate, endDate]);
 
-    // Загрузка данных тепловой карты при изменении фильтров
     useEffect(() => {
         if (projectId) {
             if (activeTab === 'code') {
@@ -86,7 +80,6 @@ const HeatmapPage = ({ projects }) => {
         }
     }, [projectId, startDate, endDate, selectedVersions, isBugFix, activeTab, side]);
 
-    // Синхронизация данных о времени из Jira
     useEffect(() => {
         const allKeys = new Set();
         if (heatmapData?.components) {
@@ -105,7 +98,6 @@ const HeatmapPage = ({ projects }) => {
         }
     }, [heatmapData, testCoverageData, jiraPat]);
 
-    // Загрузка структуры Allure при изменении проекта
     useEffect(() => {
         if (projectId) {
             fetchFolders();
@@ -407,11 +399,11 @@ const HeatmapPage = ({ projects }) => {
             componentNames.forEach(name => {
                 const found = existingMappings.filter(m => m.component_name === name);
                 if (found.length > 0) {
-                    const blockIds = [...new Set(found.map(m => m.functional_block_id))];
+                    const blockIds = [...new Set(found.map(m => m.functional_block_allure_id))];
                     mappingsMap[name] = blockIds;
                     found.forEach(m => {
-                        if (m.functional_block_id && m.functional_block_name) {
-                            namesCache[m.functional_block_id] = m.functional_block_name;
+                        if (m.functional_block_allure_id && m.functional_block_name) {
+                            namesCache[m.functional_block_allure_id] = m.functional_block_name;
                         }
                     });
                 } else {
@@ -612,7 +604,6 @@ const HeatmapPage = ({ projects }) => {
                                     [componentId]: newMappings
                                 }));
                             } else {
-                                // Select all
                                 const newMappingsSet = new Set([...currentMappings, ...allDescendantIds]);
                                 setComponentMappings(prev => ({
                                     ...prev,
@@ -724,7 +715,7 @@ const HeatmapPage = ({ projects }) => {
 
     const renderComponentItem = (compName, level = 0) => {
         const isSelected = selectedComponentForMapping === compName;
-        const hasMapping = componentMappings[compName] && componentMappings[compName].length > 0;
+        const hasMapping = componentMappings[compName] && componentMappings[compName].filter(id => id !== null && id !== undefined && id !== '').length > 0;
 
         const details = parsedHistoryItems
             .filter(item => item.component_details && item.component_details[compName])
@@ -904,7 +895,6 @@ const HeatmapPage = ({ projects }) => {
 
     const handleSaveBulkHistory = async (force = false) => {
         trackEvent('heatmap_save_history', { page: '/heatmap', projectId, extra: { force, count: parsedHistoryItems?.length } });
-        // Валидация незамапленных компонентов
         if (!force) {
             const allComponents = Array.from(new Set(parsedHistoryItems.flatMap(item =>
                 item.affected_components.map(c => typeof c === 'string' ? c : c.name)
@@ -912,7 +902,7 @@ const HeatmapPage = ({ projects }) => {
             const trulyUnmapped = allComponents.filter(name => !componentMappings[name] || componentMappings[name].length === 0);
 
             if (trulyUnmapped.length > 0) {
-                setUnmappedList(trulyUnmapped.map(name => ({ name }))); // unmappedList expects objects with 'name' property for display
+                setUnmappedList(trulyUnmapped.map(name => ({ name })));
                 setShowUnmappedConfirmation(true);
                 return;
             }
@@ -920,8 +910,6 @@ const HeatmapPage = ({ projects }) => {
 
         setLoading(true);
         try {
-            // Чтобы обойти ограничение Nginx 413 Payload Too Large,
-            // отправляем историю частями (чанками) по 100 записей.
             const chunkSize = 100;
             const totalItems = parsedHistoryItems.length;
             const chunksCount = Math.ceil(totalItems / chunkSize);
@@ -958,7 +946,6 @@ const HeatmapPage = ({ projects }) => {
         }
     };
 
-    // Подготовка данных для графика (топ компонентов)
     const chartData = heatmapData?.components?.slice(0, 30).map((item, index) => ({
         name: item.componentName,
         value: item.count,
@@ -966,7 +953,6 @@ const HeatmapPage = ({ projects }) => {
         color: COLORS[index % COLORS.length],
     })) || [];
 
-    // Остальные компоненты (если больше 30)
     const otherComponents = heatmapData?.components?.slice(30) || [];
     const otherCount = otherComponents.reduce((sum, item) => sum + item.count, 0);
     const otherPercentage = heatmapData?.totalDefects > 0
@@ -1075,8 +1061,6 @@ const HeatmapPage = ({ projects }) => {
         const incidents = fb.uniqueIncidentCount || 0;
         const timeSpent = calculateTimeSpent(fb.issueKeys) / 3600; // hours
 
-        // Веса: 60% инциденты, 40% время. Ранг до 100.
-        // Для приоритизации: 1 инцидент ~ 2 часа времени.
         const score = (incidents * 15) + (timeSpent * 7);
         return Math.min(score, 100);
     };
@@ -1132,8 +1116,6 @@ const HeatmapPage = ({ projects }) => {
 
         const map = new Map();
         testCoverageData.pages.forEach(page => {
-            // Если группируемся по роуту, ключом будет роут.
-            // Если по контроллеру - имя (которое мы подменили на контроллер при парсинге)
             const key = groupingType === 'controller' ? (page.pageName || 'Unknown Controller') : (page.pageRoute || page.pageName);
 
             if (!map.has(key)) {
@@ -1239,7 +1221,7 @@ const HeatmapPage = ({ projects }) => {
                 </div>
             </div>
 
-            {/* Современные вкладки */}
+            {/*  */}
             <div style={{
                 display: 'flex',
                 gap: '8px',
@@ -1287,9 +1269,6 @@ const HeatmapPage = ({ projects }) => {
                     Test Coverage
                 </button>
             </div>
-
-            {/* Фильтры и действия */}
-            {/* Контейнер фильтров */}
             <div style={{
                 backgroundColor: 'var(--bg-content)',
                 padding: '32px',
@@ -1453,7 +1432,7 @@ const HeatmapPage = ({ projects }) => {
                         </select>
                     </div>
 
-                    {/* Поле Стороны (Front/Back) */}
+                    {/* Поле типа фронт или бек */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                         <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                             Сторона системы
@@ -1709,7 +1688,7 @@ const HeatmapPage = ({ projects }) => {
                 </div>
             )}
 
-            {/* Статистика по Страницам (Перенесено в блок Code Coverage) */}
+            {/* Статистика по Страницам */}
             {
                 !loading && !error && activeTab === 'code' && testCoverageData?.pages && testCoverageData.pages.length > 0 && (
                     <div style={{
@@ -1777,7 +1756,6 @@ const HeatmapPage = ({ projects }) => {
                         </div>
 
                         <div style={{ display: 'flex', gap: '40px', alignItems: 'center' }}>
-                            {/* Pie Chart on the Left (40%) */}
                             <div style={{ flex: '0 0 400px', height: '400px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 <div style={{
                                     position: 'absolute',
@@ -1810,8 +1788,6 @@ const HeatmapPage = ({ projects }) => {
                                     </PieChart>
                                 </ResponsiveContainer>
                             </div>
-
-                            {/* Cards on the Right (60%) */}
                             <div style={{
                                 flex: 1,
                                 display: 'grid',
@@ -1920,7 +1896,6 @@ const HeatmapPage = ({ projects }) => {
                             </div>
 
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-                                {/* Pareto Chart for FB - Now Full Width like Code Coverage */}
                                 <div style={{ maxHeight: showAllFb ? '600px' : 'none', overflowY: showAllFb ? 'auto' : 'visible', paddingRight: showAllFb ? '4px' : '0' }}>
                                     <div style={{ height: showAllFb ? `${Math.max(400, fbChartData.length * 30)}px` : '400px', width: '100%', transition: 'height 0.3s ease' }}>
                                         <ResponsiveContainer width="100%" height="100%">
@@ -1952,7 +1927,7 @@ const HeatmapPage = ({ projects }) => {
                                     </div>
                                 </div>
 
-                                {/* Priority List - Now as a Grid of Cards like Code Coverage */}
+
                                 <div style={{ maxHeight: showAllFb ? '600px' : 'none', overflowY: showAllFb ? 'auto' : 'visible', paddingRight: showAllFb ? '8px' : '0' }}>
                                     <div style={{
                                         display: 'grid',
@@ -2232,8 +2207,8 @@ const HeatmapPage = ({ projects }) => {
                         left: 0,
                         right: 0,
                         bottom: 0,
-                        backgroundColor: 'rgba(15, 23, 42, 0.4)',
-                        backdropFilter: 'blur(8px)',
+                        backgroundColor: 'rgba(15, 23, 42, 0.6)',
+                        backdropFilter: 'blur(10px)',
                         display: 'flex',
                         justifyContent: 'center',
                         alignItems: 'center',
@@ -2242,101 +2217,144 @@ const HeatmapPage = ({ projects }) => {
                     }}>
                         <div style={{
                             backgroundColor: 'var(--bg-content)',
-                            width: '1200px',
-                            maxWidth: '95vw',
-                            height: '90vh',
-                            borderRadius: '24px',
-                            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                            width: '1300px',
+                            maxWidth: '96vw',
+                            height: '92vh',
+                            borderRadius: '32px',
+                            boxShadow: '0 30px 60px -12px rgba(0, 0, 0, 0.4)',
                             overflow: 'hidden',
                             display: 'flex',
                             flexDirection: 'column',
-                            fontFamily: '"Inter", sans-serif'
+                            fontFamily: '"Inter", sans-serif',
+                            border: '1px solid var(--border-color)',
+                            animation: 'slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1)'
                         }}>
                             <div style={{
-                                padding: '24px 32px',
+                                padding: '32px 40px',
                                 borderBottom: '1px solid var(--border-color)',
                                 display: 'flex',
                                 justifyContent: 'space-between',
                                 alignItems: 'center',
-                                background: 'var(--bg-input)'
+                                background: 'linear-gradient(to right, var(--bg-content), var(--bg-input))',
+                                position: 'relative'
                             }}>
                                 <div>
-                                    <h2 style={styles.subHeader}>Маппинг компонентов</h2>
-                                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>Свяжите компоненты из отчета с функциональными блоками Allure</div>
+                                    <h2 style={{
+                                        ...styles.subHeader,
+                                        fontSize: '24px',
+                                        fontWeight: 800,
+                                        margin: 0,
+                                        background: 'linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%)',
+                                        WebkitBackgroundClip: 'text',
+                                        WebkitTextFillColor: 'transparent',
+                                        letterSpacing: '-0.02em'
+                                    }}>Маппинг компонентов</h2>
+                                    <div style={{ fontSize: '14px', color: 'var(--text-muted)', marginTop: '6px', fontWeight: 500 }}>
+                                        Свяжите импортируемые компоненты с функциональными блоками Allure для точной аналитики
+                                    </div>
                                 </div>
 
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                                     <button
                                         onClick={() => setShowMappingModal(false)}
                                         style={{
-                                            padding: '0 20px',
-                                            height: '40px',
+                                            padding: '0 24px',
+                                            height: '46px',
                                             backgroundColor: 'var(--bg-content)',
-                                            color: 'var(--text-muted)',
+                                            color: 'var(--text-secondary)',
                                             border: '1px solid var(--border-color)',
-                                            borderRadius: '10px',
-                                            fontWeight: 600,
-                                            fontSize: '13px',
+                                            borderRadius: '14px',
+                                            fontWeight: 700,
+                                            fontSize: '14px',
                                             cursor: 'pointer',
-                                            transition: 'all 0.2s',
+                                            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
                                             display: 'flex',
                                             alignItems: 'center',
-                                            gap: '8px'
+                                            gap: '10px',
+                                            boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
                                         }}
-                                        onMouseOver={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-input)', e.currentTarget.style.borderColor = 'var(--border-focus)')}
-                                        onMouseOut={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-content)', e.currentTarget.style.borderColor = 'var(--border-color)')}
+                                        onMouseOver={(e) => {
+                                            e.currentTarget.style.backgroundColor = 'var(--bg-input)';
+                                            e.currentTarget.style.borderColor = 'var(--border-focus)';
+                                            e.currentTarget.style.transform = 'translateY(-1px)';
+                                        }}
+                                        onMouseOut={(e) => {
+                                            e.currentTarget.style.backgroundColor = 'var(--bg-content)';
+                                            e.currentTarget.style.borderColor = 'var(--border-color)';
+                                            e.currentTarget.style.transform = 'translateY(0)';
+                                        }}
                                     >
-                                        Назад к выбору файлов
+                                        <span style={{ fontSize: '18px' }}>←</span>
+                                        Назад к файлам
                                     </button>
 
                                     <button
                                         onClick={() => setShowMappingModal(false)}
                                         style={{
-                                            background: 'none',
-                                            border: 'none',
+                                            background: 'var(--bg-input)',
+                                            border: '1px solid var(--border-color)',
+                                            width: '40px',
+                                            height: '40px',
+                                            borderRadius: '12px',
                                             fontSize: '24px',
                                             color: 'var(--text-placeholder)',
                                             cursor: 'pointer',
-                                            padding: '4px',
                                             display: 'flex',
                                             alignItems: 'center',
                                             justifyContent: 'center',
-                                            transition: 'color 0.2s'
+                                            transition: 'all 0.2s'
                                         }}
-                                        onMouseOver={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
-                                        onMouseOut={(e) => e.currentTarget.style.color = 'var(--text-placeholder)'}
+                                        onMouseOver={(e) => {
+                                            e.currentTarget.style.color = 'var(--error)';
+                                            e.currentTarget.style.backgroundColor = 'var(--error-bg)';
+                                            e.currentTarget.style.borderColor = 'var(--error)';
+                                        }}
+                                        onMouseOut={(e) => {
+                                            e.currentTarget.style.color = 'var(--text-placeholder)';
+                                            e.currentTarget.style.backgroundColor = 'var(--bg-input)';
+                                            e.currentTarget.style.borderColor = 'var(--border-color)';
+                                        }}
                                     >×</button>
                                 </div>
                             </div>
 
-                            <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+                            <div style={{ display: 'flex', flex: 1, overflow: 'hidden', backgroundColor: 'var(--bg-main)' }}>
                                 {/* Левая панель: Список компонентов */}
                                 <div style={{
-                                    width: '350px',
+                                    width: '400px',
                                     borderRight: '1px solid var(--border-color)',
                                     display: 'flex',
                                     flexDirection: 'column',
-                                    backgroundColor: 'var(--bg-input)'
+                                    backgroundColor: 'var(--bg-input)',
+                                    position: 'relative',
+                                    zIndex: 10
                                 }}>
-                                    <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)' }}>
-                                        <input
-                                            type="text"
-                                            placeholder="Поиск компонента..."
-                                            value={mappingFilter}
-                                            onChange={(e) => setMappingFilter(e.target.value)}
-                                            style={{
-                                                width: '100%',
-                                                padding: '10px 12px',
-                                                borderRadius: '8px',
-                                                border: '1px solid var(--border-color)',
-                                                fontSize: '14px',
-                                                outline: 'none',
-                                                backgroundColor: 'var(--bg-content)',
-                                                color: 'var(--text-primary)'
-                                            }}
-                                        />
+                                    <div style={{ padding: '24px', borderBottom: '1px solid var(--border-color)', backgroundColor: 'var(--bg-input)' }}>
+                                        <div style={{ position: 'relative' }}>
+                                            <input
+                                                type="text"
+                                                placeholder="Поиск компонента..."
+                                                value={mappingFilter}
+                                                onChange={(e) => setMappingFilter(e.target.value)}
+                                                style={{
+                                                    width: '100%',
+                                                    padding: '14px 16px 14px 40px',
+                                                    borderRadius: '14px',
+                                                    border: '1px solid var(--border-color)',
+                                                    fontSize: '14px',
+                                                    outline: 'none',
+                                                    backgroundColor: 'var(--bg-content)',
+                                                    color: 'var(--text-primary)',
+                                                    boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+                                                    transition: 'all 0.2s'
+                                                }}
+                                                onFocus={(e) => e.target.style.borderColor = 'var(--primary-accent)'}
+                                                onBlur={(e) => e.target.style.borderColor = 'var(--border-color)'}
+                                            />
+
+                                        </div>
                                     </div>
-                                    <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+                                    <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                         {renderComponentTree(
                                             buildComponentTree(
                                                 Array.from(new Set(parsedHistoryItems.flatMap(item =>
@@ -2351,26 +2369,46 @@ const HeatmapPage = ({ projects }) => {
 
                                 {/* Правая панель: Дерево маппинга */}
                                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-content)' }}>
-                                    <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)', backgroundColor: 'var(--bg-content)' }}>
-                                        <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>
-                                                {selectedComponentForMapping ? `Маппинг для: ${selectedComponentForMapping}` : 'Выберите компонент слева'}
-                                            </h3>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    <div style={{ padding: '24px 32px', borderBottom: '1px solid var(--border-color)', backgroundColor: 'var(--bg-content)' }}>
+                                        <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
+                                                    {selectedComponentForMapping ? (
+                                                        <>
+                                                            Маппинг для: <span style={{ color: 'var(--primary-accent)' }}>{selectedComponentForMapping.split('/').pop()}</span>
+                                                        </>
+                                                    ) : 'Выберите компонент слева'}
+                                                </h3>
+                                                {selectedComponentForMapping && selectedComponentForMapping.includes('/') && (
+                                                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                                                        {selectedComponentForMapping}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                                                 {selectedComponentForMapping && (
-                                                    <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                                                        {componentMappings[selectedComponentForMapping]?.length || 0} привязано
+                                                    <div style={{
+                                                        padding: '6px 14px',
+                                                        backgroundColor: 'var(--bg-input)',
+                                                        borderRadius: '10px',
+                                                        fontSize: '13px',
+                                                        color: 'var(--primary-accent)',
+                                                        fontWeight: 700,
+                                                        border: '1px solid var(--border-color)'
+                                                    }}>
+                                                        {(componentMappings[selectedComponentForMapping] || []).filter(id => id).length} привязано
                                                     </div>
                                                 )}
                                                 <div
-                                                    title="Подсказка по маппингу:&#10;• Один клик — выбрать/убрать текущий элемент&#10;• Двойной клик — выбрать/убрать элемент со всеми вложенными"
+                                                    title="Подсказка по маппингу:\n• Один клик — выбрать/убрать текущий элемент\n• Двойной клик — выбрать/убрать элемент со всеми вложенными"
                                                     style={{
                                                         cursor: 'help',
-                                                        fontSize: '16px',
+                                                        fontSize: '18px',
                                                         backgroundColor: 'var(--bg-input)',
-                                                        width: '28px',
-                                                        height: '28px',
-                                                        borderRadius: '50%',
+                                                        width: '36px',
+                                                        height: '36px',
+                                                        borderRadius: '12px',
                                                         display: 'flex',
                                                         alignItems: 'center',
                                                         justifyContent: 'center',
@@ -2379,11 +2417,13 @@ const HeatmapPage = ({ projects }) => {
                                                         visibility: selectedComponentForMapping ? 'visible' : 'hidden'
                                                     }}
                                                     onMouseOver={(e) => {
-                                                        e.currentTarget.style.backgroundColor = 'var(--bg-input)';
-                                                        e.currentTarget.style.transform = 'scale(1.1)';
+                                                        e.currentTarget.style.backgroundColor = 'var(--bg-content)';
+                                                        e.currentTarget.style.borderColor = 'var(--primary-accent)';
+                                                        e.currentTarget.style.transform = 'scale(1.05)';
                                                     }}
                                                     onMouseOut={(e) => {
                                                         e.currentTarget.style.backgroundColor = 'var(--bg-input)';
+                                                        e.currentTarget.style.borderColor = 'var(--border-color)';
                                                         e.currentTarget.style.transform = 'scale(1)';
                                                     }}
                                                 >
@@ -2391,30 +2431,37 @@ const HeatmapPage = ({ projects }) => {
                                                 </div>
                                             </div>
                                         </div>
-                                        <input
-                                            type="text"
-                                            placeholder="Поиск по дереву фич..."
-                                            value={folderSearchTerm}
-                                            onChange={(e) => setFolderSearchTerm(e.target.value)}
-                                            disabled={!selectedComponentForMapping}
-                                            style={{
-                                                width: '100%',
-                                                padding: '10px 12px',
-                                                borderRadius: '8px',
-                                                border: '1px solid var(--border-color)',
-                                                fontSize: '14px',
-                                                outline: 'none',
-                                                backgroundColor: !selectedComponentForMapping ? 'var(--bg-input)' : 'var(--bg-content)',
-                                                color: 'var(--text-primary)'
-                                            }}
-                                        />
+                                        <div style={{ position: 'relative' }}>
+                                            <input
+                                                type="text"
+                                                placeholder="Поиск по дереву функциональных блоков..."
+                                                value={folderSearchTerm}
+                                                onChange={(e) => setFolderSearchTerm(e.target.value)}
+                                                disabled={!selectedComponentForMapping}
+                                                style={{
+                                                    width: '100%',
+                                                    padding: '14px 16px 14px 40px',
+                                                    borderRadius: '14px',
+                                                    border: '1px solid var(--border-color)',
+                                                    fontSize: '14px',
+                                                    outline: 'none',
+                                                    backgroundColor: !selectedComponentForMapping ? 'var(--bg-input)' : 'var(--bg-content)',
+                                                    color: 'var(--text-primary)',
+                                                    transition: 'all 0.2s'
+                                                }}
+                                                onFocus={(e) => e.target.style.borderColor = 'var(--primary-accent)'}
+                                                onBlur={(e) => e.target.style.borderColor = 'var(--border-color)'}
+                                            />
+                                        </div>
                                     </div>
-                                    <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+                                    <div style={{ flex: 1, overflowY: 'auto', padding: '32px', background: 'var(--bg-content)' }}>
                                         {selectedComponentForMapping ? (
-                                            renderFolderTreeForMapping(
-                                                filterFolders(filterFoldersForProject(folders), folderSearchTerm),
-                                                selectedComponentForMapping
-                                            )
+                                            <div style={{ maxWidth: '900px', margin: '0 auto' }}>
+                                                {renderFolderTreeForMapping(
+                                                    filterFolders(filterFoldersForProject(folders), folderSearchTerm),
+                                                    selectedComponentForMapping
+                                                )}
+                                            </div>
                                         ) : (
                                             <div style={{
                                                 display: 'flex',
@@ -2422,11 +2469,13 @@ const HeatmapPage = ({ projects }) => {
                                                 alignItems: 'center',
                                                 justifyContent: 'center',
                                                 height: '100%',
-                                                color: 'var(--text-placeholder)'
+                                                color: 'var(--text-placeholder)',
+                                                gap: '16px'
                                             }}>
-
-                                                <div style={{ fontSize: '16px' }}>Выберите компонент из списка слева,</div>
-                                                <div style={{ fontSize: '14px' }}>чтобы настроить его связи с функциональными блоками</div>
+                                                <div style={{ textAlign: 'center' }}>
+                                                    <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>Выберите компонент</div>
+                                                    <div style={{ fontSize: '14px' }}>Выберите элемент из списка слева, чтобы настроить его связи</div>
+                                                </div>
                                             </div>
                                         )}
                                     </div>
@@ -2434,45 +2483,50 @@ const HeatmapPage = ({ projects }) => {
                             </div>
 
                             <div style={{
-                                padding: '16px 32px',
-                                backgroundColor: 'var(--bg-content)',
+                                padding: '24px 40px',
+                                backgroundColor: 'var(--bg-input)',
                                 borderTop: '1px solid var(--border-color)',
                                 display: 'flex',
-                                justifyContent: 'flex-end',
-                                gap: '12px'
+                                justifyContent: 'space-between',
+                                alignItems: 'center'
                             }}>
+                                <div style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 500 }}>
+                                    {Object.keys(componentMappings).length} компонентов настроено
+                                </div>
 
-                                <button
-                                    onClick={() => handleSaveBulkHistory(false)}
-                                    disabled={loading}
-                                    style={{
-                                        padding: '0 24px',
-                                        height: '44px',
-                                        backgroundColor: loading ? 'var(--success)' : 'var(--success)',
-                                        color: 'var(--bg-content)',
-                                        border: 'none',
-                                        borderRadius: '10px',
-                                        fontWeight: 600,
-                                        fontSize: '14px',
-                                        cursor: loading ? 'not-allowed' : 'pointer',
-                                        opacity: loading ? 0.7 : 1,
-                                        boxShadow: '0 4px 12px rgba(16, 185, 129, 0.2)',
-                                        transition: 'all 0.2s',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '8px'
-                                    }}
-                                    onMouseOver={(e) => !loading && (e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--success) 85%, black)', e.currentTarget.style.transform = 'translateY(-1px)')}
-                                    onMouseOut={(e) => !loading && (e.currentTarget.style.backgroundColor = 'var(--success)', e.currentTarget.style.transform = 'translateY(0)')}
-                                >
-                                    <span>Завершить импорт и маппинг</span>
-                                    {loading && <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />}
-                                </button>
+                                <div style={{ display: 'flex', gap: '16px' }}>
+                                    <button
+                                        onClick={() => handleSaveBulkHistory(false)}
+                                        disabled={loading}
+                                        style={{
+                                            padding: '0 32px',
+                                            height: '52px',
+                                            backgroundColor: 'var(--success)',
+                                            color: '#fff',
+                                            border: 'none',
+                                            borderRadius: '16px',
+                                            fontWeight: 700,
+                                            fontSize: '15px',
+                                            cursor: loading ? 'not-allowed' : 'pointer',
+                                            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                                            boxShadow: '0 8px 16px -4px rgba(16, 185, 129, 0.3)',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '10px'
+                                        }}
+                                        onMouseOver={(e) => !loading && (e.currentTarget.style.backgroundColor = '#059669', e.currentTarget.style.transform = 'translateY(-2px)', e.currentTarget.style.boxShadow = '0 12px 20px -4px rgba(16, 185, 129, 0.4)')}
+                                        onMouseOut={(e) => !loading && (e.currentTarget.style.backgroundColor = 'var(--success)', e.currentTarget.style.transform = 'translateY(0)', e.currentTarget.style.boxShadow = '0 8px 16px -4px rgba(16, 185, 129, 0.3)')}
+                                    >
+                                        <span>Завершить импорт и маппинг</span>
+                                        {loading && <div style={{ width: '18px', height: '18px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />}
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
                 )
             }
+
 
             {/* Модальное окно подтверждения незамапленных компонентов */}
             {

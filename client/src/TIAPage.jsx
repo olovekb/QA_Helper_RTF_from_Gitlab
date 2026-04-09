@@ -57,7 +57,7 @@ const TIAPageContent = () => {
             <TIAPageHeader />
 
             {/* Форма настройки (Setup Form) */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '28px', marginBottom: '28px' }}>
                 <TIAModeToggle />
                 <TIAProjectSelect />
 
@@ -83,15 +83,15 @@ const TIAPageContent = () => {
             <div style={{ marginTop: '40px', paddingTop: '24px', borderTop: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
                 {error && !showMappingModal && <div style={{ padding: '14px 20px', backgroundColor: '#fef2f2', border: '1px solid #ef4444', color: '#ef4444', borderRadius: '12px', fontSize: '14px', fontWeight: 500, textAlign: 'center', width: '100%' }}>{error}</div>}
                 {successMessage && (
-                    <div style={{ 
-                        padding: '16px 24px', 
-                        backgroundColor: '#fff', 
-                        border: '1px solid #e2e8f0', 
-                        color: '#334155', 
-                        borderRadius: '16px', 
-                        fontSize: '14px', 
-                        fontWeight: 600, 
-                        textAlign: 'center', 
+                    <div style={{
+                        padding: '16px 24px',
+                        backgroundColor: '#fff',
+                        border: '1px solid #e2e8f0',
+                        color: '#334155',
+                        borderRadius: '16px',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        textAlign: 'center',
                         width: '100%',
                         boxShadow: '0 4px 12px rgba(0,0,0,0.03)'
                     }}>
@@ -103,13 +103,13 @@ const TIAPageContent = () => {
                                 href={allureLink}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                style={{ 
-                                    color: '#fff', 
-                                    backgroundColor: '#6366f1', 
-                                    padding: '8px 20px', 
-                                    borderRadius: '10px', 
-                                    display: 'inline-block', 
-                                    fontWeight: 600, 
+                                style={{
+                                    color: '#fff',
+                                    backgroundColor: '#6366f1',
+                                    padding: '8px 20px',
+                                    borderRadius: '10px',
+                                    display: 'inline-block',
+                                    fontWeight: 600,
                                     textDecoration: 'none',
                                     transition: 'all 0.2s',
                                     boxShadow: '0 4px 10px rgba(99, 102, 241, 0.2)'

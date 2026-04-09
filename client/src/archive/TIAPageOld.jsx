@@ -4,11 +4,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 import Select from 'react-select'; // Импортируем react-select для мультиселекта
 import { useNavigate } from 'react-router-dom'; // Для навигации назад
-import styles from './styles'; // Импортируем стили
-import Loader from './Loader'; // Предполагаем, что есть компонент Loader
-import config from './config';
-import GlobalBackgroundProgress from './components/GlobalBackgroundProgress';
-import { trackEvent } from './analytics';
+import styles from '../styles'; // Импортируем стили
+import Loader from '../Loader'; // Предполагаем, что есть компонент Loader
+import config from '../config';
+import GlobalBackgroundProgress from '../components/GlobalBackgroundProgress';
+import { trackEvent } from '../analytics';
 
 const TIAPage = ({ projects }) => {
     const [projectId, setProjectId] = useState('');
