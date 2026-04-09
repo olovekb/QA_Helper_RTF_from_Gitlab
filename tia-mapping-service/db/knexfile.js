@@ -1,4 +1,3 @@
-// Используем такую же логику подключения, как в connection.js
 const connection = process.env.DATABASE_URL || {
   host: process.env.DB_HOST || 'localhost',
   port: process.env.DB_PORT || 5432,
@@ -8,10 +7,10 @@ const connection = process.env.DATABASE_URL || {
 };
 
 export default {
-  client: 'pg', // Используем PostgreSQL
-  connection: connection, // Подключение через переменную окружения или отдельные параметры
+  client: 'pg',
+  connection: connection,
   migrations: {
-    directory: './migrations', // Директория с файлами миграций
-    tableName: 'knex_migrations' // Таблица для отслеживания миграций
+    directory: './migrations',
+    tableName: 'knex_migrations'
   }
 };

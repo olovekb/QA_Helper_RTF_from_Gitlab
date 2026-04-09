@@ -8,10 +8,8 @@
 export function parseJsonFiles(frontendJson, backendJson) {
   const components = [];
 
-  // --- Новый формат TIA отчёта (backward compatible) ---
   const tiaReport = backendJson || frontendJson;
   if (tiaReport && Array.isArray(tiaReport.pages) && tiaReport.summary) {
-    // Новый формат: берём компоненты из unique_affected_components (ключи — имена)
     if (tiaReport.unique_affected_components) {
       Object.values(tiaReport.unique_affected_components).forEach((comp) => {
         components.push({
@@ -20,7 +18,6 @@ export function parseJsonFiles(frontendJson, backendJson) {
         });
       });
     } else {
-      // fallback: берём зависимые компоненты со страниц
       tiaReport.pages.forEach((page, idx) => {
         (page.depends_on_components || []).forEach((name) => {
           components.push({
@@ -28,7 +25,6 @@ export function parseJsonFiles(frontendJson, backendJson) {
             name,
           });
         });
-        // добавляем саму страницу
         const pageName = page.page_meta?.name || `Page_${idx + 1}`;
         components.push({
           type: 'page',
@@ -39,7 +35,6 @@ export function parseJsonFiles(frontendJson, backendJson) {
     return components;
   }
 
-  // --- Старый формат: фронтенд ---
   if (frontendJson && Array.isArray(frontendJson.frontendComponent)) {
     frontendJson.frontendComponent.forEach((component) => {
       components.push({
@@ -49,7 +44,6 @@ export function parseJsonFiles(frontendJson, backendJson) {
     });
   }
 
-  // --- Старый формат: бэкенд ---
   if (backendJson && Array.isArray(backendJson.Controllers)) {
     backendJson.Controllers.forEach((controller) => {
       components.push({

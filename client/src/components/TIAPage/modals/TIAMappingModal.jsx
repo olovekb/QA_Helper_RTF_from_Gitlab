@@ -9,16 +9,19 @@ import TIAMappingFolderTree from '../ui/TIAMappingFolderTree';
  * @returns {JSX.Element|null}
  */
 const TIAMappingModal = () => {
-    const { 
-        showMappingModal, 
-        handleMappingCancel, 
-        handleMappingConfirm, 
-        isMappingLoading, 
-        selectedComponentId, 
-        components, 
-        folders, 
-        folderSearchTerm, 
-        setFolderSearchTerm 
+    const {
+        showMappingModal,
+        handleMappingCancel,
+        handleMappingConfirm,
+        handlePartialSave,
+        isMappingLoading,
+        isPartialSaving,
+        partialSaveMessage,
+        selectedComponentId,
+        components,
+        folders,
+        folderSearchTerm,
+        setFolderSearchTerm
     } = useTIA();
 
     if (!showMappingModal) return null;
@@ -38,7 +41,7 @@ const TIAMappingModal = () => {
                             Для компонента: <span style={{ fontWeight: 700, color: 'var(--primary-accent)' }}>{component?.name || 'Безымянный'}</span>
                         </p>
                     </div>
-                    <button onClick={handleMappingCancel} style={{ padding: '8px', borderRadius: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', transition: 'all 0.2s', '&:hover': { backgroundColor: 'var(--bg-input)' } }}>
+                    <button onClick={handleMappingCancel} style={{ padding: '8px', borderRadius: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', transition: 'all 0.2s' }}>
                         <span style={{ fontSize: '24px', color: 'var(--text-muted)' }}>×</span>
                     </button>
                 </div>
@@ -69,13 +72,41 @@ const TIAMappingModal = () => {
                 </div>
 
                 {/* Footer */}
-                <div style={{ padding: '32px 40px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', gap: '16px', borderRadius: '0 0 32px 32px' }}>
-                    <button onClick={handleMappingCancel} style={styles.modalButtonCancel}>
-                        Отмена
-                    </button>
-                    <button onClick={handleMappingConfirm} style={styles.modalButtonConfirm}>
-                        Готово
-                    </button>
+                <div style={{ padding: '24px 40px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', borderRadius: '0 0 32px 32px' }}>
+                    {/* Левая часть: частичное сохранение (1:1 с legacy) */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <button
+                            onClick={handlePartialSave}
+                            disabled={isPartialSaving}
+                            style={{
+                                ...styles.modalButtonCancel,
+                                opacity: isPartialSaving ? 0.7 : 1,
+                                cursor: isPartialSaving ? 'not-allowed' : 'pointer'
+                            }}
+                        >
+                            {isPartialSaving ? (
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <Loader size="16px" color="currentColor" />
+                                    Сохранение...
+                                </span>
+                            ) : 'Сохранить маппинг'}
+                        </button>
+                        {partialSaveMessage && (
+                            <span style={{ fontSize: '13px', color: '#16a34a', fontWeight: 600 }}>
+                                {partialSaveMessage}
+                            </span>
+                        )}
+                    </div>
+
+                    {/* Правая часть: отмена и подтверждение */}
+                    <div style={{ display: 'flex', gap: '16px' }}>
+                        <button onClick={handleMappingCancel} style={styles.modalButtonCancel}>
+                            Отмена
+                        </button>
+                        <button onClick={handleMappingConfirm} style={styles.modalButtonConfirm}>
+                            Создать запуск
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

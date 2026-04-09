@@ -65,7 +65,10 @@ export const formatCustomFieldName = (folder, level = 0) => {
         return `${layerPrefix}${folder.name}`;
     }
     const type = folder.customFieldName || 'Блок';
-    return `[${type}] ${folder.name}`;
+    const name = typeof folder.name === 'object'
+        ? (folder.name.name || folder.name.title || JSON.stringify(folder.name))
+        : (folder.name === '[object Object]' ? `ID: ${folder.id}` : folder.name);
+    return `[${type}] ${name}`;
 };
 
 /**
@@ -133,9 +136,8 @@ export const extractComponents = (frontendJSON, backendJSON, tiaReport) => {
             if (!name) return;
             const existing = componentsMap.get(name);
             const riskOrder = { HIGH: 3, MEDIUM: 2, LOW: 1, '': 0 };
-            const bestRisk = existing && riskOrder[existing.riskLevel] > riskOrder[pageRisk] ? existing.riskLevel : (pageRisk || '');
+            const bestRisk = (existing && riskOrder[existing.riskLevel] > riskOrder[pageRisk]) ? existing.riskLevel : (pageRisk || '');
             const mergedAdvice = [...(existing?.qaAdvice || []), ...(qaAdvice || [])];
-            
             const nested = detail ? [{
                 component_name: name,
                 change_source: detail.change_source,
@@ -143,6 +145,7 @@ export const extractComponents = (frontendJSON, backendJSON, tiaReport) => {
                 diff_snippet: detail.diff_snippet,
                 file_path: detail.file_path,
                 method_jsdoc: detail.method_jsdoc || {},
+                type: detail.type || defaultType
             }] : (existing?.nestedComponents || []);
 
             const envs = new Set(existing?.envs || []);
@@ -158,7 +161,7 @@ export const extractComponents = (frontendJSON, backendJSON, tiaReport) => {
                 type: compType,
                 riskLevel: bestRisk,
                 summaryText: pageSummary || existing?.summaryText || '',
-                qaAdvice: mergedAdvice,
+                qaAdvice: Array.from(new Set(mergedAdvice)),
                 nestedComponents: nested,
                 serviceName: detail?.file_path || existing?.serviceName || '',
                 envs: Array.from(envs),
@@ -182,27 +185,44 @@ export const extractComponents = (frontendJSON, backendJSON, tiaReport) => {
         if (report.backend_components && Array.isArray(report.backend_components)) {
             report.backend_components.forEach((bc) => {
                 const key = `${bc.service_name || 'unknown'}::${bc.controller_name || bc.name}`;
-                componentsMap.set(key, {
-                    id: key,
-                    name: bc.controller_name || bc.name,
-                    serviceName: bc.service_name || '',
-                    type: 'backend',
-                    endpoints: bc.endpoints || [],
-                    riskLevel: bc.risk_level || '',
-                    summaryText: bc.summary || '',
-                    qaAdvice: bc.qa_advice || [],
-                    nestedComponents: [],
-                    envs: bc.envs || [],
-                    jsdoc: bc.description || null,
-                });
+                if (!componentsMap.has(key)) {
+                    componentsMap.set(key, {
+                        id: key,
+                        name: bc.controller_name || bc.name,
+                        serviceName: bc.service_name || '',
+                        type: 'backend',
+                        endpoints: bc.endpoints || [],
+                        riskLevel: bc.risk_level || '',
+                        summaryText: bc.summary || '',
+                        qaAdvice: bc.qa_advice || [],
+                        nestedComponents: [],
+                        envs: bc.envs || [],
+                        jsdoc: bc.description || bc.jsdoc || null,
+                    });
+                }
             });
         }
     };
 
-    processReport(frontendJSON, 'frontend');
-    processReport(backendJSON, 'backend');
+    if (frontendJSON) processReport(frontendJSON, 'frontend');
+    if (backendJSON) processReport(backendJSON, 'backend');
+    if (tiaReport && !frontendJSON && !backendJSON) processReport(tiaReport, 'frontend');
 
     return Array.from(componentsMap.values());
+};
+
+/**
+ * Проверка, является ли одна папка подпапкой другой
+ * @param {Array} folders - Дерево папок
+ * @param {string|number} parentId
+ * @param {string|number} childId
+ * @returns {boolean}
+ */
+export const isSubfolderOf = (folders, parentId, childId) => {
+    const parent = findFolderById(folders, parentId);
+    if (!parent) return false;
+    const descendantIds = getAllDescendantIds(parent);
+    return descendantIds.includes(childId.toString());
 };
 
 /**
@@ -245,9 +265,9 @@ export const buildPageDependencies = (components = [], frontendJSON, backendJSON
 
 /**
  * Логирование ошибок
- * @param {string} type - Тип ошибки
- * @param {string} desc - Описание
- * @param {string} url - URL API
+ * @param {string} type
+ * @param {string} desc
+ * @param {string} url
  */
 export const logError = async (type, desc, url) => {
     try {

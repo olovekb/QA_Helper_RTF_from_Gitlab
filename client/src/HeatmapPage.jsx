@@ -1263,6 +1263,7 @@ const HeatmapPage = ({ projects }) => {
                         cursor: 'pointer',
                         transition: 'all 0.2s ease',
                         boxShadow: activeTab === 'code' ? '0 4px 12px rgba(0,0,0,0.08)' : 'none',
+                        marginTop: 0
                     }}
                 >
                     Code Coverage
@@ -1280,6 +1281,7 @@ const HeatmapPage = ({ projects }) => {
                         cursor: 'pointer',
                         transition: 'all 0.2s ease',
                         boxShadow: activeTab === 'test' ? '0 4px 12px rgba(0,0,0,0.08)' : 'none',
+                        marginTop: 0
                     }}
                 >
                     Test Coverage

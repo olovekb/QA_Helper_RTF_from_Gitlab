@@ -1,98 +1,97 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useTIA } from '../context/TIAContext';
 import TIAMappingFolderTree from './TIAMappingFolderTree';
+import TIAStyles from '../styles/TIAStyles';
 
 /**
- * Панель маппинга "Чем покрыть" (правая колонка)
+ * Панель маппинга "Дерево функциональности"
  * @returns {JSX.Element}
  */
 const TIAMappingPanel = () => {
-    const { 
-        selectedComponentId, 
-        components 
+    const {
+        selectedComponentId,
+        components,
+        folders,
+        folderSearchTerm,
+        setFolderSearchTerm
     } = useTIA();
-
-    const [searchTerm, setSearchTerm] = useState('');
 
     const selectedComponent = components.find(c => c.id === selectedComponentId);
 
     return (
-        <div style={{ 
-            backgroundColor: '#fff', 
-            borderRadius: '32px', 
-            padding: '32px', 
-            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.05)',
-            border: '1px solid rgba(0,0,0,0.02)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '24px',
-            position: 'sticky',
-            top: '24px',
-            maxHeight: 'calc(100vh - 48px)',
-            minWidth: '450px'
-        }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ fontSize: '18px', fontWeight: 800, color: '#1e293b', margin: 0 }}>Чем покрыть</h3>
-                <div style={{ padding: '8px', backgroundColor: '#f8fafc', borderRadius: '12px', color: '#6366f1' }}>
-                    💡
+        <div style={{ ...TIAStyles.mappingColumn, borderRight: 'none' }}>
+            {/* Header */}
+            <div style={TIAStyles.columnHeader}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                    <h3 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: '#1e293b' }}>
+                        Чем покрыть
+                    </h3>
                 </div>
             </div>
 
-            {/* Search Bar */}
-            <div style={{ position: 'relative' }}>
-                <input 
-                    type="text" 
-                    placeholder="Поиск по дереву фич..." 
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
+            {/* поиск */}
+            <div style={{ padding: '12px 20px', borderBottom: '1px solid #e2e8f0', backgroundColor: '#f8fafc' }}>
+                <input
+                    type="text"
+                    placeholder="Поиск по дереву"
+                    value={folderSearchTerm}
+                    onChange={(e) => setFolderSearchTerm(e.target.value)}
                     style={{
                         width: '100%',
-                        padding: '14px 20px',
-                        backgroundColor: '#334155',
-                        border: 'none',
-                        borderRadius: '16px',
-                        color: '#fff',
-                        fontSize: '14px',
-                        fontWeight: 500,
+                        padding: '10px 16px',
+                        borderRadius: '10px',
+                        border: '1px solid #e2e8f0',
+                        backgroundColor: '#ffffff',
+                        color: '#1e293b',
+                        fontSize: '13px',
                         outline: 'none',
-                        boxShadow: 'inset 0 2px 4px 0 rgba(0, 0, 0, 0.06)'
+                        transition: 'border-color 0.2s',
+                        boxSizing: 'border-box'
                     }}
                 />
             </div>
 
-            {/* Selected Component Status */}
+            {/* */}
             {!selectedComponentId ? (
-                <div style={{ 
-                    backgroundColor: '#fffbeb', 
-                    border: '1px solid #fef3c7', 
-                    borderRadius: '16px', 
-                    padding: '16px 20px', 
+                <div style={{
+                    margin: '12px 20px',
+                    backgroundColor: '#fffbeb',
+                    border: '1px solid #fef3c7',
+                    borderRadius: '10px',
+                    padding: '12px 16px',
                     display: 'flex',
                     alignItems: 'center',
                     gap: '12px'
                 }}>
-                    <span style={{ fontSize: '18px' }}>⚠️</span>
-                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#92400e' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#92400e' }}>
                         Выберите компонент слева, чтобы связать его с фичами
                     </span>
                 </div>
             ) : (
-                <div style={{ 
-                    backgroundColor: '#f0f9ff', 
-                    border: '1px solid #e0f2fe', 
-                    borderRadius: '16px', 
-                    padding: '12px 20px',
-                    fontSize: '13px',
+                <div style={{
+                    margin: '12px 20px',
+                    backgroundColor: '#f0f9ff',
+                    border: '1px solid #e0f2fe',
+                    borderRadius: '10px',
+                    padding: '10px 16px',
+                    fontSize: '12px',
                     fontWeight: 700,
-                    color: '#0369a1'
+                    color: '#0369a1',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
                 }}>
-                    Маппинг для: <span style={{ color: '#0284c7' }}>{selectedComponent?.name}</span>
+                    <span>Редактирование: {selectedComponent?.name}</span>
                 </div>
             )}
 
-            {/* Tree Area */}
-            <div style={{ flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
-                <TIAMappingFolderTree searchTerm={searchTerm} />
+            {/* */}
+            <div style={{
+                ...TIAStyles.columnScrollable,
+                padding: '0 20px 20px 20px',
+                flex: 1
+            }}>
+                <TIAMappingFolderTree folders={folders} searchTerm={folderSearchTerm} />
             </div>
         </div>
     );

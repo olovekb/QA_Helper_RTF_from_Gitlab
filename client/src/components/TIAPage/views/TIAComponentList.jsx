@@ -1,211 +1,282 @@
+import React from 'react';
 import { useTIA } from '../context/TIAContext';
 import { findFolderById } from '../utils/tiaUtils';
+import TIAStyles from '../styles/TIAStyles';
+import TIAUITrace from '../ui/TIAUITrace';
 
 /**
- * Компонент отображения списка компонентов для маппинга
+ * Компонент отображения списка компонентов для маппинга.
+ * @param {Object} props - Свойства компонента
+ * @param {Array} [props.componentsOverride] - Опциональный список компонентов для отображения
  * @returns {JSX.Element|null}
  */
-const TIAComponentList = () => {
+const TIAComponentList = ({ componentsOverride }) => {
     const {
-        components,
+        components: contextComponents,
         componentMappings,
+        autoMappedBlocks,
         handleRemoveMapping,
         selectedComponentId,
         setSelectedComponentId,
         folders,
-        expandedScenarios,
-        setExpandedScenarios,
         expandedCode,
-        setExpandedCode
+        setExpandedCode,
+        disabledInheritance,
+        toggleInheritance,
+        setComponentMappings
     } = useTIA();
 
-    if (components.length === 0) return null;
+    const components = componentsOverride || contextComponents;
+
+    if (!components || components.length === 0) return null;
 
     /**
-     * Переключение раскрытия сценариев
+     * Очистка маппинга компонента с подтверждением
      */
-    const toggleScenarios = (compId, e) => {
+    const handleClearMapping = (compId, e) => {
         e.stopPropagation();
-        setExpandedScenarios(prev => ({ ...prev, [compId]: !prev[compId] }));
+        if (window.confirm('Вы уверены, что хотите полностью очистить маппинг для этого компонента? Все ручные привязки будут удалены.')) {
+            setComponentMappings(prev => ({
+                ...prev,
+                [compId]: []
+            }));
+        }
     };
 
     /**
-     * Переключение раскрытия кода
+     * Рендеринг тегов маппинга с учетом типа
      */
-    const toggleCode = (compId, e) => {
-        e.stopPropagation();
-        setExpandedCode(prev => ({ ...prev, [compId]: !prev[compId] }));
+    const renderMappingTags = (compId) => {
+        const direct = componentMappings[compId] || [];
+        const auto = autoMappedBlocks[compId] || [];
+        const isBlocked = !!disabledInheritance[compId];
+
+        return (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '20px' }}>
+                {direct.map(folderId => {
+                    const folder = findFolderById(folders, folderId);
+                    const isAuto = auto.includes(folderId);
+                    const type = isAuto ? 'auto' : 'direct';
+
+                    return (
+                        <div key={folderId} style={TIAStyles.mappingTag(type)}>
+                            <span>
+                                {isAuto ? '[Auto] ' : ''}
+                                {folder ? `[Block] ${folder.name}` : folderId}
+                            </span>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); handleRemoveMapping(compId, folderId); }}
+                                style={{ border: 'none', background: 'none', color: 'inherit', cursor: 'pointer', padding: '0 2px', fontSize: '14px', marginLeft: '4px' }}
+                                title="Удалить маппинг"
+                            >
+                                ×
+                            </button>
+                        </div>
+                    );
+                })}
+                {direct.length === 0 && (
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                        Маппинг не задан
+                    </div>
+                )}
+            </div>
+        );
     };
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             {components.map((comp) => {
-                const mappings = componentMappings[comp.id] || [];
                 const isSelected = selectedComponentId === comp.id;
                 const isHighRisk = comp.riskLevel === 'HIGH';
-                const showScenarios = expandedScenarios[comp.id];
                 const showCode = expandedCode[comp.id];
+                const isInheritanceBlocked = !!disabledInheritance[comp.id];
+
+                const pages = comp.usedIn || comp.parents || [];
+                const isPageListExpanded = !!expandedPageLists[comp.id];
+                const displayedPages = isPageListExpanded ? pages : pages.slice(0, 10);
+                const hasMorePages = pages.length > 10;
 
                 return (
-                    <div 
-                        key={comp.id} 
+                    <div
+                        key={comp.id}
                         onClick={() => setSelectedComponentId(comp.id)}
-                        style={{ 
-                            display: 'flex', 
-                            flexDirection: 'column', 
-                            backgroundColor: '#fff', 
-                            borderRadius: '24px', 
-                            border: isSelected ? '2px solid #6366f1' : '1px solid #e2e8f0',
-                            borderTop: isHighRisk ? '6px solid #dc2626' : '1px solid #e2e8f0',
-                            boxShadow: isSelected ? '0 20px 25px -5px rgba(99, 102, 241, 0.1)' : '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
-                            transition: 'all 0.2s',
-                            cursor: 'pointer',
-                            overflow: 'hidden',
-                            position: 'relative'
+                        style={{
+                            ...TIAStyles.componentCard,
+                            ...(isSelected ? TIAStyles.componentCardSelected : {})
                         }}
                     >
-                        <div style={{ padding: '32px' }}>
-                            {/* Header Section */}
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                        <h3 style={{ 
-                                            fontSize: '20px', 
-                                            fontWeight: 900, 
-                                            color: isHighRisk ? '#dc2626' : '#1e293b', 
-                                            margin: 0,
-                                            letterSpacing: '-0.01em',
-                                            wordBreak: 'break-all'
-                                        }}>
-                                            {comp.name}
-                                        </h3>
-                                        {isHighRisk && (
-                                            <span style={{ fontSize: '11px', fontWeight: 900, backgroundColor: '#dc2626', color: '#fff', padding: '2px 8px', borderRadius: '6px', textTransform: 'uppercase' }}>
-                                                HIGH
-                                            </span>
-                                        )}
-                                    </div>
-                                    <div style={{ display: 'flex', gap: '8px' }}>
-                                        <span style={{ fontSize: '12px', fontWeight: 800, backgroundColor: '#f1f5f9', color: '#64748b', padding: '4px 10px', borderRadius: '8px' }}>
-                                            {comp.type || 'component'}
-                                        </span>
-                                    </div>
+                        {/* Риск-индикатор */}
+                        <div style={{
+                            ...TIAStyles.riskIndicator,
+                            backgroundColor: isHighRisk ? 'var(--error)' : 'var(--success)'
+                        }} />
+
+                        {/* Заголовок компонента */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+                            <div style={{ flex: 1 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                                    <h3 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
+                                        {comp.name}
+                                    </h3>
+                                    {isHighRisk && <span style={TIAStyles.badge('var(--error)')}>HIGH RISK</span>}
+                                    <span style={TIAStyles.badge('var(--text-muted)')}>{comp.type || 'component'}</span>
+                                </div>
+                                <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                                    {comp.filePath || comp.serviceName || 'No path'}
                                 </div>
                             </div>
 
-                            {/* Path Block */}
-                            <div style={{ 
-                                backgroundColor: '#f8fafc', 
-                                border: '1px solid #f1f5f9', 
-                                borderRadius: '12px', 
-                                padding: '12px 16px', 
-                                marginBottom: '20px',
-                                fontSize: '12px',
-                                color: '#94a3b8',
-                                fontWeight: 500,
-                                fontFamily: 'monospace',
-                                wordBreak: 'break-all'
-                            }}>
-                                {comp.filePath || 'Путь к файлу не указан'}
-                            </div>
+                            <button
+                                onClick={(e) => handleClearMapping(comp.id, e)}
+                                style={{
+                                    padding: '6px 12px',
+                                    backgroundColor: 'transparent',
+                                    border: '1px solid var(--error)',
+                                    color: 'var(--error)',
+                                    borderRadius: '8px',
+                                    fontSize: '12px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                Очистить маппинг
+                            </button>
+                        </div>
 
-                            {/* Description */}
-                            <div style={{ 
-                                fontSize: '14px', 
-                                lineHeight: '1.6', 
-                                color: '#475569', 
-                                marginBottom: '24px',
-                                fontWeight: 500
-                            }}>
-                                {comp.summaryText || 'Описание изменений отсутствует.'}
-                            </div>
+                        {/* Описание изменений */}
+                        <div style={{ fontSize: '14px', color: 'var(--text-primary)', marginBottom: '20px', lineHeight: 1.5 }}>
+                            {comp.summaryText || 'Описание изменений отсутствует.'}
+                        </div>
 
-                            {/* Mapped Features (Tags) */}
-                            {mappings.length > 0 && (
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '24px' }}>
-                                    {mappings.map(folderId => {
-                                        const folder = findFolderById(folders, folderId);
+                        {/* Наследование */}
+                        <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-muted)' }}>
+                                НАСЛЕДОВАНИЕ:
+                            </div>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); toggleInheritance(comp.id); }}
+                                style={{
+                                    padding: '4px 12px',
+                                    borderRadius: '20px',
+                                    border: 'none',
+                                    backgroundColor: isInheritanceBlocked ? 'var(--error)' : 'var(--success)',
+                                    color: '#fff',
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                {isInheritanceBlocked ? 'ЗАБЛОКИРОВАНО' : 'РАЗРЕШЕНО'}
+                            </button>
+                            {isInheritanceBlocked && (
+                                <span style={{ fontSize: '11px', color: 'var(--error)', fontStyle: 'italic' }}>
+                                    Авто-маппинг со страниц игнорируется
+                                </span>
+                            )}
+                        </div>
+
+                        {/* Маппинг (Теги) */}
+                        <div style={TIAStyles.cardSectionTitle}>Замапленные функции:</div>
+                        {renderMappingTags(comp.id)}
+
+                        {/* UI Trace */}
+                        <TIAUITrace component={comp} />
+
+                        {/* Кнопки действий */}
+                        <div style={{ display: 'flex', gap: '12px', marginBottom: '20px' }}>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setExpandedCode(prev => ({ ...prev, [comp.id]: !showCode })); }}
+                                style={TIAStyles.backButton}
+                            >
+                                {showCode ? 'Скрыть детали' : 'Технические детали (Code)'}
+                            </button>
+                        </div>
+
+                        {/* Блок кода */}
+                        {showCode && (
+                            <div style={{ marginBottom: '20px' }}>
+                                {comp.changed_methods?.length > 0 && (
+                                    <div style={{ marginBottom: '12px' }}>
+                                        <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px' }}>
+                                            ИЗМЕНЕННЫЕ МЕТОДЫ:
+                                        </div>
+                                        <ul style={{ margin: 0, paddingLeft: '20px' }}>
+                                            {comp.changed_methods.map((m, mi) => (
+                                                <li key={mi} style={{ marginBottom: '4px' }}>
+                                                    <code style={{ fontSize: '13px', color: 'var(--primary-accent)' }}>{m}</code>
+                                                    {comp.method_jsdoc?.[m] && (
+                                                        <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '8px', fontStyle: 'italic' }}>
+                                                            {comp.method_jsdoc[m]}
+                                                        </span>
+                                                    )}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                                <pre style={TIAStyles.codeBlock}>
+                                    {comp.codeSnippet || comp.diff_snippet || '// Нет фрагмента кода для отображения'}
+                                </pre>
+                            </div>
+                        )}
+
+                        {/* Используется на страницах */}
+                        {pages.length > 0 && (
+                            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+                                <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '12px' }}>
+                                    ИСПОЛЬЗУЕТСЯ НА СТРАНИЦАХ ({pages.length}):
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '8px' }}>
+                                    {displayedPages.map((page, idx) => {
+                                        const pageName = typeof page === 'string' ? page : (page.name || page.page_meta?.name || 'Unknown');
+                                        const pageRoute = page.route || page.page_meta?.route || '';
+                                        const pageTitle = page.human_title || page.page_meta?.human_title || '';
+                                        const pagePath = page.file_path || page.page_meta?.file_path || '';
+
+                                        const tooltip = `[Page] ${pageName}\nRoute: ${pageRoute}\nPath: ${pagePath}\nTitle: ${pageTitle}`;
+
                                         return (
-                                            <div key={folderId} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', backgroundColor: '#eff6ff', border: '1px solid #dbeafe', borderRadius: '10px', fontSize: '12px', color: '#1e40af', fontWeight: 700 }}>
-                                                <span>{folder ? `[Feature] ${folder.name}` : folderId}</span>
-                                                <button 
-                                                    onClick={(e) => { e.stopPropagation(); handleRemoveMapping(comp.id, folderId); }}
-                                                    style={{ border: 'none', background: 'none', color: '#3b82f6', cursor: 'pointer', padding: '0 2px', fontSize: '16px', lineHeight: 1 }}
-                                                >
-                                                    ×
-                                                </button>
+                                            <div
+                                                key={idx}
+                                                title={tooltip}
+                                                style={{
+                                                    padding: '6px 10px',
+                                                    backgroundColor: 'var(--bg-input)',
+                                                    border: '1px solid var(--border-color)',
+                                                    borderRadius: '6px',
+                                                    fontSize: '11px',
+                                                    fontWeight: 600,
+                                                    color: 'var(--text-secondary)',
+                                                    whiteSpace: 'nowrap',
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    cursor: 'help'
+                                                }}
+                                            >
+                                                {pageName}
                                             </div>
                                         );
                                     })}
+                                    {hasMorePages && (
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); setExpandedPageLists(prev => ({ ...prev, [comp.id]: !isPageListExpanded })); }}
+                                            style={{
+                                                padding: '4px 8px',
+                                                border: '1px dashed var(--primary-accent)',
+                                                backgroundColor: 'transparent',
+                                                color: 'var(--primary-accent)',
+                                                borderRadius: '6px',
+                                                fontSize: '10px',
+                                                fontWeight: 700,
+                                                cursor: 'pointer'
+                                            }}
+                                        >
+                                            {isPageListExpanded ? 'СВЕРНУТЬ' : `ЕЩЕ ${pages.length - 10}...`}
+                                        </button>
+                                    )}
                                 </div>
-                            )}
-
-                            {/* Action Buttons */}
-                            <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
-                                <button 
-                                    onClick={(e) => toggleScenarios(comp.id, e)}
-                                    style={{ 
-                                        backgroundColor: '#ecfdf5', 
-                                        border: '1px solid #d1fae5', 
-                                        borderRadius: '12px', 
-                                        padding: '10px 16px', 
-                                        color: '#059669', 
-                                        fontSize: '13px', 
-                                        fontWeight: 800, 
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '8px'
-                                    }}
-                                >
-                                    {showScenarios ? '▼' : '▶'} Сценарии тестирования
-                                    <span style={{ backgroundColor: '#10b981', color: '#fff', padding: '2px 8px', borderRadius: '20px', fontSize: '11px' }}>
-                                        {comp.testScenariosCount || 10}
-                                    </span>
-                                </button>
-                                <button 
-                                    onClick={(e) => toggleCode(comp.id, e)}
-                                    style={{ 
-                                        backgroundColor: '#f1f5f9', 
-                                        border: '1px solid #e2e8f0', 
-                                        borderRadius: '12px', 
-                                        padding: '10px 16px', 
-                                        color: '#475569', 
-                                        fontSize: '13px', 
-                                        fontWeight: 800, 
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '8px'
-                                    }}
-                                >
-                                    {showCode ? '▼' : '▶'} Показать код
-                                </button>
                             </div>
-
-                            {/* Expanded Sections */}
-                            {showCode && (
-                                <div style={{ marginBottom: '24px', backgroundColor: '#1e293b', padding: '20px', borderRadius: '16px', overflow: 'hidden' }}>
-                                    <pre style={{ margin: 0, fontSize: '12px', color: '#e2e8f0', fontFamily: 'monospace', overflowX: 'auto' }}>
-                                        {comp.codeSnippet || '// Код компонента недоступен'}
-                                    </pre>
-                                </div>
-                            )}
-
-                            {/* Used In Section */}
-                            {(comp.usedIn || comp.parents) && (
-                                <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '20px' }}>
-                                    <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', marginBottom: '12px' }}>Используется на страницах:</div>
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
-                                        {(comp.usedIn || comp.parents || []).map((page, idx) => (
-                                            <div key={idx} style={{ padding: '6px 12px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', fontSize: '12px', fontWeight: 700, color: '#475569' }}>
-                                                {typeof page === 'string' ? page : (page.name + ' ' + (page.url || ''))}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
+                        )}
                     </div>
                 );
             })}

@@ -1,62 +1,125 @@
-import { useTIA } from '../context/TIAContext';
+
 
 /**
  * Компонент отображения трассировки UI для компонента
  * @param {Object} props - Свойства компонента
- * @param {Object} props.component - Компонент для отображения трассировки
+ * @param {Object} [props.component] - Компонент для отображения трассировки
+ * @param {Object} [props.uiContext] - Контекст напрямую (для Light-режима)
  * @returns {JSX.Element|null}
  */
-const TIAUITrace = ({ component }) => {
-    const { expandedPageLists, setExpandedPageLists } = useTIA();
+const TIAUITrace = ({ component, uiContext: directUiContext }) => {
+    const uiContext = directUiContext || component?.uiContext || component?.ui_context;
 
-    if (!component.uiTrace || !Array.isArray(component.uiTrace)) return null;
+    if (!uiContext || !uiContext.uiElements || uiContext.uiElements.length === 0) {
+        return null;
+    }
 
     /**
-     * Переключение раскрытия списка страниц для конкретного трейса
-     * @param {string} key - Ключ трейса
-     * @param {Object} e - Событие клика
+     * Возвращает человекочитаемый тип элемента
+     * @param {string} type - Тип элемента из JSON
+     * @returns {string}
      */
-    const togglePageList = (key, e) => {
-        if (e) e.stopPropagation();
-        setExpandedPageLists(prev => ({
-            ...prev,
-            [key]: !prev[key]
-        }));
+    const getElementTypeLabel = (type) => {
+        switch (type?.toLowerCase()) {
+            case 'button': return 'Кнопка';
+            case 'form': return 'Форма';
+            case 'input': return 'Поле ввода';
+            case 'link': return 'Ссылка';
+            case 'select': return 'Выпадающий список';
+            case 'checkbox': return 'Флажок (Checkbox)';
+            case 'radio': return 'Переключатель (Radio)';
+            case 'text': return 'Текстовый блок';
+            case 'icon': return 'Иконка';
+            default: return type || 'Элемент';
+        }
+    };
+
+    /**
+     * Очищает лейбл элемента от Angular-шаблонов и пайпов
+     * @param {string} label
+     * @returns {string}
+     */
+    const getElementLabel = (label) => {
+        if (!label) return 'Элемент';
+        return label
+            .replace(/\{\{[^}]+\}\}/g, '')
+            .replace(/\|[^|]+\|/g, '')
+            .trim() || 'Элемент';
     };
 
     return (
-        <div style={{ marginTop: '12px', padding: '12px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: '13px', fontWeight: 700, color: '#475569', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ fontSize: '16px' }}>🔍</span> UI TRACE (Affected Pages)
+        <div style={{
+            marginTop: '12px',
+            marginBottom: '12px',
+            padding: '12px',
+            backgroundColor: '#fff3cd',
+            border: '1px solid #ffc107',
+            borderRadius: '6px'
+        }}>
+            <div style={{
+                fontSize: '13px',
+                fontWeight: 600,
+                color: '#856404',
+                marginBottom: '8px'
+            }}>
+                UI Trace
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {component.uiTrace.map((trace, idx) => {
-                    const key = `${component.id}-${idx}`;
-                    const isExpanded = expandedPageLists[key];
-                    const pages = trace.pages || [];
-
-                    return (
-                        <div key={key} style={{ fontSize: '12px', backgroundColor: '#fff', padding: '8px', borderRadius: '6px', border: '1px solid #f1f5f9' }}>
-                            <div 
-                                onClick={(e) => togglePageList(key, e)}
-                                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
-                            >
-                                <span style={{ fontWeight: 600, color: '#6366f1' }}>{trace.action || 'Action'}</span>
-                                <span style={{ fontSize: '10px', color: '#94a3b8' }}>{isExpanded ? '▼' : '▶'}</span>
+                {uiContext.uiElements.map((element, eidx) => (
+                    <div key={`ui-element-${eidx}`} style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '8px',
+                        padding: '8px',
+                        backgroundColor: '#fff',
+                        borderRadius: '4px',
+                        border: '1px solid #ffc107'
+                    }}>
+                        <div style={{ flex: 1, fontSize: '13px', color: '#111' }}>
+                            <div style={{ fontWeight: 600, marginBottom: '2px' }}>
+                                {getElementTypeLabel(element.type)}
+                                {element.label && ` "${getElementLabel(element.label)}"`}
                             </div>
-                            
-                            {isExpanded && (
-                                <div style={{ marginTop: '6px', paddingLeft: '8px', borderLeft: '2px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                    {pages.length > 0 ? pages.map((page, pIdx) => (
-                                        <div key={pIdx} style={{ color: '#475569', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                            <span style={{ color: '#94a3b8' }}>•</span> {page}
-                                        </div>
-                                    )) : <div style={{ color: '#94a3b8', fontStyle: 'italic' }}>No pages tracked</div>}
+
+                            {element.method && (
+                                <div style={{
+                                    fontSize: '11px',
+                                    color: '#6c757d',
+                                    fontFamily: 'monospace',
+                                    marginTop: '2px'
+                                }}>
+                                    Обработчик: {element.method}
+                                </div>
+                            )}
+
+                            {element.attributes && Object.keys(element.attributes).length > 0 && (
+                                <div style={{
+                                    fontSize: '11px',
+                                    color: '#6c757d',
+                                    marginTop: '4px',
+                                    display: 'flex',
+                                    flexWrap: 'wrap',
+                                    gap: '8px'
+                                }}>
+                                    {Object.entries(element.attributes).map(([key, value]) => (
+                                        <span key={key}>
+                                            <strong style={{ color: '#495057' }}>{key}:</strong>
+                                            <code style={{
+                                                backgroundColor: '#f8f9fa',
+                                                padding: '1px 4px',
+                                                borderRadius: '2px',
+                                                marginLeft: '4px',
+                                                border: '1px solid #e9ecef'
+                                            }}>
+                                                {String(value)}
+                                            </code>
+                                        </span>
+                                    ))}
                                 </div>
                             )}
                         </div>
-                    );
-                })}
+                    </div>
+                ))}
             </div>
         </div>
     );

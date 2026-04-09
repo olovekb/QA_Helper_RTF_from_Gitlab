@@ -1,105 +1,84 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import { useTIA } from '../context/TIAContext';
-import { setupStyles } from '../styles/TIAStyles';
+import TIAStyles, { setupStyles } from '../styles/TIAStyles';
 
 /**
- * Компонент загрузки JSON файлов для фронтенда и бэкенда
- * @returns {JSX.Element}
+ * Загрузка JSON файлов для TIA
  */
-const TIAJSONUpload = () => {
-    const { 
-        handleFrontendJSONUpload, 
-        handleBackendJSONUpload,
+const TIAJSONUpload = ({ type }) => {
+    const {
+        frontendJSON,
+        backendJSON,
         frontendFileName,
         backendFileName,
+        isLoading,
+        handleFrontendJSONUpload,
+        handleBackendJSONUpload,
+        setFrontendJSON,
+        setBackendJSON,
         setFrontendFileName,
         setBackendFileName,
-        setFrontendJSON,
-        setBackendJSON
+        setTiaReport
     } = useTIA();
 
-    const frontendInputRef = useRef(null);
-    const backendInputRef = useRef(null);
+    const isFrontend = type === 'frontend';
+    const currentJSON = isFrontend ? frontendJSON : backendJSON;
+    const currentFileName = isFrontend ? frontendFileName : backendFileName;
+    const uploadHandler = isFrontend ? handleFrontendJSONUpload : handleBackendJSONUpload;
 
-    const handleRemoveFile = (type) => {
-        if (type === 'frontend') {
+    const handleRemove = () => {
+        if (isFrontend) {
             setFrontendJSON(null);
             setFrontendFileName('');
         } else {
             setBackendJSON(null);
             setBackendFileName('');
         }
+
+        if ((isFrontend && !backendJSON) || (!isFrontend && !frontendJSON)) {
+            setTiaReport(null);
+        }
     };
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-            {/* Frontend JSON */}
-            <div>
-                <h3 style={setupStyles.sectionTitle}>Загрузить JSON Фронтенда (Опционально)</h3>
-                <div style={setupStyles.uploadBox(!!frontendFileName)}>
-                    <input
-                        type="file"
-                        ref={frontendInputRef}
-                        onChange={(e) => handleFrontendJSONUpload(e.target.files[0])}
-                        style={{ display: 'none' }}
-                        accept=".json"
-                    />
-                    <button 
-                        onClick={() => frontendInputRef.current.click()}
-                        style={setupStyles.uploadButton}
-                        onMouseOver={e => e.currentTarget.style.backgroundColor = '#e2e8f0'}
-                        onMouseOut={e => e.currentTarget.style.backgroundColor = '#f1f5f9'}
-                    >
-                        Выберите файл
-                    </button>
-
-                    {frontendFileName && (
-                        <div style={setupStyles.fileTag}>
-                            <span>{frontendFileName}</span>
-                            <button 
-                                onClick={() => handleRemoveFile('frontend')}
-                                style={setupStyles.removeFileBtn}
-                            >
-                                ×
-                            </button>
-                        </div>
-                    )}
-                </div>
+        <div style={{
+            ...setupStyles.uploadContainer,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+        }}>
+            <div style={{ width: '130px', overflow: 'hidden', flexShrink: 0 }}>
+                <input
+                    type="file"
+                    accept=".json"
+                    onChange={uploadHandler}
+                    style={{ ...setupStyles.fileInput, width: '200%', color: 'transparent' }}
+                    disabled={isLoading}
+                />
             </div>
 
-            {/* Backend JSON */}
-            <div>
-                <h3 style={setupStyles.sectionTitle}>Загрузить JSON Бэкенда (Опционально)</h3>
-                <div style={setupStyles.uploadBox(!!backendFileName)}>
-                    <input
-                        type="file"
-                        ref={backendInputRef}
-                        onChange={(e) => handleBackendJSONUpload(e.target.files[0])}
-                        style={{ display: 'none' }}
-                        accept=".json"
-                    />
-                    <button 
-                        onClick={() => backendInputRef.current.click()}
-                        style={setupStyles.uploadButton}
-                        onMouseOver={e => e.currentTarget.style.backgroundColor = '#e2e8f0'}
-                        onMouseOut={e => e.currentTarget.style.backgroundColor = '#f1f5f9'}
+            {currentJSON && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
+                    <span
+                        title={currentFileName || (isFrontend ? 'frontend.json' : 'backend.json')}
+                        style={setupStyles.fileName}
                     >
-                        Выберите файл
+                        {currentFileName || (isFrontend ? 'frontend.json' : 'backend.json')}
+                    </span>
+                    <button
+                        onClick={handleRemove}
+                        style={TIAStyles.removeButton}
+                        onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = '#fecaca';
+                        }}
+                        onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = '#fee2e2';
+                        }}
+                    >
+                        ✕
                     </button>
-
-                    {backendFileName && (
-                        <div style={setupStyles.fileTag}>
-                            <span>{backendFileName}</span>
-                            <button 
-                                onClick={() => handleRemoveFile('backend')}
-                                style={setupStyles.removeFileBtn}
-                            >
-                                ×
-                            </button>
-                        </div>
-                    )}
                 </div>
-            </div>
+            )}
         </div>
     );
 };

@@ -8,12 +8,12 @@ import Loader from '../../../Loader';
  * @returns {JSX.Element|null}
  */
 const TIAEmptyGroupsModal = () => {
-    const { 
-        showEmptyGroupsModal, 
-        setShowEmptyGroupsModal, 
-        emptyGroupsData, 
-        isCreatingStubs, 
-        handleCreateStubs 
+    const {
+        showEmptyGroupsModal,
+        setShowEmptyGroupsModal,
+        emptyGroupsData,
+        isCreatingStubs,
+        handleCreateStubs
     } = useTIA();
 
     if (!showEmptyGroupsModal) return null;
@@ -24,7 +24,7 @@ const TIAEmptyGroupsModal = () => {
                 {/* Header */}
                 <div style={{ padding: '32px 40px', borderBottom: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <h3 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
-                        💨 Пустые группы Allure
+                        Пустые группы Allure
                     </h3>
                     <p style={{ fontSize: '14px', color: 'var(--text-muted)', margin: 0 }}>
                         Следующие блоки не содержат ни одного теста. Allure не позволяет создавать запуски с пустыми группами.
@@ -53,8 +53,8 @@ const TIAEmptyGroupsModal = () => {
                     <button onClick={() => setShowEmptyGroupsModal(false)} style={styles.modalButtonCancel}>
                         Отмена
                     </button>
-                    <button 
-                        onClick={handleCreateStubs} 
+                    <button
+                        onClick={handleCreateStubs}
                         disabled={isCreatingStubs}
                         style={{ ...styles.modalButtonConfirm, display: 'flex', alignItems: 'center', gap: '8px', minWidth: '180px', justifyContent: 'center', background: 'linear-gradient(135deg, var(--primary-accent) 0%, var(--primary-hover) 100%)', boxShadow: '0 10px 15px -3px rgba(99, 102, 241, 0.4)' }}
                     >

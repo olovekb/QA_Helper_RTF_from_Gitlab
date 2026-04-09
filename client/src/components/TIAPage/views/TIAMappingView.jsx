@@ -1,28 +1,29 @@
 import React from 'react';
-import TIAComponentList from './TIAComponentList';
+import TIALeftMappingPanel from './TIALeftMappingPanel';
 import TIAMappingPanel from '../ui/TIAMappingPanel';
 
 /**
- * Контейнер для режима маппинга (Split View)
+ * Интерфейс маппинга 
+ * в
  * @returns {JSX.Element}
  */
 const TIAMappingView = () => {
     return (
-        <div style={{ 
-            display: 'flex', 
-            gap: '40px', 
-            alignItems: 'flex-start',
-            animation: 'fadeIn 0.5s ease-out',
-            marginTop: '32px'
+        <div style={{
+            display: 'flex',
+            flexDirection: 'row',
+            height: '100%',
+            width: '100%',
+            overflow: 'hidden',
+            backgroundColor: '#ffffff'
         }}>
-            {/* Left Column: Components */}
-            <div style={{ flex: 1, minWidth: 0 }}>
-                <h2 style={{ fontSize: '24px', fontWeight: 800, color: '#1e293b', margin: '0 0 24px 0' }}>Сопоставление компонентов</h2>
-                <TIAComponentList />
+            {/* Левая колонка (Аналитика и компоненты) */}
+            <div style={{ flex: 1, height: '100%', borderRight: '1px solid #e2e8f0' }}>
+                <TIALeftMappingPanel />
             </div>
 
-            {/* Right Column: Fixed Panel */}
-            <div style={{ width: '480px', flexShrink: 0, position: 'sticky', top: '32px' }}>
+            {/* Правая колонка (Дерево функциональности) */}
+            <div style={{ flex: 1, height: '100%' }}>
                 <TIAMappingPanel />
             </div>
         </div>

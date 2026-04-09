@@ -1,8 +1,9 @@
 import { useTIA } from '../context/TIAContext';
 import { formatCustomFieldName, filterFoldersForProject } from '../utils/tiaUtils';
+import { treeStyles } from '../styles/TIAStyles';
 
 /**
- * Рекурсивный компонент отображения дерева папок
+ * Рекурсивный компонент отображения дерева папок для основного экрана
  * @param {Object} props - Свойства компонента
  * @param {Array} props.folders - Узлы дерева
  * @param {number} [props.level=0] - Уровень вложенности
@@ -10,10 +11,10 @@ import { formatCustomFieldName, filterFoldersForProject } from '../utils/tiaUtil
  * @returns {JSX.Element}
  */
 const TIAFolderTree = ({ folders, level = 0, selectedId = null }) => {
-    const { 
-        projectId, 
-        expandedFolders, 
-        handleFolderToggle 
+    const {
+        projectId,
+        expandedFolders,
+        handleFolderToggle
     } = useTIA();
 
     if (!folders) return null;
@@ -21,45 +22,53 @@ const TIAFolderTree = ({ folders, level = 0, selectedId = null }) => {
     const currentFolders = filterFoldersForProject(folders, projectId);
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
             {currentFolders.map((folder) => {
-                const isExpanded = expandedFolders[folder.id];
+                const isExpanded = !!expandedFolders[folder.id];
                 const hasChildren = folder.children && folder.children.length > 0;
                 const isSelected = selectedId?.toString() === folder.id.toString();
+                const isRoot = level === 0;
 
                 return (
-                    <div key={folder.id} style={{ marginLeft: `${level * 16}px` }}>
+                    <div key={folder.id} style={{ display: 'flex', flexDirection: 'column' }}>
                         <div
                             style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '8px',
-                                padding: '6px 10px',
-                                cursor: 'pointer',
-                                borderRadius: '8px',
-                                backgroundColor: isSelected ? 'var(--bg-input)' : 'transparent',
-                                transition: 'all 0.2s ease',
-                                border: isSelected ? '1px solid var(--primary-accent)' : '1px solid transparent',
+                                ...treeStyles.folder(level, isRoot),
+                                backgroundColor: isSelected ? '#f1f5f9' : (isRoot ? '#f8fafc' : '#fff'),
+                                borderColor: isSelected ? '#e2e8f0' : '#f1f5f9',
+                                boxShadow: isRoot ? '0 2px 4px rgba(0,0,0,0.02)' : 'none'
                             }}
-                            onClick={() => handleFolderToggle(folder.id)}
+                            onClick={(e) => handleFolderToggle(folder.id, e)}
                         >
                             {hasChildren ? (
-                                <span style={{ fontSize: '10px', color: 'var(--text-muted)', width: '12px' }}>
-                                    {isExpanded ? '▼' : '▶'}
+                                <span style={treeStyles.arrow(isExpanded)}>
+                                    ▶
                                 </span>
                             ) : (
-                                <span style={{ width: '12px' }} />
+                                <span style={{ width: '14px' }} />
                             )}
-                            <span style={{ 
-                                fontSize: '14px', 
-                                color: isSelected ? 'var(--primary-accent)' : 'var(--text-primary)',
-                                fontWeight: isSelected ? 600 : 400 
+
+                            <span style={{
+                                ...treeStyles.name(isRoot),
+                                color: isSelected ? '#6366f1' : '#0f172a'
                             }}>
                                 {formatCustomFieldName(folder, level)}
                             </span>
                         </div>
+
                         {isExpanded && hasChildren && (
-                            <TIAFolderTree folders={folder.children} level={level + 1} selectedId={selectedId} />
+                            <div style={{
+                                borderLeft: '1px dashed #e2e8f0',
+                                marginLeft: `${level * 12 + 18}px`,
+                                paddingLeft: '8px',
+                                marginTop: '4px'
+                            }}>
+                                <TIAFolderTree
+                                    folders={folder.children}
+                                    level={level + 1}
+                                    selectedId={selectedId}
+                                />
+                            </div>
                         )}
                     </div>
                 );
