@@ -1162,6 +1162,39 @@ const db = knex({
         max: 50
     }
 });
+
+// Автоматическая проверка и обновление схемы базы данных
+(async () => {
+    try {
+        console.log('[Server] 🔍 Проверка таблицы generation_tasks...');
+        const hasTable = await db.schema.hasTable('generation_tasks');
+        if (hasTable) {
+            try {
+                const constraintCheck = await db.raw(`
+                    SELECT constraint_name 
+                    FROM information_schema.table_constraints 
+                    WHERE table_name = 'generation_tasks' 
+                    AND constraint_name = 'generation_tasks_type_check'
+                `);
+
+                if (constraintCheck.rows.length > 0) {
+                    console.log('[Server] 🔧 Обновляем CHECK constraint для поддержки всех типов задач...');
+                    await db.raw('ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_type_check');
+                    await db.raw(`
+                        ALTER TABLE generation_tasks 
+                        ADD CONSTRAINT generation_tasks_type_check 
+                        CHECK (type IN ('test_cases', 'test_model', 'bdd_tests', 'cleanup_duplicates', 'qa_agent_review', 'test_impact_analysis'))
+                    `);
+                    console.log('[Server] ✅ CHECK constraint успешно обновлен');
+                }
+            } catch (err) {
+                console.warn('[Server] ⚠️ Не удалось обновить constraint (возможно, база в процессе миграции):', err.message);
+            }
+        }
+    } catch (error) {
+        console.error('[Server] ❌ Ошибка при инициализации БД:', error.message);
+    }
+})();
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 50 * 1024 * 1024, files: 20 }
