@@ -110,11 +110,11 @@ async function ensureTableExists() {
                     // Удаляем старый constraint
                     await db.raw('ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_type_check');
 
-                    // Создаём новый constraint с поддержкой bdd_tests и других типов
+                    // Создаём новый constraint с поддержкой всех используемых типов
                     await db.raw(`
                         ALTER TABLE generation_tasks 
                         ADD CONSTRAINT generation_tasks_type_check 
-                        CHECK (type IN ('test_cases', 'test_model', 'bdd_tests', 'cleanup_duplicates', 'qa_agent_review'))
+                        CHECK (type IN ('test_cases', 'test_model', 'bdd_tests', 'cleanup_duplicates', 'qa_agent_review', 'test_impact_analysis'))
                     `);
 
                     console.log('[BDD Server] ✅ CHECK constraint обновлён для поддержки bdd_tests');

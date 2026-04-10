@@ -58,6 +58,8 @@ const App = ({ projects }) => {
   const [showCleanupModal, setShowCleanupModal] = useState(false);
   const [cleanupLoading, setCleanupLoading] = useState(false);
   const [cleanupResult, setCleanupResult] = useState(null);
+  const [cleanupTaskId, setCleanupTaskId] = useState(null);
+  const [cleanupProgress, setCleanupProgress] = useState(0);
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [showTestModelRulesModal, setShowTestModelRulesModal] = useState(false);
   const [lastReviewInfoCases, setLastReviewInfoCases] = useState(null);
@@ -906,6 +908,37 @@ const App = ({ projects }) => {
     setActiveTab(tab);
   };
 
+  const pollCleanupStatus = async (taskId) => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await axios.get(`${config.serverUrl}/cleanup-duplicates-status/${taskId}`);
+        const data = response.data;
+        
+        setCleanupProgress(data.progress || 0);
+
+        if (data.status === 'completed') {
+          clearInterval(pollInterval);
+          setCleanupResult(data.result);
+          setCleanupLoading(false);
+          setCleanupTaskId(null);
+          if (data.result?.success) {
+            setExportMessage(`Очистка завершена. Удалено ${data.result.deleted} дублей из ${data.result.totalCases} тест-кейсов.`);
+          }
+        } else if (data.status === 'failed') {
+          clearInterval(pollInterval);
+          setCleanupResult({
+            success: false,
+            error: data.error_message || 'Задача завершилась с ошибкой'
+          });
+          setCleanupLoading(false);
+          setCleanupTaskId(null);
+        }
+      } catch (error) {
+        console.error('Ошибка при опросе статуса очистки:', error);
+      }
+    }, 2000);
+  };
+
   const handleCleanupDuplicates = async () => {
     if (!projectId) {
       alert('Пожалуйста, выберите проект.');
@@ -915,13 +948,24 @@ const App = ({ projects }) => {
 
     setCleanupLoading(true);
     setCleanupResult(null);
+    setCleanupProgress(0);
+    setCleanupTaskId(null);
+
     try {
       const response = await axios.post(`${config.serverUrl}/cleanup-duplicates`, {
         projectId,
       });
-      setCleanupResult(response.data);
-      if (response.data.success) {
-        setExportMessage(`Очистка завершена. Удалено ${response.data.deleted} дублей из ${response.data.totalCases} тест-кейсов.`);
+      
+      if (response.data.taskId) {
+        setCleanupTaskId(response.data.taskId);
+        setCleanupProgress(1);
+        pollCleanupStatus(response.data.taskId);
+      } else {
+        setCleanupResult(response.data);
+        if (response.data.success) {
+          setExportMessage(`Очистка завершена. Удалено ${response.data.deleted} дублей из ${response.data.totalCases} тест-кейсов.`);
+        }
+        setCleanupLoading(false);
       }
     } catch (error) {
       console.error('Ошибка очистки дублей:', error);
@@ -929,7 +973,6 @@ const App = ({ projects }) => {
         success: false,
         error: error.response?.data?.error || error.message || 'Неизвестная ошибка'
       });
-    } finally {
       setCleanupLoading(false);
     }
   };
@@ -1653,18 +1696,38 @@ const App = ({ projects }) => {
                   }}></div>
                   <p style={{
                     margin: 0,
-                    color: '#666',
+                    color: 'var(--text-primary)',
                     fontSize: '15px',
                     fontWeight: '500'
                   }}>
-                    Выполняется очистка дублей...
+                    {cleanupTaskId ? `Выполняется очистка... ${cleanupProgress}%` : 'Выполняется очистка дублей...'}
                   </p>
+                  
+                  {cleanupTaskId && (
+                    <div style={{
+                      width: '100%',
+                      maxWidth: '300px',
+                      height: '8px',
+                      backgroundColor: 'var(--border-color)',
+                      borderRadius: '4px',
+                      overflow: 'hidden',
+                      marginTop: '8px'
+                    }}>
+                      <div style={{
+                        width: `${cleanupProgress}%`,
+                        height: '100%',
+                        backgroundColor: '#dc3545',
+                        transition: 'width 0.3s ease'
+                      }} />
+                    </div>
+                  )}
+
                   <p style={{
                     margin: 0,
-                    color: '#999',
+                    color: 'var(--text-muted)',
                     fontSize: '13px'
                   }}>
-                    Пожалуйста, подождите
+                    Пожалуйста, подождите. Это может занять некоторое время.
                   </p>
                 </div>
               )}
