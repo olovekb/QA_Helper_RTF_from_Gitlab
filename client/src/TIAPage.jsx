@@ -38,15 +38,11 @@ const TIAPageContent = () => {
         handleCreateTestPlan,
         isCreateButtonDisabled,
         getCreateButtonDisabledReason,
-        structureLoading
+        structureLoading,
+        isProcessing
     } = useTIA();
 
-    useEffect(() => {
-        if (frontendJSON || backendJSON || tiaReport) {
-            const extracted = extractComponents(frontendJSON, backendJSON, tiaReport);
-            setComponents(extracted);
-        }
-    }, [frontendJSON, backendJSON, tiaReport, setComponents]);
+
 
     return (
         <div style={TIAStyles.container} className="app-page-container">
@@ -54,6 +50,36 @@ const TIAPageContent = () => {
             <GlobalBackgroundProgress />
 
             <TIAPageHeader />
+
+            {/* Оверлей обработки данных */}
+            {isProcessing && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+                    backdropFilter: 'blur(4px)',
+                    zIndex: 9999,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '20px'
+                }}>
+                    <Loader size="48px" color="var(--primary-accent)" />
+                    <div style={{
+                        fontSize: '18px',
+                        fontWeight: 700,
+                        color: 'var(--primary-accent)',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.1em'
+                    }}>
+                        Обработка данных...
+                    </div>
+                </div>
+            )}
 
             {/* Форма настройки */}
             <div style={TIAStyles.setupCard}>

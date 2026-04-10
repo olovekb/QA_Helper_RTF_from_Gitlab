@@ -152,11 +152,23 @@ export const extractComponents = (frontendJSON, backendJSON, tiaReport) => {
                 ? existing.riskLevel
                 : (pageRisk || '');
 
-            const mergedAdvice = [
-                ...(existing?.qaAdvice || []),
-                ...(qaAdvice || []),
-                ...(detail?.qa_advice || [])
-            ].filter((v, i, a) => a.findIndex(t => JSON.stringify(t) === JSON.stringify(v)) === i);
+            const adviceMap = new Map();
+            const addAdvice = (items) => {
+                if (!items || !Array.isArray(items)) return;
+                items.forEach(item => {
+                    if (!item) return;
+                    const key = `${item.area}|${item.priority}|${(item.scenarios || []).join(',')}`;
+                    if (!adviceMap.has(key)) {
+                        adviceMap.set(key, item);
+                    }
+                });
+            };
+
+            if (existing?.qaAdvice) addAdvice(existing.qaAdvice);
+            addAdvice(qaAdvice);
+            if (detail?.qa_advice) addAdvice(detail.qa_advice);
+
+            const mergedAdvice = Array.from(adviceMap.values());
 
             const newNested = detail ? {
                 component_name: name,
@@ -221,6 +233,13 @@ export const extractComponents = (frontendJSON, backendJSON, tiaReport) => {
                 addComponent(bcName, bc.risk_level, bc.summary, bc.qa_advice, bc, null);
             });
         }
+
+        Object.entries(uniqueDetails).forEach(([compName, detail]) => {
+            const risk = detail.risk_level || detail.criticality?.criticality_level || '';
+            const summary = detail.ai_analysis?.summary || detail.summary || '';
+            const advice = detail.ai_analysis?.qa_advice || detail.qa_advice || [];
+            addComponent(compName, risk, summary, advice, detail, null);
+        });
     };
 
     if (frontendJSON) processReport(frontendJSON, 'frontend');

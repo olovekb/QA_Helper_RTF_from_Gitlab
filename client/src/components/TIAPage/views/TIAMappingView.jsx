@@ -20,6 +20,7 @@ const TIAMappingView = () => {
             {/* Левая колонка (Аналитика и компоненты) */}
             <div style={{
                 flex: 1,
+                minWidth: 0,
                 height: '100%',
                 borderRight: '1px solid var(--border-color)',
                 display: 'flex',
@@ -29,7 +30,13 @@ const TIAMappingView = () => {
             </div>
 
             {/* Правая колонка (Дерево функциональности) */}
-            <div style={{ flex: 1, height: '100%', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ 
+                flex: 1, 
+                minWidth: 0,
+                height: '100%', 
+                display: 'flex', 
+                flexDirection: 'column' 
+            }}>
                 <TIAMappingPanel />
             </div>
         </div>

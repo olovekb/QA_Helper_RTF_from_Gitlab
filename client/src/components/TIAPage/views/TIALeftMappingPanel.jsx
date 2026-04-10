@@ -7,17 +7,30 @@ const TIALeftMappingPanel = () => {
     const [isGlobalRisksExpanded, setIsGlobalRisksExpanded] = useState(false);
     const {
         components,
-        tiaReport,
+        frontendJSON,
+        backendJSON,
         selectedComponentType,
         setSelectedComponentType,
         selectedComponentId,
-        setSelectedComponentId
+        setSelectedComponentId,
+        componentMappings
     } = useTIA();
 
-    if (!tiaReport) return null;
+    const activeReport = selectedComponentType === 'frontend' ? frontendJSON : backendJSON;
+    if (!activeReport && !frontendJSON && !backendJSON) return null;
 
-    const summary = tiaReport.summary || {};
+    const summary = activeReport?.summary || {};
     const filteredComponents = components.filter(comp => comp.type === selectedComponentType);
+    
+    const mappedCount = filteredComponents.filter(c => componentMappings[c.id]?.length > 0).length;
+    const coverage = filteredComponents.length > 0 ? (mappedCount / filteredComponents.length) * 100 : 0;
+
+    const riskCounts = filteredComponents.reduce((acc, comp) => {
+        const score = comp.risk_score || 0;
+        const level = score > 0.4 ? 'HIGH' : score > 0.1 ? 'MEDIUM' : 'LOW';
+        acc[level] = (acc[level] || 0) + 1;
+        return acc;
+    }, { HIGH: 0, MEDIUM: 0, LOW: 0 });
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-content)' }}>
@@ -48,23 +61,19 @@ const TIALeftMappingPanel = () => {
                 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--primary-accent)' }}></span>
-                        <strong>Компонент:</strong> {components.filter(c => c.type === 'frontend').length + components.filter(c => c.type === 'backend').length}
+                        <strong>Компонент:</strong> {filteredComponents.length}
                     </div>
 
-                    {summary.test_coverage_percent !== undefined && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--success)' }}></span>
-                            <strong>Покрытие:</strong> {summary.test_coverage_percent.toFixed(1)}%
-                        </div>
-                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--success)' }}></span>
+                        <strong>Покрытие:</strong> {coverage.toFixed(1)}%
+                    </div>
 
-                    {summary.risk_counts && (
-                        <div style={{ display: 'flex', gap: '8px', marginLeft: 'auto' }}>
-                            <span style={{ color: 'var(--error)', fontWeight: 800 }}>H: {summary.risk_counts.HIGH || 0}</span>
-                            <span style={{ color: 'var(--warning)', fontWeight: 800 }}>M: {summary.risk_counts.MEDIUM || 0}</span>
-                            <span style={{ color: 'var(--success)', fontWeight: 800 }}>L: {summary.risk_counts.LOW || 0}</span>
-                        </div>
-                    )}
+                    <div style={{ display: 'flex', gap: '8px', marginLeft: 'auto' }}>
+                        <span style={{ color: 'var(--error)', fontWeight: 800 }}>H: {riskCounts.HIGH}</span>
+                        <span style={{ color: 'var(--warning)', fontWeight: 800 }}>M: {riskCounts.MEDIUM}</span>
+                        <span style={{ color: 'var(--success)', fontWeight: 800 }}>L: {riskCounts.LOW}</span>
+                    </div>
                 </div>
             </div>
 

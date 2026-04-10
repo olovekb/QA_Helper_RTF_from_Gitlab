@@ -204,12 +204,18 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                 </div>
 
                 {component.type === 'backend' && component.serviceName && (
-                    <div style={{ padding: '8px 12px', backgroundColor: '#f1f5f9', borderRadius: '6px', fontSize: '12px', color: '#475569', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div 
+                        style={{ padding: '8px 12px', backgroundColor: '#f1f5f9', borderRadius: '6px', fontSize: '12px', color: '#475569', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} 
+                        title={component.serviceName}
+                    >
                         <strong>Сервис:</strong> {component.serviceName}
                     </div>
                 )}
                 {component.type === 'frontend' && component.serviceName && (
-                    <div style={{ fontSize: '11px', color: '#6c757d', fontFamily: 'monospace', padding: '4px 8px', backgroundColor: '#f8f9fa', borderRadius: '4px', border: '1px solid #dee2e6', wordBreak: 'break-all' }}>
+                    <div 
+                        style={{ fontSize: '11px', color: '#6c757d', fontFamily: 'monospace', padding: '4px 8px', backgroundColor: '#f8f9fa', borderRadius: '4px', border: '1px solid #dee2e6', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        title={component.serviceName}
+                    >
                         {component.serviceName}
                     </div>
                 )}
@@ -233,7 +239,10 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                             }}>
                                 {ep.HttpMethod || ep.method || 'N/A'}
                             </span>
-                            <span style={{ fontFamily: 'monospace', color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            <span 
+                                style={{ fontFamily: 'monospace', color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}
+                                title={ep.RoutePath || ep.path || ep.url || 'N/A'}
+                            >
                                 {ep.RoutePath || ep.path || ep.url || 'N/A'}
                             </span>
                         </div>
@@ -430,7 +439,12 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                                         boxShadow: 'var(--shadow-sm)'
                                     }}
                                 >
-                                    <span>{pageName}</span>
+                                    <span style={{ 
+                                        maxWidth: '150px', 
+                                        overflow: 'hidden', 
+                                        textOverflow: 'ellipsis', 
+                                        whiteSpace: 'nowrap' 
+                                    }}>{pageName}</span>
                                     {pageRoute && (
                                         <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'monospace', backgroundColor: 'var(--bg-input)', padding: '1px 5px', borderRadius: '4px' }}>
                                             {pageRoute}

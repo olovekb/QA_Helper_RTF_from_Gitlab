@@ -59,6 +59,7 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
     const [expandedPageLists, setExpandedPageLists] = useState({});
     const [expandedCode, setExpandedCode] = useState({});
     const [expandedTechnicalDetails, setExpandedTechnicalDetails] = useState({});
+    const [isProcessing, setIsProcessing] = useState(false);
 
     // Состояния маппинга
     const [components, setComponents] = useState([]);
@@ -466,27 +467,33 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
     const handleFrontendJSONUpload = useCallback((e) => {
         const file = e.target.files[0];
         if (!file) return;
+        setIsProcessing(true);
         const reader = new FileReader();
         reader.onload = (event) => {
-            try {
-                const json = JSON.parse(event.target.result);
-                setFrontendFileName(file.name);
-                if (isNewTiaFormat(json)) {
-                    setTiaReport(json);
+            // Используем setTimeout, чтобы UI успел отрисовать индикатор загрузки
+            setTimeout(() => {
+                try {
+                    const json = JSON.parse(event.target.result);
+                    setFrontendFileName(file.name);
+                    if (isNewTiaFormat(json)) {
+                        setFrontendJSON(json);
+                        if (!backendJSON) setTiaReport(json);
+                        setError('');
+                        setIsProcessing(false);
+                        return;
+                    }
                     setFrontendJSON(json);
                     setError('');
-                    return;
+                } catch (err) {
+                    setError('Неверный формат JSON-файла.');
+                    logError('Frontend JSON parse error', err.message, config.TIAUrl);
+                } finally {
+                    setIsProcessing(false);
                 }
-                setFrontendJSON(json);
-                setTiaReport(null);
-                setError('');
-            } catch (err) {
-                setError('Неверный формат JSON-файла.');
-                logError('Frontend JSON parse error', err.message, config.TIAUrl);
-            }
+            }, 0);
         };
         reader.readAsText(file);
-    }, []);
+    }, [backendJSON]);
 
     /**
      * Загрузка JSON бэкенда
@@ -495,26 +502,54 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
     const handleBackendJSONUpload = useCallback((e) => {
         const file = e.target.files[0];
         if (!file) return;
+        setIsProcessing(true);
         const reader = new FileReader();
         reader.onload = (event) => {
-            try {
-                const json = JSON.parse(event.target.result);
-                setBackendFileName(file.name);
-                if (isNewTiaFormat(json)) {
-                    setTiaReport(json);
+            setTimeout(() => {
+                try {
+                    const json = JSON.parse(event.target.result);
+                    setBackendFileName(file.name);
+                    if (isNewTiaFormat(json)) {
+                        setBackendJSON(json);
+                        if (!frontendJSON) setTiaReport(json);
+                        setError('');
+                        setIsProcessing(false);
+                        return;
+                    }
                     setBackendJSON(json);
                     setError('');
-                    return;
+                } catch (err) {
+                    setError('Неверный формат JSON-файла для бэкенда.');
+                    logError('Backend JSON parse error', err.message, config.TIAUrl);
+                } finally {
+                    setIsProcessing(false);
                 }
-                setBackendJSON(json);
-                setError('');
-            } catch (err) {
-                setError('Неверный формат JSON-файла для бэкенда.');
-                logError('Backend JSON parse error', err.message, config.TIAUrl);
-            }
+            }, 0);
         };
         reader.readAsText(file);
-    }, []);
+    }, [frontendJSON]);
+
+
+    /**
+     * Эффект для автоматического извлечения компонентов при загрузке JSON
+     */
+    useEffect(() => {
+        if (frontendJSON || backendJSON || tiaReport) {
+            setIsProcessing(true);
+            // Откладываем тяжелый расчет, чтобы UI не фризил при переключении состояний
+            const timer = setTimeout(() => {
+                try {
+                    const extracted = extractComponents(frontendJSON, backendJSON, tiaReport);
+                    setComponents(extracted);
+                } catch (err) {
+                    console.error('Error extracting components:', err);
+                } finally {
+                    setIsProcessing(false);
+                }
+            }, 100);
+            return () => clearTimeout(timer);
+        }
+    }, [frontendJSON, backendJSON, tiaReport]);
 
 
     /**
@@ -882,6 +917,7 @@ export const TIAProvider = ({ children, projects: initialProjects }) => {
         expandedMethods, setExpandedMethods,
         expandedPageLists, setExpandedPageLists,
         expandedTechnicalDetails, setExpandedTechnicalDetails,
+        isProcessing, setIsProcessing,
         expandedCode, setExpandedCode,
         components, setComponents,
         componentMappings, setComponentMappings,
