@@ -70,10 +70,10 @@ const TIASplitModal = () => {
         }}>
             <div style={{
                 backgroundColor: 'var(--bg-content)',
-                width: '100%',
-                maxWidth: '1400px',
-                height: '90vh',
-                borderRadius: '32px',
+                width: '98vw',
+                maxWidth: '1800px',
+                height: '98vh',
+                borderRadius: '16px',
                 boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
                 display: 'flex',
                 flexDirection: 'column',

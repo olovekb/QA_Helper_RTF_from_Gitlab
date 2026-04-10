@@ -256,7 +256,7 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                 if (!summaryOutput) return null;
 
                 return (
-                    <div style={{ 
+                    <div style={{
                         margin: '12px 0',
                         padding: '12px 16px',
                         backgroundColor: 'var(--bg-input)',
@@ -266,10 +266,10 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                         lineHeight: 1.5,
                         color: 'var(--text-primary)'
                     }}>
-                        <div style={{ 
-                            fontSize: '11px', 
-                            fontWeight: 800, 
-                            color: 'var(--primary-accent)', 
+                        <div style={{
+                            fontSize: '11px',
+                            fontWeight: 800,
+                            color: 'var(--primary-accent)',
                             marginBottom: '6px',
                             letterSpacing: '0.5px'
                         }}>
@@ -284,7 +284,8 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
             {renderUITrace(component)}
 
             {/* Тестирование */}
-            {component.qaAdvice?.length > 0 && (
+            {/* Сценарий тестирования */}
+            {((component.qaAdvice && component.qaAdvice.length > 0) || component.summaryText) && (
                 <div style={{ marginBottom: '12px' }}>
                     <button
                         onClick={(e) => {
@@ -294,9 +295,9 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                         style={{
                             width: '100%',
                             padding: '12px 16px',
-                            backgroundColor: expandedScenarios[component.id] ? 'var(--success)' : 'var(--success-bg)',
-                            color: expandedScenarios[component.id] ? '#fff' : 'var(--success)',
-                            border: `1px solid var(--success)`,
+                            backgroundColor: expandedScenarios[component.id] ? 'var(--primary-accent)' : 'var(--bg-input)',
+                            color: expandedScenarios[component.id] ? '#fff' : 'var(--primary-accent)',
+                            border: `1px solid var(--primary-accent)`,
                             borderRadius: '14px',
                             fontSize: '13px',
                             fontWeight: 800,
@@ -306,21 +307,23 @@ const TIAComponentCard = ({ component, isSelected, onSelect }) => {
                             justifyContent: 'space-between',
                             alignItems: 'center',
                             transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                            boxShadow: expandedScenarios[component.id] ? '0 4px 12px color-mix(in srgb, var(--success) 30%, transparent)' : 'none'
+                            boxShadow: expandedScenarios[component.id] ? '0 4px 12px color-mix(in srgb, var(--primary-accent) 30%, transparent)' : 'none'
                         }}
                     >
                         <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <span style={{ transition: 'transform 0.2s ease', transform: expandedScenarios[component.id] ? 'rotate(180deg)' : 'rotate(0deg)', display: 'inline-block' }}>▼</span>
-                            СЦЕНАРИИ ТЕСТИРОВАНИЯ
-                            <span style={{ fontSize: '11px', backgroundColor: expandedScenarios[component.id] ? 'rgba(255, 255, 255, 0.3)' : 'color-mix(in srgb, var(--success) 10%, transparent)', padding: '2px 8px', borderRadius: '20px', marginLeft: '4px' }}>
-                                {component.qaAdvice.reduce((sum, advice) => sum + (advice.scenarios?.length || 0), 0)}
-                            </span>
+                            СЦЕНАРИЙ ТЕСТИРОВАНИЯ
+                            {component.qaAdvice?.length > 0 && (
+                                <span style={{ fontSize: '11px', backgroundColor: expandedScenarios[component.id] ? 'rgba(255, 255, 255, 0.3)' : 'color-mix(in srgb, var(--primary-accent) 10%, transparent)', padding: '2px 8px', borderRadius: '20px', marginLeft: '4px' }}>
+                                    {component.qaAdvice.reduce((sum, advice) => sum + (advice.scenarios?.length || 0), 0)}
+                                </span>
+                            )}
                         </span>
                     </button>
                     {expandedScenarios[component.id] && (
                         <div style={{ marginTop: '12px', padding: '16px', backgroundColor: 'var(--bg-input)', borderRadius: '16px', border: '1px solid var(--border-color)' }}>
-                            {component.qaAdvice.map((advice, i) => {
-                                const priorityColor = advice.priority === 'HIGH' ? '#dc3545' : advice.priority === 'MEDIUM' ? '#ffc107' : '#28a745';
+                            {component.qaAdvice?.map((advice, i) => {
+                                const priorityColor = advice.priority === 'HIGH' ? 'var(--error)' : advice.priority === 'MEDIUM' ? 'var(--warning)' : 'var(--success)';
                                 return (
                                     <div key={i} style={{ marginBottom: i < component.qaAdvice.length - 1 ? '16px' : '0', paddingBottom: i < component.qaAdvice.length - 1 ? '16px' : '0', borderBottom: i < component.qaAdvice.length - 1 ? '1px solid var(--border-color)' : 'none' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>

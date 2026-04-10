@@ -21,19 +21,33 @@ const TIAUnmappedModal = () => {
 
     return (
         <div style={styles.mappingModalOverlay}>
-            <div style={{ ...styles.mappingModalContent, maxWidth: '750px', height: 'auto', maxHeight: '90vh' }}>
+            <div style={{ 
+                ...styles.mappingModalContent, 
+                maxWidth: '750px', 
+                height: 'auto', 
+                maxHeight: '90vh',
+                display: 'flex',
+                flexDirection: 'column'
+            }}>
                 {/* Header */}
-                <div style={{ ...styles.mappingModalHeader, padding: '32px 40px', flexDirection: 'column', alignItems: 'flex-start', gap: '8px' }}>
-                    <h3 style={{ ...styles.title, fontSize: '24px' }}>
+                <div style={{ 
+                    ...styles.mappingModalHeader, 
+                    padding: '24px 32px', 
+                    flexDirection: 'column', 
+                    alignItems: 'flex-start', 
+                    gap: '4px',
+                    flexShrink: 0 
+                }}>
+                    <h3 style={{ ...styles.title, fontSize: '22px' }}>
                         Незамапленные компоненты
                     </h3>
-                    <p style={{ fontSize: '15px', color: 'var(--text-muted)', margin: 0, lineHeight: '1.6', maxWidth: '600px' }}>
+                    <p style={{ fontSize: '14px', color: 'var(--text-muted)', margin: 0, lineHeight: '1.5', maxWidth: '600px' }}>
                         Следующие компоненты не привязаны ни к одному функциональному блоку Allure. Они будут пропущены при создании запуска тестирования.
                     </p>
                 </div>
 
                 {/* Tabs / Filter */}
-                <div style={{ padding: '24px 40px 0', backgroundColor: 'var(--bg-input)' }}>
+                <div style={{ padding: '16px 32px 0', backgroundColor: 'var(--bg-input)', flexShrink: 0 }}>
                     <div style={setupStyles.modeToggleContainer}>
                         <button
                             onClick={() => setActiveUnmappedTab('frontend')}
@@ -51,39 +65,46 @@ const TIAUnmappedModal = () => {
                 </div>
 
                 {/* List Container */}
-                <div style={{ padding: '24px 40px 32px', backgroundColor: 'var(--bg-input)' }}>
+                <div style={{ 
+                    padding: '16px 32px 24px', 
+                    backgroundColor: 'var(--bg-input)', 
+                    flex: 1, 
+                    minHeight: 0, 
+                    display: 'flex', 
+                    flexDirection: 'column' 
+                }}>
                     <div style={{
-                        maxHeight: '400px',
+                        flex: 1,
                         overflowY: 'auto',
                         padding: '4px',
                         display: 'flex',
                         flexDirection: 'column',
-                        gap: '12px',
+                        gap: '10px',
                         paddingRight: '12px'
                     }}>
                         {filtered.length > 0 ? (
                             filtered.map((comp, idx) => (
                                 <div key={idx} style={{
-                                    padding: '16px 24px',
+                                    padding: '12px 20px',
                                     backgroundColor: 'var(--bg-content)',
-                                    borderRadius: '16px',
+                                    borderRadius: '12px',
                                     border: '1px solid var(--border-color)',
-                                    fontSize: '15px',
+                                    fontSize: '14px',
                                     color: 'var(--text-primary)',
                                     fontWeight: 600,
                                     boxShadow: 'var(--shadow-sm)',
                                     display: 'flex',
                                     alignItems: 'center',
-                                    gap: '14px',
+                                    gap: '12px',
                                     transition: 'all 0.2s ease'
                                 }}>
-                                    <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: 'var(--warning)', boxShadow: '0 0 8px color-mix(in srgb, var(--warning) 40%, transparent)' }} />
+                                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--warning)', boxShadow: '0 0 6px color-mix(in srgb, var(--warning) 40%, transparent)' }} />
                                     {comp.name}
                                 </div>
                             ))
                         ) : (
-                            <div style={{ padding: '60px 40px', textAlign: 'center', backgroundColor: 'var(--bg-content)', borderRadius: '24px', border: '1px dashed var(--border-color)' }}>
-                                <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '18px' }}>Все компоненты замаплены</div>
+                            <div style={{ padding: '40px 20px', textAlign: 'center', backgroundColor: 'var(--bg-content)', borderRadius: '20px', border: '1px dashed var(--border-color)' }}>
+                                <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '16px' }}>Все компоненты замаплены</div>
                             </div>
                         )}
                     </div>

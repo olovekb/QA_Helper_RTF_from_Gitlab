@@ -152,11 +152,11 @@ export const extractComponents = (frontendJSON, backendJSON, tiaReport) => {
                 ? existing.riskLevel
                 : (pageRisk || '');
 
-            const mergedAdvice = Array.from(new Set([
+            const mergedAdvice = [
                 ...(existing?.qaAdvice || []),
                 ...(qaAdvice || []),
                 ...(detail?.qa_advice || [])
-            ]));
+            ].filter((v, i, a) => a.findIndex(t => JSON.stringify(t) === JSON.stringify(v)) === i);
 
             const newNested = detail ? {
                 component_name: name,
@@ -181,9 +181,9 @@ export const extractComponents = (frontendJSON, backendJSON, tiaReport) => {
             if (isBackend) compType = 'backend';
 
             let bestSummary = existing?.summaryText || '';
-            const componentSummary = detail?.ai_analysis?.summary || detail?.summary || '';
+            const componentSummary = detail?.ai_analysis?.summary || detail?.summary || pageSummary || '';
 
-            if (componentSummary) {
+            if (componentSummary && (!bestSummary || componentSummary.length > bestSummary.length)) {
                 bestSummary = componentSummary;
             }
 
