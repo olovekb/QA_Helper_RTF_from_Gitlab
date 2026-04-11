@@ -8,6 +8,7 @@ services:
       - NODE_ENV=production
       - PORT=5000
       - CLIENT_PORT=3000
+      - BERT_SCORE_SERVICE_URL=http://bert-score-service:8000
       - DB_HOST=postgresql
       - DB_PORT=5432
       - DB_NAME=tia_mapping_db
@@ -28,6 +29,8 @@ services:
       postgresql:
         condition: service_healthy
       neo4j:
+        condition: service_started
+      bert-score-service:
         condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health/db"]
@@ -95,6 +98,27 @@ services:
       - allure-test-net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5002/api/bdd/steps"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  bert-score-service:
+    image: bert-score-service-local
+    restart: always
+    environment:
+      - BERT_SCORE_MODEL_TYPE=bert-base-multilingual-cased
+    ports:
+      - 8000:8000
+    networks:
+      - allure-test-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
       interval: 30s
       timeout: 10s
       retries: 5

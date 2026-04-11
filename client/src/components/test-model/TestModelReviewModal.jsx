@@ -565,6 +565,54 @@ const flattenTreeToCases = (tree) => {
     return flat;
 };
 
+const normalizeJiraIssueInput = (value, jiraProject) => {
+    const raw = (value || '').trim().toUpperCase();
+    if (!raw) return '';
+    if (/^\d+$/.test(raw) && jiraProject) {
+        return `${jiraProject}-${raw}`;
+    }
+    return raw;
+};
+
+const serializeCasesForComparison = (rawCases = []) => rawCases.map((testCase) => ({
+    id: testCase.id,
+    title: (testCase.title || '').trim(),
+    precondition: (testCase.precondition || '').trim(),
+    steps: (testCase.steps || []).map((step) => {
+        if (typeof step === 'string') {
+            return step.trim();
+        }
+        if (step && typeof step === 'object') {
+            if (step.sharedStepId) {
+                return { sharedStepId: step.sharedStepId };
+            }
+            const normalized = {};
+            if (step.action) normalized.action = step.action;
+            if (step.expectedResult) normalized.expectedResult = step.expectedResult;
+            if (step.description && !normalized.action) normalized.description = step.description;
+            if (step.text && !normalized.action) normalized.text = step.text;
+            return Object.keys(normalized).length > 0 ? normalized : String(step);
+        }
+        return String(step || '').trim();
+    }),
+    expected: (testCase.expected || '').trim(),
+    layer: testCase.layer,
+    feature: testCase.feature,
+    story: testCase.story,
+    scenario: testCase.scenario || '',
+    code: testCase.code || '',
+    tags: (testCase.tags || []).filter(Boolean),
+    priority: testCase.priority || 'Medium',
+    version: testCase.version || 'stable'
+}));
+
+const comparisonClassMeta = {
+    strong: { label: 'Strong', color: '#2ea043', background: 'rgba(46, 160, 67, 0.16)' },
+    weak: { label: 'Weak', color: '#d29922', background: 'rgba(210, 153, 34, 0.16)' },
+    mismatch: { label: 'Mismatch', color: '#f85149', background: 'rgba(248, 81, 73, 0.16)' },
+    unmatched: { label: 'Unmatched', color: '#8b949e', background: 'rgba(139, 148, 158, 0.16)' }
+};
+
 const DND_PATH_DELIMITER = '|';
 
 const encodeDroppablePath = (path = []) =>
@@ -3155,6 +3203,13 @@ export default function TestModelReviewModal({
     
     // Состояние для непринятых изменений: Set<caseId>
     const [pendingApprovals, setPendingApprovals] = useState(new Set());
+    const [comparisonJiraIssue, setComparisonJiraIssue] = useState('');
+    const [comparisonTaskId, setComparisonTaskId] = useState(null);
+    const [comparisonProgress, setComparisonProgress] = useState(0);
+    const [comparisonReport, setComparisonReport] = useState(null);
+    const [comparisonError, setComparisonError] = useState('');
+    const [expandedComparisonRows, setExpandedComparisonRows] = useState(new Set());
+    const [isComparing, setIsComparing] = useState(false);
 
     // Функция для копирования ссылки в буфер обмена
     const copyToClipboard = (text) => {
@@ -3421,6 +3476,60 @@ export default function TestModelReviewModal({
                 .catch(console.warn);
         }
     }, [isOpen, projectId, initialCases]);
+
+    useEffect(() => {
+        if (!isOpen || comparisonJiraIssue) return;
+        const currentCases = flattenTreeToCases(treeData);
+        const firstIssue = currentCases.find((testCase) => testCase?.jiraIssueOption?.value || testCase?.jiraIssue);
+        if (firstIssue) {
+            setComparisonJiraIssue(firstIssue.jiraIssueOption?.value || firstIssue.jiraIssue || '');
+        }
+    }, [isOpen, treeData, comparisonJiraIssue]);
+
+    useEffect(() => {
+        if (!comparisonTaskId) return undefined;
+
+        let cancelled = false;
+        setIsComparing(true);
+        setComparisonError('');
+
+        const pollTaskStatus = async () => {
+            try {
+                const { data } = await axios.get(
+                    `${config.serverUrl}/task-status/${comparisonTaskId}`,
+                    { params: { nocache: Date.now() } }
+                );
+
+                if (cancelled) return;
+
+                setComparisonProgress(Number(data?.progress || 0));
+
+                if (data?.status === 'completed') {
+                    setComparisonReport(data.result || null);
+                    setComparisonTaskId(null);
+                    setIsComparing(false);
+                } else if (data?.status === 'failed') {
+                    setComparisonError(data?.error_message || 'Сравнение завершилось с ошибкой');
+                    setComparisonTaskId(null);
+                    setIsComparing(false);
+                }
+            } catch (error) {
+                if (cancelled) return;
+                console.error('TestModelReviewModal: comparison polling failed:', error);
+                setComparisonError(error.response?.data?.error || error.message);
+                setComparisonTaskId(null);
+                setIsComparing(false);
+            }
+        };
+
+        pollTaskStatus();
+        const timerId = setInterval(pollTaskStatus, 2500);
+
+        return () => {
+            cancelled = true;
+            clearInterval(timerId);
+        };
+    }, [comparisonTaskId]);
     
     // Функция для поиска тест-кейса в дереве по ID
     const findCaseInTree = (tree, caseId) => {
@@ -3460,13 +3569,13 @@ export default function TestModelReviewModal({
         setSelectedCase({ ...updatedCase });
     };
     const handleCloseWithConfirm = useCallback(() => {
-        if (isGenerating || isSending) return; // не даём закрыть во время процессов
+        if (isGenerating || isSending || isComparing) return; // не даём закрыть во время процессов
         
         // Состояние уже сохраняется автоматически при изменении treeData
         // Просто закрываем модалку
         setAllureLink(null); // на всякий случай очищаем состояние успеха
         onClose();
-    }, [isGenerating, isSending, onClose]);
+    }, [isGenerating, isSending, isComparing, onClose]);
     const handleUpdateCase = useCallback((caseId, updatedCase) => {
         setTreeData((prevTree) => {
             const newTree = JSON.parse(JSON.stringify(prevTree));
@@ -4362,6 +4471,67 @@ export default function TestModelReviewModal({
         }
     };
 
+    const toggleComparisonRow = (generatedIndex) => {
+        setExpandedComparisonRows((prev) => {
+            const next = new Set(prev);
+            if (next.has(generatedIndex)) {
+                next.delete(generatedIndex);
+            } else {
+                next.add(generatedIndex);
+            }
+            return next;
+        });
+    };
+
+    const handleRunComparison = async () => {
+        const jiraIssue = normalizeJiraIssueInput(comparisonJiraIssue, jiraProject);
+        const rawCases = flattenTreeToCases(treeData);
+
+        if (!projectId) {
+            alert('Не найден projectId для сравнения');
+            return;
+        }
+        if (!jiraIssue) {
+            alert('Укажите Jira issue для сравнения');
+            return;
+        }
+        if (rawCases.length === 0) {
+            alert('Нет тест-кейсов для сравнения');
+            return;
+        }
+
+        trackEvent('compare_generated_vs_manual', {
+            page: '/solution',
+            projectId,
+            extra: { jiraIssue, casesCount: rawCases.length }
+        });
+
+        setComparisonError('');
+        setComparisonProgress(0);
+        setComparisonReport(null);
+        setExpandedComparisonRows(new Set());
+
+        try {
+            const { data } = await axios.post(
+                `${config.serverUrl}/compare-test-cases-async`,
+                {
+                    projectId,
+                    jiraIssue,
+                    generatedCases: serializeCasesForComparison(rawCases)
+                },
+                { headers: { 'Content-Type': 'application/json' } }
+            );
+
+            setComparisonJiraIssue(jiraIssue);
+            setComparisonTaskId(data?.taskId || null);
+            setIsComparing(true);
+        } catch (error) {
+            console.error('TestModelReviewModal: comparison start failed:', error);
+            setComparisonError(error.response?.data?.error || error.message);
+            setIsComparing(false);
+        }
+    };
+
     const handleConfirm = async () => {
         trackEvent('confirm_send_to_allure', { page: '/solution', projectId, extra: { casesCount: flattenTreeToCases(treeData).length } });
         const rawCases = flattenTreeToCases(treeData);
@@ -4724,7 +4894,7 @@ export default function TestModelReviewModal({
                             <button
                                 className="button-secondary"
                                 onClick={() => setShowFixPanel(!showFixPanel)}
-                                disabled={isFixing || isSending}
+                                disabled={isFixing || isSending || isComparing}
                                 style={{
                                     fontSize: '13px',
                                     padding: '6px 12px',
@@ -4733,7 +4903,7 @@ export default function TestModelReviewModal({
                             >
                                 {showFixPanel ? '✕ Скрыть' : '🔄 Быстрая правка'}
                             </button>
-                            <button className="close-btn" onClick={handleCloseWithConfirm} disabled={isSending || isFixing}>×</button>
+                            <button className="close-btn" onClick={handleCloseWithConfirm} disabled={isSending || isFixing || isComparing}>×</button>
                         </div>
                     </div>
                     
@@ -4758,7 +4928,7 @@ export default function TestModelReviewModal({
                                     value={fixPrompt}
                                     onChange={(e) => setFixPrompt(e.target.value)}
                                     placeholder={'Пиши конкретно: 1) Для одного теста укажи точное название и опиши изменение. 2) Для одной проблемы в нескольких тестах перечисли их названия или укажи story/слой с формулировкой типа "все E2E в story «Выбор тарифа» — ...". 3) Для массовой чистки напиши правило: "убери шаги с \\"Проверить\\"", "добавь scenario во все Integration backend". 4) Не проси общие улучшения, всегда указывай конкретные действия.'}
-                                    disabled={isFixing}
+                                    disabled={isFixing || isComparing}
                                     style={{
                                         width: '100%',
                                         minHeight: '80px',
@@ -4788,7 +4958,7 @@ export default function TestModelReviewModal({
                                         setFixPrompt('');
                                         setShowFixPanel(false);
                                     }}
-                                    disabled={isFixing}
+                                    disabled={isFixing || isComparing}
                                     style={{ fontSize: '13px', padding: '8px 16px' }}
                                 >
                                     Отмена
@@ -4840,7 +5010,7 @@ export default function TestModelReviewModal({
                                     <button
                                         className="button-primary"
                                         onClick={handleApproveAll}
-                                        disabled={isFixing || isSending}
+                                        disabled={isFixing || isSending || isComparing}
                                         style={{ 
                                             minWidth: '180px',
                                             backgroundColor: '#28a745',
@@ -4853,7 +5023,7 @@ export default function TestModelReviewModal({
                                 <button
                                     className="button-secondary"
                                     onClick={handleUndoLastFix}
-                                    disabled={isFixing || isSending}
+                                    disabled={isFixing || isSending || isComparing}
                                     style={{ minWidth: '200px' }}
                                 >
                                     ↩️ Откатить последнюю правку
@@ -4878,7 +5048,7 @@ export default function TestModelReviewModal({
                             <button
                                 className="button-primary"
                                 onClick={handleApproveAll}
-                                disabled={isFixing || isSending}
+                                disabled={isFixing || isSending || isComparing}
                                 style={{ 
                                     minWidth: '180px',
                                     backgroundColor: '#28a745',
@@ -4889,6 +5059,207 @@ export default function TestModelReviewModal({
                             </button>
                         </div>
                     )}
+
+                    <div style={{
+                        padding: '16px 24px',
+                        borderBottom: '1px solid var(--on-border-light, #bdd4ff36)',
+                        background: 'var(--bg-base-secondary, #2c343f)'
+                    }}>
+                        <div style={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: '12px',
+                            alignItems: 'center',
+                            marginBottom: comparisonReport || comparisonError || isComparing ? '14px' : 0
+                        }}>
+                            <div style={{ minWidth: '280px', flex: '1 1 320px' }}>
+                                <div style={{
+                                    fontSize: '12px',
+                                    color: '#9fb3d1',
+                                    marginBottom: '6px'
+                                }}>
+                                    Jira issue с ручными тест-кейсами из Allure
+                                </div>
+                                <input
+                                    type="text"
+                                    value={comparisonJiraIssue}
+                                    onChange={(event) => setComparisonJiraIssue(event.target.value)}
+                                    placeholder={jiraProject ? `${jiraProject}-12345 или 12345` : 'Например: SADO-12345'}
+                                    disabled={isComparing || isSending || isFixing}
+                                    style={{
+                                        width: '100%',
+                                        padding: '10px 12px',
+                                        backgroundColor: 'var(--bg-base-primary, #1b2129)',
+                                        border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                        borderRadius: '6px',
+                                        color: 'var(--on-text-primary, #f6fafef5)',
+                                        fontSize: '13px',
+                                        boxSizing: 'border-box'
+                                    }}
+                                />
+                            </div>
+                            <button
+                                className="button-primary"
+                                onClick={handleRunComparison}
+                                disabled={isComparing || isSending || isFixing || !Object.keys(treeData).length}
+                                style={{ minWidth: '220px', alignSelf: 'flex-end' }}
+                            >
+                                {isComparing ? `Сравниваю... ${comparisonProgress}%` : 'Сравнить с ручными ТК'}
+                            </button>
+                        </div>
+
+                        {comparisonError && (
+                            <div style={{
+                                marginBottom: '12px',
+                                padding: '10px 12px',
+                                borderRadius: '6px',
+                                background: 'rgba(248, 81, 73, 0.12)',
+                                border: '1px solid rgba(248, 81, 73, 0.35)',
+                                color: '#ffb3ad',
+                                fontSize: '13px'
+                            }}>
+                                {comparisonError}
+                            </div>
+                        )}
+
+                        {comparisonReport && (
+                            <>
+                                <div style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                                    gap: '10px',
+                                    marginBottom: '14px'
+                                }}>
+                                    <div style={{ padding: '12px', borderRadius: '8px', background: '#1b2129', border: '1px solid #30363d' }}>
+                                        <div style={{ fontSize: '11px', color: '#9fb3d1', marginBottom: '4px' }}>matchedMacroF1</div>
+                                        <div style={{ fontSize: '20px', fontWeight: 700 }}>{comparisonReport.summary?.matchedMacroF1 ?? 0}</div>
+                                    </div>
+                                    <div style={{ padding: '12px', borderRadius: '8px', background: '#1b2129', border: '1px solid #30363d' }}>
+                                        <div style={{ fontSize: '11px', color: '#9fb3d1', marginBottom: '4px' }}>allGeneratedCoverage</div>
+                                        <div style={{ fontSize: '20px', fontWeight: 700 }}>{comparisonReport.summary?.allGeneratedCoverage ?? 0}</div>
+                                    </div>
+                                    <div style={{ padding: '12px', borderRadius: '8px', background: '#1b2129', border: '1px solid #30363d' }}>
+                                        <div style={{ fontSize: '11px', color: '#9fb3d1', marginBottom: '4px' }}>allManualCoverage</div>
+                                        <div style={{ fontSize: '20px', fontWeight: 700 }}>{comparisonReport.summary?.allManualCoverage ?? 0}</div>
+                                    </div>
+                                    <div style={{ padding: '12px', borderRadius: '8px', background: '#1b2129', border: '1px solid #30363d' }}>
+                                        <div style={{ fontSize: '11px', color: '#9fb3d1', marginBottom: '4px' }}>strong / weak / unmatched</div>
+                                        <div style={{ fontSize: '18px', fontWeight: 700 }}>
+                                            {(comparisonReport.summary?.strongCount ?? 0)} / {(comparisonReport.summary?.weakCount ?? 0)} / {(comparisonReport.summary?.unmatchedCount ?? 0)}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div style={{
+                                    maxHeight: '280px',
+                                    overflowY: 'auto',
+                                    border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                    borderRadius: '8px',
+                                    background: '#1b2129'
+                                }}>
+                                    {(comparisonReport.pairReports || []).map((pair) => {
+                                        const meta = comparisonClassMeta[pair.matchClass] || comparisonClassMeta.unmatched;
+                                        const isExpanded = expandedComparisonRows.has(pair.generatedIndex);
+                                        return (
+                                            <div
+                                                key={`comparison-${pair.generatedIndex}`}
+                                                style={{
+                                                    borderBottom: '1px solid #30363d'
+                                                }}
+                                            >
+                                                <button
+                                                    type="button"
+                                                    onClick={() => toggleComparisonRow(pair.generatedIndex)}
+                                                    style={{
+                                                        width: '100%',
+                                                        display: 'flex',
+                                                        justifyContent: 'space-between',
+                                                        alignItems: 'center',
+                                                        gap: '12px',
+                                                        padding: '12px 14px',
+                                                        background: 'transparent',
+                                                        border: 'none',
+                                                        color: 'inherit',
+                                                        cursor: 'pointer',
+                                                        textAlign: 'left'
+                                                    }}
+                                                >
+                                                    <div style={{ minWidth: 0, flex: 1 }}>
+                                                        <div style={{ fontSize: '13px', fontWeight: 600, color: '#f0f6fc', marginBottom: '4px' }}>
+                                                            {pair.generatedCase?.title || 'Без названия'}
+                                                        </div>
+                                                        <div style={{ fontSize: '12px', color: '#9fb3d1' }}>
+                                                            {pair.manualCase?.title || 'Ручной кейс не сопоставлен'}
+                                                        </div>
+                                                    </div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+                                                        <span style={{
+                                                            padding: '4px 8px',
+                                                            borderRadius: '999px',
+                                                            background: meta.background,
+                                                            color: meta.color,
+                                                            fontSize: '12px',
+                                                            fontWeight: 600
+                                                        }}>
+                                                            {meta.label}
+                                                        </span>
+                                                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#f0f6fc', minWidth: '56px', textAlign: 'right' }}>
+                                                            {pair.weighted?.f1 ?? 0}
+                                                        </span>
+                                                    </div>
+                                                </button>
+
+                                                {isExpanded && (
+                                                    <div style={{ padding: '0 14px 14px 14px', fontSize: '12px', color: '#c9d1d9' }}>
+                                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px', marginBottom: '10px' }}>
+                                                            <div>Precision: {pair.weighted?.precision ?? 0}</div>
+                                                            <div>Recall: {pair.weighted?.recall ?? 0}</div>
+                                                            <div>Shortlist: {pair.shortlistSize ?? 0}</div>
+                                                            <div>Structural valid: {pair.generatedValidation?.valid ? 'yes' : 'no'}</div>
+                                                        </div>
+
+                                                        {pair.retrieval?.stages && (
+                                                            <div style={{ marginBottom: '10px', color: '#9fb3d1' }}>
+                                                                Retrieval: {Object.entries(pair.retrieval.stages).map(([stage, score]) => `${stage}=${Number(score).toFixed(3)}`).join(', ')}
+                                                            </div>
+                                                        )}
+
+                                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px', marginBottom: '10px' }}>
+                                                            {Object.entries(pair.blockScores || {}).map(([blockName, score]) => (
+                                                                <div key={`${pair.generatedIndex}-${blockName}`} style={{ padding: '10px', borderRadius: '6px', background: '#21262d', border: '1px solid #30363d' }}>
+                                                                    <div style={{ fontWeight: 600, marginBottom: '4px' }}>{blockName}</div>
+                                                                    <div>F1: {score.f1}</div>
+                                                                    <div>P: {score.precision}</div>
+                                                                    <div>R: {score.recall}</div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+
+                                                        {pair.generatedValidation?.errors?.length > 0 && (
+                                                            <div style={{ marginBottom: '8px', color: '#ffb3ad' }}>
+                                                                Generated validation: {pair.generatedValidation.errors.join(' | ')}
+                                                            </div>
+                                                        )}
+                                                        {pair.manualCompatValidation?.warnings?.length > 0 && (
+                                                            <div style={{ marginBottom: '8px', color: '#d2a8ff' }}>
+                                                                Manual warnings: {pair.manualCompatValidation.warnings.join(' | ')}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                {(comparisonReport.uncoveredManualCases || []).length > 0 && (
+                                    <div style={{ marginTop: '12px', fontSize: '12px', color: '#9fb3d1' }}>
+                                        Uncovered manual cases: {(comparisonReport.uncoveredManualCases || []).map((item) => item.manualCase?.title).filter(Boolean).join(' | ')}
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
 
                     <div className="modal-layout">
                         {/* Левая панель - упрощенное дерево структуры */}
@@ -4962,13 +5333,13 @@ export default function TestModelReviewModal({
                     </div>
 
                     <footer className="modal-footer">
-                        <button className="button-secondary" onClick={handleCloseWithConfirm} disabled={isSending || isFixing}>
+                        <button className="button-secondary" onClick={handleCloseWithConfirm} disabled={isSending || isFixing || isComparing}>
                             Отмена
                         </button>
                         <button
                             className="button-primary"
                             onClick={handleGenerateXmind}
-                            disabled={isSending || isFixing || !Object.keys(treeData).length}
+                            disabled={isSending || isFixing || isComparing || !Object.keys(treeData).length}
                             style={{ marginRight: '8px' }}
                         >
                             Сгенерировать Xmind
@@ -4976,7 +5347,7 @@ export default function TestModelReviewModal({
                         <button
                             className="button-secondary"
                             onClick={handleSavePerfectExamples}
-                            disabled={isSending || isFixing || !Object.keys(treeData).length}
+                            disabled={isSending || isFixing || isComparing || !Object.keys(treeData).length}
                             style={{ 
                                 marginRight: '8px',
                                 backgroundColor: '#6c757d',
@@ -4987,7 +5358,7 @@ export default function TestModelReviewModal({
                         >
                         Добавить в идеальный пример
                         </button>
-                        <button className="button-primary" onClick={handleConfirm} disabled={isSending || isFixing}>
+                        <button className="button-primary" onClick={handleConfirm} disabled={isSending || isFixing || isComparing}>
                             Отправить в Allure
                         </button>
                     </footer>

@@ -275,6 +275,7 @@ import { readFileSync, mkdirSync, writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import knexfile from './db/knexfile.js';
+import { compareGeneratedCasesAgainstAllure } from './metrics/test-case-comparison.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -21133,6 +21134,157 @@ app.post('/api/generate-test-cases-async', async (req, res) => {
 
 // Простое кэширование статуса задач (5 секунд)
 const taskStatusCache = new Map();
+
+function parseTaskMetrics(metrics) {
+    if (!metrics) return null;
+    if (typeof metrics === 'string') {
+        try {
+            return JSON.parse(metrics);
+        } catch (error) {
+            console.warn('[parseTaskMetrics] Failed to parse metrics JSON:', error.message);
+            return null;
+        }
+    }
+    return metrics;
+}
+
+function buildTaskStatusResponse(task) {
+    return {
+        id: task.id,
+        type: task.type,
+        status: task.status,
+        progress: task.progress,
+        result: task.result,
+        metrics: parseTaskMetrics(task.metrics),
+        error_message: task.error_message,
+        created_at: task.created_at,
+        updated_at: task.updated_at,
+        completed_at: task.completed_at
+    };
+}
+
+async function updateTaskStatusWithMetrics(taskId, updateData, metrics = null) {
+    try {
+        await db('generation_tasks').where('id', taskId).update({
+            ...updateData,
+            ...(metrics !== null ? { metrics: JSON.stringify(metrics) } : {})
+        });
+    } catch (error) {
+        const errorMsg = error.message || '';
+        const isMetricsColumnError =
+            errorMsg.includes('СЃС‚РѕР»Р±РµС† "metrics"') ||
+            errorMsg.includes('column "metrics"') ||
+            (errorMsg.includes('metrics') && (errorMsg.includes('does not exist') || errorMsg.includes("doesn't exist")));
+
+        if (!isMetricsColumnError) {
+            throw error;
+        }
+
+        console.warn('[updateTaskStatusWithMetrics] metrics column is missing, saving task without metrics');
+        await db('generation_tasks').where('id', taskId).update(updateData);
+    }
+}
+
+app.get('/api/task-status/:taskId', async (req, res) => {
+    try {
+        const taskId = req.params.taskId;
+        const cacheKey = `task_status_${taskId}`;
+        const nocache = req.query.nocache;
+
+        if (nocache) {
+            taskStatusCache.delete(cacheKey);
+        }
+
+        const cached = taskStatusCache.get(cacheKey);
+        if (cached && Date.now() - cached.timestamp < 5000 && !nocache) {
+            return res.json(cached.data);
+        }
+
+        const task = await db('generation_tasks').where('id', taskId).first();
+        if (!task) {
+            return res.status(404).json({ error: 'Task not found' });
+        }
+
+        const responseData = buildTaskStatusResponse(task);
+        taskStatusCache.set(cacheKey, {
+            data: responseData,
+            timestamp: Date.now()
+        });
+
+        return res.json(responseData);
+    } catch (error) {
+        console.error('[task-status] Error:', error);
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/compare-test-cases-async', async (req, res) => {
+    try {
+        const taskId = uuidv4();
+        const { projectId, jiraIssue, generatedCases } = req.body || {};
+
+        if (!projectId) {
+            return res.status(400).json({ error: 'projectId is required' });
+        }
+        if (!jiraIssue) {
+            return res.status(400).json({ error: 'jiraIssue is required' });
+        }
+        if (!Array.isArray(generatedCases) || generatedCases.length === 0) {
+            return res.status(400).json({ error: 'generatedCases must be a non-empty array' });
+        }
+
+        taskStatusCache.delete(`task_status_${taskId}`);
+
+        await db('generation_tasks').insert({
+            id: taskId,
+            type: 'test_case_comparison',
+            status: 'processing',
+            progress: 0,
+            input_data: req.body,
+            created_at: new Date(),
+            updated_at: new Date()
+        });
+
+        compareGeneratedCasesAgainstAllure({
+            projectId,
+            jiraIssue,
+            generatedCases,
+            onProgress: async (progress) => {
+                await db('generation_tasks').where('id', taskId).update({
+                    progress: Math.max(0, Math.min(100, Number(progress || 0))),
+                    updated_at: new Date()
+                });
+            }
+        })
+            .then(async (result) => {
+                await updateTaskStatusWithMetrics(
+                    taskId,
+                    {
+                        status: 'completed',
+                        progress: 100,
+                        result,
+                        completed_at: new Date(),
+                        updated_at: new Date()
+                    },
+                    result.summary || null
+                );
+            })
+            .catch(async (error) => {
+                console.error('[compare-test-cases-async] Error:', error);
+                await db('generation_tasks').where('id', taskId).update({
+                    status: 'failed',
+                    error_message: error.message || 'Comparison failed',
+                    updated_at: new Date(),
+                    completed_at: new Date()
+                });
+            });
+
+        return res.json({ taskId, status: 'started' });
+    } catch (error) {
+        console.error('[compare-test-cases-async] Failed to create task:', error);
+        return res.status(500).json({ error: error.message });
+    }
+});
 
 app.get('/api/generate-test-cases-status/:taskId', async (req, res) => {
     try {
