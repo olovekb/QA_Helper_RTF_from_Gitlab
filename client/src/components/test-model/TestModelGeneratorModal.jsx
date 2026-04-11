@@ -10,6 +10,7 @@ import '@xyflow/react/dist/style.css';
 import config from '../../config';
 import JSZip from 'jszip';
 import { trackEvent } from '../../analytics';
+import { formatProgressWithEta, getProgressEtaLabel } from '../../utils/progressEta';
 
 // --- Component-specific styles ---
 export const StyleInjector = () => {
@@ -1014,6 +1015,8 @@ export default function TestModelGeneratorModal({
     setModelGenerationProgress,
     modelGenerationStatus,
     setModelGenerationStatus,
+    modelGenerationStartedAt,
+    setModelGenerationStartedAt,
     modelIsMinimized,
     setModelIsMinimized,
     checkModelGenerationStatus,
@@ -1034,6 +1037,11 @@ export default function TestModelGeneratorModal({
     const [modelHistory, setModelHistory] = useState([]); // [{ version, model, timestamp, comment }]
     const [modelDiff, setModelDiff] = useState(null); // diff между v1 и v2
     const [showDiffView, setShowDiffView] = useState(false);
+    const modelEtaLabel = getProgressEtaLabel({
+        status: modelGenerationStatus,
+        progress: modelGenerationProgress,
+        startedAt: modelGenerationStartedAt
+    });
     const [availableModels, setAvailableModels] = useState([]);
     const [selectedModel, setSelectedModel] = useState('');
     const [modelDataSource, setModelDataSource] = useState('current_task');
@@ -1591,6 +1599,7 @@ export default function TestModelGeneratorModal({
                     setModelDataSource('local_cache');
                     if (savedModel) {
                         setLocalGeneratedModel(savedModel);
+                        setModelGenerationStartedAt(null);
                         setModelGenerationStatus('completed'); // Устанавливаем статус как завершенный
                     }
                 } else {
@@ -1614,7 +1623,18 @@ export default function TestModelGeneratorModal({
         };
 
         loadSavedData();
-    }, [buildTreeWithIds, idbGetModelValue, idbSetModelValue, initialCases, isOpen, modelGenerationStatus, setModelGenerationStatus, storagePageScope, storageTaskScope]);
+    }, [
+        buildTreeWithIds,
+        idbGetModelValue,
+        idbSetModelValue,
+        initialCases,
+        isOpen,
+        modelGenerationStatus,
+        setModelGenerationStartedAt,
+        setModelGenerationStatus,
+        storagePageScope,
+        storageTaskScope
+    ]);
 
 
     useEffect(() => {
@@ -1721,6 +1741,7 @@ export default function TestModelGeneratorModal({
         setLocalGeneratedModel(null);
         // Очищаем предыдущие результаты при новой генерации
         setModelGenerationStatus(null);
+        setModelGenerationStartedAt(null);
         setModelGenerationProgress(0);
         // ✅ Очищаем treeData и IndexedDB, чтобы не использовать старые данные
         setTreeData([]);
@@ -1758,6 +1779,7 @@ export default function TestModelGeneratorModal({
                 );
                 
                 setModelGenerationTaskId(data.taskId);
+                setModelGenerationStartedAt(new Date().toISOString());
                 setModelGenerationProgress(0);
                 setModelGenerationStatus('processing');
                 checkModelGenerationStatus(data.taskId);
@@ -1816,6 +1838,7 @@ export default function TestModelGeneratorModal({
         }
 
         setIsGeneratingModel(true);
+        setModelGenerationStartedAt(null);
         setModelGenerationStatus('processing');
         setModelGenerationProgress(0);
 
@@ -2312,7 +2335,7 @@ export default function TestModelGeneratorModal({
     const getLoaderText = () => {
         if (isGeneratingModel) {
             if (modelGenerationStatus === 'processing') {
-                return `Генерация тестовой модели... ${modelGenerationProgress}%`;
+                return `Генерация тестовой модели... ${formatProgressWithEta(modelGenerationProgress, modelEtaLabel)}`;
             }
             return "Генерация тестовой модели...";
         }
@@ -2351,7 +2374,9 @@ export default function TestModelGeneratorModal({
                                     }} />
                                     <h4 style={{ margin: 0, color: '#c9d1d9', fontSize: 16, fontWeight: 600 }}>Генерация тестовой модели</h4>
                                 </div>
-                                <span style={{ fontSize: 14, fontWeight: 'bold', color: '#58a6ff' }}>{modelGenerationProgress}%</span>
+                                <span style={{ fontSize: 14, fontWeight: 'bold', color: '#58a6ff', whiteSpace: 'nowrap' }}>
+                                    {formatProgressWithEta(modelGenerationProgress, modelEtaLabel)}
+                                </span>
                             </div>
                             
                             <div style={{ 
@@ -2657,7 +2682,9 @@ export default function TestModelGeneratorModal({
                         }} />
                         <h4 style={{ margin: 0, color: '#c9d1d9', fontSize: 14, fontWeight: 600 }}>Генерация тестовой модели</h4>
                     </div>
-                    <span style={{ fontSize: 12, fontWeight: 'bold', color: '#58a6ff' }}>{modelGenerationProgress}%</span>
+                    <span style={{ fontSize: 12, fontWeight: 'bold', color: '#58a6ff', whiteSpace: 'nowrap' }}>
+                        {formatProgressWithEta(modelGenerationProgress, modelEtaLabel)}
+                    </span>
                 </div>
                 
                 <div style={{ marginBottom: 12 }}>

@@ -769,6 +769,7 @@ export default function SolutionPage ({ projects = [] })
   const [generationTaskId, setGenerationTaskId] = usePersistentState('generationTaskId', null);
   const [generationProgress, setGenerationProgress] = usePersistentState('generationProgress', 0);
   const [generationStatus, setGenerationStatus] = usePersistentState('generationStatus', null);
+  const [generationStartedAt, setGenerationStartedAt] = usePersistentState('generationStartedAt', null);
   const [isGenerationMinimized, setIsGenerationMinimized] = usePersistentState('isGenerationMinimized', false);
 
   // Состояния для генерации BDD тестов
@@ -783,6 +784,7 @@ export default function SolutionPage ({ projects = [] })
   const [modelGenerationTaskId, setModelGenerationTaskId] = usePersistentState('modelGenerationTaskId', null);
   const [modelGenerationProgress, setModelGenerationProgress] = usePersistentState('modelGenerationProgress', 0);
   const [modelGenerationStatus, setModelGenerationStatus] = usePersistentState('modelGenerationStatus', null);
+  const [modelGenerationStartedAt, setModelGenerationStartedAt] = usePersistentState('modelGenerationStartedAt', null);
   const [modelIsMinimized, setModelIsMinimized] = usePersistentState('modelIsMinimized', false);
   const [generatedModel, setGeneratedModel] = usePersistentState('generatedModel', null);
 
@@ -806,11 +808,19 @@ export default function SolutionPage ({ projects = [] })
         setModelGenerationTaskId(null);
         setModelGenerationProgress(0);
         setModelGenerationStatus(null);
+        setModelGenerationStartedAt(null);
         return;
       }
       checkModelGenerationStatus(modelGenerationTaskId);
     }
-  }, [modelGenerationTaskId, modelGenerationStatus]);
+  }, [
+    modelGenerationTaskId,
+    modelGenerationStatus,
+    setModelGenerationProgress,
+    setModelGenerationStartedAt,
+    setModelGenerationStatus,
+    setModelGenerationTaskId
+  ]);
 
   // Автоматически возобновляем проверку статуса BDD генерации
   useEffect(() =>
@@ -828,10 +838,11 @@ export default function SolutionPage ({ projects = [] })
         status: generationStatus,
         progress: generationProgress,
         taskId: generationTaskId,
+        startedAt: generationStartedAt,
         isMinimized: isGenerationMinimized
       }
     }));
-  }, [generationStatus, generationProgress, generationTaskId, isGenerationMinimized]);
+  }, [generationStatus, generationProgress, generationTaskId, generationStartedAt, isGenerationMinimized]);
 
   useEffect(() =>
   {
@@ -840,10 +851,11 @@ export default function SolutionPage ({ projects = [] })
         status: modelGenerationStatus,
         progress: modelGenerationProgress,
         taskId: modelGenerationTaskId,
+        startedAt: modelGenerationStartedAt,
         isMinimized: modelIsMinimized
       }
     }));
-  }, [modelGenerationStatus, modelGenerationProgress, modelGenerationTaskId, modelIsMinimized]);
+  }, [modelGenerationStatus, modelGenerationProgress, modelGenerationTaskId, modelGenerationStartedAt, modelIsMinimized]);
 
   // Загружаем сохраненные BDD результаты при инициализации
   useEffect(() =>
@@ -888,7 +900,18 @@ export default function SolutionPage ({ projects = [] })
       }
     };
     fixModelGenerationStatus();
-  }, []);
+  }, [
+    setGenerationProgress,
+    setGenerationStartedAt,
+    setGenerationStatus,
+    setGenerationTaskId,
+    setIsGenerationMinimized,
+    setModelGenerationProgress,
+    setModelGenerationStartedAt,
+    setModelGenerationStatus,
+    setModelGenerationTaskId,
+    setModelIsMinimized
+  ]);
 
   // Загружаем сохраненные тест-кейсы при инициализации (только если нет активной задачи)
   useEffect(() =>
@@ -928,6 +951,7 @@ export default function SolutionPage ({ projects = [] })
           console.log('SolutionPage: parsed test cases length:', parsedCases?.length);
           setGeneratedCases(parsedCases);
           setGenerationStatus('completed'); // Устанавливаем статус как завершенный
+          setGenerationStartedAt(null);
         }
       } catch (error) {
         console.warn('Ошибка загрузки сохраненных тест-кейсов:', error);
@@ -955,6 +979,9 @@ export default function SolutionPage ({ projects = [] })
   {
     try {
       const { data } = await axios.get(`${config.serverUrl}/generate-test-cases-status/${taskId}`);
+      if (data.created_at) {
+        setGenerationStartedAt(data.created_at);
+      }
       setGenerationProgress(data.progress);
       setGenerationStatus(data.status);
 
@@ -969,6 +996,7 @@ export default function SolutionPage ({ projects = [] })
         localStorage.setItem('generatedTestCases', JSON.stringify(data.result.testCases));
         setReviewModalOpen(true);
         setGenerationTaskId(null);
+        setGenerationStartedAt(null);
         setGenerationProgress(100);
         setGenerationStatus('completed'); // Не сбрасываем статус, а устанавливаем 'completed'
         setIsGenerationMinimized(false); // Показать модальное окно при завершении
@@ -978,6 +1006,7 @@ export default function SolutionPage ({ projects = [] })
           idbSet('generationTaskId', null),
           idbSet('generationProgress', 0),
           idbSet('generationStatus', null),
+          idbSet('generationStartedAt', null),
           idbSet('isGenerationMinimized', false)
         ]);
 
@@ -991,6 +1020,7 @@ export default function SolutionPage ({ projects = [] })
       } else if (data.status === 'failed') {
         alert('Ошибка генерации тест-кейсов: ' + (data.error_message || 'Неизвестная ошибка'));
         setGenerationTaskId(null);
+        setGenerationStartedAt(null);
         setGenerationProgress(0);
         setGenerationStatus(null);
       } else if (data.status === 'processing') {
@@ -1007,6 +1037,7 @@ export default function SolutionPage ({ projects = [] })
       // Простая обработка ошибок - останавливаем опрос при любой ошибке
       alert('Ошибка проверки статуса генерации: ' + (err.response?.data?.error || err.message));
       setGenerationTaskId(null);
+      setGenerationStartedAt(null);
       setGenerationProgress(0);
       setGenerationStatus(null);
     }
@@ -1028,11 +1059,13 @@ export default function SolutionPage ({ projects = [] })
         // Сбрасываем состояние
         if (type === 'test_cases') {
           setGenerationTaskId(null);
+          setGenerationStartedAt(null);
           setGenerationProgress(0);
           setGenerationStatus(null);
           setIsGenerationMinimized(false);
         } else if (type === 'test_model') {
           setModelGenerationTaskId(null);
+          setModelGenerationStartedAt(null);
           setModelGenerationProgress(0);
           setModelGenerationStatus(null);
           setModelIsMinimized(false);
@@ -1060,11 +1093,15 @@ export default function SolutionPage ({ projects = [] })
   {
     try {
       const { data } = await axios.get(`${config.serverUrl}/generate-test-model-status/${taskId}`);
+      if (data.created_at) {
+        setModelGenerationStartedAt(data.created_at);
+      }
       setModelGenerationProgress(data.progress);
       setModelGenerationStatus(data.status);
 
       if (data.status === 'completed') {
         setModelGenerationTaskId(null);
+        setModelGenerationStartedAt(null);
         setModelGenerationProgress(100);
         setModelGenerationStatus('completed');
         setModelIsMinimized(false);
@@ -1081,6 +1118,7 @@ export default function SolutionPage ({ projects = [] })
           idbSet('modelGenerationTaskId', null),
           idbSet('modelGenerationProgress', 0),
           idbSet('modelGenerationStatus', null),
+          idbSet('modelGenerationStartedAt', null),
           idbSet('modelIsMinimized', false)
         ]);
 
@@ -1094,6 +1132,7 @@ export default function SolutionPage ({ projects = [] })
       } else if (data.status === 'failed') {
         alert('Ошибка генерации тестовой модели: ' + (data.error_message || 'Неизвестная ошибка'));
         setModelGenerationTaskId(null);
+        setModelGenerationStartedAt(null);
         setModelGenerationProgress(0);
         setModelGenerationStatus(null);
       } else if (data.status === 'processing') {
@@ -1110,6 +1149,7 @@ export default function SolutionPage ({ projects = [] })
       // Простая обработка ошибок - останавливаем опрос при любой ошибке
       alert('Ошибка проверки статуса генерации тестовой модели: ' + (err.response?.data?.error || err.message));
       setModelGenerationTaskId(null);
+      setModelGenerationStartedAt(null);
       setModelGenerationProgress(0);
       setModelGenerationStatus(null);
     }
@@ -1136,6 +1176,7 @@ export default function SolutionPage ({ projects = [] })
       setGeneratedCases([]);
       localStorage.removeItem('generatedTestCases');
       setGenerationStatus(null);
+      setGenerationStartedAt(null);
 
       // Сначала пробуем асинхронный API
       try {
@@ -1158,6 +1199,7 @@ export default function SolutionPage ({ projects = [] })
         );
 
         setGenerationTaskId(data.taskId);
+        setGenerationStartedAt(new Date().toISOString());
         setGenerationProgress(0);
         setGenerationStatus('processing');
         return;
@@ -1364,6 +1406,7 @@ export default function SolutionPage ({ projects = [] })
       setGeneratedCases([]);
       setGenerationStatus(null);
       setGenerationTaskId(null);
+      setGenerationStartedAt(null);
       setGenerationProgress(0);
       setIsGenerationMinimized(false);
 
@@ -1375,11 +1418,19 @@ export default function SolutionPage ({ projects = [] })
       idbSet('generationTaskId', null).catch(console.warn);
       idbSet('generationProgress', 0).catch(console.warn);
       idbSet('generationStatus', null).catch(console.warn);
+      idbSet('generationStartedAt', null).catch(console.warn);
       idbSet('isGenerationMinimized', false).catch(console.warn);
 
       console.log('Состояние тест-кейсов очищено');
     }
-  }, [clearReviewState]);
+  }, [
+    clearReviewState,
+    setGenerationProgress,
+    setGenerationStartedAt,
+    setGenerationStatus,
+    setGenerationTaskId,
+    setIsGenerationMinimized
+  ]);
 
   // Функция для очистки состояния тестовой модели
   const handleClearTestModel = useCallback(() =>
@@ -1388,6 +1439,7 @@ export default function SolutionPage ({ projects = [] })
       setGeneratedModel(null);
       setModelGenerationStatus(null);
       setModelGenerationTaskId(null);
+      setModelGenerationStartedAt(null);
       setModelGenerationProgress(0);
       setModelIsMinimized(false);
 
@@ -1397,11 +1449,19 @@ export default function SolutionPage ({ projects = [] })
       idbSet('modelGenerationTaskId', null).catch(console.warn);
       idbSet('modelGenerationProgress', 0).catch(console.warn);
       idbSet('modelGenerationStatus', null).catch(console.warn);
+      idbSet('modelGenerationStartedAt', null).catch(console.warn);
       idbSet('modelIsMinimized', false).catch(console.warn);
 
       console.log('Состояние тестовой модели очищено');
     }
-  }, []);
+  }, [
+    setGeneratedModel,
+    setModelGenerationProgress,
+    setModelGenerationStartedAt,
+    setModelGenerationStatus,
+    setModelGenerationTaskId,
+    setModelIsMinimized
+  ]);
 
   const loadMeta = useCallback(async () =>
   {
@@ -2217,6 +2277,8 @@ export default function SolutionPage ({ projects = [] })
           setGenerationProgress={ setGenerationProgress }
           generationStatus={ generationStatus }
           setGenerationStatus={ setGenerationStatus }
+          generationStartedAt={ generationStartedAt }
+          setGenerationStartedAt={ setGenerationStartedAt }
           isGenerationMinimized={ isGenerationMinimized }
           setIsGenerationMinimized={ setIsGenerationMinimized }
           generatedCases={ generatedCases }
@@ -2230,6 +2292,8 @@ export default function SolutionPage ({ projects = [] })
           setModelGenerationProgress={ setModelGenerationProgress }
           modelGenerationStatus={ modelGenerationStatus }
           setModelGenerationStatus={ setModelGenerationStatus }
+          modelGenerationStartedAt={ modelGenerationStartedAt }
+          setModelGenerationStartedAt={ setModelGenerationStartedAt }
           modelIsMinimized={ modelIsMinimized }
           setModelIsMinimized={ setModelIsMinimized }
           checkModelGenerationStatus={ checkModelGenerationStatus }

@@ -221,7 +221,8 @@ import {
     indexChunks, 
     semanticSearch,
     multiHopStructuredSearch,
-    deleteChunksByDocId
+    deleteChunksByDocId,
+    findChunksByReferences
 } from './pgvectorStore.mjs';
 import { 
     initNeo4j, isNeo4jAvailable, isNeo4jInitialized, 
@@ -277,6 +278,34 @@ import knexfile from './db/knexfile.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+function readBooleanEnv(name, fallback = false) {
+    const raw = process.env[name];
+    if (raw == null || raw === '') return fallback;
+    return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+}
+
+function getDefaultPipelineFlags() {
+    return {
+        ENABLE_CANONICAL_DEFAULT_PIPELINE: readBooleanEnv('ENABLE_CANONICAL_DEFAULT_PIPELINE', true),
+        ENABLE_GRAPH_PIPELINE: readBooleanEnv('ENABLE_GRAPH_PIPELINE', false),
+        ENABLE_CONTEXT_TOOLS: readBooleanEnv('ENABLE_CONTEXT_TOOLS', false),
+        ENABLE_GLOBAL_PREPROCESSORS: readBooleanEnv('ENABLE_GLOBAL_PREPROCESSORS', false),
+        ENABLE_CHUNK_DUMP: readBooleanEnv('ENABLE_CHUNK_DUMP', false),
+        ENABLE_WIDE_MULTIHOP_RETRIEVAL: readBooleanEnv('ENABLE_WIDE_MULTIHOP_RETRIEVAL', false),
+        ENABLE_GLOBAL_SEMANTIC_REFINEMENT: readBooleanEnv('ENABLE_GLOBAL_SEMANTIC_REFINEMENT', false)
+    };
+}
+
+const DEFAULT_SEGMENT_CONCURRENCY = 3;
+const DEFAULT_SEGMENT_TARGET_TOKENS = 1400;
+const DEFAULT_SEGMENT_HARD_MAX_TOKENS = 2200;
+const DEFAULT_SEGMENT_MAX_CHUNKS = 8;
+const AGGRESSIVE_SEGMENT_TARGET_TOKENS = 1800;
+const AGGRESSIVE_SEGMENT_HARD_MAX_TOKENS = 2600;
+const MAX_SEGMENTS_BEFORE_AGGRESSIVE_REBUILD = 64;
+const MAX_SEGMENT_LLM_ATTEMPTS = 2;
+const TARGETED_REFINEMENT_TOP_K = 6;
 
 const FALLBACK_TEST_MODEL_EXAMPLE = `[
   {
@@ -1275,7 +1304,8 @@ async function indexConfluencePageChunksWithCache({
     content,
     title,
     sourceType,
-    apiKey
+    apiKey,
+    precomputedChunks = null
 }) {
     const normalizedContent = normalizeContentForHash(content);
     if (!normalizedContent) {
@@ -1287,7 +1317,8 @@ async function indexConfluencePageChunksWithCache({
     }
 
     const contentHash = computeContentHash(normalizedContent);
-    const cached = confluenceChunkIndexCache.get(String(docId));
+    const cacheKey = `${String(sourceType || 'linked')}:${String(docId)}`;
+    const cached = confluenceChunkIndexCache.get(cacheKey);
 
     if (cached?.contentHash === contentHash) {
         console.log(
@@ -1301,22 +1332,29 @@ async function indexConfluencePageChunksWithCache({
         };
     }
 
-    const chunks = await chunkify(normalizedContent, {
-        pageId: docId,
-        title
-    });
+    const chunks = Array.isArray(precomputedChunks) && precomputedChunks.length > 0
+        ? precomputedChunks
+        : await chunkify(normalizedContent, {
+            pageId: docId,
+            title
+        });
 
     const indexableChunks = chunks.filter(chunk => !(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval));
 
     for (const chunk of indexableChunks) {
         chunk.source_type = sourceType;
+        chunk.authority = sourceType === 'main' ? 1.0 : (sourceType === 'context' ? 0.85 : 0.65);
+        chunk.metadata = {
+            ...(chunk.metadata || {}),
+            source_scope: sourceType
+        };
     }
 
     await deleteChunksByDocId(String(docId));
     const indexResult = await indexChunks(indexableChunks, apiKey);
 
     if ((indexResult.errors || 0) === 0 && indexResult.processed === indexableChunks.length) {
-        confluenceChunkIndexCache.set(String(docId), {
+        confluenceChunkIndexCache.set(cacheKey, {
             contentHash,
             chunkCount: indexableChunks.length,
             updatedAt: Date.now()
@@ -8405,6 +8443,1117 @@ function extractKeywords(text) {
         .slice(0, 5); // Берём топ-5 ключевых слов
 }
 
+function deriveCanonicalTitle(content, fallbackTitle = 'Requirements', fallbackId = '') {
+    const text = String(content || '').trim();
+    if (!text) {
+        return fallbackId ? `${fallbackTitle} ${fallbackId}`.trim() : fallbackTitle;
+    }
+
+    const firstMeaningfulLine = text
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .find(line => line.length > 3 && !/^[-#*|>]+$/.test(line));
+
+    return (firstMeaningfulLine || fallbackTitle).slice(0, 160);
+}
+
+function normalizeSectionPath(sectionPath) {
+    if (Array.isArray(sectionPath)) {
+        return sectionPath
+            .map(item => String(item || '').trim())
+            .filter(Boolean);
+    }
+
+    if (typeof sectionPath === 'string' && sectionPath.trim()) {
+        return sectionPath
+            .split(/>\s*|\/\s*|\|\s*/)
+            .map(item => item.trim())
+            .filter(Boolean);
+    }
+
+    return [];
+}
+
+function getSharedSectionPathPrefixLength(leftPath, rightPath) {
+    const left = normalizeSectionPath(leftPath);
+    const right = normalizeSectionPath(rightPath);
+    const maxLength = Math.min(left.length, right.length);
+    let prefixLength = 0;
+
+    for (let index = 0; index < maxLength; index++) {
+        if (String(left[index]).toLowerCase() !== String(right[index]).toLowerCase()) {
+            break;
+        }
+        prefixLength += 1;
+    }
+
+    return prefixLength;
+}
+
+function getChunkAreaGroup(chunkType = '') {
+    const normalized = String(chunkType || '').toLowerCase();
+    if (!normalized) return 'generic';
+    if (normalized.startsWith('api') || normalized.includes('endpoint')) return 'api';
+    if (normalized.startsWith('ui') || normalized.includes('form') || normalized.includes('screen')) return 'ui';
+    if (normalized.includes('business')) return 'business';
+    if (normalized.includes('validation') || normalized.includes('error')) return 'validation';
+    if (normalized.includes('scenario') || normalized.includes('branch')) return 'scenario';
+    if (normalized.includes('requirement')) return 'requirement';
+    return 'generic';
+}
+
+function createCanonicalChunk(rawChunk = {}, overrides = {}) {
+    const cleanedText = String(
+        overrides.cleaned_text ??
+        rawChunk.cleaned_text ??
+        rawChunk.content ??
+        ''
+    ).trim();
+
+    const sourceType = overrides.source_type || overrides.sourceType || rawChunk.source_type || 'linked';
+    const sourceScope = overrides.source_scope || overrides.sourceScope || rawChunk.source_scope || sourceType;
+    const authority = typeof overrides.authority === 'number'
+        ? overrides.authority
+        : (typeof rawChunk.authority === 'number'
+            ? rawChunk.authority
+            : (sourceType === 'main' ? 1.0 : (sourceType === 'context' ? 0.85 : 0.65)));
+
+    return {
+        ...rawChunk,
+        ...overrides,
+        id: overrides.id || rawChunk.id || uuidv4(),
+        doc_id: String(overrides.doc_id || rawChunk.doc_id || overrides.docId || 'inline-requirements'),
+        doc_title: overrides.doc_title || rawChunk.doc_title || overrides.docTitle || 'Requirements',
+        cleaned_text: cleanedText,
+        content: cleanedText,
+        heading: overrides.heading || rawChunk.heading || null,
+        section_path: normalizeSectionPath(overrides.section_path || rawChunk.section_path),
+        requirement_id: overrides.requirement_id || rawChunk.requirement_id || null,
+        chunk_type: overrides.chunk_type || rawChunk.chunk_type || 'generic',
+        explicit_refs: Array.isArray(overrides.explicit_refs || rawChunk.explicit_refs)
+            ? (overrides.explicit_refs || rawChunk.explicit_refs)
+            : [],
+        token_count: overrides.token_count || rawChunk.token_count || Math.ceil(cleanedText.length / 4),
+        source_type: sourceType,
+        source_scope: sourceScope,
+        authority,
+        exclude_from_retrieval: Boolean(
+            overrides.exclude_from_retrieval ??
+            rawChunk.exclude_from_retrieval ??
+            rawChunk.metadata?.exclude_from_retrieval
+        ),
+        metadata: {
+            ...(rawChunk.metadata || {}),
+            ...(overrides.metadata || {}),
+            source_scope: sourceScope
+        }
+    };
+}
+
+async function buildAuxiliaryCanonicalDocument({
+    docId,
+    title,
+    content,
+    sourceType,
+    sourceScope
+}) {
+    const normalizedContent = String(content || '').trim();
+    if (!normalizedContent) return null;
+
+    const rawChunks = await chunkify(normalizedContent, {
+        pageId: docId,
+        title: title || deriveCanonicalTitle(normalizedContent, 'Context', docId)
+    });
+
+    const canonicalChunks = rawChunks.map(chunk => createCanonicalChunk(chunk, {
+        doc_id: String(docId),
+        doc_title: title || deriveCanonicalTitle(normalizedContent, 'Context', docId),
+        source_type: sourceType,
+        source_scope: sourceScope
+    }));
+
+    return {
+        docId: String(docId),
+        title: title || deriveCanonicalTitle(normalizedContent, 'Context', docId),
+        content: normalizedContent,
+        rawChunks,
+        canonicalChunks,
+        sourceType,
+        sourceScope
+    };
+}
+
+async function buildCanonicalChunkBundle({
+    graphDocumentId,
+    mainTitle,
+    mainRawChunks,
+    reqStringForModel,
+    autoPageDocs = [],
+    explicitContextPageDocs = [],
+    requestContextText = '',
+    glossary = '',
+    glossaryPageId,
+    bearerToken
+}) {
+    const mainDocId = String(graphDocumentId || 'inline-requirements');
+    const mainDocument = {
+        docId: mainDocId,
+        title: mainTitle || deriveCanonicalTitle(reqStringForModel, 'Requirements', mainDocId),
+        content: String(reqStringForModel || ''),
+        rawChunks: Array.isArray(mainRawChunks) ? mainRawChunks : [],
+        canonicalChunks: (Array.isArray(mainRawChunks) ? mainRawChunks : []).map(chunk => createCanonicalChunk(chunk, {
+            doc_id: mainDocId,
+            doc_title: mainTitle || deriveCanonicalTitle(reqStringForModel, 'Requirements', mainDocId),
+            source_type: 'main',
+            source_scope: 'main',
+            authority: 1.0
+        })),
+        sourceType: 'main',
+        sourceScope: 'main'
+    };
+
+    const contextDocs = [];
+    const linkedDocs = [];
+
+    if (requestContextText && String(requestContextText).trim()) {
+        const requestContextDoc = await buildAuxiliaryCanonicalDocument({
+            docId: `context:${mainDocId}:user`,
+            title: 'User context',
+            content: requestContextText,
+            sourceType: 'context',
+            sourceScope: 'request_context'
+        });
+        if (requestContextDoc) contextDocs.push(requestContextDoc);
+    }
+
+    if (glossary && String(glossary).trim()) {
+        const glossaryDoc = await buildAuxiliaryCanonicalDocument({
+            docId: `context:${mainDocId}:glossary`,
+            title: 'Glossary',
+            content: glossary,
+            sourceType: 'context',
+            sourceScope: 'glossary'
+        });
+        if (glossaryDoc) contextDocs.push(glossaryDoc);
+    }
+
+    if (glossaryPageId && bearerToken) {
+        try {
+            const { markdown: glossaryMarkdown, title: glossaryTitle } = await fetchConfluencePage(bearerToken.trim(), glossaryPageId, { inlineTextAttachments: true });
+            const glossaryPageDoc = await buildAuxiliaryCanonicalDocument({
+                docId: String(glossaryPageId),
+                title: glossaryTitle || `Glossary ${glossaryPageId}`,
+                content: glossaryMarkdown,
+                sourceType: 'context',
+                sourceScope: 'glossary_page'
+            });
+            if (glossaryPageDoc) contextDocs.push(glossaryPageDoc);
+        } catch (error) {
+            console.warn(`[buildCanonicalChunkBundle] Failed to fetch glossaryPageId=${glossaryPageId}:`, error.message);
+        }
+    }
+
+    for (const page of explicitContextPageDocs || []) {
+        const contextDoc = await buildAuxiliaryCanonicalDocument({
+            docId: String(page.pageId || `context:${mainDocId}:${contextDocs.length + 1}`),
+            title: page.title || `Context page ${page.pageId || contextDocs.length + 1}`,
+            content: page.content || page.graphText || '',
+            sourceType: 'context',
+            sourceScope: 'context_page'
+        });
+        if (contextDoc) contextDocs.push(contextDoc);
+    }
+
+    for (const page of autoPageDocs || []) {
+        const linkedDoc = await buildAuxiliaryCanonicalDocument({
+            docId: String(page.pageId || `linked:${mainDocId}:${linkedDocs.length + 1}`),
+            title: page.title || `Linked page ${page.pageId || linkedDocs.length + 1}`,
+            content: page.content || page.graphText || page.promptText || '',
+            sourceType: 'linked',
+            sourceScope: 'linked'
+        });
+        if (linkedDoc) linkedDocs.push(linkedDoc);
+    }
+
+    const allDocs = [mainDocument, ...contextDocs, ...linkedDocs];
+    const canonicalChunksById = new Map();
+    for (const doc of allDocs) {
+        for (const chunk of (doc.canonicalChunks || [])) {
+            canonicalChunksById.set(chunk.id, chunk);
+        }
+    }
+
+    return {
+        main: mainDocument,
+        contextDocs,
+        linkedDocs,
+        allDocs,
+        canonicalChunksById
+    };
+}
+
+function canMergeIntoSegment(currentChunks, nextChunk, options = {}) {
+    if (!Array.isArray(currentChunks) || currentChunks.length === 0) return true;
+
+    const {
+        targetTokens = DEFAULT_SEGMENT_TARGET_TOKENS,
+        hardMaxTokens = DEFAULT_SEGMENT_HARD_MAX_TOKENS,
+        maxChunks = DEFAULT_SEGMENT_MAX_CHUNKS
+    } = options;
+
+    const currentTokens = currentChunks.reduce((sum, chunk) => sum + (chunk.token_count || 0), 0);
+    const nextTokens = nextChunk?.token_count || 0;
+    const lastChunk = currentChunks[currentChunks.length - 1];
+
+    if (!nextChunk || lastChunk.doc_id !== nextChunk.doc_id) return false;
+    if (currentChunks.length >= maxChunks) return false;
+    if (currentTokens + nextTokens > hardMaxTokens) return false;
+
+    const sameRequirement = Boolean(
+        lastChunk.requirement_id &&
+        nextChunk.requirement_id &&
+        String(lastChunk.requirement_id) === String(nextChunk.requirement_id)
+    );
+    const sharedPrefixLength = getSharedSectionPathPrefixLength(lastChunk.section_path, nextChunk.section_path);
+    const sameAreaGroup = getChunkAreaGroup(lastChunk.chunk_type) === getChunkAreaGroup(nextChunk.chunk_type);
+    const similarHeading = Boolean(
+        lastChunk.heading &&
+        nextChunk.heading &&
+        String(lastChunk.heading).trim().toLowerCase() === String(nextChunk.heading).trim().toLowerCase()
+    );
+
+    if (sameRequirement || sharedPrefixLength >= 2 || sameAreaGroup || similarHeading) {
+        return true;
+    }
+
+    return currentTokens < Math.ceil(targetTokens * 0.45) && sharedPrefixLength >= 1;
+}
+
+function finalizeGenerationSegment(chunks, segmentIndex) {
+    const list = Array.isArray(chunks) ? chunks.filter(Boolean) : [];
+    if (list.length === 0) return null;
+
+    const firstChunk = list[0];
+    const commonSectionPath = normalizeSectionPath(firstChunk.section_path).filter((part, index) =>
+        list.every(chunk => String(normalizeSectionPath(chunk.section_path)[index] || '').toLowerCase() === String(part || '').toLowerCase())
+    );
+    const requirementIds = Array.from(new Set(list.map(chunk => chunk.requirement_id).filter(Boolean)));
+    const chunkTypes = Array.from(new Set(list.map(chunk => chunk.chunk_type).filter(Boolean)));
+    const explicitRefs = [];
+    const seenExplicitRefs = new Set();
+
+    for (const chunk of list) {
+        for (const ref of (chunk.explicit_refs || [])) {
+            const refKey = `${ref?.type || ''}:${ref?.target || ''}`;
+            if (seenExplicitRefs.has(refKey)) continue;
+            seenExplicitRefs.add(refKey);
+            explicitRefs.push(ref);
+        }
+    }
+
+    return {
+        id: `segment-${segmentIndex + 1}`,
+        index: segmentIndex,
+        docId: firstChunk.doc_id,
+        docTitle: firstChunk.doc_title,
+        chunkIds: list.map(chunk => chunk.id),
+        chunks: list,
+        text: list.map(chunk => chunk.cleaned_text || chunk.content || '').filter(Boolean).join('\n\n'),
+        tokenCount: list.reduce((sum, chunk) => sum + (chunk.token_count || 0), 0),
+        heading: firstChunk.heading || null,
+        sectionPath: commonSectionPath,
+        requirementIds,
+        chunkTypes,
+        explicitRefs
+    };
+}
+
+function buildGenerationSegmentsPass(chunks, options = {}) {
+    const segments = [];
+    let currentSegmentChunks = [];
+
+    for (const chunk of (chunks || [])) {
+        const normalizedChunk = createCanonicalChunk(chunk, {
+            source_type: chunk.source_type || 'main',
+            source_scope: chunk.source_scope || 'main'
+        });
+
+        if (currentSegmentChunks.length === 0) {
+            currentSegmentChunks.push(normalizedChunk);
+            continue;
+        }
+
+        if (canMergeIntoSegment(currentSegmentChunks, normalizedChunk, options)) {
+            currentSegmentChunks.push(normalizedChunk);
+            continue;
+        }
+
+        const finalized = finalizeGenerationSegment(currentSegmentChunks, segments.length);
+        if (finalized) segments.push(finalized);
+        currentSegmentChunks = [normalizedChunk];
+    }
+
+    const finalized = finalizeGenerationSegment(currentSegmentChunks, segments.length);
+    if (finalized) segments.push(finalized);
+
+    return segments;
+}
+
+function buildGenerationSegments(chunks = []) {
+    const firstPass = buildGenerationSegmentsPass(chunks, {
+        targetTokens: DEFAULT_SEGMENT_TARGET_TOKENS,
+        hardMaxTokens: DEFAULT_SEGMENT_HARD_MAX_TOKENS,
+        maxChunks: DEFAULT_SEGMENT_MAX_CHUNKS
+    });
+
+    if (firstPass.length <= MAX_SEGMENTS_BEFORE_AGGRESSIVE_REBUILD) {
+        return firstPass;
+    }
+
+    return buildGenerationSegmentsPass(chunks, {
+        targetTokens: AGGRESSIVE_SEGMENT_TARGET_TOKENS,
+        hardMaxTokens: AGGRESSIVE_SEGMENT_HARD_MAX_TOKENS,
+        maxChunks: DEFAULT_SEGMENT_MAX_CHUNKS
+    });
+}
+
+function buildSegmentRetrievalQuery(segment) {
+    const sectionPath = normalizeSectionPath(segment?.sectionPath).join(' > ');
+    const requirementIdPart = Array.isArray(segment?.requirementIds) && segment.requirementIds.length > 0
+        ? `Requirement IDs: ${segment.requirementIds.join(', ')}`
+        : '';
+    const chunkTypePart = Array.isArray(segment?.chunkTypes) && segment.chunkTypes.length > 0
+        ? `Chunk types: ${segment.chunkTypes.join(', ')}`
+        : '';
+
+    return [
+        sectionPath,
+        segment?.heading ? `Heading: ${segment.heading}` : '',
+        requirementIdPart,
+        chunkTypePart,
+        String(segment?.text || '').slice(0, 1800)
+    ]
+        .filter(Boolean)
+        .join('\n');
+}
+
+function formatRetrievedContext(retrievedChunks = []) {
+    const items = (retrievedChunks || []).slice(0, 9).map((chunk, index) => {
+        const label = `${String(chunk.source_type || 'linked').toUpperCase()} ${index + 1}`;
+        const heading = chunk.heading || chunk.doc_title || chunk.doc_id;
+        const content = String(chunk.content || chunk.cleaned_text || '').trim().slice(0, 1200);
+        return `[${label}] ${heading}\n${content}`;
+    });
+
+    return items.join('\n\n');
+}
+
+async function retrieveContextForSegment(segment, bundle, apiKey) {
+    const sourceWeights = {
+        main: 1.0,
+        context: 0.85,
+        linked: 0.65
+    };
+    const currentSegmentChunkIds = new Set(Array.isArray(segment?.chunkIds) ? segment.chunkIds : []);
+    const merged = new Map();
+    let retrievalCallCount = 0;
+
+    const pushChunks = (chunks = [], channel = 'semantic', extraBoost = 0) => {
+        for (const chunk of chunks) {
+            if (!chunk?.id || currentSegmentChunkIds.has(chunk.id)) continue;
+
+            const sourceType = chunk.source_type || 'linked';
+            const baseWeight = sourceWeights[sourceType] ?? 0.65;
+            const score = typeof chunk.score === 'number' ? chunk.score : 1.0;
+            const finalScore = score * baseWeight + extraBoost;
+            const existing = merged.get(chunk.id);
+
+            if (!existing || finalScore > existing.finalScore) {
+                merged.set(chunk.id, {
+                    ...chunk,
+                    retrieval_channel: channel,
+                    finalScore
+                });
+            }
+        }
+    };
+
+    const query = buildSegmentRetrievalQuery(segment);
+
+    const mainResults = await semanticSearch(query, apiKey, {
+        topK: 5,
+        sourceType: 'main',
+        docId: bundle?.main?.docId || null
+    });
+    retrievalCallCount += 1;
+    pushChunks(mainResults, 'main');
+
+    if (Array.isArray(segment?.explicitRefs) && segment.explicitRefs.length > 0) {
+        const explicitResults = await findChunksByReferences(segment.explicitRefs, null, { limit: 2 });
+        pushChunks(explicitResults, 'explicit_refs', 0.05);
+    }
+
+    if (merged.size < 4 && Array.isArray(bundle?.contextDocs) && bundle.contextDocs.length > 0) {
+        const contextResults = await semanticSearch(query, apiKey, {
+            topK: 2,
+            sourceType: 'context'
+        });
+        retrievalCallCount += 1;
+        pushChunks(contextResults, 'context');
+    }
+
+    if (merged.size < 4 && Array.isArray(bundle?.linkedDocs) && bundle.linkedDocs.length > 0) {
+        const linkedResults = await semanticSearch(query, apiKey, {
+            topK: 2,
+            sourceType: 'linked'
+        });
+        retrievalCallCount += 1;
+        pushChunks(linkedResults, 'linked');
+    }
+
+    const items = Array.from(merged.values())
+        .sort((left, right) => right.finalScore - left.finalScore)
+        .slice(0, 9);
+
+    return {
+        query,
+        items,
+        formattedContext: formatRetrievedContext(items),
+        retrievalCallCount
+    };
+}
+
+function buildCanonicalModelUserPrompt({
+    segment,
+    retrievedContext
+}) {
+    const sectionPath = normalizeSectionPath(segment?.sectionPath).join(' > ') || 'n/a';
+    const requirementIds = Array.isArray(segment?.requirementIds) && segment.requirementIds.length > 0
+        ? segment.requirementIds.join(', ')
+        : 'n/a';
+    const chunkTypes = Array.isArray(segment?.chunkTypes) && segment.chunkTypes.length > 0
+        ? segment.chunkTypes.join(', ')
+        : 'n/a';
+
+    return `
+Сгенерируй только локальный фрагмент тестовой модели для текущего смыслового сегмента требований.
+Не добавляй graph context, не используй внешние инструменты, не пытайся покрыть весь документ целиком.
+
+META:
+- Segment: ${segment?.index + 1}
+- Document: ${segment?.docTitle || segment?.docId || 'Requirements'}
+- Heading: ${segment?.heading || 'n/a'}
+- Section path: ${sectionPath}
+- Requirement IDs: ${requirementIds}
+- Chunk types: ${chunkTypes}
+
+CURRENT SEGMENT:
+---
+${segment?.text || ''}
+---
+
+${retrievedContext ? `RETRIEVED CONTEXT:
+---
+${retrievedContext}
+---
+` : 'RETRIEVED CONTEXT:\n---\nнет дополнительного контекста, работай только с текущим сегментом\n---\n'}
+
+Правила:
+- Формируй только минимально достаточный JSON-фрагмент Feature -> Story -> Scenario -> Code для этого сегмента.
+- Используй retrieved context только если он прямо относится к текущему сегменту.
+- Основной источник истины: CURRENT SEGMENT.
+- Не смешивай независимые ветки логики в один Scenario.
+- Если сегмент покрывает только часть Story, верни только эту часть без дублирования остального документа.
+- Ответ отправь через submit_test_model.
+`.trim();
+}
+
+function buildSubmitFixedCodesTool() {
+    return {
+        type: 'function',
+        function: {
+            name: 'submit_fixed_codes',
+            description: 'Submit corrected codes for one scenario only',
+            parameters: {
+                type: 'object',
+                properties: {
+                    codes: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                id: { type: 'string' },
+                                text: { type: 'string' },
+                                type: {
+                                    type: 'string',
+                                    enum: ['backend', 'frontend']
+                                }
+                            },
+                            required: ['id', 'text']
+                        }
+                    }
+                },
+                required: ['codes']
+            }
+        }
+    };
+}
+
+function coerceCodesFromToolArgs(args) {
+    if (!args) return null;
+
+    if (Array.isArray(args.codes)) {
+        return args.codes;
+    }
+
+    if (typeof args.codes === 'string') {
+        try {
+            const parsed = JSON5.parse(args.codes);
+            return Array.isArray(parsed) ? parsed : null;
+        } catch (error) {
+            console.warn('[coerceCodesFromToolArgs] Failed to parse codes:', error.message);
+        }
+    }
+
+    return null;
+}
+
+function isPlaceholderLikeCode(text) {
+    const normalized = String(text || '').trim().toLowerCase();
+    if (!normalized) return true;
+
+    const placeholderPhrases = [
+        'todo',
+        'tbd',
+        'placeholder',
+        'заглуш',
+        'не указано',
+        'не определено',
+        'выполнить действие',
+        'произвести действие',
+        'система выполняет действие',
+        'система обрабатывает запрос',
+        'действие системы'
+    ];
+
+    return placeholderPhrases.some(phrase => normalized.includes(phrase));
+}
+
+function collectSemanticRefinementTargets(model = []) {
+    const targets = [];
+    let totalScenarios = 0;
+
+    for (const feature of model || []) {
+        for (const story of (feature?.stories || [])) {
+            for (const scenario of (story?.scenarios || [])) {
+                totalScenarios += 1;
+
+                const codes = Array.isArray(scenario?.codes) ? scenario.codes : [];
+                const reasons = [];
+
+                if (codes.length === 0) {
+                    reasons.push('missing_codes');
+                }
+
+                if (codes.some(code => !String(code?.text || '').trim())) {
+                    reasons.push('empty_code_text');
+                }
+
+                if (codes.some(code => !code?.type)) {
+                    reasons.push('missing_code_type');
+                }
+
+                if (codes.some(code => isPlaceholderLikeCode(code?.text))) {
+                    reasons.push('placeholder_code');
+                }
+
+                if (reasons.length > 0) {
+                    targets.push({
+                        feature,
+                        story,
+                        scenario,
+                        reasons: Array.from(new Set(reasons))
+                    });
+                }
+            }
+        }
+    }
+
+    const maxTargets = Math.min(20, Math.max(1, Math.ceil(totalScenarios * 0.1)));
+    return targets.slice(0, maxTargets);
+}
+
+async function regenerateSemanticCodesForTarget({
+    target,
+    bundle,
+    apiKey,
+    systemPrompt,
+    modelsToTry
+}) {
+    const pseudoSegment = {
+        index: 0,
+        docId: bundle?.main?.docId || 'inline-requirements',
+        docTitle: bundle?.main?.title || 'Requirements',
+        chunkIds: [],
+        text: [
+            `Feature: ${target?.feature?.text || ''}`,
+            `Story: ${target?.story?.text || ''}`,
+            `Scenario: ${target?.scenario?.text || ''}`
+        ].filter(Boolean).join('\n'),
+        heading: target?.story?.text || target?.feature?.text || null,
+        sectionPath: [],
+        requirementIds: [],
+        chunkTypes: ['scenario_refinement'],
+        explicitRefs: []
+    };
+
+    const retrieval = await retrieveContextForSegment(pseudoSegment, bundle, apiKey);
+    const existingCodes = (target?.scenario?.codes || [])
+        .map(code => `- ${code?.text || ''}${code?.type ? ` [${code.type}]` : ''}`)
+        .join('\n');
+
+    const userPrompt = `
+Исправь только список Codes для одного Scenario.
+Не меняй Feature, Story и текст Scenario.
+Верни только массив codes через submit_fixed_codes.
+
+Feature: ${target?.feature?.text || ''}
+Story: ${target?.story?.text || ''}
+Scenario: ${target?.scenario?.text || ''}
+Problems: ${(target?.reasons || []).join(', ')}
+
+Current codes:
+${existingCodes || '- отсутствуют'}
+
+${retrieval.formattedContext ? `Retrieved context:
+---
+${retrieval.formattedContext}
+---
+` : ''}
+
+Правила:
+- Дай конкретные системные реакции.
+- Не добавляй пользовательские действия.
+- Не выдумывай поля, endpoint или коды ответа, если их нет в текущем сегменте или retrieved context.
+- Ответ отправь через submit_fixed_codes.
+`.trim();
+
+    const response = await callWithCloudRuFallback(
+        OPENROUTER_URL,
+        [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+        ],
+        config.openRouterAiKey,
+        {
+            tools: [buildSubmitFixedCodesTool()],
+            temperature: 0,
+            top_p: 0.9,
+            max_tokens: 4000,
+            models: modelsToTry,
+            extra: { transforms: 'middle-out' }
+        }
+    );
+
+    const args = extractToolArgs(response, 'submit_fixed_codes');
+    const parsedCodes = coerceCodesFromToolArgs(args);
+    const fixedCodes = Array.isArray(parsedCodes)
+        ? parsedCodes
+            .map(code => ({
+                id: code?.id || uuidv4(),
+                text: normalizeCodeText(code?.text),
+                type: code?.type || detectCodeType(code?.text)
+            }))
+            .filter(code => String(code.text || '').trim())
+        : [];
+
+    return {
+        codes: fixedCodes,
+        retrievalCallCount: retrieval.retrievalCallCount,
+        llmCallCount: 1
+    };
+}
+
+async function runTargetedSemanticRefinement({
+    model,
+    bundle,
+    apiKey,
+    systemPrompt,
+    modelsToTry
+}) {
+    const targets = collectSemanticRefinementTargets(model);
+    if (targets.length === 0) {
+        return {
+            model,
+            targetedRefinementCount: 0,
+            retrievalCallCount: 0,
+            llmCallCount: 0
+        };
+    }
+
+    const limit = pLimit(Math.min(2, DEFAULT_SEGMENT_CONCURRENCY));
+    let targetedRefinementCount = 0;
+    let retrievalCallCount = 0;
+    let llmCallCount = 0;
+
+    await Promise.all(targets.map(target => limit(async () => {
+        try {
+            const result = await regenerateSemanticCodesForTarget({
+                target,
+                bundle,
+                apiKey,
+                systemPrompt,
+                modelsToTry
+            });
+
+            retrievalCallCount += result.retrievalCallCount || 0;
+            llmCallCount += result.llmCallCount || 0;
+
+            if (Array.isArray(result.codes) && result.codes.length > 0) {
+                target.scenario.codes = result.codes;
+                targetedRefinementCount += 1;
+            }
+        } catch (error) {
+            console.warn(`[runTargetedSemanticRefinement] Failed for scenario "${target?.scenario?.text || 'unknown'}":`, error.message);
+        }
+    })));
+
+    return {
+        model,
+        targetedRefinementCount,
+        retrievalCallCount,
+        llmCallCount
+    };
+}
+
+async function persistCompletedTestModelTask({
+    taskId,
+    cleanedModel,
+    startTime,
+    canonicalChunkCount,
+    generationSegmentCount,
+    llmCallCount,
+    retrievalCallCount,
+    targetedRefinementCount,
+    dedupeStats = {},
+    auxiliaryIndexing = {}
+}) {
+    const finalModelStats = summarizeModelCounts(cleanedModel);
+    const scenariosCount = finalModelStats.scenariosCount || 0;
+    const codesCount = finalModelStats.codesCount || 0;
+
+    const metrics = {
+        duration: Date.now() - startTime,
+        requirementsCoverage: 0,
+        storiesCoverage: 0,
+        structureCoverage: 0,
+        scenariosCount,
+        codesCount,
+        regenerations: targetedRefinementCount,
+        escalations: 0,
+        canonicalChunkCount,
+        generationSegmentCount,
+        llmCallCount,
+        retrievalCallCount,
+        targetedRefinementCount
+    };
+
+    const updateData = {
+        status: 'completed',
+        progress: 100,
+        result: {
+            testModel: cleanedModel,
+            modelStats: finalModelStats,
+            dedupeStats,
+            graphSessionId: null,
+            chunkSummary: {
+                canonicalChunkCount,
+                generationSegmentCount
+            },
+            pipeline: 'canonical-semantic-rag',
+            auxiliaryIndexing,
+            testModelId: taskId
+        },
+        completed_at: new Date(),
+        updated_at: new Date()
+    };
+
+    try {
+        await db('generation_tasks').where('id', taskId).update({
+            ...updateData,
+            metrics: JSON.stringify(metrics)
+        });
+    } catch (error) {
+        const errorMsg = error.message || '';
+        const isMetricsColumnError =
+            errorMsg.includes('столбец "metrics"') ||
+            errorMsg.includes('column "metrics"') ||
+            (errorMsg.includes('metrics') && (errorMsg.includes('does not exist') || errorMsg.includes('doesn\'t exist')));
+
+        if (!isMetricsColumnError) {
+            throw error;
+        }
+
+        console.warn('[persistCompletedTestModelTask] metrics column is missing, saving result without metrics');
+        await db('generation_tasks').where('id', taskId).update(updateData);
+    }
+}
+
+async function runCanonicalDefaultModelPipeline({
+    taskId,
+    startTime,
+    reqStringForModel,
+    graphDocumentId,
+    mainTitle,
+    mainRawChunks,
+    autoPageDocs,
+    explicitContextPageDocs,
+    requestContextText,
+    glossary,
+    glossaryPageId,
+    bearerToken,
+    modelsToTry,
+    apiKey
+}) {
+    if (!apiKey) {
+        throw new Error('Canonical default pipeline requires CLOUDRU_API_KEY for pgvector embeddings.');
+    }
+
+    if (!isPgVectorInitialized()) {
+        throw new Error('Canonical default pipeline requires initialized pgvector store.');
+    }
+
+    console.log('[generate-test-model-async] Using canonical semantic RAG default pipeline');
+
+    await db('generation_tasks').where('id', taskId).update({
+        progress: 5,
+        updated_at: new Date()
+    });
+
+    const bundle = await buildCanonicalChunkBundle({
+        graphDocumentId,
+        mainTitle,
+        mainRawChunks,
+        reqStringForModel,
+        autoPageDocs,
+        explicitContextPageDocs,
+        requestContextText,
+        glossary,
+        glossaryPageId,
+        bearerToken
+    });
+
+    const canonicalMainChunks = (bundle?.main?.canonicalChunks || [])
+        .filter(chunk => !(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval));
+
+    if (canonicalMainChunks.length === 0) {
+        throw new Error('Canonical semantic chunking produced no retrievable chunks for the main document.');
+    }
+
+    const mainIndexResult = await indexConfluencePageChunksWithCache({
+        docId: bundle.main.docId,
+        content: bundle.main.content,
+        title: bundle.main.title,
+        sourceType: 'main',
+        apiKey,
+        precomputedChunks: canonicalMainChunks
+    });
+
+    if (!mainIndexResult.cacheHit && ((mainIndexResult.errors || 0) > 0 || mainIndexResult.processed !== canonicalMainChunks.length)) {
+        throw new Error(`Failed to index canonical main chunks into pgvector (${mainIndexResult.processed}/${canonicalMainChunks.length}, errors=${mainIndexResult.errors || 0})`);
+    }
+
+    await db('generation_tasks').where('id', taskId).update({
+        progress: 15,
+        updated_at: new Date()
+    });
+
+    const auxiliaryIndexing = {
+        contextDocs: 0,
+        linkedDocs: 0,
+        indexedContextChunks: 0,
+        indexedLinkedChunks: 0
+    };
+    const auxiliaryIndexLimit = pLimit(2);
+    const auxiliaryDocs = [
+        ...(bundle.contextDocs || []).map(doc => ({ ...doc, sourceType: 'context' })),
+        ...(bundle.linkedDocs || []).map(doc => ({ ...doc, sourceType: 'linked' }))
+    ];
+
+    await Promise.all(auxiliaryDocs.map(doc => auxiliaryIndexLimit(async () => {
+        const retrievableChunks = (doc.canonicalChunks || [])
+            .filter(chunk => !(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval));
+
+        if (retrievableChunks.length === 0) {
+            return;
+        }
+
+        try {
+            const indexResult = await indexConfluencePageChunksWithCache({
+                docId: doc.docId,
+                content: doc.content,
+                title: doc.title,
+                sourceType: doc.sourceType,
+                apiKey,
+                precomputedChunks: retrievableChunks
+            });
+
+            if (doc.sourceType === 'context') {
+                auxiliaryIndexing.contextDocs += 1;
+                auxiliaryIndexing.indexedContextChunks += indexResult.chunkCount || 0;
+            } else {
+                auxiliaryIndexing.linkedDocs += 1;
+                auxiliaryIndexing.indexedLinkedChunks += indexResult.chunkCount || 0;
+            }
+        } catch (error) {
+            console.warn(`[runCanonicalDefaultModelPipeline] Failed to index ${doc.sourceType} doc ${doc.docId}:`, error.message);
+        }
+    })));
+
+    const generationSegments = buildGenerationSegments(canonicalMainChunks);
+    if (generationSegments.length === 0) {
+        throw new Error('Generation segments are empty after canonical chunk aggregation.');
+    }
+
+    console.log(
+        `[generate-test-model-async] Canonical chunks=${canonicalMainChunks.length}, generation segments=${generationSegments.length}, ` +
+        `context docs=${bundle.contextDocs.length}, linked docs=${bundle.linkedDocs.length}`
+    );
+
+    await db('generation_tasks').where('id', taskId).update({
+        progress: 25,
+        updated_at: new Date()
+    });
+
+    const systemPrompt = buildModelSystemPrompt(null);
+    const segmentResults = new Array(generationSegments.length).fill(null);
+    const generateSegmentLimit = pLimit(DEFAULT_SEGMENT_CONCURRENCY);
+    let llmCallCount = 0;
+    let retrievalCallCount = 0;
+    let completedSegments = 0;
+
+    await Promise.all(generationSegments.map((segment, segmentIndex) => generateSegmentLimit(async () => {
+        const retrieval = await retrieveContextForSegment(segment, bundle, apiKey);
+        retrievalCallCount += retrieval.retrievalCallCount || 0;
+
+        const basePrompt = buildCanonicalModelUserPrompt({
+            segment,
+            retrievedContext: retrieval.formattedContext
+        });
+
+        let bestSegmentModel = [];
+
+        for (let attempt = 0; attempt < MAX_SEGMENT_LLM_ATTEMPTS; attempt++) {
+            const attemptPrompt = attempt === 0
+                ? basePrompt
+                : `${basePrompt}\n\nПопытка ${attempt + 1}: верни полный корректный JSON-фрагмент через submit_test_model без пояснений.`.trim();
+
+            try {
+                const response = await callWithCloudRuFallback(
+                    OPENROUTER_URL,
+                    [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: attemptPrompt }
+                    ],
+                    config.openRouterAiKey,
+                    {
+                        tools: [buildSubmitModelTool()],
+                        temperature: 0,
+                        top_p: 0.9,
+                        max_tokens: 20000,
+                        models: modelsToTry,
+                        extra: { transforms: 'middle-out' }
+                    }
+                );
+                llmCallCount += 1;
+
+                const args = extractToolArgs(response, 'submit_test_model');
+                const partialModel = coerceModelArrayFromToolArgs(args);
+
+                if (Array.isArray(partialModel) && partialModel.length > 0) {
+                    let normalized = normalizeModelStructure(partialModel);
+                    normalized = repairModelStructure(normalized);
+                    const sanitized = sanitizeModelForValidation(normalized);
+                    bestSegmentModel = sanitized.model;
+                    break;
+                }
+            } catch (error) {
+                console.warn(`[runCanonicalDefaultModelPipeline] Segment ${segmentIndex + 1} attempt ${attempt + 1} failed:`, error.message);
+            }
+        }
+
+        segmentResults[segmentIndex] = Array.isArray(bestSegmentModel) ? bestSegmentModel : [];
+        completedSegments += 1;
+
+        const progress = 25 + Math.round((completedSegments / generationSegments.length) * 55);
+        await db('generation_tasks').where('id', taskId).update({
+            progress: Math.min(80, progress),
+            updated_at: new Date()
+        });
+    })));
+
+    const nonEmptySegmentResults = segmentResults.filter(result => Array.isArray(result) && result.length > 0);
+    if (nonEmptySegmentResults.length === 0) {
+        throw new Error('Canonical default pipeline produced no model fragments.');
+    }
+
+    const initialMergedModel = mergeChunkResults(nonEmptySegmentResults);
+    const initialModelStats = summarizeModelCounts(initialMergedModel);
+
+    let cleanedModel = deduplicateModel(initialMergedModel);
+    cleanedModel = postProcessModel(cleanedModel);
+    cleanedModel = enrichBackendCodesWithExpectedResult(cleanedModel);
+
+    const sanitizedBeforeRefinement = sanitizeModelForValidation(cleanedModel);
+    cleanedModel = sanitizedBeforeRefinement.model;
+
+    await db('generation_tasks').where('id', taskId).update({
+        progress: 85,
+        updated_at: new Date()
+    });
+
+    const refinementResult = await runTargetedSemanticRefinement({
+        model: cleanedModel,
+        bundle,
+        apiKey,
+        systemPrompt,
+        modelsToTry
+    });
+    cleanedModel = refinementResult.model;
+    retrievalCallCount += refinementResult.retrievalCallCount || 0;
+    llmCallCount += refinementResult.llmCallCount || 0;
+
+    const sanitizedAfterRefinement = sanitizeModelForValidation(cleanedModel);
+    cleanedModel = sanitizedAfterRefinement.model;
+
+    const finalModelStats = summarizeModelCounts(cleanedModel);
+    const dedupeStats = {
+        storiesRemoved: Math.max(0, (initialModelStats?.storiesCount || 0) - (finalModelStats?.storiesCount || 0)),
+        scenariosRemoved: Math.max(0, (initialModelStats?.scenariosCount || 0) - (finalModelStats?.scenariosCount || 0)),
+        codesRemoved: Math.max(0, (initialModelStats?.codesCount || 0) - (finalModelStats?.codesCount || 0)),
+        initialModelStats,
+        finalModelStats
+    };
+
+    await db('generation_tasks').where('id', taskId).update({
+        progress: 95,
+        updated_at: new Date()
+    });
+
+    await persistCompletedTestModelTask({
+        taskId,
+        cleanedModel,
+        startTime,
+        canonicalChunkCount: canonicalMainChunks.length,
+        generationSegmentCount: generationSegments.length,
+        llmCallCount,
+        retrievalCallCount,
+        targetedRefinementCount: refinementResult.targetedRefinementCount || 0,
+        dedupeStats,
+        auxiliaryIndexing
+    });
+}
+
 
 // 2. Функция финальной склейки (Smart Merge)
 function mergeChunkResults(allChunksJson) {
@@ -8447,6 +9596,7 @@ async function generateTestModelAsync(taskId, inputData) {
     let regenerationCount = 0;
     let escalationCount = 0;
     const CLOUDRU_API_KEY = process.env.CLOUDRU_API_KEY || config.cloudru?.apiKey;
+    const pipelineFlags = getDefaultPipelineFlags();
 
     try {
         await db('generation_tasks').where('id', taskId).update({
@@ -8584,7 +9734,7 @@ async function generateTestModelAsync(taskId, inputData) {
                 // Индексируем все загруженные страницы в pgvector для RAG
                 const allPageChunks = [];
                 
-                if (CLOUDRU_API_KEY && isPgVectorInitialized()) {
+                if (!pipelineFlags.ENABLE_CANONICAL_DEFAULT_PIPELINE && CLOUDRU_API_KEY && isPgVectorInitialized()) {
                     try {
                         console.log(`[generate-test-model-async] Семантическая чанкизация страниц в pgvector...`);
                         
@@ -8742,6 +9892,10 @@ async function generateTestModelAsync(taskId, inputData) {
         reqStringForModel = requirementsPool.filter(Boolean).join('\n\n---\n\n');
 
         if (!reqStringForModel) {
+            if (pipelineFlags.ENABLE_CANONICAL_DEFAULT_PIPELINE) {
+                throw new Error('Canonical default pipeline requires a non-empty requirements text. Unable to build reqStringForModel.');
+            }
+
             try {
                 const { refinedText, refinedArray } = await contextRefiner({
                     requirements,
@@ -8780,6 +9934,37 @@ async function generateTestModelAsync(taskId, inputData) {
         }
 
         const graphDocumentId = String(pageId || taskId || 'inline-requirements');
+        const canonicalMainTitle = deriveTitleFromContent(
+            reqStringForModel,
+            mainRequirementTitle || 'Requirements',
+            pageId || graphDocumentId
+        );
+
+        if (pipelineFlags.ENABLE_CANONICAL_DEFAULT_PIPELINE) {
+            const mainRawChunks = await chunkify(reqStringForModel, {
+                pageId: graphDocumentId,
+                title: canonicalMainTitle
+            });
+
+            await runCanonicalDefaultModelPipeline({
+                taskId,
+                startTime,
+                reqStringForModel,
+                graphDocumentId,
+                mainTitle: canonicalMainTitle,
+                mainRawChunks,
+                autoPageDocs,
+                explicitContextPageDocs,
+                requestContextText,
+                glossary,
+                glossaryPageId,
+                bearerToken,
+                modelsToTry,
+                apiKey: CLOUDRU_API_KEY
+            });
+            return;
+        }
+
         let rawChunks = await chunkify(reqStringForModel, {
             pageId: graphDocumentId,
             title: deriveTitleFromContent(reqStringForModel, 'Requirements', pageId || graphDocumentId)

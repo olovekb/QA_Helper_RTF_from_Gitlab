@@ -7,6 +7,7 @@ import TestModelGeneratorModal from './test-model/TestModelGeneratorModal';
 import TestModelReviewModal from './test-model/TestModelReviewModal';
 import BDDReviewModal from './bdd/BDDReviewModal';
 import { trackEvent } from '../analytics';
+import { formatProgressWithEta, getProgressEtaLabel } from '../utils/progressEta';
 
 // CSS для анимаций
 const animationStyles = `
@@ -68,6 +69,8 @@ const GlobalGenerationWindow = ({
   setGenerationProgress,
   generationStatus,
   setGenerationStatus,
+  generationStartedAt,
+  setGenerationStartedAt,
   isGenerationMinimized,
   setIsGenerationMinimized,
   generatedCases,
@@ -81,6 +84,8 @@ const GlobalGenerationWindow = ({
   setModelGenerationProgress,
   modelGenerationStatus,
   setModelGenerationStatus,
+  modelGenerationStartedAt,
+  setModelGenerationStartedAt,
   modelIsMinimized,
   setModelIsMinimized,
   checkModelGenerationStatus,
@@ -105,6 +110,11 @@ const GlobalGenerationWindow = ({
   onRegenerateBDD
 }) => {
   const location = useLocation();
+  const testCaseEtaLabel = getProgressEtaLabel({
+    status: generationStatus,
+    progress: generationProgress,
+    startedAt: generationStartedAt
+  });
 
   // Локальное состояние для модальных окон
 
@@ -162,6 +172,7 @@ const GlobalGenerationWindow = ({
       localStorage.removeItem('generatedTestCases');
 
       setGenerationTaskId(data.taskId);
+      setGenerationStartedAt(new Date().toISOString());
       setGenerationProgress(0);
       setGenerationStatus('processing');
     } catch (error) {
@@ -458,7 +469,9 @@ const GlobalGenerationWindow = ({
               >
                 Свернуть
               </button>
-              <span style={{ fontSize: 14, fontWeight: 'bold', color: '#58a6ff' }}>{generationProgress}%</span>
+              <span style={{ fontSize: 14, fontWeight: 'bold', color: '#58a6ff', whiteSpace: 'nowrap' }}>
+                {formatProgressWithEta(generationProgress, testCaseEtaLabel)}
+              </span>
             </div>
           </div>
 
@@ -532,7 +545,9 @@ const GlobalGenerationWindow = ({
               }} />
               <h4 style={{ margin: 0, color: '#c9d1d9', fontSize: 14, fontWeight: 600 }}>Генерация тест-кейсов</h4>
             </div>
-            <span style={{ fontSize: 12, fontWeight: 'bold', color: '#58a6ff' }}>{generationProgress}%</span>
+            <span style={{ fontSize: 12, fontWeight: 'bold', color: '#58a6ff', whiteSpace: 'nowrap' }}>
+              {formatProgressWithEta(generationProgress, testCaseEtaLabel)}
+            </span>
           </div>
 
           <div style={{ marginBottom: 12 }}>
@@ -651,6 +666,8 @@ const GlobalGenerationWindow = ({
         setModelGenerationProgress={setModelGenerationProgress}
         modelGenerationStatus={modelGenerationStatus}
         setModelGenerationStatus={setModelGenerationStatus}
+        modelGenerationStartedAt={modelGenerationStartedAt}
+        setModelGenerationStartedAt={setModelGenerationStartedAt}
         modelIsMinimized={modelIsMinimized}
         setModelIsMinimized={setModelIsMinimized}
         checkModelGenerationStatus={checkModelGenerationStatus}

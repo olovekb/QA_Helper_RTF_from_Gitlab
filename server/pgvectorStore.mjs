@@ -172,8 +172,8 @@ export async function indexChunk(chunk, apiKey) {
 
     const query = `
         INSERT INTO semantic_chunks 
-        (doc_id, doc_title, source_type, authority, chunk_type, heading, content, embedding, metadata, explicit_refs)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        (id, doc_id, doc_title, source_type, authority, chunk_type, heading, content, embedding, metadata, explicit_refs)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT (id) DO UPDATE SET
             doc_title = EXCLUDED.doc_title,
             source_type = EXCLUDED.source_type,
@@ -188,6 +188,7 @@ export async function indexChunk(chunk, apiKey) {
     `;
 
     const values = [
+        chunk.id,
         chunk.doc_id,
         chunk.doc_title,
         chunk.source_type || 'linked',
@@ -392,18 +393,23 @@ async function resolveExplicitLinks(initialChunks, apiKey, options = {}) {
 /**
  * Находит чанки по явной ссылке
  */
-async function findChunksByReference(ref, excludeDocId) {
+async function findChunksByReference(ref, excludeDocId, limit = 5) {
     if (!pool) return [];
 
     let query = `
         SELECT id, doc_id, doc_title, source_type, authority, chunk_type, 
                heading, content, metadata, explicit_refs
         FROM semantic_chunks
-        WHERE doc_id != $1
+        WHERE 1 = 1
     `;
 
-    const params = [excludeDocId];
-    let paramIndex = 2;
+    const params = [];
+    let paramIndex = 1;
+
+    if (excludeDocId != null) {
+        query += ` AND doc_id != $${paramIndex++}`;
+        params.push(excludeDocId);
+    }
 
     // Ищем по разным типам ссылок
     if (ref.type === 'section_ref' && ref.target) {
@@ -417,7 +423,8 @@ async function findChunksByReference(ref, excludeDocId) {
         params.push(ref.target);
     }
 
-    query += ' LIMIT 5';
+    query += ` LIMIT $${paramIndex++}`;
+    params.push(limit);
 
     try {
         const result = await pool.query(query, params);
@@ -438,6 +445,36 @@ async function findChunksByReference(ref, excludeDocId) {
         console.error('[pgvectorStore] Ошибка поиска по ссылке:', error.message);
         return [];
     }
+}
+
+export async function findChunksByReferences(refs = [], excludeDocId = null, options = {}) {
+    const { limit = 2 } = options;
+    const normalizedRefs = Array.isArray(refs)
+        ? refs
+            .filter(ref => ref && ref.type && ref.target)
+            .map(ref => ({
+                type: String(ref.type),
+                target: String(ref.target)
+            }))
+        : [];
+
+    const uniqueRefs = normalizedRefs.filter((ref, index, arr) =>
+        arr.findIndex(candidate => candidate.type === ref.type && candidate.target === ref.target) === index
+    );
+
+    const seen = new Set();
+    const resolved = [];
+
+    for (const ref of uniqueRefs) {
+        const chunks = await findChunksByReference(ref, excludeDocId, limit);
+        for (const chunk of chunks) {
+            if (seen.has(chunk.id)) continue;
+            seen.add(chunk.id);
+            resolved.push(chunk);
+        }
+    }
+
+    return resolved;
 }
 
 /**
