@@ -276,6 +276,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import knexfile from './db/knexfile.js';
 import { compareGeneratedCasesAgainstAllure } from './metrics/test-case-comparison.mjs';
+import { GENERATION_TASK_TYPES, buildGenerationTaskTypeCheckClause } from '../shared/generation-task-types.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1259,6 +1260,27 @@ const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 50 * 1024 * 1024, files: 20 }
 });
+
+async function ensureGenerationTaskTypeConstraint() {
+    try {
+        const tableExists = await db.schema.hasTable('generation_tasks');
+        if (!tableExists) {
+            console.warn('[startup] generation_tasks table not found, skipping type constraint sync');
+            return;
+        }
+
+        await db.raw('ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_type_check');
+        await db.raw(`
+            ALTER TABLE generation_tasks
+            ADD CONSTRAINT generation_tasks_type_check
+            ${buildGenerationTaskTypeCheckClause()}
+        `);
+
+        console.log(`[startup] ✅ generation_tasks_type_check synced: ${GENERATION_TASK_TYPES.join(', ')}`);
+    } catch (error) {
+        console.warn('[startup] ⚠️ Failed to sync generation_tasks_type_check:', error.message);
+    }
+}
 
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'https://test-inspector.abanking.ru')
@@ -21654,6 +21676,8 @@ try {
 } catch (e) {
     console.warn('[startup] ⚠️ Не удалось инициализировать Neo4j:', e.message);
 }
+
+await ensureGenerationTaskTypeConstraint();
 
 // Запуск сервера
 app.listen(PORT, () => {

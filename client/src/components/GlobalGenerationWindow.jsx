@@ -48,6 +48,14 @@ if (typeof document !== 'undefined') {
   document.head.appendChild(styleSheet);
 }
 
+const getAllureProjectId = (project) => {
+  if (project === null || project === undefined || project === '') return '';
+  if (typeof project === 'object') {
+    return project.id ?? project.value ?? '';
+  }
+  return project;
+};
+
 const GlobalGenerationWindow = ({
   projects,
   buildRequirementsPayload,
@@ -110,6 +118,7 @@ const GlobalGenerationWindow = ({
   onRegenerateBDD
 }) => {
   const location = useLocation();
+  const allureProjectId = getAllureProjectId(allureProject);
   const testCaseEtaLabel = getProgressEtaLabel({
     status: generationStatus,
     progress: generationProgress,
@@ -135,7 +144,7 @@ const GlobalGenerationWindow = ({
 
   // Обработчик генерации тест-кейсов
   const handleGenerateCases = async (modelStructure, includeBackendTests = true, selectedModel = '') => {
-    trackEvent('generate_test_cases', { page: location.pathname, projectId: allureProject?.id });
+    trackEvent('generate_test_cases', { page: location.pathname, projectId: allureProjectId });
     console.log('GlobalGenerationWindow: получена структура тестовой модели для генерации тест-кейсов:', modelStructure);
     console.log('GlobalGenerationWindow: количество features в структуре:', modelStructure?.length);
     console.log('GlobalGenerationWindow: includeBackendTests:', includeBackendTests);
@@ -152,7 +161,7 @@ const GlobalGenerationWindow = ({
         includeBackendTests: includeBackendTests !== false, // По умолчанию true, если не передан
         ...buildRequirementsPayload({ includeRequirements: true }),
         ...(selectedModel ? { models: [selectedModel] } : {}),
-        ...(allureProject?.id ? { projectId: allureProject.id } : {})  // ✅ Добавляем projectId для shared steps
+        ...(allureProjectId ? { projectId: allureProjectId } : {})  // ✅ Добавляем projectId для shared steps
       };
 
       console.log('GlobalGenerationWindow: отправляем payload с modelStructure:', payload);
@@ -183,7 +192,7 @@ const GlobalGenerationWindow = ({
 
   // Обработчик открытия модального окна тестовой модели
   const handleOpenModelModal = () => {
-    trackEvent('open_generation_modal', { page: location.pathname, projectId: allureProject?.id });
+    trackEvent('open_generation_modal', { page: location.pathname, projectId: allureProjectId });
     setIsGenModalOpen(true);
   };
 
@@ -194,12 +203,12 @@ const GlobalGenerationWindow = ({
 
   // Функция для подсчета тест-кейсов из сохраненного состояния или из generatedCases
   const getTestCasesCount = () => {
-    if (!allureProject?.id) return generatedCases?.length || 0;
+    if (!allureProjectId) return generatedCases?.length || 0;
 
     // Пытаемся получить сохраненное состояние из localStorage
     try {
       // Ищем все ключи, начинающиеся с testCasesReview_${projectId}_
-      const projectId = allureProject.id;
+      const projectId = allureProjectId;
       const prefix = `testCasesReview_${projectId}_`;
 
       // Проходим по всем ключам localStorage
@@ -264,11 +273,11 @@ const GlobalGenerationWindow = ({
   useEffect(() => {
     const count = getTestCasesCount();
     setTestCasesCount(count);
-  }, [generatedCases, reviewModalOpen, allureProject?.id]);
+  }, [generatedCases, reviewModalOpen, allureProjectId]);
 
   // Обработчик открытия модального окна просмотра тест-кейсов
   const handleOpenReviewModal = () => {
-    trackEvent('open_test_cases_review', { page: location.pathname, projectId: allureProject?.id });
+    trackEvent('open_test_cases_review', { page: location.pathname, projectId: allureProjectId });
     setReviewModalOpen(true);
     // Обновляем счетчик при открытии модалки
     setTimeout(() => {
@@ -679,7 +688,7 @@ const GlobalGenerationWindow = ({
       {reviewModalOpen && console.log('GlobalGenerationWindow: passing to TestModelReviewModal:', {
         generatedCases,
         generatedCasesLength: generatedCases?.length,
-        projectId: allureProject?.id,
+        projectId: allureProjectId,
         allureProject,
         reviewModalOpen
       })}
@@ -687,7 +696,7 @@ const GlobalGenerationWindow = ({
         isOpen={reviewModalOpen}
         onClose={handleCloseReviewModal}
         initialCases={generatedCases}
-        projectId={allureProject?.id}
+        projectId={allureProjectId}
         jiraProject={jiraProject}
         jiraPat={jiraPat}
         onCasesCountChange={(count) => {

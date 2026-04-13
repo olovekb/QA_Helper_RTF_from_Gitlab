@@ -42,9 +42,47 @@ const ASSIGNMENT_COSTS = {
 };
 
 const MANUAL_CACHE_TTL_MS = 10 * 60 * 1000;
+const ALLURE_READ_RETRY_ATTEMPTS = 3;
+const ALLURE_READ_RETRY_DELAY_MS = 500;
+const ISSUE_LOOKUP_CONCURRENCY = 8;
+const DETAILS_LOOKUP_CONCURRENCY = 8;
+const FAILURE_SAMPLE_LIMIT = 5;
+const RETRYABLE_ERROR_CODES = new Set([
+    'ABORT_ERR',
+    'ECONNABORTED',
+    'ECONNREFUSED',
+    'ECONNRESET',
+    'EAI_AGAIN',
+    'ENETUNREACH',
+    'ENOTFOUND',
+    'ETIMEDOUT',
+    'FETCH_ERROR'
+]);
+const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const RETRYABLE_ERROR_PATTERNS = [
+    'aborted',
+    'connect etimedout',
+    'econnaborted',
+    'econnrefused',
+    'econnreset',
+    'eai_again',
+    'enotfound',
+    'fetch failed',
+    'network timeout',
+    'too many requests',
+    'request timeout',
+    'service unavailable',
+    'bad gateway',
+    'gateway timeout',
+    'socket hang up',
+    'temporarily unavailable',
+    'timed out',
+    'timeout'
+];
+
 const manualCaseCache = new Map();
-const issueLookupLimit = pLimit(20);
-const detailsLookupLimit = pLimit(8);
+const issueLookupLimit = pLimit(ISSUE_LOOKUP_CONCURRENCY);
+const detailsLookupLimit = pLimit(DETAILS_LOOKUP_CONCURRENCY);
 const ID_PATTERN = /^(tc-(e2e|if|ib|uf)-\d+|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i;
 
 function pickText(...values) {
@@ -64,6 +102,75 @@ function normalizeWhitespace(text) {
 
 function normalizeIssueKey(issue) {
     return pickText(issue).toUpperCase();
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function extractErrorStatus(error) {
+    const status = Number(
+        error?.status ||
+        error?.statusCode ||
+        error?.response?.status
+    );
+    return Number.isFinite(status) ? status : null;
+}
+
+function isRetryableAllureError(error) {
+    const code = pickText(error?.code).toUpperCase();
+    if (code && RETRYABLE_ERROR_CODES.has(code)) {
+        return true;
+    }
+
+    const status = extractErrorStatus(error);
+    if (status !== null && RETRYABLE_STATUS_CODES.has(status)) {
+        return true;
+    }
+
+    const message = pickText(error?.message).toLowerCase();
+    return RETRYABLE_ERROR_PATTERNS.some((pattern) => message.includes(pattern));
+}
+
+async function withAllureRetry(operation, { label, attempts = ALLURE_READ_RETRY_ATTEMPTS } = {}) {
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+            return await operation();
+        } catch (error) {
+            lastError = error;
+            if (attempt >= attempts || !isRetryableAllureError(error)) {
+                throw error;
+            }
+
+            const delayMs = ALLURE_READ_RETRY_DELAY_MS * attempt;
+            const errorMessage = pickText(error?.message) || 'Unknown Allure error';
+            console.warn(
+                `[test-case-comparison] ${label || 'Allure request'} failed ` +
+                `(attempt ${attempt}/${attempts}): ${errorMessage}. Retrying in ${delayMs}ms.`
+            );
+            await sleep(delayMs);
+        }
+    }
+
+    throw lastError;
+}
+
+function toFailureDiagnostic(testCaseId, error) {
+    return {
+        testCaseId,
+        code: pickText(error?.code) || null,
+        status: extractErrorStatus(error),
+        message: pickText(error?.message) || String(error)
+    };
+}
+
+function summarizeFailures(failures) {
+    return {
+        count: failures.length,
+        sample: failures.slice(0, FAILURE_SAMPLE_LIMIT)
+    };
 }
 
 function roundMetric(value) {
@@ -483,57 +590,133 @@ async function loadManualCasesForJiraIssue(projectId, jiraIssue, onProgress = nu
     onProgress?.(16);
 
     const issueKey = normalizeIssueKey(jiraIssue);
-    const matchedBaseCases = (
-        await Promise.all(
-            allCases.map((testCase) => issueLookupLimit(async () => {
-                const issues = await getCaseIssue(testCase.id);
-                const hasIssue = Array.isArray(issues) && issues.some((issue) => normalizeIssueKey(issue?.name) === issueKey);
-                return hasIssue ? { ...testCase, issue: issues } : null;
-            }))
-        )
-    ).filter(Boolean);
+    const issueLookupResults = await Promise.allSettled(
+        allCases.map((testCase) => issueLookupLimit(async () => {
+            const issues = await withAllureRetry(
+                () => getCaseIssue(testCase.id),
+                { label: `Load Jira links for Allure test case ${testCase.id}` }
+            );
+            const hasIssue = Array.isArray(issues) && issues.some((issue) => normalizeIssueKey(issue?.name) === issueKey);
+            return hasIssue ? { ...testCase, issue: issues } : null;
+        }))
+    );
+
+    const issueLookupFailures = [];
+    const matchedBaseCases = [];
+    issueLookupResults.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+            if (result.value) {
+                matchedBaseCases.push(result.value);
+            }
+            return;
+        }
+
+        issueLookupFailures.push(toFailureDiagnostic(allCases[index]?.id, result.reason));
+    });
+
+    if (issueLookupFailures.length > 0) {
+        console.warn(
+            `[test-case-comparison] Failed to load Jira links for ${issueLookupFailures.length}/${allCases.length} ` +
+            `Allure test case(s) while searching issue ${jiraIssue}. Continuing with partial data.`
+        );
+    }
 
     if (matchedBaseCases.length === 0) {
+        if (issueLookupFailures.length > 0) {
+            throw new Error(
+                `Failed to reliably load Jira links from Allure for issue ${jiraIssue}. ` +
+                `${issueLookupFailures.length} request(s) failed; retry the comparison.`
+            );
+        }
         throw new Error(`No manual Allure test cases linked to Jira issue ${jiraIssue}`);
     }
 
     onProgress?.(28);
-    const manualCases = (
-        await Promise.all(
-            matchedBaseCases.map((testCase) => detailsLookupLimit(async () => {
-                const [stepsRaw, expectedResult, layer, precondition, customFields, overview] = await Promise.all([
-                    getTestCaseSteps(testCase.id),
-                    getTestCaseExpectedResult(testCase.id),
-                    getTestCaseLayer(testCase.id),
-                    getTestCasePrecondition(testCase.id),
-                    getTestCaseCustomFields(testCase.id, projectId),
-                    getTestCaseOverview(testCase.id)
-                ]);
+    const detailLookupResults = await Promise.allSettled(
+        matchedBaseCases.map((testCase) => detailsLookupLimit(async () => {
+            const [stepsRaw, expectedResult, layer, precondition, customFields, overview] = await Promise.all([
+                withAllureRetry(
+                    () => getTestCaseSteps(testCase.id),
+                    { label: `Load steps for Allure test case ${testCase.id}` }
+                ),
+                withAllureRetry(
+                    () => getTestCaseExpectedResult(testCase.id),
+                    { label: `Load expected result for Allure test case ${testCase.id}` }
+                ),
+                withAllureRetry(
+                    () => getTestCaseLayer(testCase.id),
+                    { label: `Load layer for Allure test case ${testCase.id}` }
+                ),
+                withAllureRetry(
+                    () => getTestCasePrecondition(testCase.id),
+                    { label: `Load precondition for Allure test case ${testCase.id}` }
+                ),
+                withAllureRetry(
+                    () => getTestCaseCustomFields(testCase.id, projectId),
+                    { label: `Load custom fields for Allure test case ${testCase.id}` }
+                ),
+                withAllureRetry(
+                    () => getTestCaseOverview(testCase.id),
+                    { label: `Load overview for Allure test case ${testCase.id}` }
+                )
+            ]);
 
-                const formatted = await formatTestCaseAsJson({
-                    id: testCase.id,
-                    name: testCase.name,
-                    issue: testCase.issue || [],
-                    layer,
-                    precondition,
-                    customFields,
-                    expectedResult,
-                    parameters: overview?.parameters || [],
-                    examples: overview?.examples || [],
-                    stepsRaw
-                });
+            const formatted = await formatTestCaseAsJson({
+                id: testCase.id,
+                name: testCase.name,
+                issue: testCase.issue || [],
+                layer,
+                precondition,
+                customFields,
+                expectedResult,
+                parameters: overview?.parameters || [],
+                examples: overview?.examples || [],
+                stepsRaw
+            });
 
-                return normalizeManualCase(formatted);
-            }))
-        )
-    ).filter(Boolean);
+            return normalizeManualCase(formatted);
+        }))
+    );
+
+    const detailLookupFailures = [];
+    const manualCases = [];
+    detailLookupResults.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+            if (result.value) {
+                manualCases.push(result.value);
+            }
+            return;
+        }
+
+        detailLookupFailures.push(toFailureDiagnostic(matchedBaseCases[index]?.id, result.reason));
+    });
+
+    if (detailLookupFailures.length > 0) {
+        console.warn(
+            `[test-case-comparison] Failed to load details for ${detailLookupFailures.length}/${matchedBaseCases.length} ` +
+            `matched Allure test case(s) for issue ${jiraIssue}. Continuing with partial data.`
+        );
+    }
+
+    if (manualCases.length === 0) {
+        throw new Error(
+            `Manual Allure test cases were found for ${jiraIssue}, but their details could not be loaded. ` +
+            `Retry the comparison.`
+        );
+    }
+
+    const diagnostics = {
+        partialManualCaseData: issueLookupFailures.length > 0 || detailLookupFailures.length > 0,
+        issueLookupFailures: summarizeFailures(issueLookupFailures),
+        detailLookupFailures: summarizeFailures(detailLookupFailures)
+    };
 
     manualCaseCache.set(cacheKey, {
         timestamp: Date.now(),
-        data: manualCases
+        data: { manualCases, diagnostics }
     });
 
-    return manualCases;
+    return { manualCases, diagnostics };
 }
 
 async function scoreCandidatePairs(generatedCases, manualCases, candidateShortlists, onProgress = null) {
@@ -750,7 +933,10 @@ export async function compareGeneratedCasesAgainstAllure({
     const generatedValidations = validateGeneratedCases(normalizedGeneratedCases);
 
     onProgress?.(12);
-    const manualCases = await loadManualCasesForJiraIssue(projectId, normalizedIssue, onProgress);
+    const {
+        manualCases,
+        diagnostics
+    } = await loadManualCasesForJiraIssue(projectId, normalizedIssue, onProgress);
     const manualCompatValidations = manualCases.map(validateManualCaseCompat);
 
     onProgress?.(32);
@@ -839,6 +1025,7 @@ export async function compareGeneratedCasesAgainstAllure({
         weights: BLOCK_WEIGHTS,
         thresholds: MATCH_THRESHOLDS,
         assignmentCosts: ASSIGNMENT_COSTS,
+        diagnostics,
         summary,
         pairReports,
         uncoveredManualCases,

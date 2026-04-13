@@ -5254,7 +5254,21 @@ export default function TestModelReviewModal({
 
                                 {(comparisonReport.uncoveredManualCases || []).length > 0 && (
                                     <div style={{ marginTop: '12px', fontSize: '12px', color: '#9fb3d1' }}>
-                                        Uncovered manual cases: {(comparisonReport.uncoveredManualCases || []).map((item) => item.manualCase?.title).filter(Boolean).join(' | ')}
+                                        <div style={{ marginBottom: '6px' }}>
+                                            Ваши тест-кейсы, которые не были учтены в тест-кейсах LLM:
+                                        </div>
+                                        <ol style={{ margin: 0, paddingLeft: '18px' }}>
+                                            {(comparisonReport.uncoveredManualCases || []).map((item, index) => {
+                                                const manualCaseId = item.manualCase?.id || 'ID не указан';
+                                                const manualCaseTitle = item.manualCase?.title || 'Без названия';
+
+                                                return (
+                                                    <li key={`${manualCaseId}-${index}`} style={{ marginBottom: '4px' }}>
+                                                        {manualCaseTitle} (id: {manualCaseId})
+                                                    </li>
+                                                );
+                                            })}
+                                        </ol>
                                     </div>
                                 )}
                             </>

@@ -17,6 +17,7 @@ import { OpenAIEmbeddings } from '@langchain/openai';
 import { PineconeStore } from '@langchain/pinecone';
 import { callCloudRuAPI, callWithCloudRuFallback } from '../server/cloudruClient.mjs';
 import config from '../server/config.json' assert { type: 'json' };
+import { GENERATION_TASK_TYPES, buildGenerationTaskTypeCheckClause } from '../shared/generation-task-types.mjs';
 import pkg from 'gherkin';
 const { Parser } = pkg;
 
@@ -66,7 +67,7 @@ const inMemoryTasks = new Map();
 
 /**
  * Автоматическое создание таблицы generation_tasks если её нет
- * И обновление CHECK constraint для поддержки 'bdd_tests'
+ * И синхронизация CHECK constraint для всех поддерживаемых типов задач
  */
 async function ensureTableExists() {
     try {
@@ -89,36 +90,30 @@ async function ensureTableExists() {
             // Создаём индексы
             await db.raw('CREATE INDEX IF NOT EXISTS idx_generation_tasks_status ON generation_tasks(status)');
             await db.raw('CREATE INDEX IF NOT EXISTS idx_generation_tasks_created_at ON generation_tasks(created_at)');
+            await db.raw('ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_type_check');
+            await db.raw(`
+                ALTER TABLE generation_tasks
+                ADD CONSTRAINT generation_tasks_type_check
+                ${buildGenerationTaskTypeCheckClause()}
+            `);
 
             console.log('[BDD Server] ✅ Таблица generation_tasks создана');
         } else {
             console.log('[BDD Server] ✅ Таблица generation_tasks уже существует');
 
-            // Проверяем и обновляем CHECK constraint для поддержки 'bdd_tests'
+            // Проверяем и обновляем CHECK constraint для всех типов задач
             try {
-                // Проверяем существование constraint
-                const constraintCheck = await db.raw(`
-                    SELECT constraint_name 
-                    FROM information_schema.table_constraints 
-                    WHERE table_name = 'generation_tasks' 
-                    AND constraint_name = 'generation_tasks_type_check'
+                console.log('[BDD Server] 🔧 Синхронизируем CHECK constraint для generation_tasks...');
+
+                // Приводим constraint к актуальному списку типов даже если он отсутствовал.
+                await db.raw('ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_type_check');
+                await db.raw(`
+                    ALTER TABLE generation_tasks 
+                    ADD CONSTRAINT generation_tasks_type_check 
+                    ${buildGenerationTaskTypeCheckClause()}
                 `);
 
-                if (constraintCheck.rows.length > 0) {
-                    console.log('[BDD Server] 🔧 Обновляем CHECK constraint для поддержки bdd_tests...');
-
-                    // Удаляем старый constraint
-                    await db.raw('ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_type_check');
-
-                    // Создаём новый constraint с поддержкой bdd_tests
-                    await db.raw(`
-                        ALTER TABLE generation_tasks 
-                        ADD CONSTRAINT generation_tasks_type_check 
-                        CHECK (type IN ('test_cases', 'test_model', 'bdd_tests'))
-                    `);
-
-                    console.log('[BDD Server] ✅ CHECK constraint обновлён для поддержки bdd_tests');
-                }
+                console.log(`[BDD Server] ✅ CHECK constraint обновлён: ${GENERATION_TASK_TYPES.join(', ')}`);
             } catch (constraintError) {
                 console.warn('[BDD Server] ⚠️ Не удалось обновить constraint (возможно, уже обновлён):', constraintError.message);
             }

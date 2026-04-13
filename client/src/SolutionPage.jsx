@@ -401,6 +401,13 @@ export default function SolutionPage ({ projects = [] })
   const [assigneeOption, setAssigneeOption] = usePersistentState('solutionAssignee', null);
   const [targetStatus, setTargetStatus] = usePersistentState('targetStatus', null);
   const [allureProject, setAllureProject] = usePersistentState('allureProject', '');
+  const allureProjectId = (
+    allureProject === null || allureProject === undefined || allureProject === ''
+      ? ''
+      : typeof allureProject === 'object'
+        ? allureProject.id ?? allureProject.value ?? ''
+        : allureProject
+  );
   const [fieldOptions, setFieldOptions] = useState({});
   const [fieldIds, setFieldIds] = useState({});
   const [transitions, setTransitions] = useState([]);
@@ -1157,7 +1164,7 @@ export default function SolutionPage ({ projects = [] })
 
   const handleGenerateModel = async (modelStructure, includeBackendTests = true, selectedModel = '') =>
   {
-    trackEvent('generate_test_model', { page: '/solution', projectId: allureProject?.id, taskId: confluencePageId });
+    trackEvent('generate_test_model', { page: '/solution', projectId: allureProjectId, taskId: confluencePageId });
     console.log('SolutionPage: получена структура тестовой модели для генерации тест-кейсов:', modelStructure);
     console.log('SolutionPage: количество features в структуре:', modelStructure?.length);
     console.log('SolutionPage: includeBackendTests:', includeBackendTests);
@@ -1185,7 +1192,7 @@ export default function SolutionPage ({ projects = [] })
           modelStructure,
           ...(selectedModel ? { models: [selectedModel] } : {}),
           includeBackendTests: includeBackendTests !== false, // ✅ Передаём флаг включения backend тестов
-          ...(allureProject ? { projectId: allureProject } : {})  // ✅ Добавляем projectId для shared steps
+          ...(allureProjectId ? { projectId: allureProjectId } : {})  // ✅ Добавляем projectId для shared steps
         };
         console.log('SolutionPage: отправляем payload с modelStructure:', payload);
 
@@ -1332,7 +1339,7 @@ export default function SolutionPage ({ projects = [] })
     try {
       const payload = {
         ...payloadBase,
-        ...(allureProject ? { projectId: typeof allureProject === 'string' ? allureProject : allureProject.id } : {})
+        ...(allureProjectId ? { projectId: allureProjectId } : {})
       };
 
       console.log('BDD: отправляем запрос на генерацию:', payload);
@@ -1582,7 +1589,7 @@ export default function SolutionPage ({ projects = [] })
 
   const handleFillAllWithAI = async () =>
   {
-    trackEvent('fill_all_ai', { page: '/solution', projectId: allureProject?.id, taskId: jiraProject });
+    trackEvent('fill_all_ai', { page: '/solution', projectId: allureProjectId, taskId: jiraProject });
     if (!jiraProject || !jiraPat) {
       alert('Сначала укажите Project Key и Jira PAT');
       return;
@@ -1858,7 +1865,7 @@ export default function SolutionPage ({ projects = [] })
 
   const handleAnalyzeSolution = async () =>
   {
-    trackEvent('ai_analyze_requirements', { page: '/solution', projectId: allureProject?.id, taskId: confluencePageId });
+    trackEvent('ai_analyze_requirements', { page: '/solution', projectId: allureProjectId, taskId: confluencePageId });
     setLoading(true);
     setAnalysisResult(null);
 
@@ -1949,7 +1956,7 @@ export default function SolutionPage ({ projects = [] })
 
   const handleCreateAll = async () =>
   {
-    trackEvent('create_jira_tasks', { page: '/solution', projectId: allureProject?.id, taskId: jiraProject, extra: { count: tasks.filter(t => t.selected).length } });
+    trackEvent('create_jira_tasks', { page: '/solution', projectId: allureProjectId, taskId: jiraProject, extra: { count: tasks.filter(t => t.selected).length } });
     setCreating(true);
     setResults([]);
     const out = [];
@@ -2131,7 +2138,7 @@ export default function SolutionPage ({ projects = [] })
                 value={
                   projects
                     .map(p => ({ value: p.id, label: p.name }))
-                    .find(o => o.value === allureProject) || null
+                    .find(o => String(o.value) === String(allureProjectId)) || null
                 }
                 isClearable
                 onChange={ opt => setAllureProject(opt?.value || '') }
@@ -2300,7 +2307,7 @@ export default function SolutionPage ({ projects = [] })
           generatedModel={ generatedModel }
           cancelGeneration={ cancelGeneration }
           jiraProject={ jiraProject }
-          allureProject={ allureProject ? (typeof allureProject === 'string' ? { id: allureProject } : allureProject) : null }
+          allureProject={ allureProjectId ? { id: allureProjectId } : null }
           jiraPat={ jiraPat }
           reviewModalOpen={ isReviewModalOpen }
           setReviewModalOpen={ setReviewModalOpen }
