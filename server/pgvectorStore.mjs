@@ -52,6 +52,9 @@ export async function initPgVectorStore(config = {}) {
                 chunk_type VARCHAR(100),
                 heading VARCHAR(1000),
                 content TEXT NOT NULL,
+                embedding_text TEXT,
+                retrieval_class VARCHAR(50),
+                eligibility_status VARCHAR(32),
                 embedding VECTOR(1024),
                 metadata JSONB DEFAULT '{}',
                 explicit_refs JSONB DEFAULT '[]',
@@ -62,6 +65,19 @@ export async function initPgVectorStore(config = {}) {
 
         // Создаём индексы
         await client.query(`
+            ALTER TABLE semantic_chunks
+            ADD COLUMN IF NOT EXISTS embedding_text TEXT
+        `);
+        await client.query(`
+            ALTER TABLE semantic_chunks
+            ADD COLUMN IF NOT EXISTS retrieval_class VARCHAR(50)
+        `);
+        await client.query(`
+            ALTER TABLE semantic_chunks
+            ADD COLUMN IF NOT EXISTS eligibility_status VARCHAR(32)
+        `);
+
+        await client.query(`
             CREATE INDEX IF NOT EXISTS idx_semantic_chunks_doc_id ON semantic_chunks(doc_id)
         `);
         await client.query(`
@@ -69,6 +85,12 @@ export async function initPgVectorStore(config = {}) {
         `);
         await client.query(`
             CREATE INDEX IF NOT EXISTS idx_semantic_chunks_chunk_type ON semantic_chunks(chunk_type)
+        `);
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_semantic_chunks_retrieval_class ON semantic_chunks(retrieval_class)
+        `);
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_semantic_chunks_eligibility_status ON semantic_chunks(eligibility_status)
         `);
 
         // Индекс для семантического поиска (IVFFlat)
@@ -167,13 +189,14 @@ async function fetchEmbeddingFromCloudRu(text, apiKey, model) {
 export async function indexChunk(chunk, apiKey) {
     if (!pool) throw new Error('pgvector не инициализирован');
 
-    const embedding = await getEmbedding(chunk.content || chunk.cleaned_text, apiKey);
+    const embeddingSource = chunk.embedding_text || chunk.content || chunk.cleaned_text;
+    const embedding = await getEmbedding(embeddingSource, apiKey);
     const embeddingStr = `[${embedding.join(',')}]`;
 
     const query = `
         INSERT INTO semantic_chunks 
-        (id, doc_id, doc_title, source_type, authority, chunk_type, heading, content, embedding, metadata, explicit_refs)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        (id, doc_id, doc_title, source_type, authority, chunk_type, heading, content, embedding_text, retrieval_class, eligibility_status, embedding, metadata, explicit_refs)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (id) DO UPDATE SET
             doc_title = EXCLUDED.doc_title,
             source_type = EXCLUDED.source_type,
@@ -181,6 +204,9 @@ export async function indexChunk(chunk, apiKey) {
             chunk_type = EXCLUDED.chunk_type,
             heading = EXCLUDED.heading,
             content = EXCLUDED.content,
+            embedding_text = EXCLUDED.embedding_text,
+            retrieval_class = EXCLUDED.retrieval_class,
+            eligibility_status = EXCLUDED.eligibility_status,
             embedding = EXCLUDED.embedding,
             metadata = EXCLUDED.metadata,
             explicit_refs = EXCLUDED.explicit_refs,
@@ -196,6 +222,9 @@ export async function indexChunk(chunk, apiKey) {
         chunk.chunk_type,
         chunk.heading,
         chunk.cleaned_text || chunk.content,
+        embeddingSource,
+        chunk.retrieval_class || chunk.metadata?.retrieval_class || null,
+        chunk.eligibility_status || chunk.metadata?.eligibility_status || null,
         embeddingStr,
         JSON.stringify(chunk.metadata || {}),
         JSON.stringify(chunk.explicit_refs || [])
@@ -248,6 +277,8 @@ export async function semanticSearch(query, apiKey, options = {}) {
         sourceType = null,
         docId = null,
         chunkType = null,
+        retrievalClass = null,
+        eligibilityStatuses = null,
         minScore = 0.0
     } = options;
 
@@ -274,6 +305,14 @@ export async function semanticSearch(query, apiKey, options = {}) {
         conditions.push(`chunk_type = $${paramIndex++}`);
         params.push(chunkType);
     }
+    if (retrievalClass) {
+        conditions.push(`retrieval_class = $${paramIndex++}`);
+        params.push(retrievalClass);
+    }
+    if (Array.isArray(eligibilityStatuses) && eligibilityStatuses.length > 0) {
+        conditions.push(`eligibility_status = ANY($${paramIndex++})`);
+        params.push(eligibilityStatuses);
+    }
 
     const whereClause = conditions.length > 0 
         ? `WHERE ${conditions.join(' AND ')}` 
@@ -282,7 +321,7 @@ export async function semanticSearch(query, apiKey, options = {}) {
     const querySql = `
         SELECT 
             id, doc_id, doc_title, source_type, authority, chunk_type, 
-            heading, content, metadata, explicit_refs,
+            heading, content, embedding_text, retrieval_class, eligibility_status, metadata, explicit_refs,
             1 - (embedding <=> $1::vector) as score
         FROM semantic_chunks
         ${whereClause}
@@ -301,6 +340,9 @@ export async function semanticSearch(query, apiKey, options = {}) {
         chunk_type: row.chunk_type,
         heading: row.heading,
         content: row.content,
+        embedding_text: row.embedding_text,
+        retrieval_class: row.retrieval_class,
+        eligibility_status: row.eligibility_status,
         metadata: row.metadata,
         explicit_refs: row.explicit_refs,
         score: parseFloat(row.score)
@@ -316,7 +358,9 @@ export async function multiHopStructuredSearch(query, apiKey, options = {}) {
         expansionTopK = 3,
         authorityMain = 1.0,
         authorityLinked = 0.7,
-        depth = 2
+        depth = 2,
+        retrievalClass = null,
+        eligibilityStatuses = null
     } = options;
 
     console.log(`[pgvectorStore] Multi-hop поиск: primaryTopK=${primaryTopK}, expansionTopK=${expansionTopK}`);
@@ -324,7 +368,9 @@ export async function multiHopStructuredSearch(query, apiKey, options = {}) {
     // === ШАГ 1: Primary Retrieval (main document) ===
     const primaryResults = await semanticSearch(query, apiKey, {
         topK: primaryTopK,
-        sourceType: 'main'
+        sourceType: 'main',
+        retrievalClass,
+        eligibilityStatuses
     });
 
     console.log(`[pgvectorStore] Primary results: ${primaryResults.length}`);
@@ -339,7 +385,9 @@ export async function multiHopStructuredSearch(query, apiKey, options = {}) {
     if (resolvedChunks.length < primaryTopK * 2) {
         const linkedResults = await semanticSearch(query, apiKey, {
             topK: expansionTopK,
-            sourceType: 'linked'
+            sourceType: 'linked',
+            retrievalClass,
+            eligibilityStatuses
         });
 
         // Применяем lower authority
@@ -398,7 +446,7 @@ async function findChunksByReference(ref, excludeDocId, limit = 5) {
 
     let query = `
         SELECT id, doc_id, doc_title, source_type, authority, chunk_type, 
-               heading, content, metadata, explicit_refs
+               heading, content, embedding_text, retrieval_class, eligibility_status, metadata, explicit_refs
         FROM semantic_chunks
         WHERE 1 = 1
     `;
@@ -437,6 +485,9 @@ async function findChunksByReference(ref, excludeDocId, limit = 5) {
             chunk_type: row.chunk_type,
             heading: row.heading,
             content: row.content,
+            embedding_text: row.embedding_text,
+            retrieval_class: row.retrieval_class,
+            eligibility_status: row.eligibility_status,
             metadata: row.metadata,
             explicit_refs: row.explicit_refs,
             score: 1.0

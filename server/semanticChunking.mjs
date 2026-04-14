@@ -47,6 +47,18 @@ export const CHUNK_TYPES = {
     TABLE_ROW: 'table_row'                    // Строка таблицы требований
 };
 
+export const RETRIEVAL_CLASSES = {
+    BEHAVIORAL: 'behavioral',
+    API_CONTEXT: 'api_context',
+    REFERENCE_CONTEXT: 'reference_context'
+};
+
+export const ELIGIBILITY_STATUSES = {
+    ELIGIBLE: 'eligible',
+    PENALIZED: 'penalized',
+    EXCLUDED: 'excluded'
+};
+
 const RETRIEVAL_EXCLUDED_CHUNK_TYPES = new Set([
     CHUNK_TYPES.DOCUMENT_META,
     CHUNK_TYPES.CHANGE_LOG,
@@ -91,7 +103,11 @@ export async function chunkify(markdown, metadata = {}) {
         }
         
         // Создаём atomic chunk
-        const atomicChunk = createAtomicChunk(section, {
+        const retrievalProfile = assignRetrievalProfile(section, chunkType);
+        const atomicChunk = createAtomicChunk({
+            ...section,
+            retrieval_profile: retrievalProfile
+        }, {
             doc_id: docId,
             doc_title: docTitle,
             chunk_type: chunkType,
@@ -109,6 +125,16 @@ export async function chunkify(markdown, metadata = {}) {
             // Добавляем к существующему composite chunk
             currentComposite.atomic_chunks.push(atomicChunk.id);
             currentComposite.cleaned_text += '\n\n' + atomicChunk.cleaned_text;
+            currentComposite.content = currentComposite.cleaned_text;
+            currentComposite.core_text = trimSemanticBlock([
+                currentComposite.core_text || '',
+                atomicChunk.core_text || ''
+            ].filter(Boolean).join('\n\n'));
+            currentComposite.embedding_text = currentComposite.core_text || currentComposite.cleaned_text;
+            currentComposite.aux_metadata = {
+                ...(currentComposite.aux_metadata || {}),
+                ...(atomicChunk.aux_metadata || {})
+            };
             currentComposite.linked_chunk_ids.push(atomicChunk.id);
         } else {
             // Завершаем предыдущий composite
@@ -632,6 +658,10 @@ function createAtomicChunk(section, metadata) {
     if (!isMeaningfulChunkText(cleanedText)) {
         return null;
     }
+    const retrievalProfile = normalizeRetrievalProfile(
+        section?.retrieval_profile,
+        cleanedText
+    );
     const mergedMetadata = {
         ...(section.metadata || {}),
         split_source: metadata.split_source || section.split_source || null
@@ -642,10 +672,16 @@ function createAtomicChunk(section, metadata) {
     const explicitRefs = extractExplicitRefs(explicitRefSource);
     const excludeFromRetrieval =
         Boolean(mergedMetadata.exclude_from_retrieval) ||
+        Boolean(retrievalProfile.exclude_from_retrieval) ||
         shouldExcludeChunkTypeFromRetrieval(metadata.chunk_type);
     const excludeFromGraph =
         Boolean(mergedMetadata.exclude_from_graph) ||
         excludeFromRetrieval;
+    const auxMetadata = {
+        ...(retrievalProfile.aux_metadata || {}),
+        section_number: retrievalProfile?.aux_metadata?.section_number || section.section_number || null,
+        row_number: retrievalProfile?.aux_metadata?.row_number || mergedMetadata.row_number || null
+    };
     
     return {
         id: uuidv4(),
@@ -661,8 +697,16 @@ function createAtomicChunk(section, metadata) {
         
         raw_text: rawText,
         cleaned_text: cleanedText,
+        content: cleanedText,
+        core_text: retrievalProfile.core_text || '',
+        embedding_text: retrievalProfile.embedding_text || cleanedText,
+        aux_metadata: auxMetadata,
         
         chunk_type: metadata.chunk_type,
+        retrieval_class: retrievalProfile.retrieval_class,
+        eligibility_status: retrievalProfile.eligibility_status,
+        retrieval_penalty: retrievalProfile.retrieval_penalty,
+        content_ratio: retrievalProfile.content_ratio,
         split_source: metadata.split_source || section.split_source || null,
         
         parent_chunk_id: null,
@@ -672,16 +716,34 @@ function createAtomicChunk(section, metadata) {
         feature_name: metadata.doc_title,
         metadata: {
             ...mergedMetadata,
+            aux_metadata: auxMetadata,
+            core_text: retrievalProfile.core_text || '',
+            embedding_text: retrievalProfile.embedding_text || cleanedText,
+            retrieval_class: retrievalProfile.retrieval_class,
+            eligibility_status: retrievalProfile.eligibility_status,
+            retrieval_penalty: retrievalProfile.retrieval_penalty,
+            content_ratio: retrievalProfile.content_ratio,
+            has_behavioral_predicate: retrievalProfile.has_behavioral_predicate,
+            has_expected_result: retrievalProfile.has_expected_result,
+            metadata_only: retrievalProfile.metadata_only,
+            screen_scope: auxMetadata.screen_scope || null,
+            channel_scope: auxMetadata.channel_scope || null,
+            entity_scope: auxMetadata.entity_scope || null,
+            endpoint: auxMetadata.endpoint || null,
+            method: auxMetadata.method || null,
+            row_number: auxMetadata.row_number || null,
+            section_number: auxMetadata.section_number || section.section_number || null,
             exclude_from_retrieval: excludeFromRetrieval,
             exclude_from_graph: excludeFromGraph,
             source_scope: mergedMetadata.source_scope || metadata.source_scope || 'main',
             graph_eligible: mergedMetadata.graph_eligible,
             relevance_score: mergedMetadata.relevance_score,
             canonical_key: mergedMetadata.canonical_key || null,
-            drop_reason: mergedMetadata.drop_reason || null
+            drop_reason: retrievalProfile.drop_reason || mergedMetadata.drop_reason || null
         },
         exclude_from_retrieval: excludeFromRetrieval,
         exclude_from_graph: excludeFromGraph,
+        drop_reason: retrievalProfile.drop_reason || mergedMetadata.drop_reason || null,
         
         source_location: {
             line_start: section.line_start,
@@ -708,8 +770,16 @@ function createCompositeChunk(firstAtomicChunk) {
         
         raw_text: firstAtomicChunk.raw_text,
         cleaned_text: firstAtomicChunk.cleaned_text,
+        content: firstAtomicChunk.cleaned_text,
+        core_text: firstAtomicChunk.core_text || '',
+        embedding_text: firstAtomicChunk.embedding_text || firstAtomicChunk.cleaned_text,
+        aux_metadata: { ...(firstAtomicChunk.aux_metadata || {}) },
         
         chunk_type: CHUNK_TYPES.COMPOSITE,
+        retrieval_class: firstAtomicChunk.retrieval_class,
+        eligibility_status: firstAtomicChunk.eligibility_status,
+        retrieval_penalty: firstAtomicChunk.retrieval_penalty,
+        content_ratio: firstAtomicChunk.content_ratio,
         split_source: firstAtomicChunk.split_source || null,
         
         parent_chunk_id: null,
@@ -721,6 +791,7 @@ function createCompositeChunk(firstAtomicChunk) {
         metadata: { ...(firstAtomicChunk.metadata || {}) },
         exclude_from_retrieval: Boolean(firstAtomicChunk.exclude_from_retrieval),
         exclude_from_graph: Boolean(firstAtomicChunk.exclude_from_graph),
+        drop_reason: firstAtomicChunk.drop_reason || null,
         
         source_location: firstAtomicChunk.source_location,
         token_count: firstAtomicChunk.token_count,
@@ -818,8 +889,8 @@ function shouldMergeWithPrevious(atomicChunk, currentComposite) {
     
     // 1. Если текущий чанк - начало условной конструкции, а предыдущий - нет условие
     // объединяем чтобы не разрывать "если → то"
-    const currentText = atomicChunk.cleaned_text || '';
-    const prevText = currentComposite.cleaned_text || '';
+    const currentText = atomicChunk.core_text || atomicChunk.cleaned_text || '';
+    const prevText = currentComposite.core_text || currentComposite.cleaned_text || '';
     
     // Если предыдущий содержит условную конструкцию (если/то/иначе), а текущий продолжает её - объединяем
     if (isConditionalBranch(prevText) && isConditionalContinuation(currentText)) {
@@ -838,6 +909,14 @@ function shouldMergeWithPrevious(atomicChunk, currentComposite) {
     const currentPath = JSON.stringify(atomicChunk.section_path || []);
     const prevPath = JSON.stringify(currentComposite.section_path || []);
     if (atomicChunk.heading !== currentComposite.heading || currentPath !== prevPath) {
+        return false;
+    }
+    const currentAux = atomicChunk.aux_metadata || atomicChunk.metadata?.aux_metadata || {};
+    const previousAux = currentComposite.aux_metadata || currentComposite.metadata?.aux_metadata || {};
+    if (!sharesFunctionalUnit(previousAux, currentAux)) {
+        return false;
+    }
+    if (introducesNewOutcomeOrErrorFlow(prevText, currentText)) {
         return false;
     }
     
@@ -866,7 +945,44 @@ function shouldMergeWithPrevious(atomicChunk, currentComposite) {
         return false;
     }
     
-    return true;
+    return classifyBehaviorDetailClause(currentText) !== null ||
+        classifyBehaviorDetailClause(atomicChunk.cleaned_text || '') !== null ||
+        (isConditionalBranch(prevText) && isConditionalContinuation(currentText));
+}
+
+function sharesFunctionalUnit(previousAux = {}, currentAux = {}) {
+    return sameOrMissing(previousAux.entity_scope, currentAux.entity_scope) &&
+        sameOrMissing(previousAux.screen_scope, currentAux.screen_scope) &&
+        sameOrMissing(previousAux.endpoint, currentAux.endpoint) &&
+        sameOrMissing(previousAux.method, currentAux.method);
+}
+
+function introducesNewOutcomeOrErrorFlow(previousText, currentText) {
+    const previousOutcome = extractOutcomeSignature(previousText);
+    const currentOutcome = extractOutcomeSignature(currentText);
+    const previousErrorFlow = isErrorFlowText(previousText);
+    const currentErrorFlow = isErrorFlowText(currentText);
+
+    if (previousErrorFlow !== currentErrorFlow) {
+        return true;
+    }
+    if (previousOutcome && currentOutcome && previousOutcome !== currentOutcome) {
+        return true;
+    }
+    return false;
+}
+
+function isErrorFlowText(text) {
+    return /(ошибк|error|exception|timeout|forbidden|unauthorized|not found|bad request)/i.test(String(text || ''));
+}
+
+function sameOrMissing(left, right) {
+    const normalizedLeft = normalizeForComparison(left);
+    const normalizedRight = normalizeForComparison(right);
+    if (!normalizedLeft || !normalizedRight) {
+        return true;
+    }
+    return normalizedLeft === normalizedRight;
 }
 
 // ============================================================
@@ -1018,10 +1134,12 @@ function buildRequirementRowSections(section) {
             const branchSplit = splitRequirementIntoScenarioBranches(mappedRow.requirement || '');
             const rowHeading = buildRequirementRowHeading(section.heading, mappedRow.row_number, mappedRow.element);
             const sectionPath = buildSectionPathForRow(section.path, mappedRow.row_number || mappedRow.element);
-            const rowMetadata = buildRequirementChunkMetadata(mappedRow, branchSplit.sharedIntro);
+            const rowPayload = buildRequirementRowPayload(mappedRow, branchSplit.sharedIntro);
+            const rowMetadata = buildRequirementChunkMetadata(mappedRow, branchSplit.sharedIntro, rowPayload.aux_metadata);
 
-            if (branchSplit.branches.length > 1) {
+            if (branchSplit.forceBranches || branchSplit.branches.length > 1) {
                 branchSplit.branches.forEach((branch, index) => {
+                    const branchPayload = buildRequirementBranchPayload(mappedRow, branchSplit.sharedIntro, branch);
                     semanticSections.push(createFinalSemanticSection(section, {
                         heading: `${rowHeading} / branch ${branch.label || index + 1}`,
                         path: sectionPath,
@@ -1035,12 +1153,18 @@ function buildRequirementRowSections(section) {
                             semantic_role: CHUNK_TYPES.SCENARIO_BRANCH,
                             row_number: mappedRow.row_number || null,
                             element: mappedRow.element || null,
+                            screen_scope: branchPayload.aux_metadata.screen_scope || rowPayload.aux_metadata.screen_scope || null,
+                            channel_scope: branchPayload.aux_metadata.channel_scope || rowPayload.aux_metadata.channel_scope || null,
+                            entity_scope: branchPayload.aux_metadata.entity_scope || rowPayload.aux_metadata.entity_scope || null,
+                            endpoint: branchPayload.aux_metadata.endpoint || null,
+                            method: branchPayload.aux_metadata.method || null,
                             branch_index: index + 1,
                             branch_label: branch.label || null,
                             branch_source_number: branch.sourceNumber || null,
                             scenario_seed_text: branch.text || null
                         },
-                        content: buildRequirementBranchContent(mappedRow, branchSplit.sharedIntro, branch)
+                        retrieval_profile: branchPayload,
+                        content: buildRequirementBranchContent(mappedRow, branchSplit.sharedIntro, branch, branchPayload)
                     }));
                 });
                 continue;
@@ -1058,9 +1182,15 @@ function buildRequirementRowSections(section) {
                     ...rowMetadata,
                     semantic_role: CHUNK_TYPES.REQUIREMENT_ROW,
                     row_number: mappedRow.row_number || null,
-                    element: mappedRow.element || null
+                    element: mappedRow.element || null,
+                    screen_scope: rowPayload.aux_metadata.screen_scope || null,
+                    channel_scope: rowPayload.aux_metadata.channel_scope || null,
+                    entity_scope: rowPayload.aux_metadata.entity_scope || null,
+                    endpoint: rowPayload.aux_metadata.endpoint || null,
+                    method: rowPayload.aux_metadata.method || null
                 },
-                content: buildRequirementRowContent(mappedRow)
+                retrieval_profile: rowPayload,
+                content: buildRequirementRowContent(mappedRow, rowPayload)
             }));
         }
     }
@@ -1093,10 +1223,12 @@ function buildRequirementRowSectionsFromFlattenedTable(section) {
         const branchSplit = splitRequirementIntoScenarioBranches(mappedRow.requirement || '');
         const rowHeading = buildRequirementRowHeading(section.heading, mappedRow.row_number, mappedRow.element);
         const sectionPath = buildSectionPathForRow(section.path, mappedRow.row_number || mappedRow.element);
-        const rowMetadata = buildRequirementChunkMetadata(mappedRow, branchSplit.sharedIntro);
+        const rowPayload = buildRequirementRowPayload(mappedRow, branchSplit.sharedIntro);
+        const rowMetadata = buildRequirementChunkMetadata(mappedRow, branchSplit.sharedIntro, rowPayload.aux_metadata);
 
-        if (branchSplit.branches.length > 1) {
+        if (branchSplit.forceBranches || branchSplit.branches.length > 1) {
             branchSplit.branches.forEach((branch, index) => {
+                const branchPayload = buildRequirementBranchPayload(mappedRow, branchSplit.sharedIntro, branch);
                 semanticSections.push(createFinalSemanticSection(section, {
                     heading: `${rowHeading} / branch ${branch.label || index + 1}`,
                     path: sectionPath,
@@ -1110,12 +1242,18 @@ function buildRequirementRowSectionsFromFlattenedTable(section) {
                         semantic_role: CHUNK_TYPES.SCENARIO_BRANCH,
                         row_number: mappedRow.row_number || null,
                         element: mappedRow.element || null,
+                        screen_scope: branchPayload.aux_metadata.screen_scope || rowPayload.aux_metadata.screen_scope || null,
+                        channel_scope: branchPayload.aux_metadata.channel_scope || rowPayload.aux_metadata.channel_scope || null,
+                        entity_scope: branchPayload.aux_metadata.entity_scope || rowPayload.aux_metadata.entity_scope || null,
+                        endpoint: branchPayload.aux_metadata.endpoint || null,
+                        method: branchPayload.aux_metadata.method || null,
                         branch_index: index + 1,
                         branch_label: branch.label || null,
                         branch_source_number: branch.sourceNumber || null,
                         scenario_seed_text: branch.text || null
                     },
-                    content: buildRequirementBranchContent(mappedRow, branchSplit.sharedIntro, branch)
+                    retrieval_profile: branchPayload,
+                    content: buildRequirementBranchContent(mappedRow, branchSplit.sharedIntro, branch, branchPayload)
                 }));
             });
             continue;
@@ -1133,9 +1271,15 @@ function buildRequirementRowSectionsFromFlattenedTable(section) {
                 ...rowMetadata,
                 semantic_role: CHUNK_TYPES.REQUIREMENT_ROW,
                 row_number: mappedRow.row_number || null,
-                element: mappedRow.element || null
+                element: mappedRow.element || null,
+                screen_scope: rowPayload.aux_metadata.screen_scope || null,
+                channel_scope: rowPayload.aux_metadata.channel_scope || null,
+                entity_scope: rowPayload.aux_metadata.entity_scope || null,
+                endpoint: rowPayload.aux_metadata.endpoint || null,
+                method: rowPayload.aux_metadata.method || null
             },
-            content: buildRequirementRowContent(mappedRow)
+            retrieval_profile: rowPayload,
+            content: buildRequirementRowContent(mappedRow, rowPayload)
         }));
     }
 
@@ -1434,6 +1578,268 @@ function shouldExcludeChunkTypeFromRetrieval(chunkType) {
     return RETRIEVAL_EXCLUDED_CHUNK_TYPES.has(chunkType);
 }
 
+function normalizeRetrievalProfile(profile, cleanedText = '') {
+    const contentRatio = profile?.content_ratio && typeof profile.content_ratio === 'object'
+        ? profile.content_ratio
+        : {
+            behavioral_ratio: null,
+            service_ratio: null
+        };
+
+    return {
+        core_text: trimSemanticBlock(profile?.core_text || ''),
+        embedding_text: trimSemanticBlock(profile?.embedding_text || profile?.core_text || cleanedText),
+        aux_metadata: { ...(profile?.aux_metadata || {}) },
+        retrieval_class: profile?.retrieval_class || null,
+        eligibility_status: profile?.eligibility_status || null,
+        retrieval_penalty: Number.isFinite(profile?.retrieval_penalty) ? Number(profile.retrieval_penalty) : 0,
+        content_ratio: contentRatio,
+        drop_reason: profile?.drop_reason || null,
+        exclude_from_retrieval: Boolean(profile?.exclude_from_retrieval),
+        has_behavioral_predicate: Boolean(profile?.has_behavioral_predicate),
+        has_expected_result: Boolean(profile?.has_expected_result),
+        metadata_only: Boolean(profile?.metadata_only)
+    };
+}
+
+function assignRetrievalProfile(section, chunkType) {
+    const legacyText = cleanText(getChunkableSectionText(section));
+    const normalized = normalizeRetrievalProfile(section?.retrieval_profile, legacyText);
+    const retrievalClass = normalized.retrieval_class || determineRetrievalClass(section, chunkType, normalized, legacyText);
+    const auxMetadata = {
+        ...(section?.metadata?.aux_metadata || {}),
+        ...(section?.metadata || {}),
+        ...(normalized.aux_metadata || {})
+    };
+    delete auxMetadata.source_ref_text;
+    delete auxMetadata.exclude_from_retrieval;
+    delete auxMetadata.exclude_from_graph;
+    delete auxMetadata.semantic_role;
+    delete auxMetadata.graph_eligible;
+    delete auxMetadata.relevance_score;
+    delete auxMetadata.canonical_key;
+    delete auxMetadata.drop_reason;
+
+    if (!auxMetadata.section_number && section?.section_number) {
+        auxMetadata.section_number = section.section_number;
+    }
+
+    const baseProfile = {
+        ...normalized,
+        core_text: normalized.core_text || (retrievalClass === RETRIEVAL_CLASSES.BEHAVIORAL ? legacyText : ''),
+        embedding_text: normalized.embedding_text || (retrievalClass === RETRIEVAL_CLASSES.BEHAVIORAL ? normalized.core_text || legacyText : legacyText),
+        aux_metadata: auxMetadata,
+        retrieval_class: retrievalClass
+    };
+    const evaluation = retrievalClass === RETRIEVAL_CLASSES.BEHAVIORAL
+        ? evaluateBehavioralEligibility(baseProfile, legacyText, chunkType)
+        : evaluateContextEligibility(baseProfile, legacyText, chunkType);
+    const excludeFromRetrieval = Boolean(
+        normalized.exclude_from_retrieval ||
+        evaluation.exclude_from_retrieval ||
+        shouldExcludeChunkTypeFromRetrieval(chunkType)
+    );
+
+    return {
+        ...baseProfile,
+        ...evaluation,
+        exclude_from_retrieval: excludeFromRetrieval
+    };
+}
+
+function determineRetrievalClass(section, chunkType, normalizedProfile, legacyText = '') {
+    if ([
+        CHUNK_TYPES.API_ENDPOINT_SUMMARY,
+        CHUNK_TYPES.API_INPUT_PARAMS,
+        CHUNK_TYPES.API_OUTPUT_PARAMS,
+        CHUNK_TYPES.API_BEHAVIOR_NOTES,
+        CHUNK_TYPES.API_CONTRACT
+    ].includes(chunkType)) {
+        return RETRIEVAL_CLASSES.API_CONTEXT;
+    }
+
+    if ([
+        CHUNK_TYPES.REFERENCE_CONTEXT,
+        CHUNK_TYPES.REFERENCE_LINK,
+        CHUNK_TYPES.DOCUMENT_META,
+        CHUNK_TYPES.CHANGE_LOG,
+        CHUNK_TYPES.BUSINESS_CONTEXT,
+        CHUNK_TYPES.SCOPE_CONTEXT,
+        CHUNK_TYPES.NOISE_METADATA,
+        CHUNK_TYPES.NOISE_SKIPPED
+    ].includes(chunkType)) {
+        return RETRIEVAL_CLASSES.REFERENCE_CONTEXT;
+    }
+
+    if ([CHUNK_TYPES.REQUIREMENT_ROW, CHUNK_TYPES.SCENARIO_BRANCH].includes(chunkType)) {
+        return RETRIEVAL_CLASSES.BEHAVIORAL;
+    }
+
+    if ([CHUNK_TYPES.VALIDATION_RULE, CHUNK_TYPES.ERROR_HANDLING].includes(chunkType)) {
+        const text = normalizedProfile.core_text || legacyText;
+        return hasExpectedResultSignal(text) || hasBehavioralPredicateSignal(text)
+            ? RETRIEVAL_CLASSES.BEHAVIORAL
+            : RETRIEVAL_CLASSES.REFERENCE_CONTEXT;
+    }
+
+    if ([CHUNK_TYPES.BUSINESS_RULE, CHUNK_TYPES.UI_RULE, CHUNK_TYPES.UI_CURRENT_BEHAVIOR, CHUNK_TYPES.SCENARIO_STEP].includes(chunkType)) {
+        return RETRIEVAL_CLASSES.BEHAVIORAL;
+    }
+
+    return containsApiContract(`${section?.heading || ''}\n${legacyText}`)
+        ? RETRIEVAL_CLASSES.API_CONTEXT
+        : RETRIEVAL_CLASSES.REFERENCE_CONTEXT;
+}
+
+function evaluateBehavioralEligibility(profile, legacyText, chunkType) {
+    const coreText = trimSemanticBlock(profile.core_text || '');
+    const hasBehavioralPredicate = hasBehavioralPredicateSignal(coreText || legacyText);
+    const hasExpectedResult = hasExpectedResultSignal(coreText || legacyText);
+    const metadataOnly = !isMeaningfulChunkText(cleanText(coreText));
+    const serviceRatio = calculateServiceRatio(legacyText || coreText);
+    const dropReason = determineBehavioralDropReason({
+        chunkType,
+        metadataOnly,
+        hasBehavioralPredicate,
+        hasExpectedResult,
+        serviceRatio,
+        auxMetadata: profile.aux_metadata
+    });
+
+    let eligibilityStatus = ELIGIBILITY_STATUSES.ELIGIBLE;
+    if (metadataOnly || (!hasBehavioralPredicate && !hasExpectedResult) || serviceRatio >= 0.65) {
+        eligibilityStatus = ELIGIBILITY_STATUSES.EXCLUDED;
+    } else if (!hasBehavioralPredicate || !hasExpectedResult || serviceRatio >= 0.35) {
+        eligibilityStatus = ELIGIBILITY_STATUSES.PENALIZED;
+    }
+
+    return {
+        eligibility_status: eligibilityStatus,
+        retrieval_penalty: eligibilityStatus === ELIGIBILITY_STATUSES.ELIGIBLE
+            ? 0
+            : (eligibilityStatus === ELIGIBILITY_STATUSES.PENALIZED ? 0.2 : 1.0),
+        content_ratio: {
+            behavioral_ratio: Number((1 - serviceRatio).toFixed(4)),
+            service_ratio: Number(serviceRatio.toFixed(4))
+        },
+        drop_reason: dropReason,
+        has_behavioral_predicate: hasBehavioralPredicate,
+        has_expected_result: hasExpectedResult,
+        metadata_only: metadataOnly,
+        exclude_from_retrieval: eligibilityStatus === ELIGIBILITY_STATUSES.EXCLUDED
+    };
+}
+
+function evaluateContextEligibility(profile, legacyText, chunkType) {
+    const meaningful = isMeaningfulChunkText(cleanText(profile.embedding_text || legacyText));
+    const serviceRatio = calculateServiceRatio(legacyText || profile.embedding_text || '');
+    const eligibilityStatus = meaningful
+        ? ELIGIBILITY_STATUSES.ELIGIBLE
+        : ELIGIBILITY_STATUSES.EXCLUDED;
+    const dropReason = meaningful
+        ? null
+        : (chunkType === CHUNK_TYPES.REFERENCE_LINK ? 'reference_heavy' : 'metadata_only');
+
+    return {
+        eligibility_status: eligibilityStatus,
+        retrieval_penalty: eligibilityStatus === ELIGIBILITY_STATUSES.ELIGIBLE ? 0 : 1.0,
+        content_ratio: {
+            behavioral_ratio: Number((1 - serviceRatio).toFixed(4)),
+            service_ratio: Number(serviceRatio.toFixed(4))
+        },
+        drop_reason: dropReason,
+        has_behavioral_predicate: false,
+        has_expected_result: false,
+        metadata_only: !meaningful,
+        exclude_from_retrieval: eligibilityStatus === ELIGIBILITY_STATUSES.EXCLUDED
+    };
+}
+
+function determineBehavioralDropReason({
+    chunkType,
+    metadataOnly,
+    hasBehavioralPredicate,
+    hasExpectedResult,
+    serviceRatio,
+    auxMetadata = {}
+}) {
+    const hasConstraintDetails = [
+        ...(auxMetadata.constraints || []),
+        ...(auxMetadata.display_rules || []),
+        ...(auxMetadata.validation_rules || []),
+        ...(auxMetadata.fallbacks || [])
+    ].length > 0;
+
+    if (metadataOnly && hasConstraintDetails) {
+        return 'constraint_only';
+    }
+    if (metadataOnly) {
+        return 'metadata_only';
+    }
+    if (!hasBehavioralPredicate && !hasExpectedResult) {
+        return 'metadata_only';
+    }
+    if (!hasBehavioralPredicate) {
+        return 'missing_behavioral_predicate';
+    }
+    if (!hasExpectedResult) {
+        return 'missing_expected_result';
+    }
+    if (serviceRatio >= 0.65 || serviceRatio >= 0.35) {
+        if ((auxMetadata.layout_hints || []).length > 0 && !(auxMetadata.related_params || []).length) {
+            return 'layout_only';
+        }
+        if ((auxMetadata.references || []).length > 0 && !(auxMetadata.related_params || []).length) {
+            return 'reference_heavy';
+        }
+        return 'params_heavy';
+    }
+    if ([CHUNK_TYPES.VALIDATION_RULE].includes(chunkType) && hasConstraintDetails) {
+        return 'constraint_only';
+    }
+    return null;
+}
+
+function calculateServiceRatio(text = '') {
+    const normalizedTokens = normalizeForComparison(text)
+        .split(/\s+/)
+        .map(token => token.trim())
+        .filter(Boolean);
+    if (normalizedTokens.length === 0) {
+        return 1;
+    }
+
+    const serviceTokenPatterns = [
+        'api',
+        'endpoint',
+        'method',
+        'request',
+        'response',
+        'status',
+        'header',
+        'param',
+        'reference',
+        'layout',
+        'figma',
+        'макет',
+        'параметр',
+        'метод',
+        'ссылк',
+        'layout',
+        'channel',
+        'screen',
+        'page',
+        'row',
+        'section',
+        'табл'
+    ];
+    const serviceTokenCount = normalizedTokens.filter(token =>
+        serviceTokenPatterns.some(pattern => token.includes(pattern))
+    ).length;
+
+    return serviceTokenCount / normalizedTokens.length;
+}
+
 function createFinalSemanticSection(section, overrides = {}) {
     return {
         ...section,
@@ -1578,18 +1984,111 @@ function buildRequirementRowHeading(baseHeading, rowNumber, element) {
     return parts.filter(part => part && !isPlaceholderValue(part)).join(' / ') || 'Requirement row';
 }
 
-function buildRequirementRowContent(row) {
-    const lines = [];
-    const behavior = trimSemanticBlock(String(row.requirement || '').trim());
+function buildRequirementRowPayload(row, sharedIntro = '') {
+    const rawBehaviorText = trimSemanticBlock(String(row.requirement || '').trim());
+    const behaviorText = stripServiceContextFragments(rawBehaviorText);
+    const sharedContext = summarizeSharedContext(sharedIntro, row.element || '');
+    const detailBuckets = extractBehaviorDetailBuckets(behaviorText);
     const methodSummary = buildMethodContextSummary(row.method);
     const paramsSummary = buildRelevantParamsSummary(row.params, row.requirement);
     const layoutSummary = buildReferenceSummary(row.layout);
+    const coreText = buildBehavioralCoreText({
+        subject: row.element,
+        sharedContext,
+        behavior: detailBuckets.behavior
+    });
+    const auxMetadata = buildRequirementAuxMetadata({
+        row,
+        sharedContext,
+        behaviorText: rawBehaviorText,
+        detailBuckets
+    });
 
-    if (!isPlaceholderValue(row.row_number)) {
-        lines.push(`Requirement row: ${row.row_number}`);
+    return {
+        core_text: coreText,
+        embedding_text: coreText,
+        aux_metadata: auxMetadata,
+        legacy_text: renderRequirementLegacyText({
+            rowNumber: row.row_number,
+            element: row.element,
+            context: sharedContext,
+            branchLabel: null,
+            behavior: detailBuckets.behavior || behaviorText,
+            methodSummary,
+            paramsSummary,
+            layoutSummary
+        })
+    };
+}
+
+function buildRequirementRowContent(row, payload = null) {
+    return (payload || buildRequirementRowPayload(row)).legacy_text;
+}
+
+function buildRequirementBranchPayload(row, sharedIntro, branch) {
+    const sharedContext = summarizeSharedContext(sharedIntro, row.element || '');
+    const rawBranchText = trimSemanticBlock(String(branch?.text || '').trim());
+    const branchText = stripServiceContextFragments(rawBranchText);
+    const detailBuckets = extractBehaviorDetailBuckets(branchText);
+    const methodSummary = buildMethodContextSummary(row.method);
+    const paramsSummary = buildRelevantParamsSummary(row.params, branch?.text || row.requirement);
+    const coreText = buildBehavioralCoreText({
+        subject: row.element,
+        sharedContext,
+        behavior: detailBuckets.behavior
+    });
+    const auxMetadata = buildRequirementAuxMetadata({
+        row,
+        sharedContext,
+        behaviorText: rawBranchText,
+        detailBuckets,
+        branchLabel: branch?.label || null
+    });
+
+    return {
+        core_text: coreText,
+        embedding_text: coreText,
+        aux_metadata: auxMetadata,
+        legacy_text: renderRequirementLegacyText({
+            rowNumber: row.row_number,
+            element: row.element,
+            context: sharedContext,
+            branchLabel: branch?.label || null,
+            behavior: detailBuckets.behavior || branchText,
+            methodSummary,
+            paramsSummary,
+            layoutSummary: ''
+        })
+    };
+}
+
+function buildRequirementBranchContent(row, sharedIntro, branch, payload = null) {
+    return (payload || buildRequirementBranchPayload(row, sharedIntro, branch)).legacy_text;
+}
+
+function renderRequirementLegacyText({
+    rowNumber,
+    element,
+    context,
+    branchLabel,
+    behavior,
+    methodSummary,
+    paramsSummary,
+    layoutSummary
+}) {
+    const lines = [];
+
+    if (!isPlaceholderValue(rowNumber)) {
+        lines.push(`Requirement row: ${rowNumber}`);
     }
-    if (!isPlaceholderValue(row.element)) {
-        lines.push(`Element: ${row.element}`);
+    if (!isPlaceholderValue(element)) {
+        lines.push(`Element: ${element}`);
+    }
+    if (!isPlaceholderValue(context)) {
+        lines.push(`Context: ${context}`);
+    }
+    if (!isPlaceholderValue(branchLabel)) {
+        lines.push(`Branch label: ${branchLabel}`);
     }
     if (!isPlaceholderValue(behavior)) {
         lines.push(`Behavior: ${behavior}`);
@@ -1607,44 +2106,240 @@ function buildRequirementRowContent(row) {
     return lines.join('\n');
 }
 
-function buildRequirementBranchContent(row, sharedIntro, branch) {
+function buildBehavioralCoreText({ subject, sharedContext, behavior }) {
     const lines = [];
-    const minimalSharedContext = summarizeSharedContext(sharedIntro, row.element || '');
+    const normalizedBehavior = normalizeForComparison(behavior);
+    const cleanedSubject = cleanInlineText(subject);
+    const cleanedContext = cleanInlineText(sharedContext);
+
+    if (cleanedSubject && (!normalizedBehavior || !normalizedBehavior.includes(normalizeForComparison(cleanedSubject)))) {
+        lines.push(cleanedSubject);
+    }
+    if (cleanedContext && shouldIncludeSharedContextInCoreText(cleanedContext)) {
+        lines.push(cleanedContext);
+    }
+    if (!isPlaceholderValue(behavior)) {
+        lines.push(trimSemanticBlock(behavior));
+    }
+
+    return trimSemanticBlock(lines.join('\n'));
+}
+
+function stripServiceContextFragments(text) {
+    return trimSemanticBlock(
+        String(text || '')
+            .replace(/(?:^|[\s;])API dependency\s*:\s*[^.;\n]+(?:[.;]|$)/gi, ' ')
+            .replace(/(?:^|[\s;])Relevant params?\s*:\s*[^.;\n]+(?:[.;]|$)/gi, ' ')
+            .replace(/(?:^|[\s;])Reference\s*:\s*[^.;\n]+(?:[.;]|$)/gi, ' ')
+            .replace(/(?:^|[\s;])Layout\s*:\s*[^.;\n]+(?:[.;]|$)/gi, ' ')
+            .replace(/\s{2,}/g, ' ')
+    );
+}
+
+function shouldIncludeSharedContextInCoreText(text) {
+    return Boolean(text) &&
+        hasConditionSignal(text) &&
+        !looksLikePureScopeContext(text);
+}
+
+function looksLikePureScopeContext(text) {
+    return /^(?:на|в)\s+(?:странице|экране|вкладке|табе|tab|page|screen|канале|channel)\b/i.test(cleanInlineText(text));
+}
+
+function extractBehaviorDetailBuckets(text) {
+    const { behavior, clauses } = parseStructuredBranchText(text);
+    const buckets = {
+        behavior: trimSemanticBlock(behavior || text),
+        constraints: [],
+        fallbacks: [],
+        display_rules: [],
+        validation_rules: []
+    };
+    const retainedBehaviorClauses = [];
+
+    for (const clause of clauses) {
+        const cleanedClause = trimSemanticBlock(clause);
+        const bucket = classifyBehaviorDetailClause(cleanedClause);
+        if (!bucket) {
+            retainedBehaviorClauses.push(cleanedClause);
+            continue;
+        }
+        buckets[bucket].push(cleanedClause);
+    }
+
+    if (retainedBehaviorClauses.length > 0) {
+        buckets.behavior = trimSemanticBlock([
+            buckets.behavior,
+            ...retainedBehaviorClauses
+        ].filter(Boolean).join('\n'));
+    }
+
+    return buckets;
+}
+
+function classifyBehaviorDetailClause(text) {
+    if (!text) {
+        return null;
+    }
+    if (isFallbackClauseText(text)) {
+        return 'fallbacks';
+    }
+    if (containsValidationRule(text)) {
+        return 'validation_rules';
+    }
+    if (looksLikeDisplayDetailClause(text)) {
+        return 'display_rules';
+    }
+    if (looksLikeConstraintClause(text)) {
+        return 'constraints';
+    }
+    return null;
+}
+
+function looksLikeDisplayDetailClause(text) {
+    const normalized = normalizeForComparison(text);
+    if (!normalized) {
+        return false;
+    }
+    return !hasScenarioBranchSeed(text) && (
+        /отображ|показ|скрыт|видим|формат|сортиров|layout|макет|placeholder|tooltip|иконк|подсказ/i.test(text) ||
+        normalized.includes('display') ||
+        normalized.includes('visible') ||
+        normalized.includes('hidden') ||
+        normalized.includes('color') ||
+        normalized.includes('red') ||
+        normalized.includes('green') ||
+        normalized.includes('font') ||
+        normalized.includes('icon')
+    );
+}
+
+function looksLikeConstraintClause(text) {
+    const normalized = normalizeForComparison(text);
+    if (!normalized) {
+        return false;
+    }
+    return !hasScenarioBranchSeed(text) && (
+        normalized.includes('только') ||
+        normalized.includes('only') ||
+        normalized.includes('недоступ') ||
+        normalized.includes('доступ') ||
+        normalized.includes('огранич') ||
+        normalized.includes('обязател') ||
+        normalized.includes('не допуска') ||
+        normalized.includes('not allowed') ||
+        normalized.includes('must not')
+    );
+}
+
+function buildRequirementAuxMetadata({
+    row,
+    sharedContext,
+    behaviorText,
+    detailBuckets,
+    branchLabel = null
+}) {
     const methodSummary = buildMethodContextSummary(row.method);
-    const paramsSummary = buildRelevantParamsSummary(row.params, branch?.text || row.requirement);
+    const endpoint = extractEndpointSignature(`${row.method || ''}\n${behaviorText || ''}`);
+    return {
+        element: cleanInlineText(row.element || ''),
+        shared_context: sharedContext || '',
+        screen_scope: extractScreenScope(sharedContext, behaviorText, row.element),
+        channel_scope: extractChannelScope(sharedContext, behaviorText),
+        entity_scope: truncateHeading(row.element || deriveEntityScopeFromBehavior(behaviorText), 160),
+        row_number: row.row_number || null,
+        section_number: row.section_number || null,
+        method: extractHttpMethod(row.method),
+        endpoint: endpoint || null,
+        method_summary: methodSummary || '',
+        related_params: buildRelevantParamsList(row.params, behaviorText),
+        references: buildRequirementReferences(row.layout, behaviorText),
+        layout_hints: buildLayoutHints(row.layout),
+        branch_label: branchLabel,
+        constraints: detailBuckets.constraints,
+        fallbacks: detailBuckets.fallbacks,
+        display_rules: detailBuckets.display_rules,
+        validation_rules: detailBuckets.validation_rules
+    };
+}
 
-    if (!isPlaceholderValue(row.row_number)) {
-        lines.push(`Requirement row: ${row.row_number}`);
+function deriveEntityScopeFromBehavior(text) {
+    const cleaned = cleanInlineText(text);
+    if (!cleaned) {
+        return '';
     }
-    if (!isPlaceholderValue(row.element)) {
-        lines.push(`Element: ${row.element}`);
-    }
-    if (!isPlaceholderValue(minimalSharedContext)) {
-        lines.push(`Context: ${minimalSharedContext}`);
-    }
-    if (!isPlaceholderValue(branch?.label)) {
-        lines.push(`Branch label: ${branch.label}`);
-    }
-    lines.push(`Behavior: ${branch.text}`);
+    const match = cleaned.match(/^([^:.;]{3,120})/);
+    return match?.[1] || cleaned;
+}
 
-    if (!isPlaceholderValue(methodSummary)) {
-        lines.push(`API dependency: ${methodSummary}`);
-    }
-    if (!isPlaceholderValue(paramsSummary)) {
-        lines.push(`Relevant params: ${paramsSummary}`);
-    }
+function extractScreenScope(...sources) {
+    return extractScopeByPatterns(sources, [
+        /((?:страниц[аеы]|экран[еау]|вкладк[аеу]|таб[еау]?|screen|page|tab|форм[аеу]|раздел[еау])\s+[^,.;:\n]{1,120})/i,
+        /((?:на|в)\s+(?:страниц[ае]|экране|вкладке|табе|screen|page|tab)\s+[^,.;:\n]{1,120})/i
+    ]);
+}
 
-    return lines.join('\n');
+function extractChannelScope(...sources) {
+    return extractScopeByPatterns(sources, [
+        /((?:канал[аеу]?|channel)\s+[^,.;:\n]{1,120})/i
+    ]);
+}
+
+function extractScopeByPatterns(sources = [], patterns = []) {
+    for (const source of sources) {
+        const text = cleanInlineText(source);
+        if (!text) {
+            continue;
+        }
+        for (const pattern of patterns) {
+            const match = text.match(pattern);
+            if (match?.[1]) {
+                return truncateHeading(match[1], 160);
+            }
+        }
+    }
+    return '';
+}
+
+function extractHttpMethod(text) {
+    const match = String(text || '').match(/\b(GET|POST|PUT|DELETE|PATCH)\b/i);
+    return match?.[1]?.toUpperCase() || null;
+}
+
+function buildRelevantParamsList(paramsText, branchText = '') {
+    const summary = buildRelevantParamsSummary(paramsText, branchText);
+    return summary
+        ? summary.split(',').map(item => item.trim()).filter(Boolean)
+        : [];
+}
+
+function buildRequirementReferences(layoutText, behaviorText = '') {
+    const references = [];
+    const layoutSummary = buildReferenceSummary(layoutText);
+    if (layoutSummary) {
+        references.push(layoutSummary);
+    }
+    for (const ref of extractExplicitRefs([layoutText, behaviorText].filter(Boolean).join('\n'))) {
+        if (ref?.original) {
+            references.push(ref.original);
+        }
+    }
+    return Array.from(new Set(references));
+}
+
+function buildLayoutHints(layoutText) {
+    const layoutSummary = buildReferenceSummary(layoutText);
+    return layoutSummary ? [layoutSummary] : [];
 }
 
 function splitRequirementIntoScenarioBranches(text) {
     const normalized = cleanInlineText(text);
     if (!normalized) {
-        return { sharedIntro: '', branches: [] };
+        return { sharedIntro: '', branches: [], forceBranches: false };
     }
 
     const numberedSplit = splitRequirementIntoStructuredScenarioBranches(normalized);
-    if (numberedSplit.branches.length >= 2) {
+    if (numberedSplit.forceBranches || numberedSplit.branches.length >= 2) {
         return numberedSplit;
     }
 
@@ -1659,16 +2354,28 @@ function splitRequirementIntoScenarioBranches(text) {
 
     return {
         sharedIntro: '',
-        branches: [{ label: null, text: normalized }]
+        branches: [{ label: null, text: normalized }],
+        forceBranches: false
     };
 }
 
-function buildRequirementChunkMetadata(row, sharedIntro = '') {
+function buildRequirementChunkMetadata(row, sharedIntro = '', auxMetadata = {}) {
     return {
         shared_context: summarizeSharedContext(sharedIntro, row.element || ''),
         method_summary: buildMethodContextSummary(row.method),
         related_params: buildRelevantParamsSummary(row.params, row.requirement),
         layout_ref: buildReferenceSummary(row.layout),
+        screen_scope: auxMetadata.screen_scope || null,
+        channel_scope: auxMetadata.channel_scope || null,
+        entity_scope: auxMetadata.entity_scope || null,
+        endpoint: auxMetadata.endpoint || null,
+        method: auxMetadata.method || null,
+        references: auxMetadata.references || [],
+        layout_hints: auxMetadata.layout_hints || [],
+        constraints: auxMetadata.constraints || [],
+        fallbacks: auxMetadata.fallbacks || [],
+        display_rules: auxMetadata.display_rules || [],
+        validation_rules: auxMetadata.validation_rules || [],
         source_ref_text: buildRequirementReferenceContext(row)
     };
 }
@@ -1758,19 +2465,49 @@ function buildReferenceSummary(layoutText) {
 function splitRequirementIntoStructuredScenarioBranches(text) {
     const parsed = parseNumberedRequirementClauses(text);
     if (!parsed.roots.length) {
-        return { sharedIntro: '', branches: [] };
+        return { sharedIntro: '', branches: [], forceBranches: false };
     }
 
     const branches = [];
+    const deferredDetailClauses = [];
+    let forceBranches = false;
+    let sawSeededRoot = false;
     for (const root of parsed.roots) {
-        if (shouldSplitNodeChildrenIntoScenarios(root)) {
-            for (const child of root.children) {
-                branches.push(buildScenarioBranchFromHierarchy(root, child));
-            }
+        const splitResult = splitScenarioNodeIntoBranches(root);
+        if (splitResult.forceBranches) {
+            forceBranches = true;
+        }
+        if (splitResult.branches.length > 0) {
+            const preparedBranches = splitResult.branches.map((branch, index) =>
+                index === 0 && deferredDetailClauses.length > 0
+                    ? appendDetailClausesToBranch(branch, deferredDetailClauses)
+                    : branch
+            );
+            deferredDetailClauses.length = 0;
+            branches.push(...preparedBranches);
             continue;
         }
 
-        branches.push(buildScenarioBranchFromHierarchy(null, root));
+        const rootBranch = buildScenarioBranchFromHierarchy(null, root);
+        if (hasScenarioBranchSeed(root.text) || hasScenarioBranchSeed(rootBranch.text)) {
+            sawSeededRoot = true;
+            forceBranches = true;
+            const preparedBranch = deferredDetailClauses.length > 0
+                ? appendDetailClausesToBranch(rootBranch, deferredDetailClauses)
+                : rootBranch;
+            deferredDetailClauses.length = 0;
+            branches.push(preparedBranch);
+            continue;
+        }
+
+        deferredDetailClauses.push(trimTrailingPunctuation(root.text));
+    }
+
+    if (branches.length > 0 && deferredDetailClauses.length > 0) {
+        branches[branches.length - 1] = appendDetailClausesToBranch(
+            branches[branches.length - 1],
+            deferredDetailClauses
+        );
     }
 
     const normalizedBranches = normalizeStructuredScenarioBranches(branches);
@@ -1778,13 +2515,15 @@ function splitRequirementIntoStructuredScenarioBranches(text) {
     if (meaningfulBranches.length < 2) {
         return {
             sharedIntro: '',
-            branches: [{ label: null, text }]
+            branches: (forceBranches || sawSeededRoot) ? meaningfulBranches : [{ label: null, text }],
+            forceBranches: Boolean((forceBranches || sawSeededRoot) && meaningfulBranches.length > 0)
         };
     }
 
     return {
         sharedIntro: parsed.sharedIntro,
-        branches: meaningfulBranches
+        branches: meaningfulBranches,
+        forceBranches
     };
 }
 
@@ -1836,65 +2575,68 @@ function expandFallbackScenarioBranch(branch) {
 }
 
 function mergeOvergranularScenarioBranches(branches = []) {
-    const broadBranchByPrefix = new Map();
-    const granularBranchGroups = new Map();
-    for (const branch of branches) {
-        const prefix = getScenarioLabelPrefix(branch?.label, 2);
-        const depth = getScenarioLabelDepth(branch?.label);
-        if (!prefix) {
-            continue;
-        }
-        if (depth === 2) {
-            broadBranchByPrefix.set(prefix, branch);
-            continue;
-        }
-        if (depth > 2) {
-            if (!granularBranchGroups.has(prefix)) {
-                granularBranchGroups.set(prefix, []);
-            }
-            granularBranchGroups.get(prefix).push(branch);
-        }
-    }
-
-    const synthesizedBranchByPrefix = new Map();
-    for (const [prefix, groupedBranches] of granularBranchGroups.entries()) {
-        if (!broadBranchByPrefix.has(prefix) && groupedBranches.length >= 2) {
-            synthesizedBranchByPrefix.set(prefix, synthesizeScenarioBranchFromGroup(prefix, groupedBranches));
-        }
-    }
-
     const result = [];
-    const emittedSynthesizedPrefixes = new Set();
     for (const branch of branches) {
-        const prefix = getScenarioLabelPrefix(branch?.label, 2);
-        const depth = getScenarioLabelDepth(branch?.label);
-        const target = prefix ? broadBranchByPrefix.get(prefix) : null;
-        if (
-            target &&
-            target !== branch &&
-            !String(branch?.label || '').includes('-fallback') &&
-            depth > 2
-        ) {
-            target.text = mergeStructuredBranchTexts(target.text, branch.text);
+        const previous = result[result.length - 1];
+        if (previous && shouldMergeScenarioBranches(previous, branch)) {
+            previous.text = mergeStructuredBranchTexts(previous.text, branch.text);
+            previous.sourceNumber = previous.sourceNumber || branch.sourceNumber || previous.label || branch.label || null;
             continue;
         }
+        result.push({ ...branch });
+    }
+    return result;
+}
 
-        if (
-            depth > 2 &&
-            prefix &&
-            synthesizedBranchByPrefix.has(prefix)
-        ) {
-            if (!emittedSynthesizedPrefixes.has(prefix)) {
-                result.push(synthesizedBranchByPrefix.get(prefix));
-                emittedSynthesizedPrefixes.add(prefix);
-            }
-            continue;
-        }
+function appendDetailClausesToBranch(branch, clauses = []) {
+    const parsed = parseStructuredBranchText(branch?.text || '');
+    return {
+        ...branch,
+        text: buildStructuredBranchText(parsed.behavior, [
+            ...parsed.clauses,
+            ...clauses
+        ])
+    };
+}
 
-        result.push(branch);
+function shouldMergeScenarioBranches(left, right) {
+    if (!left || !right) {
+        return false;
     }
 
-    return result;
+    const leftFallback = String(left?.label || '').includes('-fallback');
+    const rightFallback = String(right?.label || '').includes('-fallback');
+    if (leftFallback !== rightFallback) {
+        return false;
+    }
+
+    const leftParsed = parseStructuredBranchText(left.text);
+    const rightParsed = parseStructuredBranchText(right.text);
+    const leftBehavior = normalizeForComparison(leftParsed.behavior || left.text);
+    const rightBehavior = normalizeForComparison(rightParsed.behavior || right.text);
+    const leftEntity = normalizeForComparison(deriveEntityScopeFromBehavior(leftParsed.behavior || left.text));
+    const rightEntity = normalizeForComparison(deriveEntityScopeFromBehavior(rightParsed.behavior || right.text));
+    const leftScreen = normalizeForComparison(extractScreenScope(left.text));
+    const rightScreen = normalizeForComparison(extractScreenScope(right.text));
+    const sameBehavior = Boolean(
+        leftBehavior &&
+        rightBehavior &&
+        (leftBehavior === rightBehavior || leftBehavior.includes(rightBehavior) || rightBehavior.includes(leftBehavior))
+    );
+    const sameEntity = Boolean(leftEntity && rightEntity && leftEntity === rightEntity);
+    const sameScreen = !leftScreen || !rightScreen || leftScreen === rightScreen;
+    const sameOutcome = extractOutcomeSignature(leftParsed.behavior || left.text) === extractOutcomeSignature(rightParsed.behavior || right.text);
+    const rightOnlyDetails = [rightParsed.behavior, ...rightParsed.clauses]
+        .filter(Boolean)
+        .every(part => classifyBehaviorDetailClause(part));
+
+    return sameOutcome && sameScreen && rightOnlyDetails && (sameBehavior || sameEntity);
+}
+
+function extractOutcomeSignature(text) {
+    const matches = Array.from(String(text || '').matchAll(/(отображ|показыв|скрыва|ошибк|сообщени|возвраща|сохраня|созда|доступ|недоступ|show|hide|error|message|return|save|create|enabled|disabled)/gi))
+        .map(match => String(match[1] || '').toLowerCase());
+    return matches.slice(0, 4).join('|');
 }
 
 function normalizeImplicitFirstScenarioBranches(branches = []) {
@@ -2115,9 +2857,57 @@ function findParentNumberedClause(item, allItems) {
     return null;
 }
 
+function splitScenarioNodeIntoBranches(node) {
+    const children = Array.isArray(node?.children) ? node.children : [];
+    if (children.length === 0) {
+        return { branches: [], forceBranches: false };
+    }
+
+    const seedChildren = children.filter(child =>
+        hasScenarioBranchSeed(child.text) ||
+        hasScenarioBranchSeed(trimSemanticBlock([child.text, ...collectNestedScenarioClauses(child.children || [])].join('\n')))
+    );
+    if (seedChildren.length === 0) {
+        return { branches: [], forceBranches: false };
+    }
+
+    const siblingDetails = children
+        .filter(child => !seedChildren.includes(child))
+        .map(child => trimTrailingPunctuation(child.text))
+        .filter(Boolean);
+
+    return {
+        branches: seedChildren.map(child => buildScenarioBranchFromHierarchy(node, child, siblingDetails)),
+        forceBranches: true
+    };
+}
+
 function shouldSplitNodeChildrenIntoScenarios(node) {
-    return (node?.children || []).length >= 2 &&
-        node.children.some(child => looksLikeScenarioSeed(child.text) || child.children.length > 0);
+    return splitScenarioNodeIntoBranches(node).forceBranches;
+}
+
+function hasScenarioBranchSeed(text) {
+    const cleaned = cleanInlineText(text);
+    if (!cleaned) {
+        return false;
+    }
+
+    return hasConditionSignal(cleaned) &&
+        (hasBehavioralPredicateSignal(cleaned) || hasExpectedResultSignal(cleaned));
+}
+
+function hasConditionSignal(text) {
+    return /^(если|иначе если|иначе|когда|при|в случае|if|when|otherwise|else)\b/i.test(cleanInlineText(text));
+}
+
+function hasBehavioralPredicateSignal(text) {
+    return /(нажим|клика|выбира|ввод|открыва|закрыва|отправля|созда|сохраня|удаля|редактиру|отобража|показыва|скрыва|блокир|разреша|запреща|возвраща|получа|активн|неактивн|доступн|недоступн|выбран|enabled|disabled|active|inactive|available|unavailable|selected|select|click|enter|open|close|submit|display|show|hide|save|create|delete|return)/i
+        .test(String(text || ''));
+}
+
+function hasExpectedResultSignal(text) {
+    return /(отобража|показыва|скрыва|станов|доступ|недоступ|ошибк|сообщени|открыва|закрыва|сохраня|созда|возвраща|появля|очища|selected|shown|hidden|visible|enabled|disabled|error|message|opened|saved|created|returned|must|should)/i
+        .test(String(text || ''));
 }
 
 function looksLikeScenarioSeed(text) {
@@ -2125,7 +2915,7 @@ function looksLikeScenarioSeed(text) {
         .test(cleanInlineText(text));
 }
 
-function buildScenarioBranchFromHierarchy(parentNode, node) {
+function buildScenarioBranchFromHierarchy(parentNode, node, inheritedClauses = []) {
     const lines = [];
     if (parentNode?.text) {
         lines.push(trimTrailingPunctuation(parentNode.text));
@@ -2133,7 +2923,10 @@ function buildScenarioBranchFromHierarchy(parentNode, node) {
 
     lines.push(trimTrailingPunctuation(node.text));
 
-    const clauses = collectNestedScenarioClauses(node.children || []);
+    const clauses = [
+        ...inheritedClauses,
+        ...collectNestedScenarioClauses(node.children || [])
+    ];
     if (clauses.length) {
         lines.push('Clauses:');
         for (const clause of clauses) {
@@ -2171,7 +2964,8 @@ function splitTextByMarkers(text, regex, getLabel) {
     if (matches.length < 2) {
         return {
             sharedIntro: '',
-            branches: [{ label: null, text }]
+            branches: [{ label: null, text }],
+            forceBranches: false
         };
     }
 
@@ -2206,11 +3000,12 @@ function splitTextByMarkers(text, regex, getLabel) {
     if (branches.length < 2) {
         return {
             sharedIntro: '',
-            branches: [{ label: null, text }]
+            branches: [{ label: null, text }],
+            forceBranches: false
         };
     }
 
-    return { sharedIntro, branches };
+    return { sharedIntro, branches, forceBranches: false };
 }
 
 function escapeRegExp(text) {

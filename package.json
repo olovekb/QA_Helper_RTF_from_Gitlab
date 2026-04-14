@@ -6,7 +6,8 @@
   "scripts": {
     "run": "node server/server",
     "generate-validation-rules": "node server/scripts/generate-validation-rules-md.mjs",
-    "db:migrate": "npx knex migrate:latest --knexfile server/db/knexfile.js"
+    "db:migrate": "npx knex migrate:latest --knexfile server/db/knexfile.js",
+    "test:server": "node --test server/tests"
   },
   "type": "module",
   "author": "Владимир Поляков",

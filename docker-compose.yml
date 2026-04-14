@@ -1,5 +1,8 @@
 services:
   allure-test-inspector:
+    build:
+      context: .
+      dockerfile: Dockerfile.allure-test-inspector
     image: allure-test-inspector-local
     restart: always
     env_file:
@@ -45,6 +48,9 @@ services:
         max-file: "3"
 
   tia-mapping-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.tia-mapping-service
     depends_on:
       postgresql:
         condition: service_healthy
@@ -77,6 +83,9 @@ services:
         max-file: "3"
 
   bdd-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.bdd-server
     depends_on:
       postgresql:
         condition: service_healthy
@@ -109,6 +118,9 @@ services:
         max-file: "3"
 
   bert-score-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.bert-score-service
     image: bert-score-service-local
     restart: always
     environment:
@@ -134,6 +146,7 @@ services:
     restart: always
     ports:
       - 5432:5432
+      - 55432:5432
     networks:
       - allure-test-net
     environment:

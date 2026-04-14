@@ -5257,7 +5257,17 @@ export default function TestModelReviewModal({
                                         <div style={{ marginBottom: '6px' }}>
                                             Ваши тест-кейсы, которые не были учтены в тест-кейсах LLM:
                                         </div>
-                                        <ol style={{ margin: 0, paddingLeft: '18px' }}>
+                                        <div style={{
+                                            maxHeight: '240px',
+                                            overflowY: 'auto',
+                                            overflowX: 'hidden',
+                                            padding: '10px 12px',
+                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                            borderRadius: '8px',
+                                            background: '#1b2129',
+                                            scrollbarGutter: 'stable'
+                                        }}>
+                                            <ol style={{ margin: 0, paddingLeft: '18px' }}>
                                             {(comparisonReport.uncoveredManualCases || []).map((item, index) => {
                                                 const manualCaseId = item.manualCase?.id || 'ID не указан';
                                                 const manualCaseTitle = item.manualCase?.title || 'Без названия';
@@ -5268,7 +5278,8 @@ export default function TestModelReviewModal({
                                                     </li>
                                                 );
                                             })}
-                                        </ol>
+                                            </ol>
+                                        </div>
                                     </div>
                                 )}
                             </>

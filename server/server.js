@@ -214,7 +214,12 @@ import http from 'http';
 import https from 'https';
 import { prepareContextWithAI } from './contextRefiner.mjs';
 import { callWithCloudRuFallback, callCloudRuAPI } from './cloudruClient.mjs';
-import { chunkify, linkChunks } from './semanticChunking.mjs';
+import {
+    chunkify,
+    linkChunks,
+    RETRIEVAL_CLASSES,
+    ELIGIBILITY_STATUSES
+} from './semanticChunking.mjs';
 import { 
     initPgVectorStore, 
     isPgVectorInitialized, 
@@ -224,6 +229,12 @@ import {
     deleteChunksByDocId,
     findChunksByReferences
 } from './pgvectorStore.mjs';
+import {
+    buildEnrichmentQuery,
+    getChunkAuxMetadata as getBehavioralAuxMetadata,
+    isBehavioralRetrievalCandidate,
+    rerankRetrievedChunksByMetadata
+} from './behavioralRetrieval.mjs';
 import { 
     initNeo4j, isNeo4jAvailable, isNeo4jInitialized, 
     upsertNodes, upsertRelationships,
@@ -295,7 +306,8 @@ function getDefaultPipelineFlags() {
         ENABLE_GLOBAL_PREPROCESSORS: readBooleanEnv('ENABLE_GLOBAL_PREPROCESSORS', false),
         ENABLE_CHUNK_DUMP: readBooleanEnv('ENABLE_CHUNK_DUMP', false),
         ENABLE_WIDE_MULTIHOP_RETRIEVAL: readBooleanEnv('ENABLE_WIDE_MULTIHOP_RETRIEVAL', false),
-        ENABLE_GLOBAL_SEMANTIC_REFINEMENT: readBooleanEnv('ENABLE_GLOBAL_SEMANTIC_REFINEMENT', false)
+        ENABLE_GLOBAL_SEMANTIC_REFINEMENT: readBooleanEnv('ENABLE_GLOBAL_SEMANTIC_REFINEMENT', false),
+        ENABLE_BEHAVIORAL_RETRIEVAL_V2: readBooleanEnv('', true)
     };
 }
 
@@ -3799,6 +3811,9 @@ function formatExplicitRefForDebug(ref) {
 
 function serializeDebugChunk(chunk, index, { includeFullText = true, maxPreviewLength = 1500 } = {}) {
     const text = String(chunk?.cleaned_text || chunk?.content || '').trim();
+    const coreText = String(chunk?.core_text || chunk?.metadata?.core_text || '').trim();
+    const embeddingText = String(chunk?.embedding_text || chunk?.metadata?.embedding_text || '').trim();
+    const auxMetadata = getBehavioralAuxMetadata(chunk);
     const preview = text.length > maxPreviewLength
         ? `${text.slice(0, maxPreviewLength)}...`
         : text;
@@ -3819,10 +3834,21 @@ function serializeDebugChunk(chunk, index, { includeFullText = true, maxPreviewL
         graphEligible: chunk?.metadata?.graph_eligible,
         relevanceScore: Number.isFinite(chunk?.metadata?.relevance_score) ? Number(chunk.metadata.relevance_score) : null,
         canonicalKey: chunk?.metadata?.canonical_key || null,
-        dropReason: chunk?.metadata?.drop_reason || null,
+        retrievalClass: chunk?.retrieval_class || chunk?.metadata?.retrieval_class || null,
+        eligibilityStatus: chunk?.eligibility_status || chunk?.metadata?.eligibility_status || null,
+        contentRatio: chunk?.content_ratio || chunk?.metadata?.content_ratio || null,
+        retrievalPenalty: Number.isFinite(chunk?.retrieval_penalty)
+            ? Number(chunk.retrieval_penalty)
+            : (Number(chunk?.metadata?.retrieval_penalty) || 0),
+        dropReason: chunk?.drop_reason || chunk?.metadata?.drop_reason || null,
+        auxMetadata,
         length: text.length,
         preview,
-        ...(includeFullText ? { text } : {})
+        ...(includeFullText ? {
+            text,
+            coreText,
+            embeddingText
+        } : {})
     };
 }
 
@@ -4223,12 +4249,29 @@ function renderChunkMarkdownSection(title, chunkGroup, { includeSourceText = tru
         lines.push(`- graphEligible: ${chunk.graphEligible == null ? 'вЂ”' : (chunk.graphEligible ? 'yes' : 'no')}`);
         lines.push(`- relevanceScore: ${chunk.relevanceScore == null ? 'вЂ”' : chunk.relevanceScore}`);
         lines.push(`- canonicalKey: ${chunk.canonicalKey || 'вЂ”'}`);
+        lines.push(`- retrievalClass: ${chunk.retrievalClass || 'вЂ”'}`);
+        lines.push(`- eligibilityStatus: ${chunk.eligibilityStatus || 'вЂ”'}`);
+        lines.push(`- contentRatio: ${chunk.contentRatio == null ? 'вЂ”' : chunk.contentRatio}`);
+        lines.push(`- retrievalPenalty: ${chunk.retrievalPenalty == null ? 'вЂ”' : chunk.retrievalPenalty}`);
         lines.push(`- dropReason: ${chunk.dropReason || 'вЂ”'}`);
+        lines.push(`- auxMetadata: ${Object.keys(chunk.auxMetadata || {}).length ? JSON.stringify(chunk.auxMetadata) : 'вЂ”'}`);
         lines.push('');
         lines.push('```text');
         lines.push(chunk.text || chunk.preview || '');
         lines.push('```');
         lines.push('');
+        if (chunk.coreText) {
+            lines.push('```text');
+            lines.push(`CORE_TEXT:\n${chunk.coreText}`);
+            lines.push('```');
+            lines.push('');
+        }
+        if (chunk.embeddingText) {
+            lines.push('```text');
+            lines.push(`EMBEDDING_TEXT:\n${chunk.embeddingText}`);
+            lines.push('```');
+            lines.push('');
+        }
     }
 
     return lines.join('\n');
@@ -4353,6 +4396,20 @@ function persistRequirementChunkDumpMarkdown(markdown, { taskId = null } = {}) {
     writeFileSync(latestFilePath, markdown, 'utf8');
 
     return { taskFilePath, latestFilePath };
+}
+
+function persistGeneratedTestModelJson(testModel, { taskId = null } = {}) {
+    const outputDir = join(__dirname, '..', 'report', 'test-models');
+    mkdirSync(outputDir, { recursive: true });
+
+    const safeTaskId = String(taskId || 'manual').replace(/[^a-zA-Z0-9._-]+/g, '_');
+    const filename = `${safeTaskId}-test-model.json`;
+    const absoluteFilePath = join(outputDir, filename);
+    const relativeFilePath = join('report', 'test-models', filename).replace(/\\/g, '/');
+
+    writeFileSync(absoluteFilePath, JSON.stringify(testModel, null, 2), 'utf8');
+
+    return { absoluteFilePath, relativeFilePath };
 }
 
 // API для работы с правилами валидации
@@ -8532,6 +8589,27 @@ function createCanonicalChunk(rawChunk = {}, overrides = {}) {
         rawChunk.content ??
         ''
     ).trim();
+    const coreText = String(
+        overrides.core_text ??
+        rawChunk.core_text ??
+        rawChunk.metadata?.core_text ??
+        ''
+    ).trim();
+    const embeddingText = String(
+        overrides.embedding_text ??
+        rawChunk.embedding_text ??
+        rawChunk.metadata?.embedding_text ??
+        (coreText || cleanedText)
+    ).trim();
+    const auxMetadata = {
+        ...(rawChunk.aux_metadata || rawChunk.metadata?.aux_metadata || {}),
+        ...(overrides.aux_metadata || overrides.metadata?.aux_metadata || {})
+    };
+    const segmentText = String(
+        overrides.segment_text ??
+        rawChunk.segment_text ??
+        (coreText || cleanedText)
+    ).trim();
 
     const sourceType = overrides.source_type || overrides.sourceType || rawChunk.source_type || 'linked';
     const sourceScope = overrides.source_scope || overrides.sourceScope || rawChunk.source_scope || sourceType;
@@ -8549,10 +8627,20 @@ function createCanonicalChunk(rawChunk = {}, overrides = {}) {
         doc_title: overrides.doc_title || rawChunk.doc_title || overrides.docTitle || 'Requirements',
         cleaned_text: cleanedText,
         content: cleanedText,
+        core_text: coreText,
+        embedding_text: embeddingText,
+        aux_metadata: auxMetadata,
+        segment_text: segmentText,
         heading: overrides.heading || rawChunk.heading || null,
         section_path: normalizeSectionPath(overrides.section_path || rawChunk.section_path),
         requirement_id: overrides.requirement_id || rawChunk.requirement_id || null,
         chunk_type: overrides.chunk_type || rawChunk.chunk_type || 'generic',
+        retrieval_class: overrides.retrieval_class || rawChunk.retrieval_class || rawChunk.metadata?.retrieval_class || null,
+        eligibility_status: overrides.eligibility_status || rawChunk.eligibility_status || rawChunk.metadata?.eligibility_status || null,
+        retrieval_penalty: Number.isFinite(overrides.retrieval_penalty)
+            ? Number(overrides.retrieval_penalty)
+            : (Number.isFinite(rawChunk.retrieval_penalty) ? Number(rawChunk.retrieval_penalty) : (Number(rawChunk.metadata?.retrieval_penalty) || 0)),
+        content_ratio: overrides.content_ratio || rawChunk.content_ratio || rawChunk.metadata?.content_ratio || null,
         explicit_refs: Array.isArray(overrides.explicit_refs || rawChunk.explicit_refs)
             ? (overrides.explicit_refs || rawChunk.explicit_refs)
             : [],
@@ -8568,6 +8656,15 @@ function createCanonicalChunk(rawChunk = {}, overrides = {}) {
         metadata: {
             ...(rawChunk.metadata || {}),
             ...(overrides.metadata || {}),
+            aux_metadata: auxMetadata,
+            core_text: coreText,
+            embedding_text: embeddingText,
+            retrieval_class: overrides.retrieval_class || rawChunk.retrieval_class || rawChunk.metadata?.retrieval_class || null,
+            eligibility_status: overrides.eligibility_status || rawChunk.eligibility_status || rawChunk.metadata?.eligibility_status || null,
+            retrieval_penalty: Number.isFinite(overrides.retrieval_penalty)
+                ? Number(overrides.retrieval_penalty)
+                : (Number.isFinite(rawChunk.retrieval_penalty) ? Number(rawChunk.retrieval_penalty) : (Number(rawChunk.metadata?.retrieval_penalty) || 0)),
+            content_ratio: overrides.content_ratio || rawChunk.content_ratio || rawChunk.metadata?.content_ratio || null,
             source_scope: sourceScope
         }
     };
@@ -8774,6 +8871,15 @@ function finalizeGenerationSegment(chunks, segmentIndex) {
         }
     }
 
+    const retrievalProfile = {
+        screen_scopes: Array.from(new Set(list.map(chunk => chunk?.metadata?.screen_scope || chunk?.aux_metadata?.screen_scope).filter(Boolean))),
+        entity_scopes: Array.from(new Set(list.map(chunk => chunk?.metadata?.entity_scope || chunk?.aux_metadata?.entity_scope).filter(Boolean))),
+        section_numbers: Array.from(new Set(list.map(chunk => chunk?.metadata?.section_number || chunk?.section_number).filter(Boolean))),
+        endpoints: Array.from(new Set(list.map(chunk => chunk?.metadata?.endpoint || chunk?.aux_metadata?.endpoint).filter(Boolean))),
+        methods: Array.from(new Set(list.map(chunk => chunk?.metadata?.method || chunk?.aux_metadata?.method).filter(Boolean))),
+        row_numbers: Array.from(new Set(list.map(chunk => chunk?.metadata?.row_number || chunk?.aux_metadata?.row_number).filter(Boolean)))
+    };
+
     return {
         id: `segment-${segmentIndex + 1}`,
         index: segmentIndex,
@@ -8781,13 +8887,14 @@ function finalizeGenerationSegment(chunks, segmentIndex) {
         docTitle: firstChunk.doc_title,
         chunkIds: list.map(chunk => chunk.id),
         chunks: list,
-        text: list.map(chunk => chunk.cleaned_text || chunk.content || '').filter(Boolean).join('\n\n'),
+        text: list.map(chunk => chunk.segment_text || chunk.core_text || chunk.cleaned_text || chunk.content || '').filter(Boolean).join('\n\n'),
         tokenCount: list.reduce((sum, chunk) => sum + (chunk.token_count || 0), 0),
         heading: firstChunk.heading || null,
         sectionPath: commonSectionPath,
         requirementIds,
         chunkTypes,
-        explicitRefs
+        explicitRefs,
+        retrievalProfile
     };
 }
 
@@ -8860,18 +8967,59 @@ function buildSegmentRetrievalQuery(segment) {
         .join('\n');
 }
 
-function formatRetrievedContext(retrievedChunks = []) {
+function formatRetrievedContext(retrievedChunks = [], options = {}) {
+    const {
+        preferCoreText = false,
+        includeAuxMetadata = false
+    } = options;
     const items = (retrievedChunks || []).slice(0, 9).map((chunk, index) => {
         const label = `${String(chunk.source_type || 'linked').toUpperCase()} ${index + 1}`;
         const heading = chunk.heading || chunk.doc_title || chunk.doc_id;
-        const content = String(chunk.content || chunk.cleaned_text || '').trim().slice(0, 1200);
-        return `[${label}] ${heading}\n${content}`;
+        const content = String(
+            (preferCoreText
+                ? (chunk.core_text || chunk.metadata?.core_text || chunk.content || chunk.cleaned_text)
+                : (chunk.content || chunk.cleaned_text || chunk.core_text || chunk.metadata?.core_text)
+            ) || ''
+        ).trim().slice(0, 1200);
+        const auxSummary = includeAuxMetadata ? formatChunkAuxMetadata(chunk) : '';
+        return `[${label}] ${heading}\n${content}${auxSummary ? `\n${auxSummary}` : ''}`;
     });
 
     return items.join('\n\n');
 }
 
-async function retrieveContextForSegment(segment, bundle, apiKey) {
+function formatChunkAuxMetadata(chunk = {}) {
+    const aux = getBehavioralAuxMetadata(chunk);
+    const lines = [];
+
+    if (aux.screen_scope) lines.push(`Screen scope: ${aux.screen_scope}`);
+    if (aux.entity_scope) lines.push(`Entity scope: ${aux.entity_scope}`);
+    if (aux.channel_scope) lines.push(`Channel scope: ${aux.channel_scope}`);
+    if (aux.method || aux.endpoint) {
+        lines.push(`API: ${[aux.method, aux.endpoint].filter(Boolean).join(' ')}`.trim());
+    }
+    if (Array.isArray(aux.related_params) && aux.related_params.length > 0) {
+        lines.push(`Relevant params: ${aux.related_params.slice(0, 6).join(', ')}`);
+    }
+    if (Array.isArray(aux.references) && aux.references.length > 0) {
+        lines.push(`References: ${aux.references.slice(0, 3).join('; ')}`);
+    }
+    if (Array.isArray(aux.fallbacks) && aux.fallbacks.length > 0) {
+        lines.push(`Fallbacks: ${aux.fallbacks.slice(0, 2).join(' | ')}`);
+    }
+    if (Array.isArray(aux.display_rules) && aux.display_rules.length > 0) {
+        lines.push(`Display rules: ${aux.display_rules.slice(0, 2).join(' | ')}`);
+    }
+    if (Array.isArray(aux.validation_rules) && aux.validation_rules.length > 0) {
+        lines.push(`Validation rules: ${aux.validation_rules.slice(0, 2).join(' | ')}`);
+    }
+
+    return lines.length > 0
+        ? lines.map(line => `Metadata: ${line}`).join('\n')
+        : '';
+}
+
+async function retrieveContextForSegmentLegacy(segment, bundle, apiKey) {
     const sourceWeights = {
         main: 1.0,
         context: 0.85,
@@ -8944,6 +9092,215 @@ async function retrieveContextForSegment(segment, bundle, apiKey) {
         formattedContext: formatRetrievedContext(items),
         retrievalCallCount
     };
+}
+
+async function retrieveContextForSegmentV2(segment, bundle, apiKey) {
+    const sourceWeights = {
+        main: 1.0,
+        context: 0.85,
+        linked: 0.65
+    };
+    const currentSegmentChunkIds = new Set(Array.isArray(segment?.chunkIds) ? segment.chunkIds : []);
+    const mergedBehavioral = new Map();
+    let retrievalCallCount = 0;
+
+    const pushBehavioralChunks = (chunks = [], channel = 'behavioral', extraBoost = 0) => {
+        for (const chunk of chunks) {
+            if (!chunk?.id || currentSegmentChunkIds.has(chunk.id) || !isBehavioralRetrievalCandidate(chunk)) {
+                continue;
+            }
+
+            const sourceType = chunk.source_type || 'linked';
+            const baseWeight = sourceWeights[sourceType] ?? 0.65;
+            const score = typeof chunk.score === 'number' ? chunk.score : 1.0;
+            const finalScore = score * baseWeight + extraBoost;
+            const existing = mergedBehavioral.get(chunk.id);
+
+            if (!existing || finalScore > existing.finalScore) {
+                mergedBehavioral.set(chunk.id, {
+                    ...chunk,
+                    retrieval_channel: channel,
+                    finalScore
+                });
+            }
+        }
+    };
+
+    const query = buildSegmentRetrievalQuery(segment);
+    const behavioralSearchOptions = {
+        retrievalClass: RETRIEVAL_CLASSES.BEHAVIORAL,
+        eligibilityStatuses: [
+            ELIGIBILITY_STATUSES.ELIGIBLE,
+            ELIGIBILITY_STATUSES.PENALIZED
+        ]
+    };
+
+    const mainResults = await semanticSearch(query, apiKey, {
+        topK: 8,
+        sourceType: 'main',
+        docId: bundle?.main?.docId || null,
+        ...behavioralSearchOptions
+    });
+    retrievalCallCount += 1;
+    pushBehavioralChunks(mainResults, 'behavioral_main');
+
+    if (Array.isArray(segment?.explicitRefs) && segment.explicitRefs.length > 0) {
+        const explicitResults = await findChunksByReferences(segment.explicitRefs, null, { limit: 4 });
+        pushBehavioralChunks(explicitResults, 'behavioral_explicit', 0.05);
+    }
+
+    if (mergedBehavioral.size < 5 && Array.isArray(bundle?.contextDocs) && bundle.contextDocs.length > 0) {
+        const contextResults = await semanticSearch(query, apiKey, {
+            topK: 4,
+            sourceType: 'context',
+            ...behavioralSearchOptions
+        });
+        retrievalCallCount += 1;
+        pushBehavioralChunks(contextResults, 'behavioral_context');
+    }
+
+    if (mergedBehavioral.size < 5 && Array.isArray(bundle?.linkedDocs) && bundle.linkedDocs.length > 0) {
+        const linkedResults = await semanticSearch(query, apiKey, {
+            topK: 4,
+            sourceType: 'linked',
+            ...behavioralSearchOptions
+        });
+        retrievalCallCount += 1;
+        pushBehavioralChunks(linkedResults, 'behavioral_linked');
+    }
+
+    const behavioralItems = rerankRetrievedChunksByMetadata(
+        Array.from(mergedBehavioral.values()),
+        segment,
+        { limit: 6 }
+    );
+
+    if (behavioralItems.length === 0) {
+        const fallback = await retrieveContextForSegmentLegacy(segment, bundle, apiKey);
+        return {
+            ...fallback,
+            retrievalMode: 'legacy_fallback'
+        };
+    }
+
+    const enrichmentQuery = buildEnrichmentQuery(segment, behavioralItems) || query;
+    const enrichmentStatuses = [
+        ELIGIBILITY_STATUSES.ELIGIBLE,
+        ELIGIBILITY_STATUSES.PENALIZED
+    ];
+
+    let apiItems = [];
+    let referenceItems = [];
+
+    if (enrichmentQuery) {
+        const [apiResults, referenceResults] = await Promise.all([
+            semanticSearch(enrichmentQuery, apiKey, {
+                topK: 3,
+                retrievalClass: RETRIEVAL_CLASSES.API_CONTEXT,
+                eligibilityStatuses: enrichmentStatuses
+            }),
+            semanticSearch(enrichmentQuery, apiKey, {
+                topK: 3,
+                retrievalClass: RETRIEVAL_CLASSES.REFERENCE_CONTEXT,
+                eligibilityStatuses: enrichmentStatuses
+            })
+        ]);
+        retrievalCallCount += 2;
+
+        apiItems = rerankRetrievedChunksByMetadata(apiResults, segment, {
+            selectedBehavioralChunks: behavioralItems,
+            limit: 3
+        });
+        referenceItems = rerankRetrievedChunksByMetadata(referenceResults, segment, {
+            selectedBehavioralChunks: behavioralItems,
+            limit: 3
+        });
+    }
+
+    if (Array.isArray(segment?.explicitRefs) && segment.explicitRefs.length > 0) {
+        const explicitEnrichment = await findChunksByReferences(segment.explicitRefs, null, { limit: 6 });
+        const explicitApiItems = explicitEnrichment.filter(chunk =>
+            chunk?.retrieval_class === RETRIEVAL_CLASSES.API_CONTEXT &&
+            !apiItems.some(item => item.id === chunk.id)
+        );
+        const explicitReferenceItems = explicitEnrichment.filter(chunk =>
+            chunk?.retrieval_class === RETRIEVAL_CLASSES.REFERENCE_CONTEXT &&
+            !referenceItems.some(item => item.id === chunk.id)
+        );
+
+        apiItems = rerankRetrievedChunksByMetadata(
+            [...apiItems, ...explicitApiItems],
+            segment,
+            {
+                selectedBehavioralChunks: behavioralItems,
+                limit: 3
+            }
+        );
+        referenceItems = rerankRetrievedChunksByMetadata(
+            [...referenceItems, ...explicitReferenceItems],
+            segment,
+            {
+                selectedBehavioralChunks: behavioralItems,
+                limit: 3
+            }
+        );
+    }
+
+    const contextSections = [];
+
+    if (behavioralItems.length > 0) {
+        contextSections.push([
+            'BEHAVIORAL CONTEXT:',
+            '---',
+            formatRetrievedContext(behavioralItems, {
+                preferCoreText: true,
+                includeAuxMetadata: true
+            }),
+            '---'
+        ].join('\n'));
+    }
+
+    if (apiItems.length > 0) {
+        contextSections.push([
+            'API ENRICHMENT:',
+            '---',
+            formatRetrievedContext(apiItems, {
+                preferCoreText: false,
+                includeAuxMetadata: true
+            }),
+            '---'
+        ].join('\n'));
+    }
+
+    if (referenceItems.length > 0) {
+        contextSections.push([
+            'REFERENCE ENRICHMENT:',
+            '---',
+            formatRetrievedContext(referenceItems, {
+                preferCoreText: false,
+                includeAuxMetadata: true
+            }),
+            '---'
+        ].join('\n'));
+    }
+
+    return {
+        query,
+        items: behavioralItems,
+        behavioralItems,
+        apiItems,
+        referenceItems,
+        formattedContext: contextSections.join('\n\n'),
+        retrievalCallCount,
+        retrievalMode: 'behavioral_v2'
+    };
+}
+
+async function retrieveContextForSegment(segment, bundle, apiKey, options = {}) {
+    if (options?.useBehavioralRetrievalV2) {
+        return retrieveContextForSegmentV2(segment, bundle, apiKey);
+    }
+    return retrieveContextForSegmentLegacy(segment, bundle, apiKey);
 }
 
 function buildCanonicalModelUserPrompt({
@@ -9111,7 +9468,8 @@ async function regenerateSemanticCodesForTarget({
     bundle,
     apiKey,
     systemPrompt,
-    modelsToTry
+    modelsToTry,
+    useBehavioralRetrievalV2 = false
 }) {
     const pseudoSegment = {
         index: 0,
@@ -9130,7 +9488,9 @@ async function regenerateSemanticCodesForTarget({
         explicitRefs: []
     };
 
-    const retrieval = await retrieveContextForSegment(pseudoSegment, bundle, apiKey);
+    const retrieval = await retrieveContextForSegment(pseudoSegment, bundle, apiKey, {
+        useBehavioralRetrievalV2
+    });
     const existingCodes = (target?.scenario?.codes || [])
         .map(code => `- ${code?.text || ''}${code?.type ? ` [${code.type}]` : ''}`)
         .join('\n');
@@ -9202,7 +9562,8 @@ async function runTargetedSemanticRefinement({
     bundle,
     apiKey,
     systemPrompt,
-    modelsToTry
+    modelsToTry,
+    useBehavioralRetrievalV2 = false
 }) {
     const targets = collectSemanticRefinementTargets(model);
     if (targets.length === 0) {
@@ -9226,7 +9587,8 @@ async function runTargetedSemanticRefinement({
                 bundle,
                 apiKey,
                 systemPrompt,
-                modelsToTry
+                modelsToTry,
+                useBehavioralRetrievalV2
             });
 
             retrievalCallCount += result.retrievalCallCount || 0;
@@ -9280,6 +9642,18 @@ async function persistCompletedTestModelTask({
         retrievalCallCount,
         targetedRefinementCount
     };
+
+    const safeTaskId = String(taskId || 'manual').replace(/[^a-zA-Z0-9._-]+/g, '_');
+    const expectedJsonRelativePath = `report/test-models/${safeTaskId}-test-model.json`;
+
+    try {
+        const persistedTestModelJson = persistGeneratedTestModelJson(cleanedModel, { taskId });
+        console.log(`[persistCompletedTestModelTask] ✅ Test model JSON сохранен: ${persistedTestModelJson.absoluteFilePath}`);
+        console.log(`[persistCompletedTestModelTask] ℹ️ Относительный путь JSON-артефакта: ${persistedTestModelJson.relativeFilePath}`);
+    } catch (error) {
+        console.error('[persistCompletedTestModelTask] ❌ Не удалось сохранить JSON-артефакт test model:', error);
+        throw new Error(`Не удалось сохранить test model JSON в ${expectedJsonRelativePath}: ${error.message}`);
+    }
 
     const updateData = {
         status: 'completed',
@@ -9346,6 +9720,9 @@ async function runCanonicalDefaultModelPipeline({
         throw new Error('Canonical default pipeline requires initialized pgvector store.');
     }
 
+    const pipelineFlags = getDefaultPipelineFlags();
+    const useBehavioralRetrievalV2 = Boolean(pipelineFlags.ENABLE_BEHAVIORAL_RETRIEVAL_V2);
+
     console.log('[generate-test-model-async] Using canonical semantic RAG default pipeline');
 
     await db('generation_tasks').where('id', taskId).update({
@@ -9366,8 +9743,15 @@ async function runCanonicalDefaultModelPipeline({
         bearerToken
     });
 
-    const canonicalMainChunks = (bundle?.main?.canonicalChunks || [])
+    const indexableMainChunks = (bundle?.main?.canonicalChunks || [])
         .filter(chunk => !(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval));
+
+    const behavioralMainChunks = indexableMainChunks
+        .filter(chunk => isBehavioralRetrievalCandidate(chunk));
+
+    const canonicalMainChunks = useBehavioralRetrievalV2 && behavioralMainChunks.length > 0
+        ? behavioralMainChunks
+        : indexableMainChunks;
 
     if (canonicalMainChunks.length === 0) {
         throw new Error('Canonical semantic chunking produced no retrievable chunks for the main document.');
@@ -9379,11 +9763,11 @@ async function runCanonicalDefaultModelPipeline({
         title: bundle.main.title,
         sourceType: 'main',
         apiKey,
-        precomputedChunks: canonicalMainChunks
+        precomputedChunks: indexableMainChunks
     });
 
-    if (!mainIndexResult.cacheHit && ((mainIndexResult.errors || 0) > 0 || mainIndexResult.processed !== canonicalMainChunks.length)) {
-        throw new Error(`Failed to index canonical main chunks into pgvector (${mainIndexResult.processed}/${canonicalMainChunks.length}, errors=${mainIndexResult.errors || 0})`);
+    if (!mainIndexResult.cacheHit && ((mainIndexResult.errors || 0) > 0 || mainIndexResult.processed !== indexableMainChunks.length)) {
+        throw new Error(`Failed to index canonical main chunks into pgvector (${mainIndexResult.processed}/${indexableMainChunks.length}, errors=${mainIndexResult.errors || 0})`);
     }
 
     await db('generation_tasks').where('id', taskId).update({
@@ -9404,10 +9788,10 @@ async function runCanonicalDefaultModelPipeline({
     ];
 
     await Promise.all(auxiliaryDocs.map(doc => auxiliaryIndexLimit(async () => {
-        const retrievableChunks = (doc.canonicalChunks || [])
+        const indexableChunks = (doc.canonicalChunks || [])
             .filter(chunk => !(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval));
 
-        if (retrievableChunks.length === 0) {
+        if (indexableChunks.length === 0) {
             return;
         }
 
@@ -9418,7 +9802,7 @@ async function runCanonicalDefaultModelPipeline({
                 title: doc.title,
                 sourceType: doc.sourceType,
                 apiKey,
-                precomputedChunks: retrievableChunks
+                precomputedChunks: indexableChunks
             });
 
             if (doc.sourceType === 'context') {
@@ -9456,7 +9840,9 @@ async function runCanonicalDefaultModelPipeline({
     let completedSegments = 0;
 
     await Promise.all(generationSegments.map((segment, segmentIndex) => generateSegmentLimit(async () => {
-        const retrieval = await retrieveContextForSegment(segment, bundle, apiKey);
+        const retrieval = await retrieveContextForSegment(segment, bundle, apiKey, {
+            useBehavioralRetrievalV2
+        });
         retrievalCallCount += retrieval.retrievalCallCount || 0;
 
         const basePrompt = buildCanonicalModelUserPrompt({
@@ -9540,7 +9926,8 @@ async function runCanonicalDefaultModelPipeline({
         bundle,
         apiKey,
         systemPrompt,
-        modelsToTry
+        modelsToTry,
+        useBehavioralRetrievalV2
     });
     cleanedModel = refinementResult.model;
     retrievalCallCount += refinementResult.retrievalCallCount || 0;
@@ -11454,6 +11841,18 @@ ${escalationPrompt}`;
         console.log(`[generateTestModelAsync] 📊 Метрики:`, metrics);
 
         // Сохраняем результат (метрики сохраняем только если столбец существует)
+        const safeTaskId = String(taskId || 'manual').replace(/[^a-zA-Z0-9._-]+/g, '_');
+        const expectedJsonRelativePath = `report/test-models/${safeTaskId}-test-model.json`;
+
+        try {
+            const persistedTestModelJson = persistGeneratedTestModelJson(cleanedModel, { taskId });
+            console.log(`[generateTestModelAsync] ✅ Test model JSON сохранен: ${persistedTestModelJson.absoluteFilePath}`);
+            console.log(`[generateTestModelAsync] ℹ️ Относительный путь JSON-артефакта: ${persistedTestModelJson.relativeFilePath}`);
+        } catch (error) {
+            console.error('[generateTestModelAsync] ❌ Не удалось сохранить JSON-артефакт test model:', error);
+            throw new Error(`Не удалось сохранить test model JSON в ${expectedJsonRelativePath}: ${error.message}`);
+        }
+
         const updateData = {
             status: 'completed',
             progress: 100,
