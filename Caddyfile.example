@@ -9,7 +9,7 @@ ab-vsrv-autotest-tc:443 {
     }
     
     # Основной API сервер
-    handle /api/api* {
+    handle /api* {
         reverse_proxy allure-test-inspector:5000 {
             timeout 1200s
         }
@@ -34,4 +34,3 @@ ab-vsrv-autotest-tc:443 {
         reverse_proxy allure-test-inspector:3000
     }
 }
-

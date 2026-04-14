@@ -268,6 +268,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import knexfile from './db/knexfile.js';
 import { compareGeneratedCasesAgainstAllure } from './metrics/test-case-comparison.mjs';
+import { GENERATION_TASK_TYPES, buildGenerationTaskTypeCheckClause } from '../shared/generation-task-types.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1184,7 +1185,7 @@ const db = knex({
                     await db.raw(`
                         ALTER TABLE generation_tasks 
                         ADD CONSTRAINT generation_tasks_type_check 
-                        CHECK (type IN ('test_cases', 'test_model', 'bdd_tests', 'cleanup_duplicates', 'qa_agent_review', 'test_impact_analysis'))
+                        ${buildGenerationTaskTypeCheckClause(GENERATION_TASK_TYPES)}
                     `);
                     console.log('[Server] ✅ CHECK constraint успешно обновлен');
                 }

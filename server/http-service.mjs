@@ -654,7 +654,14 @@ export async function getSharedStepsList({
     }
 
     // возвращаем весь JSON (в нём обычно есть content, totalPages, totalElements и пр.)
-    return response.json();
+    const text = await response.text();
+
+    try {
+        return JSON.parse(text);
+    } catch (error) {
+        const preview = text.slice(0, 200).replace(/\s+/g, ' ').trim();
+        throw new Error(`Shared steps endpoint returned non-JSON response for ${url}: ${preview}`);
+    }
 }
 
 /**
