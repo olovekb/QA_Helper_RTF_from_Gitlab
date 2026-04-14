@@ -307,7 +307,7 @@ function getDefaultPipelineFlags() {
         ENABLE_CHUNK_DUMP: readBooleanEnv('ENABLE_CHUNK_DUMP', false),
         ENABLE_WIDE_MULTIHOP_RETRIEVAL: readBooleanEnv('ENABLE_WIDE_MULTIHOP_RETRIEVAL', false),
         ENABLE_GLOBAL_SEMANTIC_REFINEMENT: readBooleanEnv('ENABLE_GLOBAL_SEMANTIC_REFINEMENT', false),
-        ENABLE_BEHAVIORAL_RETRIEVAL_V2: readBooleanEnv('', true)
+        ENABLE_BEHAVIORAL_RETRIEVAL_V2: readBooleanEnv('ENABLE_BEHAVIORAL_RETRIEVAL_V2', false)
     };
 }
 
@@ -4382,6 +4382,48 @@ function buildRequirementChunkDumpMarkdown(payload, { taskId = null } = {}) {
     }
 
     return lines.join('\n');
+}
+
+async function persistRequirementChunkDumpForGeneration({
+    taskId = null,
+    requirements = '',
+    text = '',
+    pageId = null,
+    glossary = '',
+    context = '',
+    reqStringForModel = '',
+    usedContextRefinerFallback = false,
+    graphDocumentId = null,
+    deriveTitleFromContent = deriveCanonicalTitle,
+    mainTitle = null,
+    baseRequirement = '',
+    autoPageDocs = [],
+    explicitContextPageDocs = [],
+    precomputedModelInputChunks = null,
+    includeFullText = true,
+    includeSourceTexts = true
+}) {
+    const chunkDumpPayload = await assembleRequirementChunkDebugPayload({
+        requirements,
+        text,
+        pageId,
+        glossary,
+        context,
+        reqStringForModel,
+        usedContextRefinerFallback,
+        graphDocumentId,
+        deriveTitleFromContent,
+        mainTitle,
+        baseRequirement,
+        autoPageDocs,
+        explicitContextPageDocs,
+        includeFullText,
+        includeSourceTexts,
+        precomputedModelInputChunks
+    });
+
+    const chunkDumpMarkdown = buildRequirementChunkDumpMarkdown(chunkDumpPayload, { taskId });
+    return persistRequirementChunkDumpMarkdown(chunkDumpMarkdown, { taskId });
 }
 
 function persistRequirementChunkDumpMarkdown(markdown, { taskId = null } = {}) {
@@ -9757,6 +9799,31 @@ async function runCanonicalDefaultModelPipeline({
         throw new Error('Canonical semantic chunking produced no retrievable chunks for the main document.');
     }
 
+    try {
+        const chunkDumpPaths = await persistRequirementChunkDumpForGeneration({
+            taskId,
+            requirements: reqStringForModel,
+            text: reqStringForModel,
+            pageId: graphDocumentId,
+            glossary,
+            context: requestContextText,
+            reqStringForModel,
+            usedContextRefinerFallback: false,
+            graphDocumentId,
+            deriveTitleFromContent: deriveCanonicalTitle,
+            mainTitle,
+            baseRequirement: reqStringForModel,
+            autoPageDocs,
+            explicitContextPageDocs,
+            includeFullText: true,
+            includeSourceTexts: true,
+            precomputedModelInputChunks: mainRawChunks
+        });
+        console.log(`[runCanonicalDefaultModelPipeline] Chunk dump saved: ${chunkDumpPaths.taskFilePath}`);
+    } catch (chunkDumpError) {
+        console.warn('[runCanonicalDefaultModelPipeline] Failed to persist chunk dump:', chunkDumpError.message);
+    }
+
     const mainIndexResult = await indexConfluencePageChunksWithCache({
         docId: bundle.main.docId,
         content: bundle.main.content,
@@ -10823,7 +10890,8 @@ async function generateTestModelAsync(taskId, inputData) {
         }));
 
         try {
-            const chunkDumpPayload = await assembleRequirementChunkDebugPayload({
+            const chunkDumpPaths = await persistRequirementChunkDumpForGeneration({
+                taskId,
                 requirements,
                 text,
                 pageId,
@@ -10842,8 +10910,6 @@ async function generateTestModelAsync(taskId, inputData) {
                 precomputedModelInputChunks: rawChunks
             });
 
-            const chunkDumpMarkdown = buildRequirementChunkDumpMarkdown(chunkDumpPayload, { taskId });
-            const chunkDumpPaths = persistRequirementChunkDumpMarkdown(chunkDumpMarkdown, { taskId });
             console.log(`[generate-test-model-async] 📝 Дамп чанков сохранен: ${chunkDumpPaths.taskFilePath}`);
         } catch (chunkDumpError) {
             console.warn('[generate-test-model-async] Не удалось сохранить markdown-дамп чанков:', chunkDumpError.message);
