@@ -33,6 +33,7 @@ RUN npm install --legacy-peer-deps --production
 
 # Копируем серверные файлы
 COPY server/ ./server
+COPY shared/ ./shared
 
 # Копируем билд React-приложения в папку для статики
 COPY --from=frontend-builder /usr/src/app/client/build ./client/build
