@@ -1,51 +1,31 @@
 # Stage 1: Build client
-FROM node:20-alpine AS frontend-builder
+FROM node:18-alpine AS frontend-builder
 WORKDIR /usr/src/app/client
 
-# Копируем package.json и package-lock.json, устанавливаем зависимости
 COPY client/package*.json ./
-RUN npm install --legacy-peer-deps
+RUN npm install --legacy-peer-deps --production
 
-# Копируем исходники и собираем React-приложение
 COPY client/ ./
-
-ARG REACT_APP_SERVER_URL
-ARG REACT_APP_TIA_URL
-ARG REACT_APP_BDD_SERVER_URL
-
-ENV REACT_APP_SERVER_URL=$REACT_APP_SERVER_URL
-ENV REACT_APP_TIA_URL=$REACT_APP_TIA_URL
-ENV REACT_APP_BDD_SERVER_URL=$REACT_APP_BDD_SERVER_URL
-
 RUN chmod +x ./node_modules/.bin/react-scripts && npm run build
 
 # Stage 2: Build backend and serve static files
-FROM node:20-alpine AS backend-builder
+FROM node:18-alpine AS backend-builder
 WORKDIR /usr/src/app
 
-RUN apk add --no-cache postgresql-client python3 py3-pip && \
-    ln -sf python3 /usr/bin/python && \
-    pip install --no-cache-dir openai Pillow --break-system-packages
+RUN apk add --no-cache postgresql-client curl
 
-# Копируем package.json, устанавливаем зависимости
 COPY package*.json ./
 RUN npm install --legacy-peer-deps --production
 
-# Копируем серверные файлы
 COPY server/ ./server
-
-# Копируем билд React-приложения в папку для статики
+COPY shared/ ./shared
 COPY --from=frontend-builder /usr/src/app/client/build ./client/build
 
-# Устанавливаем пакет serve для обслуживания статики клиента
 RUN npm install -g serve
 
 RUN chmod +x server/scripts/setup-db.sh 2>/dev/null || true
-# Исправление CRLF
 RUN sed -i 's/\r//' server/scripts/setup-db.sh 2>/dev/null || true
 
-# Expose порты
 EXPOSE 3000 5000
 
-# Миграции БД, затем запуск сервера и клиента
 CMD ["sh", "-c", "server/scripts/setup-db.sh || echo 'WARN: setup-db завершился с ошибкой'; node server/server.js & serve -s client/build -l 3000"]

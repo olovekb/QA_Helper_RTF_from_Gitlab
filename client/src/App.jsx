@@ -1,3 +1,4 @@
+// src/App.jsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useShowScrollTop } from './hooks/useShowScrollTop';
 import { useDebounce } from './hooks/useDebounce';
@@ -7,68 +8,31 @@ import './style.css';
 import config from './config';
 import { parseXmindFile } from './parce-xmind/parce.xmind.mjs';
 import { useNavigate } from 'react-router-dom';
-import { marked } from 'marked';
+import { marked } from 'marked'; // Импорт библиотеки marked
 import GlobalBackgroundProgress from './components/GlobalBackgroundProgress';
 import ErrorBoundary from './components/ErrorBoundary';
 import RulesModal from './components/RulesModal';
 import ArrowUpIcon from './components/ArrowUpIcon';
-import { HiOutlineQuestionMarkCircle, HiOutlineSearch, HiOutlineUpload, HiChevronDown, HiOutlineLightningBolt, HiOutlineDocumentText, HiOutlineTerminal, HiOutlinePresentationChartBar } from 'react-icons/hi';
-import { motion, AnimatePresence } from 'framer-motion';
+import { HiOutlineQuestionMarkCircle } from 'react-icons/hi';
 import { trackEvent } from './analytics';
-import setupStyles from './components/TIAPage/styles/TIAStyles';
-
-const STORAGE_HTML_CASES = 'htmlReportCases';
-const STORAGE_HTML_MODEL = 'htmlReportModel';
-const STORAGE_JIRA_CASES = 'jiraIssueCases';
-const STORAGE_JIRA_MODEL = 'jiraIssueModel';
-const STORAGE_LAST_REPORT_JIRA_CASES = 'lastReportJiraCases';
-const STORAGE_LAST_REPORT_JIRA_MODEL = 'lastReportJiraModel';
-
-function readInitialJiraCases() {
-  try {
-    return sessionStorage.getItem(STORAGE_JIRA_CASES)
-      || config.jiraIssue
-      || '';
-  } catch {
-    return config.jiraIssue || '';
-  }
-}
-
-function readInitialJiraModel() {
-  try {
-    return sessionStorage.getItem(STORAGE_JIRA_MODEL) || '';
-  } catch {
-    return '';
-  }
-}
 
 const App = ({ projects }) => {
   const [projectId, setProjectId] = useState(config.projectId || '');
-  const [jiraIssueCases, setJiraIssueCases] = useState(readInitialJiraCases);
-  const [jiraIssueModel, setJiraIssueModel] = useState(readInitialJiraModel);
+  const [jiraIssue, setJiraIssue] = useState(config.jiraIssue || '');
   const [loading, setLoading] = useState(false);
   const [htmlReport, setHtmlReport] = useState('');
   const [fixStatus, setFixStatus] = useState(false);
   const [activeTab, setActiveTab] = useState('analysis');
-  const [analysisType, setAnalysisType] = useState('cases');
   const [xmindFile, setXmindFile] = useState(null);
-  const [modelFile, setModelFile] = useState(null);
   const [exportMessage, setExportMessage] = useState('');
   const [exportResult, setExportResult] = useState(null);
   const [showCleanupModal, setShowCleanupModal] = useState(false);
   const [cleanupLoading, setCleanupLoading] = useState(false);
   const [cleanupResult, setCleanupResult] = useState(null);
-  const [cleanupTaskId, setCleanupTaskId] = useState(null);
-  const [cleanupProgress, setCleanupProgress] = useState(0);
   const [showRulesModal, setShowRulesModal] = useState(false);
-  const [showTestModelRulesModal, setShowTestModelRulesModal] = useState(false);
-  const [lastReviewInfoCases, setLastReviewInfoCases] = useState(null);
-  const [lastReviewInfoModel, setLastReviewInfoModel] = useState(null);
-  const [showServicesDropdown, setShowServicesDropdown] = useState(false);
-  const dropdownRef = useRef(null);
+  const [lastReviewInfo, setLastReviewInfo] = useState(null);
 
-  const debouncedJiraIssueCases = useDebounce(jiraIssueCases.trim(), 400);
-  const debouncedJiraIssueModel = useDebounce(jiraIssueModel.trim(), 400);
+  const debouncedJiraIssue = useDebounce(jiraIssue.trim(), 400);
   const navigate = useNavigate();
   const reportContainerRef = useRef(null);
   const showScrollTop = useShowScrollTop();
@@ -85,79 +49,30 @@ const App = ({ projects }) => {
     if (savedFixStatus) {
       setFixStatus(JSON.parse(savedFixStatus));
     }
-
-    const handleClickOutside = (event) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setShowServicesDropdown(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    const savedReport = sessionStorage.getItem('htmlReport');
+    if (savedReport) {
+      setHtmlReport(savedReport);
+    }
   }, []);
 
   useEffect(() => {
-    if (analysisType === 'cases') {
-      setHtmlReport(sessionStorage.getItem(STORAGE_HTML_CASES) || '');
-    } else {
-      setHtmlReport(sessionStorage.getItem(STORAGE_HTML_MODEL) || '');
-    }
-  }, [analysisType]);
-
-  useEffect(() => {
-    if (analysisType !== 'cases') {
-      return;
-    }
-    if (!debouncedJiraIssueCases) {
-      setLastReviewInfoCases(null);
+    if (!debouncedJiraIssue) {
+      setLastReviewInfo(null);
       return;
     }
     let cancelled = false;
-    axios.get(`${config.serverUrl}/analyze/status`, { params: { jiraIssue: debouncedJiraIssueCases, analysisType: 'cases' } })
+    axios.get(`${config.serverUrl}/analyze/status`, { params: { jiraIssue: debouncedJiraIssue } })
       .then((res) => {
         if (cancelled) return;
         if (res.data?.hasReview && res.data?.createdAt) {
-          setLastReviewInfoCases({ createdAt: res.data.createdAt });
+          setLastReviewInfo({ createdAt: res.data.createdAt });
         } else {
-          setLastReviewInfoCases(null);
+          setLastReviewInfo(null);
         }
       })
-      .catch(() => { if (!cancelled) setLastReviewInfoCases(null); });
+      .catch(() => { if (!cancelled) setLastReviewInfo(null); });
     return () => { cancelled = true; };
-  }, [debouncedJiraIssueCases, analysisType]);
-
-  useEffect(() => {
-    if (analysisType !== 'model') {
-      return;
-    }
-    if (!debouncedJiraIssueModel) {
-      setLastReviewInfoModel(null);
-      return;
-    }
-    let cancelled = false;
-    axios.get(`${config.serverUrl}/analyze/status`, { params: { jiraIssue: debouncedJiraIssueModel, analysisType: 'model' } })
-      .then((res) => {
-        if (cancelled) return;
-        if (res.data?.hasReview && res.data?.createdAt) {
-          setLastReviewInfoModel({ createdAt: res.data.createdAt });
-        } else {
-          setLastReviewInfoModel(null);
-        }
-      })
-      .catch(() => { if (!cancelled) setLastReviewInfoModel(null); });
-    return () => { cancelled = true; };
-  }, [debouncedJiraIssueModel, analysisType]);
-
-  useEffect(() => {
-    try {
-      sessionStorage.setItem(STORAGE_JIRA_CASES, jiraIssueCases);
-    } catch { /* ignore */ }
-  }, [jiraIssueCases]);
-
-  useEffect(() => {
-    try {
-      sessionStorage.setItem(STORAGE_JIRA_MODEL, jiraIssueModel);
-    } catch { /* ignore */ }
-  }, [jiraIssueModel]);
+  }, [debouncedJiraIssue]);
 
   const syncProjectFromJiraPrefix = (value) => {
     const prefix = value.split('-')[0]?.trim().toUpperCase();
@@ -169,133 +84,6 @@ const App = ({ projects }) => {
       const id = matched.id;
       setProjectId((prev) => (prev === id ? prev : id));
     }
-  };
-
-  const renderJiraIssueBlock = (variant) => {
-    const isCases = variant === 'cases';
-    const value = isCases ? jiraIssueCases : jiraIssueModel;
-    const setValue = isCases ? setJiraIssueCases : setJiraIssueModel;
-    const inputId = isCases ? 'jira-issue-input-cases' : 'jira-issue-input-model';
-    const reviewHint = isCases ? lastReviewInfoCases : lastReviewInfoModel;
-    const reviewHintLabel = isCases
-      ? 'Есть результат ревью тест-кейсов от'
-      : 'Есть результат ревью тестовой модели от';
-
-    return (
-      <div className="jira-issue-field">
-        <div className="jira-issue-header">
-          <label htmlFor={inputId}>Номер задачи из Jira:</label>
-          {reviewHint && (
-            <span
-              className="jira-review-trigger"
-              onMouseEnter={(e) => {
-                if (tooltipHideTimeoutRef.current) {
-                  clearTimeout(tooltipHideTimeoutRef.current);
-                  tooltipHideTimeoutRef.current = null;
-                }
-                tooltipShownAtRef.current = Date.now();
-                const tt = e.currentTarget.querySelector('.jira-review-tooltip');
-                if (tt) tt.style.visibility = 'visible';
-              }}
-              onMouseLeave={(e) => {
-                const tt = e.currentTarget.querySelector('.jira-review-tooltip');
-                if (tt) {
-                  tooltipHideTimeoutRef.current = setTimeout(() => {
-                    tt.style.visibility = 'hidden';
-                    tooltipHideTimeoutRef.current = null;
-                  }, 150);
-                }
-              }}
-            >
-              <HiOutlineQuestionMarkCircle size={16} />
-              <span
-                className="jira-review-tooltip"
-                onMouseEnter={(e) => {
-                  if (tooltipHideTimeoutRef.current) {
-                    clearTimeout(tooltipHideTimeoutRef.current);
-                    tooltipHideTimeoutRef.current = null;
-                  }
-                  e.currentTarget.style.visibility = 'visible';
-                }}
-                onMouseLeave={(e) => {
-                  const el = e.currentTarget;
-                  tooltipHideTimeoutRef.current = setTimeout(() => {
-                    el.style.visibility = 'hidden';
-                    tooltipHideTimeoutRef.current = null;
-                  }, 150);
-                }}
-              >
-                <span>
-                  {reviewHintLabel}{' '}
-                  {new Date(reviewHint.createdAt).toLocaleString('ru-RU', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
-                </span>
-                <button
-                  type="button"
-                  className="btn-link jira-review-tooltip-btn"
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    if (Date.now() - tooltipShownAtRef.current < 300) return;
-                    const confirmMsg = isCases
-                      ? 'Результаты ревью тест-кейсов по этой задаче будут удалены без возможности восстановления. Продолжить?'
-                      : 'Результаты ревью тестовой модели по этой задаче будут удалены без возможности восстановления. Продолжить?';
-                    const confirmed = window.confirm(confirmMsg);
-                    if (!confirmed) return;
-                    try {
-                      const jiraForDelete = (isCases ? jiraIssueCases : jiraIssueModel).trim();
-                      await axios.delete(`${config.serverUrl}/analyze/status`, {
-                        params: {
-                          jiraIssue: jiraForDelete,
-                          analysisType: isCases ? 'cases' : 'model'
-                        }
-                      });
-                      if (isCases) {
-                        setLastReviewInfoCases(null);
-                      } else {
-                        setLastReviewInfoModel(null);
-                      }
-                    } catch (err) {
-                      console.error('Ошибка очистки результатов:', err);
-                    }
-                  }}
-                >
-                  Очистить результат
-                </button>
-              </span>
-            </span>
-          )}
-        </div>
-        <input
-          id={inputId}
-          type="text"
-          value={value}
-          onChange={(e) => {
-            const v = e.target.value;
-            setValue(v);
-            syncProjectFromJiraPrefix(v);
-          }}
-          style={{
-            width: '100%',
-            padding: '12px 16px',
-            fontSize: '15px',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px',
-            backgroundColor: 'var(--bg-input)',
-            color: 'var(--text-primary)',
-            outline: 'none',
-            transition: 'all 0.2s',
-            boxSizing: 'border-box'
-          }}
-          onFocus={(e) => e.target.style.borderColor = 'var(--border-focus)'}
-          onBlur={(e) => e.target.style.borderColor = 'var(--border-color)'}
-        />
-      </div>
-    );
   };
 
   // Делегирование кликов внутри контейнера, обработка кнопок AI-рекомендаций
@@ -358,12 +146,11 @@ const App = ({ projects }) => {
   useEffect(() => {
     const container = reportContainerRef.current;
     if (!container || !htmlReport) return;
-    const tree = container.querySelector('#nav-tree');
-    if (!tree) return;
     const select = container.querySelector('#category-select');
+    const tree = container.querySelector('#nav-tree');
+    if (!select || !tree) return;
 
     const applyFilter = () => {
-      if (!select) return;
       const val = select.value;
       const leaves = tree.querySelectorAll('.tree-leaf');
       leaves.forEach((li) => {
@@ -391,10 +178,8 @@ const App = ({ projects }) => {
       });
     };
 
-    if (select) {
-      select.addEventListener('change', applyFilter);
-      applyFilter();
-    }
+    select.addEventListener('change', applyFilter);
+    applyFilter();
 
     const svgChevronRight = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2l4 3-4 3"/></svg>';
     const svgChevronDown = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3l3 4 3-4"/></svg>';
@@ -438,7 +223,7 @@ const App = ({ projects }) => {
     });
 
     return () => {
-      if (select) select.removeEventListener('change', applyFilter);
+      select.removeEventListener('change', applyFilter);
     };
   }, [htmlReport]);
 
@@ -464,22 +249,12 @@ const App = ({ projects }) => {
 
         .test-cases-details {
           flex: 1 !important;
-          min-width: 0 !important;
           min-height: 400px !important;
-          position: sticky !important;
-          top: 16px !important;
-          align-self: flex-start !important;
-          max-height: calc(100vh - 32px) !important;
-          overflow-y: auto !important;
-          overflow-x: hidden !important;
-          box-sizing: border-box !important;
-          z-index: 1 !important;
         }
 
         .test-lists .scrollable-list {
           max-height: none !important;
           overflow: visible !important;
-          overflow-y: visible !important;
         }
 
         .test-case {
@@ -498,28 +273,25 @@ const App = ({ projects }) => {
           border-radius: 4px !important;
           text-decoration: none !important;
         }
-
-        .main-layout > .resizer {
-          align-self: stretch !important;
-          flex-shrink: 0 !important;
-        }
       `;
       document.head.appendChild(styleElement);
     }
 
+    // Модифицируем структуру DOM
     const testLists = container.querySelector('.test-lists');
     const testDetails = container.querySelector('.test-cases-details');
 
     if (testLists && testDetails && !container.querySelector('.main-layout')) {
+      // Создаем новую структуру
       const mainLayout = document.createElement('div');
       mainLayout.className = 'main-layout';
       mainLayout.id = 'main-layout';
-      mainLayout.style.cssText = 'display: flex; gap: 0; margin-bottom: 30px; align-items: flex-start;';
+      mainLayout.style.cssText = 'display: flex; gap: 0; margin-bottom: 30px; align-items: stretch;';
 
       const resizerElement = document.createElement('div');
       resizerElement.className = 'resizer';
       resizerElement.id = 'resizer';
-      resizerElement.style.cssText = 'flex: 0 0 4px; flex-shrink: 0; align-self: stretch; background: var(--border-color); cursor: col-resize; position: relative; transition: background-color 0.2s; margin: 0 8px;';
+      resizerElement.style.cssText = 'flex: 0 0 4px; background: var(--border-color); cursor: col-resize; position: relative; transition: background-color 0.2s; margin: 0 8px;';
 
       resizerElement.addEventListener('mouseenter', () => {
         resizerElement.style.background = 'var(--border-focus)';
@@ -528,19 +300,28 @@ const App = ({ projects }) => {
         resizerElement.style.background = 'var(--border-color)';
       });
 
+      const emptyStateElement = document.createElement('div');
+      emptyStateElement.className = 'empty-state';
+      emptyStateElement.style.cssText = 'display: flex; align-items: center; justify-content: center; min-height: 400px; color: #d1d5db; font-size: 1.1rem; text-align: center;';
+      emptyStateElement.innerHTML = '<p>Выберите тест-кейс для просмотра деталей</p>';
+
       // перемещение элементов
       const parent = testLists.parentElement;
       parent.insertBefore(mainLayout, testLists);
       mainLayout.appendChild(testLists);
       mainLayout.appendChild(resizerElement);
       mainLayout.appendChild(testDetails);
+      testDetails.insertBefore(emptyStateElement, testDetails.firstChild);
     }
 
     // обработка кликов по тест-кейсам в структуре для отображения превью
+    const emptyState = container.querySelector('.empty-state');
     const testCases = container.querySelectorAll('.test-case');
     const treeLinks = container.querySelectorAll('.tree-leaf a');
 
     const showTestCase = (testId) => {
+      if (emptyState) emptyState.style.display = 'none';
+
       testCases.forEach((tc) => {
         tc.classList.remove('active');
       });
@@ -682,81 +463,36 @@ const App = ({ projects }) => {
     };
   }, [htmlReport]);
 
-  const downloadHtml = useCallback(() => {
-    const isModel = analysisType === 'model';
-    let htmlContent = isModel
-      ? sessionStorage.getItem(STORAGE_HTML_MODEL)
-      : sessionStorage.getItem(STORAGE_HTML_CASES);
-    const savedProjectId = sessionStorage.getItem('projectId');
-    const savedJiraIssue = isModel
-      ? (
-        sessionStorage.getItem(STORAGE_LAST_REPORT_JIRA_MODEL)
-        || sessionStorage.getItem(STORAGE_JIRA_MODEL)
-        || ''
-      ).trim()
-      : (
-        sessionStorage.getItem(STORAGE_LAST_REPORT_JIRA_CASES)
-        || sessionStorage.getItem(STORAGE_JIRA_CASES)
-        || ''
-      ).trim();
-    if (!htmlContent) {
-      console.error('HTML отчет не найден в sessionStorage');
-      return;
-    }
-    if (!savedProjectId || !savedJiraIssue) {
-      console.error(
-        isModel
-          ? 'ID проекта или номер задачи для отчета по модели отсутствуют в sessionStorage'
-          : 'ID проекта или номер задачи для отчета по тест-кейсам отсутствуют в sessionStorage'
-      );
-      return;
-    }
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(htmlContent, 'text/html');
-    doc.querySelectorAll('.ai-recommendations').forEach(el => el.remove());
-    doc.querySelectorAll('.allure-iframe-wrapper').forEach(wrapper => {
-      const fallbackLink = wrapper.querySelector('.allure-iframe-fallback a[href]');
-      const iframe = wrapper.querySelector('iframe');
-      const href = fallbackLink?.getAttribute('href') || iframe?.getAttribute('src') || '#';
-      const a = doc.createElement('a');
-      a.href = href;
-      a.target = '_blank';
-      a.textContent = 'Открыть в новой вкладке';
-      wrapper.innerHTML = '';
-      wrapper.appendChild(a);
-    });
-    htmlContent = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
-    const fileName = isModel
-      ? `Результат ревью тестовой модели ${savedJiraIssue}.html`
-      : `Результат ревью тест-кейсов ${savedJiraIssue}.html`;
-    const blob = new Blob([htmlContent], { type: 'text/html' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = fileName;
-    link.click();
-  }, [analysisType]);
-
+  // клавиатурные события
   useEffect(() => {
     const handleKeyDown = (e) => {
+      // закрыть модальное окно правил
       if (e.key === 'Escape') {
         if (showRulesModal) {
           setShowRulesModal(false);
-        }
-        if (showTestModelRulesModal) {
-          setShowTestModelRulesModal(false);
         }
         if (showCleanupModal) {
           setShowCleanupModal(false);
         }
       }
 
+      // открыть модальное окно правил
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        if (projectId && !showRulesModal) {
+          setShowRulesModal(true);
+        }
+      }
+
+      // скачать репорт
       if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
         e.preventDefault();
-        if (htmlReport && !loading && (analysisType === 'cases' || analysisType === 'model')) {
+        if (htmlReport && !loading) {
           downloadHtml();
         }
       }
 
+      // фокус на фильтр категорий
       if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const activeElement = document.activeElement;
         if (activeElement?.tagName !== 'INPUT' && activeElement?.tagName !== 'TEXTAREA') {
@@ -773,7 +509,43 @@ const App = ({ projects }) => {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [showTestModelRulesModal, showCleanupModal, projectId, htmlReport, loading, analysisType, downloadHtml]);
+  }, [showRulesModal, showCleanupModal, projectId, htmlReport, loading]);
+
+  const downloadHtml = useCallback(() => {
+    let htmlContent = sessionStorage.getItem('htmlReport');
+    const savedProjectId = sessionStorage.getItem('projectId');
+    const savedJiraIssue = sessionStorage.getItem('jiraIssue');
+    if (!htmlContent) {
+      console.error('HTML отчет не найден в sessionStorage');
+      return;
+    }
+    if (!savedProjectId || !savedJiraIssue) {
+      console.error('Данные projectId или jiraIssue отсутствуют в sessionStorage');
+      return;
+    }
+    // удаление кнопки AI-рекомендаций, замена iframe на ссылку
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlContent, 'text/html');
+    doc.querySelectorAll('.ai-recommendations').forEach(el => el.remove());
+    doc.querySelectorAll('.allure-iframe-wrapper').forEach(wrapper => {
+      const fallbackLink = wrapper.querySelector('.allure-iframe-fallback a[href]');
+      const iframe = wrapper.querySelector('iframe');
+      const href = fallbackLink?.getAttribute('href') || iframe?.getAttribute('src') || '#';
+      const a = doc.createElement('a');
+      a.href = href;
+      a.target = '_blank';
+      a.textContent = 'Открыть в новой вкладке';
+      wrapper.innerHTML = '';
+      wrapper.appendChild(a);
+    });
+    htmlContent = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+    const fileName = `Результат ревью тест-кейсов ${savedJiraIssue}.html`;
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = fileName;
+    link.click();
+  }, []);
 
   useEffect(() => {
     const handler = () => downloadHtml();
@@ -789,52 +561,21 @@ const App = ({ projects }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    trackEvent('static_analysis', {
-      page: '/',
-      projectId,
-      taskId: analysisType === 'cases' ? jiraIssueCases : jiraIssueModel
-    });
+    trackEvent('static_analysis', { page: '/', projectId, taskId: jiraIssue });
     setLoading(true);
     setHtmlReport('');
 
     try {
-      const payload = { projectId, analysisType };
-
-      if (analysisType === 'cases') {
-        payload.jiraIssue = jiraIssueCases.trim();
-      } else if (analysisType === 'model') {
-        if (!jiraIssueModel.trim()) {
-          console.error('Для анализа модели укажите номер задачи Jira');
-          setLoading(false);
-          return;
-        }
-        if (!modelFile) {
-          console.error("Файл тестовой модели не выбран");
-          setLoading(false);
-          return;
-        }
-        const allureData = await parseXmindFile(modelFile, projectId);
-        payload.modelData = allureData;
-        payload.modelFileName = modelFile.name;
-        payload.jiraIssue = jiraIssueModel.trim();
-      }
-
-      const response = await axios.post(`${config.serverUrl}/analyze`, payload);
+      const response = await axios.post(`${config.serverUrl}/analyze`, {
+        projectId,
+        jiraIssue,
+      });
       const newReport = response.data;
       setHtmlReport(newReport);
-      if (analysisType === 'cases') {
-        sessionStorage.setItem(STORAGE_HTML_CASES, newReport);
-        sessionStorage.setItem(STORAGE_LAST_REPORT_JIRA_CASES, jiraIssueCases.trim());
-      } else {
-        sessionStorage.setItem(STORAGE_HTML_MODEL, newReport);
-        sessionStorage.setItem(STORAGE_LAST_REPORT_JIRA_MODEL, jiraIssueModel.trim());
-      }
+      sessionStorage.setItem('htmlReport', newReport);
       sessionStorage.setItem('projectId', projectId);
-      if (analysisType === 'cases') {
-        setLastReviewInfoCases({ createdAt: new Date().toISOString() });
-      } else {
-        setLastReviewInfoModel({ createdAt: new Date().toISOString() });
-      }
+      sessionStorage.setItem('jiraIssue', jiraIssue);
+      setLastReviewInfo({ createdAt: new Date().toISOString() });
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -846,13 +587,6 @@ const App = ({ projects }) => {
     const file = e.target.files[0];
     if (file) {
       setXmindFile(file);
-    }
-  };
-
-  const handleModelFileChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setModelFile(file);
     }
   };
 
@@ -873,6 +607,7 @@ const App = ({ projects }) => {
       const response = await axios.post(`${config.serverUrl}/export`, {
         allureData,
         projectId,
+        jiraIssue: jiraIssue.trim(),
       });
       if (response.status === 200) {
         const allureLink = `https://abanking.qatools.cloud/project/${projectId}/test-cases`;
@@ -899,44 +634,8 @@ const App = ({ projects }) => {
     navigate('/solution');
   };
 
-  // Обработчик для перехода на страницу "Тепловая карта дефектов"
-  const handleHeatmapClick = () => {
-    navigate('/heatmap');
-  };
-
   const handleTabChange = (tab) => {
     setActiveTab(tab);
-  };
-
-  const pollCleanupStatus = async (taskId) => {
-    const pollInterval = setInterval(async () => {
-      try {
-        const response = await axios.get(`${config.serverUrl}/cleanup-duplicates-status/${taskId}`);
-        const data = response.data;
-        
-        setCleanupProgress(data.progress || 0);
-
-        if (data.status === 'completed') {
-          clearInterval(pollInterval);
-          setCleanupResult(data.result);
-          setCleanupLoading(false);
-          setCleanupTaskId(null);
-          if (data.result?.success) {
-            setExportMessage(`Очистка завершена. Удалено ${data.result.deleted} дублей из ${data.result.totalCases} тест-кейсов.`);
-          }
-        } else if (data.status === 'failed') {
-          clearInterval(pollInterval);
-          setCleanupResult({
-            success: false,
-            error: data.error_message || 'Задача завершилась с ошибкой'
-          });
-          setCleanupLoading(false);
-          setCleanupTaskId(null);
-        }
-      } catch (error) {
-        console.error('Ошибка при опросе статуса очистки:', error);
-      }
-    }, 2000);
   };
 
   const handleCleanupDuplicates = async () => {
@@ -948,24 +647,13 @@ const App = ({ projects }) => {
 
     setCleanupLoading(true);
     setCleanupResult(null);
-    setCleanupProgress(0);
-    setCleanupTaskId(null);
-
     try {
       const response = await axios.post(`${config.serverUrl}/cleanup-duplicates`, {
         projectId,
       });
-      
-      if (response.data.taskId) {
-        setCleanupTaskId(response.data.taskId);
-        setCleanupProgress(1);
-        pollCleanupStatus(response.data.taskId);
-      } else {
-        setCleanupResult(response.data);
-        if (response.data.success) {
-          setExportMessage(`Очистка завершена. Удалено ${response.data.deleted} дублей из ${response.data.totalCases} тест-кейсов.`);
-        }
-        setCleanupLoading(false);
+      setCleanupResult(response.data);
+      if (response.data.success) {
+        setExportMessage(`Очистка завершена. Удалено ${response.data.deleted} дублей из ${response.data.totalCases} тест-кейсов.`);
       }
     } catch (error) {
       console.error('Ошибка очистки дублей:', error);
@@ -973,7 +661,9 @@ const App = ({ projects }) => {
         success: false,
         error: error.response?.data?.error || error.message || 'Неизвестная ошибка'
       });
+    } finally {
       setCleanupLoading(false);
+      // Не закрываем модалку - пользователь сам закроет после просмотра результатов
     }
   };
 
@@ -990,341 +680,221 @@ const App = ({ projects }) => {
         <GlobalBackgroundProgress />
 
         <div className="header-wrapper">
-          <div className="header-left">
-            <h1 onClick={() => {
-              setActiveTab('analysis');
-              navigate('/');
-            }}>QA-helper</h1>
-          </div>
-
-          <nav className="header-center">
-            <button
-              className={`nav-tab ${activeTab === 'analysis' ? 'active' : ''}`}
-              onClick={() => handleTabChange('analysis')}
-              style={{ position: 'relative' }}
-            >
-              {activeTab === 'analysis' && (
-                <motion.div
-                  layoutId="active-tab"
-                  className="active-tab-indicator"
-                  transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                />
-              )}
-              <span style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '2px', paddingRight: '4px' }}>
-                <HiOutlineSearch /> Анализ
-              </span>
+          <h1>QA-helper</h1>
+          <div className="header-buttons">
+            <button onClick={handleTIAClick} className="tia-button">
+              Test impact analysis
             </button>
-            <button
-              className={`nav-tab ${activeTab === 'export' ? 'active' : ''}`}
-              onClick={() => handleTabChange('export')}
-              style={{ position: 'relative' }}
-            >
-              {activeTab === 'export' && (
-                <motion.div
-                  layoutId="active-tab"
-                  className="active-tab-indicator"
-                  transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                />
-              )}
-              <span style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '2px', paddingRight: '4px' }}>
-                <HiOutlineUpload /> Экспорт Xmind
-              </span>
+            <button onClick={handleSolutionClick} className="tia-button">
+              Тестирование требований
             </button>
-            <div className="services-dropdown-container" ref={dropdownRef}>
-              <button
-                className="nav-tab services-nav-btn"
-                onClick={() => setShowServicesDropdown(!showServicesDropdown)}
-              >
-                <span style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '2px' }}>
-                  Сервисы <HiChevronDown style={{ transform: showServicesDropdown ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
-                </span>
-              </button>
-
-              <AnimatePresence>
-                {showServicesDropdown && (
-                  <motion.div
-                    className="services-dropdown"
-                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                    transition={{ duration: 0.2, ease: "easeOut" }}
-                  >
-                    <button onClick={() => { handleSolutionClick(); setShowServicesDropdown(false); }} className="dropdown-item">
-                      <HiOutlineDocumentText /> Тестирование требований
-                    </button>
-                    <button onClick={() => { handleTIAClick(); setShowServicesDropdown(false); }} className="dropdown-item">
-                      <HiOutlineLightningBolt /> Test impact analysis
-                    </button>
-                    <button onClick={() => { navigate('/code-error'); setShowServicesDropdown(false); }} className="dropdown-item">
-                      <HiOutlineTerminal /> Завести ошибки на эпик
-                    </button>
-                    <button onClick={() => { handleHeatmapClick(); setShowServicesDropdown(false); }} className="dropdown-item">
-                      <HiOutlinePresentationChartBar /> Тепловая карта дефектов
-                    </button>
-
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </nav>
-
-          <div className="header-right">
-
+            <button onClick={() => navigate('/code-error')} className="tia-button">
+              Завести набор ошибок кода на эпик
+            </button>
           </div>
         </div>
 
+        <div className="tabs">
+          <button onClick={() => handleTabChange('analysis')} className={activeTab === 'analysis' ? 'active' : ''}>
+            Анализ тестов
+          </button>
+          <button onClick={() => handleTabChange('export')} className={activeTab === 'export' ? 'active' : ''}>
+            Экспорт Xmind в Allure
+          </button>
+        </div>
         {activeTab === 'analysis' && (
-          <div className="app-page-container">
-            <div style={{ marginBottom: '16px' }}>
-              <div style={setupStyles.modeToggleContainer}>
-                <button
-                  type="button"
-                  onClick={() => setAnalysisType('cases')}
-                  style={setupStyles.modeToggleButton(analysisType === 'cases')}
-                >
-                  Тест-кейсы
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAnalysisType('model')}
-                  style={setupStyles.modeToggleButton(analysisType === 'model')}
-                >
-                  Тестовая модель
-                </button>
-              </div>
-            </div>
-
-            {analysisType === 'cases' && (
-              <>
-                <h2 style={{
-                  fontSize: '24px',
-                  fontWeight: '800',
-                  color: 'var(--text-primary)',
-                  marginBottom: '24px',
-                  textAlign: 'center'
-                }}>
-                  Анализ тест-кейсов
-                </h2>
-                <form className="analysis-form" onSubmit={handleSubmit} style={setupStyles.setupCard}>
-                  <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
-                    <div style={{ flex: '1', minWidth: '200px' }}>
-                      <label style={{
-                        display: 'block',
-                        marginBottom: '8px',
-                        fontSize: '14px',
-                        fontWeight: '600',
-                        color: 'var(--text-secondary)'
-                      }}>
-                        Выберите проект:
-                      </label>
-                      <Select
-                        classNamePrefix="select"
-                        placeholder="Выберите проект"
-                        options={projects.map(p => ({ value: p.id, label: p.name }))}
-                        value={(() => { const p = projects.find(pr => pr.id === projectId); return p ? { value: p.id, label: p.name } : null; })()}
-                        onChange={opt => setProjectId(opt?.value ?? '')}
-                        menuPortalTarget={document.body}
-                        menuPosition="fixed"
-                        menuPlacement="auto"
-                        styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
-                      />
-                    </div>
-                    {renderJiraIssueBlock('cases')}
-                  </div>
-                  {/* Кнопка просмотра правил */}
-                  {projectId && (
-                    <button
-                      type="button"
-                      onClick={() => setShowRulesModal(true)}
-                      className="rules-trigger-btn"
-                    >
-                      Правила статанализа
-                    </button>
-                  )}
-
-                  <button
-                    type="submit"
-                    disabled={loading || !projectId || !jiraIssueCases.trim()}
-                    style={{
-                      width: '100%',
-                      padding: '16px 24px',
-                      fontSize: '16px',
-                      fontWeight: '700',
-                      color: (loading || !projectId || !jiraIssueCases.trim()) ? 'var(--text-muted)' : 'var(--text-primary)',
-                      backgroundColor: (loading || !projectId || !jiraIssueCases.trim()) ? 'var(--bg-input)' : 'var(--bg-content)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: '14px',
-                      cursor: (loading || !projectId || !jiraIssueCases.trim()) ? 'default' : 'pointer',
-                      transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                      boxShadow: (loading || !projectId || !jiraIssueCases.trim()) ? 'none' : 'var(--shadow-sm)'
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!loading && projectId && jiraIssueCases.trim()) {
-                        e.target.style.backgroundColor = 'var(--bg-hover)';
-                        e.target.style.boxShadow = 'var(--shadow-md)';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!loading && projectId && jiraIssueCases.trim()) {
-                        e.target.style.backgroundColor = 'var(--bg-content)';
-                        e.target.style.boxShadow = 'var(--shadow-sm)';
-                      }
-                    }}
-                  >
-                    {loading ? 'Анализ запущен...' : !projectId ? 'Выберите проект' : !jiraIssueCases.trim() ? 'Введите номер задачи' : 'Запустить анализ'}
-                  </button>
-                </form>
-              </>
-            )}
-
-            {analysisType === 'model' && (
-              <>
-                <h2 style={{
-                  fontSize: '24px',
-                  fontWeight: '800',
-                  color: 'var(--text-primary)',
-                  marginBottom: '24px',
-                  textAlign: 'center'
-                }}>
-                  Анализ тестовой модели
-                </h2>
-                <form className="analysis-form" onSubmit={handleSubmit} style={setupStyles.setupCard}>
-                  <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
-                    <div style={{ flex: '1', minWidth: '200px' }}>
-                      <label style={{
-                        display: 'block',
-                        marginBottom: '8px',
-                        fontSize: '14px',
-                        fontWeight: '600',
-                        color: 'var(--text-secondary)'
-                      }}>
-                        Выберите проект:
-                      </label>
-                      <Select
-                        classNamePrefix="select"
-                        placeholder="Выберите проект"
-                        options={projects.map(p => ({ value: p.id, label: p.name }))}
-                        value={(() => { const p = projects.find(pr => pr.id === projectId); return p ? { value: p.id, label: p.name } : null; })()}
-                        onChange={opt => setProjectId(opt?.value ?? '')}
-                        menuPortalTarget={document.body}
-                        menuPosition="fixed"
-                        menuPlacement="auto"
-                        styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
-                      />
-                    </div>
-                    {renderJiraIssueBlock('model')}
-                  </div>
-
-                  <div style={{ marginBottom: '32px' }}>
-                    <label style={{
-                      display: 'block',
-                      marginBottom: '8px',
-                      fontSize: '14px',
-                      fontWeight: '600',
-                      color: 'var(--text-secondary)'
-                    }}>
-                      Выберите файл модели:
-                    </label>
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '12px',
-                      flexWrap: 'wrap'
-                    }}>
-                      <label style={{
-                        padding: '10px 20px',
-                        fontSize: '14px',
-                        fontWeight: '600',
-                        color: 'var(--text-primary)',
-                        backgroundColor: 'var(--bg-input)',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '12px',
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                        boxShadow: 'var(--shadow-sm)'
-                      }}
-                        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; e.currentTarget.style.borderColor = 'var(--primary-accent)'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-input)'; e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+          <div style={{
+            maxWidth: '90vw',
+            margin: '0 auto',
+            padding: '40px 20px'
+          }}>
+            <form className="analysis-form" onSubmit={handleSubmit} style={{
+              backgroundColor: 'var(--bg-content)',
+              padding: '32px',
+              borderRadius: '12px',
+              border: '1px solid var(--border-color)',
+              marginBottom: '32px',
+              boxShadow: 'none'
+            }}>
+              <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
+                <div style={{ flex: '1', minWidth: '200px' }}>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '8px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    color: 'var(--text-secondary)'
+                  }}>
+                    Выберите проект:
+                  </label>
+                  <Select
+                    classNamePrefix="select"
+                    placeholder="Выберите проект"
+                    options={projects.map(p => ({ value: p.id, label: p.name }))}
+                    value={(() => { const p = projects.find(pr => pr.id === projectId); return p ? { value: p.id, label: p.name } : null; })()}
+                    onChange={opt => setProjectId(opt?.value ?? '')}
+                    menuPortalTarget={document.body}
+                    menuPosition="fixed"
+                    menuPlacement="auto"
+                    styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
+                  />
+                </div>
+                <div className="jira-issue-field">
+                  <div className="jira-issue-header">
+                    <label htmlFor="jira-issue-input">Номер задачи из Jira:</label>
+                    {lastReviewInfo && (
+                      <span
+                        className="jira-review-trigger"
+                        onMouseEnter={(e) => {
+                          if (tooltipHideTimeoutRef.current) {
+                            clearTimeout(tooltipHideTimeoutRef.current);
+                            tooltipHideTimeoutRef.current = null;
+                          }
+                          tooltipShownAtRef.current = Date.now();
+                          const tt = e.currentTarget.querySelector('.jira-review-tooltip');
+                          if (tt) tt.style.visibility = 'visible';
+                        }}
+                        onMouseLeave={(e) => {
+                          const tt = e.currentTarget.querySelector('.jira-review-tooltip');
+                          if (tt) {
+                            tooltipHideTimeoutRef.current = setTimeout(() => {
+                              tt.style.visibility = 'hidden';
+                              tooltipHideTimeoutRef.current = null;
+                            }, 150);
+                          }
+                        }}
                       >
-                        <HiOutlineDocumentText style={{ fontSize: '18px', color: 'var(--primary-accent)' }} />
-                        Выбрать файл
-                        <input
-                          type="file"
-                          accept=".json,.md"
-                          onChange={handleModelFileChange}
-                          style={{ display: 'none' }}
-                        />
-                      </label>
-                      <span style={{
-                        fontSize: '13px',
-                        color: modelFile ? 'var(--success)' : 'var(--text-muted)',
-                        fontWeight: modelFile ? '600' : '400'
-                      }}>
-                        {modelFile ? modelFile.name : 'Файл не выбран'}
+                        <HiOutlineQuestionMarkCircle size={16} />
+                        <span
+                          className="jira-review-tooltip"
+                          onMouseEnter={(e) => {
+                            if (tooltipHideTimeoutRef.current) {
+                              clearTimeout(tooltipHideTimeoutRef.current);
+                              tooltipHideTimeoutRef.current = null;
+                            }
+                            e.currentTarget.style.visibility = 'visible';
+                          }}
+                          onMouseLeave={(e) => {
+                            const el = e.currentTarget;
+                            tooltipHideTimeoutRef.current = setTimeout(() => {
+                              el.style.visibility = 'hidden';
+                              tooltipHideTimeoutRef.current = null;
+                            }, 150);
+                          }}
+                        >
+                          <span>
+                            Есть результат ревью от {new Date(lastReviewInfo.createdAt).toLocaleString('ru-RU', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </span>
+                          <button
+                            type="button"
+                            className="btn-link jira-review-tooltip-btn"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (Date.now() - tooltipShownAtRef.current < 300) return;
+                              const confirmed = window.confirm(
+                                'Результаты ревью будут удалены без возможности восстановления. Продолжить?'
+                              );
+                              if (!confirmed) return;
+                              try {
+                                await axios.delete(`${config.serverUrl}/analyze/status`, { params: { jiraIssue: jiraIssue.trim() } });
+                                setLastReviewInfo(null);
+                              } catch (err) {
+                                console.error('Ошибка очистки результатов:', err);
+                              }
+                            }}
+                          >
+                            Очистить результат
+                          </button>
+                        </span>
                       </span>
-                    </div>
+                    )}
                   </div>
-
-                  {projectId && (
-                    <button
-                      type="button"
-                      onClick={() => setShowTestModelRulesModal(true)}
-                      className="rules-trigger-btn"
-                    >
-                      Правила тестовой модели
-                    </button>
-                  )}
-
-                  <button
-                    type="submit"
-                    disabled={loading || !projectId || !jiraIssueModel.trim() || !modelFile}
+                  <input
+                    id="jira-issue-input"
+                    type="text"
+                    value={jiraIssue}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setJiraIssue(v);
+                      syncProjectFromJiraPrefix(v);
+                    }}
                     style={{
                       width: '100%',
-                      padding: '16px 24px',
-                      fontSize: '16px',
-                      fontWeight: '700',
-                      color: (loading || !projectId || !jiraIssueModel.trim() || !modelFile) ? 'var(--text-muted)' : 'var(--text-primary)',
-                      backgroundColor: (loading || !projectId || !jiraIssueModel.trim() || !modelFile) ? 'var(--bg-input)' : 'var(--bg-content)',
+                      padding: '12px 16px',
+                      fontSize: '15px',
                       border: '1px solid var(--border-color)',
-                      borderRadius: '14px',
-                      cursor: (loading || !projectId || !jiraIssueModel.trim() || !modelFile) ? 'default' : 'pointer',
-                      transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                      boxShadow: (loading || !projectId || !jiraIssueModel.trim() || !modelFile) ? 'none' : 'var(--shadow-sm)'
+                      borderRadius: '8px',
+                      backgroundColor: 'var(--bg-input)',
+                      color: 'var(--text-primary)',
+                      outline: 'none',
+                      transition: 'all 0.2s',
+                      boxSizing: 'border-box'
                     }}
-                    onMouseEnter={(e) => {
-                      if (!loading && projectId && jiraIssueModel.trim() && modelFile) {
-                        e.target.style.backgroundColor = 'var(--bg-hover)';
-                        e.target.style.boxShadow = 'var(--shadow-md)';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!loading && projectId && jiraIssueModel.trim() && modelFile) {
-                        e.target.style.backgroundColor = 'var(--bg-content)';
-                        e.target.style.boxShadow = 'var(--shadow-sm)';
-                      }
-                    }}
-                  >
-                    {loading ? (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-                        <div className="spinner" style={{
-                          width: '18px', height: '18px', border: '2px solid rgba(0,0,0,0.1)',
-                          borderTop: '2px solid var(--primary-accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite'
-                        }}></div>
-                        Идет анализ...
-                      </div>
-                    ) : (
-                      !projectId ? 'Выберите проект' : !jiraIssueModel.trim() ? 'Введите номер задачи' : !modelFile ? 'Выберите файл модели' : 'Запустить анализ'
-                    )}
-                  </button>
-                </form>
-              </>
-            )}
+                    onFocus={(e) => e.target.style.borderColor = 'var(--border-focus)'}
+                    onBlur={(e) => e.target.style.borderColor = 'var(--border-color)'}
+                  />
+                </div>
+              </div>
+              {/* Кнопка просмотра правил */}
+              {projectId && (
+                <button
+                  type="button"
+                  onClick={() => setShowRulesModal(true)}
+                  style={{
+                    width: '100%',
+                    padding: '12px 24px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    color: 'var(--primary-accent)',
+                    backgroundColor: 'transparent',
+                    border: '2px solid var(--primary-accent)',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    margin: '0px'
+                  }}
+                >
+                  Правила статанализа
+                </button>
+              )}
 
+              <button
+                type="submit"
+                disabled={loading || !projectId || !jiraIssue.trim()}
+                style={{
+                  width: '100%',
+                  padding: '14px 24px',
+
+                  fontSize: '16px',
+                  fontWeight: '600',
+                  color: 'white',
+                  backgroundColor: (loading || !projectId || !jiraIssue.trim()) ? 'var(--border-color)' : 'var(--primary-accent)',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: (loading || !projectId || !jiraIssue.trim()) ? 'default' : 'pointer',
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={(e) => {
+                  if (!loading && projectId && jiraIssue.trim()) {
+                    e.target.style.backgroundColor = 'var(--primary-hover)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!loading && projectId && jiraIssue.trim()) {
+                    e.target.style.backgroundColor = 'var(--primary-accent)';
+                  }
+                }}
+              >
+                {loading ? 'Анализ запущен...' : !projectId ? 'Выберите проект' : !jiraIssue.trim() ? 'Введите номер задачи' : 'Запустить анализ'}
+              </button>
+            </form>
             {htmlReport && !loading && showScrollTop && (
-              <div className="floating-buttons floating-buttons--top-only">
+              <div className="floating-buttons analysis-floating">
                 <span />
                 <button
                   type="button"
@@ -1335,17 +905,13 @@ const App = ({ projects }) => {
                 </button>
               </div>
             )}
-            <div
-              ref={reportContainerRef}
-              className="static-analysis-report-host"
-              style={{
-                backgroundColor: 'var(--bg-content)',
-                padding: '32px',
-                borderRadius: '16px',
-                border: '1px solid var(--border-color)',
-                minHeight: '200px'
-              }}
-            >
+            <div ref={reportContainerRef} style={{
+              backgroundColor: 'var(--bg-content)',
+              padding: '32px',
+              borderRadius: '12px',
+              border: '1px solid var(--border-color)',
+              minHeight: '200px'
+            }}>
               {loading ? (
                 <div style={{
                   display: 'flex',
@@ -1364,29 +930,32 @@ const App = ({ projects }) => {
                   fontSize: '16px',
                   padding: '40px 20px'
                 }}>
-                  {analysisType === 'cases' ? 'Не найдено тест-кейсов для анализа' : 'Загрузите модель для выполнения анализа'}
+                  Не найдено тест-кейсов для анализа
                 </p>
               )}
             </div>
           </div>
         )}
         {activeTab === 'export' && (
-          <div className="app-page-container">
+          <div style={{
+            maxWidth: '800px',
+            margin: '0 auto',
+            padding: '40px 20px'
+          }}>
             <h2 style={{
-              fontSize: '24px',
-              fontWeight: '800',
+              fontSize: '28px',
+              fontWeight: '600',
               color: 'var(--text-primary)',
               marginBottom: '32px',
               textAlign: 'center'
             }}>
-              Экспорт XMind в ТестОпс
+              Экспорт XMind в Allure
             </h2>
             <div style={{
               backgroundColor: 'var(--bg-content)',
               padding: '32px',
-              borderRadius: '16px',
-              border: '1px solid var(--border-color)',
-              boxShadow: 'none',
+              borderRadius: '12px',
+              boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.2)',
               marginBottom: '24px'
             }}>
               <div style={{ marginBottom: '24px' }}>
@@ -1419,6 +988,27 @@ const App = ({ projects }) => {
                   fontWeight: '600',
                   color: 'var(--text-secondary)'
                 }}>
+                  Номер задачи из Jira (опционально):
+                </label>
+                <input
+                  type="text"
+                  value={jiraIssue}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setJiraIssue(v);
+                    syncProjectFromJiraPrefix(v);
+                  }}
+                  placeholder="JMT-1234"
+                  style={{ width: '100%', boxSizing: 'border-box', marginBottom: '24px' }}
+                />
+
+                <label style={{
+                  display: 'block',
+                  marginBottom: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: 'var(--text-secondary)'
+                }}>
                   Загрузить XMind файл:
                 </label>
                 <div style={{
@@ -1428,25 +1018,25 @@ const App = ({ projects }) => {
                   flexWrap: 'wrap'
                 }}>
                   <label style={{
-                    padding: '10px 20px',
-                    fontSize: '14px',
-                    fontWeight: '600',
-                    color: 'var(--text-primary)',
-                    backgroundColor: 'var(--bg-input)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '12px',
+                    padding: '12px 24px',
+                    fontSize: '15px',
+                    fontWeight: '500',
+                    color: 'white',
+                    backgroundColor: 'var(--primary-accent)',
+                    border: 'none',
+                    borderRadius: '8px',
                     cursor: 'pointer',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                    boxShadow: 'var(--shadow-sm)'
+                    transition: 'all 0.2s',
+                    display: 'inline-block'
                   }}
-                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; e.currentTarget.style.borderColor = 'var(--primary-accent)'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-input)'; e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+                    onMouseEnter={(e) => {
+                      e.target.style.backgroundColor = 'var(--primary-hover)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.backgroundColor = 'var(--primary-accent)';
+                    }}
                   >
-                    <HiOutlineDocumentText style={{ fontSize: '18px', color: 'var(--primary-accent)' }} />
-                    Выбрать файл
+                    Выберите файл
                     <input
                       type="file"
                       accept=".xmind"
@@ -1455,9 +1045,9 @@ const App = ({ projects }) => {
                     />
                   </label>
                   <span style={{
-                    fontSize: '13px',
-                    color: xmindFile ? 'var(--success)' : 'var(--text-muted)',
-                    fontWeight: xmindFile ? '600' : '400'
+                    fontSize: '14px',
+                    color: xmindFile ? 'var(--success)' : 'var(--error)',
+                    fontWeight: xmindFile ? '500' : '400'
                   }}>
                     {xmindFile ? xmindFile.name : 'Файл не выбран'}
                   </span>
@@ -1471,29 +1061,16 @@ const App = ({ projects }) => {
                   padding: '14px 24px',
                   fontSize: '16px',
                   fontWeight: '600',
-                  color: 'white',
-                  background: (loading || !xmindFile) ? 'var(--border-color)' : 'linear-gradient(135deg, var(--primary-accent), #a855f7)',
+                  color: 'var(--text-primary)',
+                  backgroundColor: (loading || !xmindFile) ? 'var(--border-color)' : 'var(--success)',
                   border: 'none',
-                  borderRadius: '12px',
+                  borderRadius: '8px',
                   cursor: (loading || !xmindFile) ? 'default' : 'pointer',
-                  transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                  transition: 'all 0.2s',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: '10px',
-                  boxShadow: (loading || !xmindFile) ? 'none' : '0 4px 15px rgba(99, 102, 241, 0.3)'
-                }}
-                onMouseEnter={(e) => {
-                  if (!loading && xmindFile) {
-                    e.currentTarget.style.transform = 'translateY(-1px)';
-                    e.currentTarget.style.boxShadow = '0 6px 20px rgba(99, 102, 241, 0.4)';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!loading && xmindFile) {
-                    e.currentTarget.style.transform = 'translateY(0)';
-                    e.currentTarget.style.boxShadow = '0 4px 15px rgba(99, 102, 241, 0.3)';
-                  }
+                  gap: '10px'
                 }}
               >
                 {loading ? (
@@ -1516,9 +1093,9 @@ const App = ({ projects }) => {
 
             {exportMessage && (
               <div style={{
-                backgroundColor: 'var(--bg-input)',
+                backgroundColor: 'var(--success-bg)',
                 border: '1px solid var(--border-color)',
-                borderRadius: '16px',
+                borderRadius: '8px',
                 padding: '16px 20px',
                 marginBottom: '24px'
               }}>
@@ -1547,23 +1124,21 @@ const App = ({ projects }) => {
                     padding: '12px 24px',
                     fontSize: '15px',
                     fontWeight: '500',
-                    color: 'white',
-                    backgroundColor: 'var(--primary-accent)',
+                    color: 'var(--text-primary)',
+                    backgroundColor: 'var(--success)',
                     textDecoration: 'none',
-                    borderRadius: '12px',
+                    borderRadius: '8px',
                     transition: 'all 0.2s',
-                    boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
+                    boxShadow: '0 2px 4px rgba(16, 185, 129, 0.3)'
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = 'translateY(-1px)';
-                    e.currentTarget.style.boxShadow = '0 6px 16px rgba(99, 102, 241, 0.3)';
+                    e.target.style.backgroundColor = '#059669'; /* success hover */
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = 'translateY(0)';
-                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(99, 102, 241, 0.2)';
+                    e.target.style.backgroundColor = 'var(--success)';
                   }}
                 >
-                  Открыть проект в ТестОпс
+                  Открыть проект в Allure
                 </a>
               </div>
             )}
@@ -1579,23 +1154,21 @@ const App = ({ projects }) => {
                   padding: '12px 24px',
                   fontSize: '15px',
                   fontWeight: '500',
-                  color: (loading || !projectId) ? 'var(--text-muted)' : 'var(--text-secondary)',
-                  backgroundColor: (loading || !projectId) ? 'var(--border-color)' : 'var(--bg-input)',
-                  border: '1px solid var(--border-color)',
-                  borderRadius: '12px',
+                  color: 'white',
+                  backgroundColor: (loading || !projectId) ? 'var(--border-color)' : 'var(--error)',
+                  border: 'none',
+                  borderRadius: '8px',
                   cursor: (loading || !projectId) ? 'default' : 'pointer',
-                  transition: 'all 0.2s'
+                  transition: 'all 0.2s',
                 }}
                 onMouseEnter={(e) => {
                   if (!loading && projectId) {
-                    e.currentTarget.style.backgroundColor = 'var(--bg-hover)';
-                    e.currentTarget.style.color = 'var(--text-primary)';
+                    e.target.style.backgroundColor = '#c82333';
                   }
                 }}
                 onMouseLeave={(e) => {
                   if (!loading && projectId) {
-                    e.currentTarget.style.backgroundColor = 'var(--bg-input)';
-                    e.currentTarget.style.color = 'var(--text-secondary)';
+                    e.target.style.backgroundColor = '#dc3545';
                   }
                 }}
               >
@@ -1696,38 +1269,18 @@ const App = ({ projects }) => {
                   }}></div>
                   <p style={{
                     margin: 0,
-                    color: 'var(--text-primary)',
+                    color: '#666',
                     fontSize: '15px',
                     fontWeight: '500'
                   }}>
-                    {cleanupTaskId ? `Выполняется очистка... ${cleanupProgress}%` : 'Выполняется очистка дублей...'}
+                    Выполняется очистка дублей...
                   </p>
-                  
-                  {cleanupTaskId && (
-                    <div style={{
-                      width: '100%',
-                      maxWidth: '300px',
-                      height: '8px',
-                      backgroundColor: 'var(--border-color)',
-                      borderRadius: '4px',
-                      overflow: 'hidden',
-                      marginTop: '8px'
-                    }}>
-                      <div style={{
-                        width: `${cleanupProgress}%`,
-                        height: '100%',
-                        backgroundColor: '#dc3545',
-                        transition: 'width 0.3s ease'
-                      }} />
-                    </div>
-                  )}
-
                   <p style={{
                     margin: 0,
-                    color: 'var(--text-muted)',
+                    color: '#999',
                     fontSize: '13px'
                   }}>
-                    Пожалуйста, подождите. Это может занять некоторое время.
+                    Пожалуйста, подождите
                   </p>
                 </div>
               )}
@@ -1963,13 +1516,7 @@ const App = ({ projects }) => {
         isOpen={showRulesModal}
         onClose={() => setShowRulesModal(false)}
         projectId={projectId}
-      />
-      <RulesModal
-        isOpen={showTestModelRulesModal}
-        onClose={() => setShowTestModelRulesModal(false)}
-        projectId={projectId}
-        exportUrlSuffix="validation/test-model-rules/export"
-        emptyTitleFallback="Правила ревью тестовой модели"
+        projects={projects}
       />
     </ErrorBoundary>
   );

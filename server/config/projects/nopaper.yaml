@@ -1,5 +1,5 @@
 # Кастомные правила для Nopaper (id = 2)
-cases_rules:
+project_rules:
   "2":
     - id: "nopaper_block_required"
       name: "Обязательное поле Block (кастомное правило проекта)"

@@ -79,7 +79,7 @@ const LOGIC_EXTRACTION_PROMPT = `
  * @param {string} requirementsText - Текст требований
  * @returns {Promise<Object>} Объект с извлеченной логикой
  */
-export async function extractLogicAndConstraints(requirementsText) {
+export async function extractLogicAndConstraints(requirementsText, options = {}) {
     if (!requirementsText || typeof requirementsText !== 'string' || !requirementsText.trim()) {
         console.warn('[logic-extractor] Пустые требования, возвращаю пустой результат');
         return {
@@ -94,6 +94,11 @@ export async function extractLogicAndConstraints(requirementsText) {
     try {
         console.log('[logic-extractor] Начинаю извлечение логики из требований...');
         
+        const models = Array.isArray(options.models) && options.models.length > 0
+            ? options.models
+            : config.cloudruModels;
+        console.log(`[logic-extractor] Модели для попыток: ${models.join(', ')}`);
+
         const messages = [
             {
                 role: 'system',
@@ -120,6 +125,7 @@ ${requirementsText.substring(0, 50000)}${requirementsText.length > 50000 ? '\n\n
             messages,
             config.openRouterAiKey,
             {
+                models,
                 temperature: 0.0,
                 max_tokens: 4000,
                 response_format: {
@@ -272,4 +278,3 @@ function getEmptyResult() {
         dependencies: []
     };
 }
-

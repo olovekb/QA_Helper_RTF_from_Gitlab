@@ -1,16 +1,16 @@
-import { fetchWithAuth, authHeaders, buildTestCaseTreeEntityUrl, getTestCaseTreeEntityContent } from '../utils/allureAuth.js';
-import config from '../config/index.js';
-import { logInfo, logError, logWarn } from '../utils/logger.js';
-import databasePool from '../db/pool.js';
+import { fetchWithAuth, authHeaders } from '../utils/allureAuth.js'; // Импорт функции авторизации и заголовков
+import config from '../config/index.js'; // Импорт конфигурации проекта
+import { logInfo, logError, logWarn } from '../utils/logger.js'; // Импорт функций логирования
+import databasePool from '../db/pool.js'; // Импорт пула подключений к базе данных
 import pLimit from 'p-limit';
 
-const nocodeProjectIds = ['1', '307', '377'];
-const allureLimit = pLimit(5);
+// Глобальный кэш для хранения результатов запросов (очищается при необходимости)
 const cache = new Map();
 let currentProjectId = null;
 
 /**
- * Получает иерархическую структуру проекта (только папки) из Allure API, включая все уровни вложенности
+ * Получает иерархическую структуру проекта (только папки) из Allure API, включая все уровни вложенности,
+ * с оптимизацией для скорости и сохранением всех функциональных блоков (Feature, Story, Scenario и т.д.) в БД
  * @param {string} projectId - Идентификатор проекта в Allure
  * @param {Object} [skipCriteria] - Критерии для пропуска узлов (например, { customFieldIdsToSkip: [], namePatternsToSkip: [] })
  * @returns {Promise<Object>} - Структура проекта с папками, содержащими name, customFieldId, их названия и вложенные дети
@@ -18,27 +18,29 @@ let currentProjectId = null;
  */
 export async function getProjectStructure(projectId, skipCriteria = { customFieldIdsToSkip: [], namePatternsToSkip: [] }) {
     try {
-        logInfo(`Запрашиваем иерархическую структуру папок проекта с ID ${projectId} из Allure API`);
+        logInfo(`Запрашиваем иерархическую структуру папок проекта с ID ${projectId} из Allure API`); // Логирование запроса\
 
+        // Очищаем кэш, если projectId изменился
         if (currentProjectId !== projectId) {
             cache.clear();
             logInfo(`Кэш очищен, так как projectId изменился с ${currentProjectId} на ${projectId}`);
             currentProjectId = projectId;
         }
 
+        // Шаг 1: Получаем treeId для проекта через эндпоинт /api/tree (с кэшированием)
         const treeCacheKey = `tree_${projectId}`;
         let treeId = cache.get(treeCacheKey);
 
         if (!treeId) {
             const treeUrl = `${config.allureBaseUrl}/api/tree?projectId=${projectId}`;
 
-            logInfo(`Получаем treeId для проекта ${projectId} (без кэша)`);
-            const treeResponse = await allureLimit(() => fetchWithAuth(treeUrl, {
+            logInfo(`Получаем treeId для проекта ${projectId} (без кэша)`); // Логирование шага
+            const treeResponse = await fetchWithAuth(treeUrl, {
                 headers: {
-                    ...authHeaders,
-                    'Content-Type': 'application/json',
+                    ...authHeaders, // Используем глобальные заголовки с токеном
+                    'Content-Type': 'application/json', // Тип контента
                 },
-            }));
+            });
 
             if (!treeResponse.ok) {
                 const errorMessage = await treeResponse.text();
@@ -47,9 +49,11 @@ export async function getProjectStructure(projectId, skipCriteria = { customFiel
             }
 
             const treeData = await treeResponse.json();
-            logInfo(`Получен ответ от /api/tree для projectId ${projectId}`);
+            logInfo(`Ответ от /api/tree для projectId ${projectId}:`, JSON.stringify(treeData)); // Логирование ответа для отладки
 
-
+            // Извлекаем treeId из ответа
+            // Для проектов NoCode (1 и 307) ищем "Global Structure", для остальных - "Structure"
+            const nocodeProjectIds = ['1', '307'];
             let structureTree = null;
             if (nocodeProjectIds.includes(String(projectId))) {
                 structureTree = treeData.content?.find(item => item.name === "Global Structure");
@@ -62,37 +66,38 @@ export async function getProjectStructure(projectId, skipCriteria = { customFiel
 
             if (structureTree && structureTree.id) {
                 treeId = structureTree.id;
-                logInfo(`Найден treeId ${treeId} для проекта ${projectId} с name: "${structureTree.name}"`);
+                logInfo(`Найден treeId ${treeId} для проекта ${projectId} с name: "${structureTree.name}"`); // Логирование успеха
             } else {
-                const searchName = nocodeProjectIds.includes(String(projectId)) ? '"Global Structure" или "Structure"' : '"Structure"';
-                logWarn(`treeId с name: ${searchName} не найден в ответе для проекта ${projectId}, используем значение по умолчанию (0)`);
-                treeId = 0;
+                const searchName = projectId === '307' ? '"Global Structure" или "Structure"' : '"Structure"';
+                logWarn(`treeId с name: ${searchName} не найден в ответе для проекта ${projectId}, используем значение по умолчанию (0)`); // Логирование предупреждения
+                treeId = 0; // Значение по умолчанию, если treeId не найден
             }
 
             if (!treeId) {
-                const searchName = nocodeProjectIds.includes(String(projectId)) ? '"Global Structure" или "Structure"' : '"Structure"';
+                const searchName = projectId === '307' ? '"Global Structure" или "Structure"' : '"Structure"';
                 throw new Error(`treeId не найден для проекта ${projectId} с name: ${searchName}`);
             }
 
-            cache.set(treeCacheKey, treeId);
-            logInfo(`Найден и закэширован treeId ${treeId} для проекта ${projectId}`);
+            cache.set(treeCacheKey, treeId); // Кэшируем treeId
+            logInfo(`Найден и закэширован treeId ${treeId} для проекта ${projectId}`); // Логирование успеха
         } else {
-            logInfo(`Используем закэшированный treeId ${treeId} для проекта ${projectId}`);
+            logInfo(`Используем закэшированный treeId ${treeId} для проекта ${projectId}`); // Логирование кэширования
         }
 
+        // Шаг 2: Получаем структуру дерева для конкретного treeId через /api/tree/{treeId} (с кэшированием)
         const treeDetailCacheKey = `treeDetail_${treeId}`;
         let customFields = cache.get(treeDetailCacheKey);
 
         if (!customFields) {
             const treeDetailUrl = `${config.allureBaseUrl}/api/tree/${treeId}`;
 
-            logInfo(`Получаем детали дерева с treeId ${treeId} для проекта ${projectId} (без кэша)`);
-            const treeDetailResponse = await allureLimit(() => fetchWithAuth(treeDetailUrl, {
+            logInfo(`Получаем детали дерева с treeId ${treeId} для проекта ${projectId} (без кэша)`); // Логирование шага
+            const treeDetailResponse = await fetchWithAuth(treeDetailUrl, {
                 headers: {
-                    ...authHeaders,
-                    'Content-Type': 'application/json',
+                    ...authHeaders, // Используем глобальные заголовки с токеном
+                    'Content-Type': 'application/json', // Тип контента
                 },
-            }));
+            });
 
             if (!treeDetailResponse.ok) {
                 const errorMessage = await treeDetailResponse.text();
@@ -101,47 +106,52 @@ export async function getProjectStructure(projectId, skipCriteria = { customFiel
             }
 
             const treeDetailData = await treeDetailResponse.json();
+            logInfo(`Ответ от /api/tree/${treeId}:`, JSON.stringify(treeDetailData)); // Логирование ответа для отладки
+            // Извлекаем поля (fields) из ответа, где содержатся customFieldId и их названия
             customFields = treeDetailData.fields || [];
-            cache.set(treeDetailCacheKey, customFields);
-            logInfo(`Успешно получены custom fields для treeId ${treeId}: ${customFields.length} полей`);
+            cache.set(treeDetailCacheKey, customFields); // Кэшируем customFields
+            logInfo(`Успешно получены и закэшированы custom fields для treeId ${treeId}: ${customFields.length} полей`); // Логирование успеха
         } else {
-            logInfo(`Используем закэшированные custom fields для treeId ${treeId}: ${customFields.length} полей`);
+            logInfo(`Используем закэшированные custom fields для treeId ${treeId}: ${customFields.length} полей`); // Логирование кэширования
         }
-        const initialUrl = buildTestCaseTreeEntityUrl(config.allureBaseUrl, {
-            projectId,
-            treeId,
-            page: 0,
-            size: 100,
-            pathPrefix: [],
-            deleted: 'false',
+
+        // Шаг 3: Получаем полную структуру дерева тест-кейсов с параллельными запросами
+        const structureUrl = `${config.allureBaseUrl}/api/v2/project/${projectId}/test-case/tree/tree-node`;
+        const baseQueryParams = new URLSearchParams({
+            treeId: treeId.toString(), // Используем полученный treeId
+            page: '0', // Начальная страница
+            size: '100', // Размер страницы, чтобы получить достаточно данных
+            sort: 'nodeSortOrder,asc', // Сортировка, как в твоём примере
+            deleted: 'false', // Фильтруем неудалённые узлы
         });
 
-        logInfo(`Запрашиваем корневую структуру для projectId ${projectId}, treeId ${treeId}`);
-        const initialStructureResponse = await allureLimit(() => fetchWithAuth(initialUrl, {
+        // Выполняем начальный запрос структуры
+        logInfo(`Запрашиваем корневую структуру для projectId ${projectId}, treeId ${treeId}`); // Логирование шага
+        const initialStructureResponse = await fetchWithAuth(`${structureUrl}?${baseQueryParams.toString()}`, {
             headers: {
-                ...authHeaders,
-                'Content-Type': 'application/json',
+                ...authHeaders, // Используем глобальные заголовки с токеном
+                'Content-Type': 'application/json', // Тип контента
             },
-        }));
+        });
 
         if (!initialStructureResponse.ok) {
             const errorMessage = await initialStructureResponse.text();
-            logError(`Ошибка получения структуры проекта ${projectId} для treeId ${treeId}: ${initialStructureResponse.statusText}`, errorMessage);
+            logError(`Ошибка получения структуры проекта ${projectId} для treeId ${treeId}: ${initialStructureResponse.statusText}`, errorMessage); // Логирование ошибки
             throw new Error(`Не удалось получить структуру проекта: ${initialStructureResponse.statusText} - ${errorMessage}`);
         }
 
         const initialData = await initialStructureResponse.json();
-        logInfo(`Получен ответ от testcasetree/entity (корень) projectId ${projectId}`);
+        logInfo(`Ответ от /api/v2/project/${projectId}/test-case/tree/tree-node (корень):`, JSON.stringify(initialData)); // Логирование ответа для отладки
 
-        const rootContent = getTestCaseTreeEntityContent(initialData);
-        const hasEntityPageArray =
-            Array.isArray(initialData.children?.content) || Array.isArray(initialData.content);
-        if (!hasEntityPageArray) {
-            logWarn(`Структура ответа для projectId ${projectId} без children.content/content-массива`);
+        // Проверяем структуру ответа перед сохранением
+        if (!initialData.children || !initialData.children.content) {
+            logWarn(`Структура ответа для projectId ${projectId} не содержит children.content:`, JSON.stringify(initialData));
             throw new Error('Некорректная структура ответа от Allure API');
         }
 
-
+        // Логируем типы корневых узлов и customFields для проекта 307
+        // Логируем типы корневых узлов и customFields для NoCode проектов
+        const nocodeProjectIds = ['1', '307'];
         if (nocodeProjectIds.includes(String(projectId))) {
             const customFieldsMap = new Map();
             customFields.forEach(field => {
@@ -151,20 +161,31 @@ export async function getProjectStructure(projectId, skipCriteria = { customFiel
             customFields.forEach(field => {
                 logInfo(`[projectId=${projectId}] customField: id=${field.id}, name="${field.name}"`);
             });
-            logInfo(`[projectId=${projectId}] Корневые узлы (${rootContent.length}):`);
-            rootContent.forEach((node, idx) => {
+            logInfo(`[projectId=${projectId}] Корневые узлы (${initialData.children.content.length}):`);
+            initialData.children.content.forEach((node, idx) => {
                 const customFieldName = customFieldsMap.get(node.customFieldId);
                 logInfo(`[projectId=${projectId}] Корневой узел ${idx}: id=${node.id}, name="${node.name}", customFieldId=${node.customFieldId}, customFieldName="${customFieldName}", type=${node.type}`);
             });
         }
 
-        const rootFolders = await getNestedFoldersParallel(projectId, [], treeId, customFields, skipCriteria, null);
+        // Сохраняем корневые функциональные блоки и их детей рекурсивно
+        await saveFunctionalBlocks(projectId, initialData.children.content, null, customFields);
 
-        logInfo(`Успешно получена структура проекта ${projectId} с treeId ${treeId}`);
+        // Рекурсивно получаем и сохраняем всю структуру, начиная с корневого узла, используя fetchAndSaveNestedBlocks
+        for (const node of initialData.children.content) {
+            if (node.type === 'GROUP') { // Сохраняем все узлы типа GROUP, независимо от наличия детей
+                await fetchAndSaveNestedBlocks(projectId, node.id.toString(), treeId, customFields, skipCriteria);
+            }
+        }
+
+        // Рекурсивно получаем всю структуру для клиента, параллельно, без пропуска
+        const rootFolders = await getNestedFoldersParallel(projectId, null, treeId, customFields, skipCriteria);
+
+        logInfo(`Успешно получена структура проекта ${projectId} с treeId ${treeId}`); // Логирование успеха
 
         return {
             projectId,
-            folders: rootFolders,
+            folders: rootFolders, // Возвращаем только папки с полной вложенностью
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : (typeof error === 'string' ? error : JSON.stringify(error) || 'Неизвестная ошибка');
@@ -173,7 +194,7 @@ export async function getProjectStructure(projectId, skipCriteria = { customFiel
         if (errorStack) {
             logError(`Стек ошибки для проекта ${projectId}:`, errorStack);
         }
-        throw error instanceof Error ? error : new Error(errorMessage);
+        throw error instanceof Error ? error : new Error(errorMessage); // Пробрасываем ошибку для обработки выше
     }
 }
 
@@ -190,10 +211,19 @@ async function saveFunctionalBlocks(projectId, nodes, parentId, customFields) {
         customFieldsMap.set(field.id, field.name);
     });
 
-    const blocksToUpsert = [];
+    // Собираем данные для пакетной вставки/обновления
+    const blocksToInsert = [];
+    const blocksToUpdate = [];
+
     for (const node of nodes) {
         if (node.type === 'GROUP') {
-            blocksToUpsert.push({
+            logInfo(`Обрабатываем узел типа GROUP с ID ${node.id}, name: ${node.name}, customFieldId: ${node.customFieldId}, parentId: ${parentId}, children count: ${node.children?.content?.length || 0}`);
+
+            const existingBlock = await databasePool('functional_blocks')
+                .where({ allure_id: node.id.toString(), project_id: projectId })
+                .first();
+
+            const blockData = {
                 allure_id: node.id.toString(),
                 project_id: projectId,
                 name: node.name,
@@ -205,49 +235,126 @@ async function saveFunctionalBlocks(projectId, nodes, parentId, customFields) {
                 layer: node.layer || null,
                 created_at: databasePool.fn.now(),
                 updated_at: databasePool.fn.now(),
-            });
+            };
+
+            if (!existingBlock) {
+                blocksToInsert.push(blockData);
+            } else {
+                blocksToUpdate.push({ ...blockData, id: existingBlock.id });
+            }
+        } else {
+            logWarn(`Пропущен узел с ID ${node.id} (type: ${node.type}, name: ${node.name}) — не является GROUP`);
         }
     }
 
-    if (blocksToUpsert.length > 0) {
-        const uniqueBlocksMap = new Map();
-        blocksToUpsert.forEach(block => uniqueBlocksMap.set(block.allure_id, block));
-        const uniqueBlocksToUpsert = Array.from(uniqueBlocksMap.values());
-
-        const saved = await databasePool('functional_blocks')
-            .insert(uniqueBlocksToUpsert)
-            .onConflict(['allure_id', 'project_id'])
-            .merge([
-                'project_id',
-                'name',
-                'custom_field_id',
-                'custom_field_name',
-                'count',
-                'parent_id',
-                'node_type',
-                'layer',
-                'updated_at'
-            ])
-            .returning(['id', 'allure_id']);
-
-        logInfo(`Пакетно загружено / обновлено ${uniqueBlocksToUpsert.length} функциональных блоков для проекта ${projectId}`);
-        return saved;
+    // Пакетная вставка новых блоков
+    if (blocksToInsert.length > 0) {
+        await databasePool('functional_blocks').insert(blocksToInsert);
+        logInfo(`Пакетно создано ${blocksToInsert.length} новых функциональных блоков для проекта ${projectId}`);
     }
-    return [];
+
+    // Пакетное обновление существующих блоков
+    if (blocksToUpdate.length > 0) {
+        await Promise.all(
+            blocksToUpdate.map(block =>
+                databasePool('functional_blocks')
+                    .where({ id: block.id })
+                    .update({
+                        name: block.name,
+                        custom_field_id: block.custom_field_id,
+                        custom_field_name: block.custom_field_name,
+                        count: block.count,
+                        parent_id: block.parent_id,
+                        node_type: block.node_type,
+                        layer: block.layer,
+                        updated_at: block.updated_at,
+                    })
+            )
+        );
+        logInfo(`Пакетно обновлено ${blocksToUpdate.length} функциональных блоков для проекта ${projectId}`);
+    }
+
+    // Рекурсивно сохраняем вложенные блоки
+    for (const node of nodes) {
+        if (node.type === 'GROUP' && node.children?.content?.length > 0) {
+            const existingBlock = await databasePool('functional_blocks')
+                .where({ allure_id: node.id.toString(), project_id: projectId })
+                .first();
+            await saveFunctionalBlocks(projectId, node.children.content, existingBlock.id, customFields);
+        }
+    }
 }
 
+/**
+ * Получает и сохраняет вложенные блоки для указанного parentNodeId
+ * @param {string} projectId - Идентификатор проекта в Allure
+ * @param {string} parentNodeId - ID родительского узла
+ * @param {number} treeId - Идентификатор дерева
+ * @param {Array} customFields - Список пользовательских полей с id и названиями
+ * @param {Object} skipCriteria - Критерии для пропуска узлов (например, { customFieldIdsToSkip: [], namePatternsToSkip: [] })
+ */
+async function fetchAndSaveNestedBlocks(projectId, parentNodeId, treeId, customFields, skipCriteria) {
+    const structureUrl = `${config.allureBaseUrl}/api/v2/project/${projectId}/test-case/tree/tree-node`;
+    const queryParams = new URLSearchParams({
+        treeId: treeId.toString(),
+        parentNodeId: parentNodeId,
+        page: '0',
+        size: '100',
+        sort: 'nodeSortOrder,asc',
+        sort: 'nodeSortOrder,asc',
+        deleted: 'false',
+    });
 
+    logInfo(`Запрашиваем вложенные блоки для projectId ${projectId}, treeId ${treeId}, parentNodeId ${parentNodeId}`);
+    const structureResponse = await fetchWithAuth(`${structureUrl}?${queryParams.toString()}`, {
+        headers: {
+            ...authHeaders,
+            'Content-Type': 'application/json',
+        },
+    });
+
+    if (!structureResponse.ok) {
+        const errorMessage = await structureResponse.text();
+        logError(`Ошибка получения вложенных блоков для projectId ${projectId}, parentNodeId ${parentNodeId}: ${structureResponse.statusText}`, errorMessage);
+        throw new Error(`Не удалось получить вложенные блоки: ${structureResponse.statusText} - ${errorMessage}`);
+    }
+
+    const data = await structureResponse.json();
+    logInfo(`Ответ для parentNodeId ${parentNodeId}: children.content.length = ${data.children?.content?.length || 0}`, JSON.stringify(data));
+
+    const parentBlock = await databasePool('functional_blocks')
+        .where({ allure_id: parentNodeId.toString(), project_id: projectId })
+        .first();
+    const parentId = parentBlock ? parentBlock.id : null;
+
+    logInfo(`Сохраняем вложенные блоки для parentNodeId ${parentNodeId}, parentId: ${parentId}, nodes count: ${data.children?.content?.length || 0}`);
+
+    if (data.children?.content && data.children.content.length > 0) {
+        await saveFunctionalBlocks(projectId, data.children.content, parentId, customFields);
+    } else {
+        logWarn(`Нет вложенных узлов (children.content) для parentNodeId ${parentNodeId}`);
+    }
+
+    // Параллельно обрабатываем вложенные узлы
+    const groupNodes = data.children?.content?.filter(node => node.type === 'GROUP') || [];
+    const nestedPromises = groupNodes.map(node =>
+        fetchAndSaveNestedBlocks(projectId, node.id.toString(), treeId, customFields, skipCriteria)
+    );
+    await Promise.all(nestedPromises);
+}
 
 /**
  * Рекурсивно получает папки и их вложенные дети из Allure API с параллельными запросами и возможностью пропуска
  * @param {string} projectId - Идентификатор проекта в Allure
- * @param {number[]} pathPrefix - Путь от корня дерева до папки, чьи прямые дети запрашиваются ([] для корня)
+ * @param {string|null} parentNodeId - ID родительского узла (null для корня)
  * @param {number} treeId - Идентификатор дерева
  * @param {Array} customFields - Список пользовательских полей с id и названиями
- * @param {Object} [skipCriteria] - Критерии для пропуска узлов (например, { customFieldIdsToSkip: [], namePatternsToSkip: [] })
+ * @param {Object} skipCriteria - Критерии для пропуска узлов (например, { customFieldIdsToSkip: [], namePatternsToSkip: [] })
  * @returns {Promise<Array>} - Массив отформатированных папок с их детьми
  */
-async function getNestedFoldersParallel(projectId, pathPrefix, treeId, customFields, skipCriteria = { customFieldIdsToSkip: [], namePatternsToSkip: [] }, dbParentId = null) {
+async function getNestedFoldersParallel(projectId, parentNodeId, treeId, customFields, skipCriteria = { customFieldIdsToSkip: [], namePatternsToSkip: [] }) {
+    const structureUrl = `${config.allureBaseUrl}/api/v2/project/${projectId}/test-case/tree/tree-node`;
+    const limit = pLimit(10);
     const folders = [];
     const customFieldsMap = new Map();
     customFields.forEach(field => {
@@ -258,136 +365,171 @@ async function getNestedFoldersParallel(projectId, pathPrefix, treeId, customFie
     let hasMore = true;
 
     while (hasMore) {
-        const entityUrl = buildTestCaseTreeEntityUrl(config.allureBaseUrl, {
-            projectId,
-            treeId,
-            page,
-            size: 100,
-            pathPrefix,
+        const queryParams = new URLSearchParams({
+            treeId: treeId.toString(),
+            page: page.toString(),
+            size: '100',
+            sort: 'nodeSortOrder,asc',
             deleted: 'false',
         });
 
-        logInfo(`Запрашиваем вложенные папки для projectId ${projectId}, treeId ${treeId}, path ${JSON.stringify(pathPrefix)}, page ${page}`);
-        const structureResponse = await allureLimit(() => fetchWithAuth(entityUrl, {
+        if (parentNodeId !== null) {
+            queryParams.append('parentNodeId', parentNodeId.toString());
+        }
+
+        logInfo(`Запрашиваем вложенные папки для projectId ${projectId}, treeId ${treeId}, parentNodeId ${parentNodeId}, page ${page}`);
+        const structureResponse = await fetchWithAuth(`${structureUrl}?${queryParams.toString()}`, {
             headers: {
                 ...authHeaders,
                 'Content-Type': 'application/json',
             },
-        }));
+        });
 
         if (!structureResponse.ok) {
             const errorMessage = await structureResponse.text();
-            logError(`Ошибка получения вложенных папок для projectId ${projectId}, path ${JSON.stringify(pathPrefix)}: ${structureResponse.statusText}`, errorMessage);
+            logError(`Ошибка получения вложенных папок для projectId ${projectId}, parentNodeId ${parentNodeId}: ${structureResponse.statusText}`, errorMessage);
             throw new Error(`Не удалось получить вложенные папки: ${structureResponse.statusText} - ${errorMessage}`);
         }
 
         const data = await structureResponse.json();
-        const pageContent = getTestCaseTreeEntityContent(data);
-        logInfo(`Ответ для path ${JSON.stringify(pathPrefix)}, page ${page}: получено ${pageContent.length} узлов`);
+        logInfo(`Ответ для parentNodeId ${parentNodeId}, page ${page}: children.content.length = ${data.children?.content?.length || 0}`, JSON.stringify(data));
 
-        let savedBlocksMapping = new Map();
-        if (pageContent.length > 0) {
-            const saved = await allureLimit(() => saveFunctionalBlocks(projectId, pageContent, dbParentId, customFields));
-            saved.forEach(b => savedBlocksMapping.set(b.allure_id, b.id));
-        }
+        const interestingNodes = data.children?.content?.filter(node => node.type === 'GROUP') || [];
+        const folderPromises = interestingNodes.map(node =>
+            limit(async () => {
+                try {
+                    if (shouldSkipNode(node, skipCriteria)) {
+                        logWarn(`Пропущен узел с ID ${node.id} (name: ${node.name}, customFieldId: ${node.customFieldId}) по критериям пропуска`);
+                        return null;
+                    }
 
-        const interestingNodes = pageContent.filter(node => node.type === 'GROUP');
-        const folderPromises = interestingNodes.map(async (node) => {
-            try {
-                const childPath = [...pathPrefix, Number(node.id)];
-                const nodeCustomFieldName = customFieldsMap.get(node.customFieldId);
-                const layer = node.layer || null;
-                const currentDbId = savedBlocksMapping.get(node.id.toString()) || null;
+                    const nodeCustomFieldName = customFieldsMap.get(node.customFieldId);
 
-                if (shouldSkipNode(node, skipCriteria)) {
-                    logWarn(`Пропущен узел с ID ${node.id} (name: ${node.name}) по критериям пропуска`);
+                    // Если это TEST_CASE, извлекаем Layer
+                    let layer = null;
+                    if (node.type === 'TEST_CASE') {
+                        // Allure в дереве обычно отдает labels
+                        const layerLabel = (node.labels || []).find(l => l.name === 'layer');
+                        layer = layerLabel ? layerLabel.value : null;
+                    }
+
+                    logInfo(`Обрабатываем узел [${node.type}] projectId=${projectId}, id=${node.id}, name=${node.name}, layer=${layer}`);
+
+                    // Для NoCode проектов (1 и 307): специальная обработка
+                    const nocodeProjectIds = ['1', '307'];
+                    if (nocodeProjectIds.includes(String(projectId))) {
+                        // Показываем Block и SubBlock, а также все узлы, которые находятся под ними
+                        if (nodeCustomFieldName === 'Block' || nodeCustomFieldName === 'SubBlock') {
+                            logInfo(`Найден Block/SubBlock для проекта 307: ${nodeCustomFieldName} - ${node.name}`);
+                            // Для Block и SubBlock обрабатываем детей БЕЗ фильтрации, чтобы показать Feature, Story, Scenario, Code
+                            const children = await getNestedFoldersParallel(projectId, node.id.toString(), treeId, customFields, skipCriteria);
+                            const result = {
+                                id: node.id,
+                                name: node.name,
+                                customFieldId: node.customFieldId || null,
+                                customFieldName: nodeCustomFieldName,
+                                count: node.children?.content?.length || 0,
+                                node_type: node.type,
+                                layer: layer,
+                                children: children.filter(child => child !== null),
+                            };
+                            logInfo(`Возвращаем Block/SubBlock для проекта 307: ${nodeCustomFieldName} - ${node.name}, children count: ${result.children.length}`);
+                            return result;
+                        }
+
+                        // Для остальных типов - не показываем их на корневом уровне
+                        if (parentNodeId === null) {
+                            // На корневом уровне пропускаем все, кроме Block и SubBlock
+                            logInfo(`Пропускаем корневой узел ${nodeCustomFieldName} для проекта 307, обрабатываем детей: ${node.name}`);
+                            const children = await getNestedFoldersParallel(projectId, node.id.toString(), treeId, customFields, skipCriteria);
+                            const filteredChildren = children.filter(child => child !== null);
+                            return filteredChildren;
+                        } else {
+                            // Если это не корневой уровень, показываем все узлы
+                            const children = node.type === 'GROUP'
+                                ? await getNestedFoldersParallel(projectId, node.id.toString(), treeId, customFields, skipCriteria)
+                                : [];
+                            return {
+                                id: node.id,
+                                name: node.name,
+                                customFieldId: node.customFieldId || null,
+                                customFieldName: nodeCustomFieldName,
+                                count: node.children?.content?.length || 0,
+                                node_type: node.type,
+                                layer: layer,
+                                children: children.filter(child => child !== null),
+                            };
+                        }
+                    }
+
+                    // Обычная обработка для всех остальных проектов
+                    const children = node.type === 'GROUP'
+                        ? await getNestedFoldersParallel(projectId, node.id.toString(), treeId, customFields, skipCriteria)
+                        : [];
+                    const folder = {
+                        id: node.id,
+                        name: node.name,
+                        customFieldId: node.customFieldId || null,
+                        customFieldName: nodeCustomFieldName || (node.type === 'TEST_CASE' ? 'Test Case' : 'Неизвестное поле'),
+                        count: node.children?.content?.length || 0,
+                        node_type: node.type,
+                        layer: layer,
+                        children: children.filter(child => child !== null),
+                    };
+
+                    return folder;
+                } catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : (typeof error === 'string' ? error : JSON.stringify(error) || 'Неизвестная ошибка');
+                    logError(`Ошибка при обработке узла ${node.id} (${node.name}):`, errorMessage);
                     return null;
                 }
-
-                logInfo(`Обрабатываем узел [${node.type}] projectId=${projectId}, id=${node.id}, name=${node.name}`);
-
-                if (nocodeProjectIds.includes(String(projectId))) {
-                    if (nodeCustomFieldName === 'Block' || nodeCustomFieldName === 'SubBlock') {
-                        const children = await getNestedFoldersParallel(projectId, childPath, treeId, customFields, skipCriteria, currentDbId);
-                        return {
-                            id: node.id,
-                            name: node.name,
-                            customFieldId: node.customFieldId || null,
-                            customFieldName: nodeCustomFieldName,
-                            count: children.length,
-                            node_type: node.type,
-                            layer: layer,
-                            children: children.filter(child => child !== null),
-                        };
-                    }
-
-                    if (pathPrefix.length === 0) {
-                        const children = await getNestedFoldersParallel(projectId, childPath, treeId, customFields, skipCriteria, currentDbId);
-                        return children.filter(child => child !== null);
-                    } else {
-                        const children = await getNestedFoldersParallel(projectId, childPath, treeId, customFields, skipCriteria, currentDbId);
-                        return {
-                            id: node.id,
-                            name: node.name,
-                            customFieldId: node.customFieldId || null,
-                            customFieldName: nodeCustomFieldName,
-                            count: children.length,
-                            node_type: node.type,
-                            layer: layer,
-                            children: children.filter(child => child !== null),
-                        };
-                    }
-                }
-
-                const children = await getNestedFoldersParallel(projectId, childPath, treeId, customFields, skipCriteria, currentDbId);
-                return {
-                    id: node.id,
-                    name: node.name,
-                    customFieldId: node.customFieldId || null,
-                    customFieldName: nodeCustomFieldName || 'Неизвестное поле',
-                    count: children.length,
-                    node_type: node.type,
-                    layer: layer,
-                    children: children.filter(child => child !== null),
-                };
-
-            } catch (error) {
-                logError(`Ошибка при обработке узла ${node.id} (${node.name}):`, error.message);
-                return null;
-            }
-        });
+            })
+        );
 
         const resolvedFolders = await Promise.all(folderPromises);
-        resolvedFolders.forEach((result) => {
+        // Обрабатываем результаты: если это массив (для Feature в проекте 307), распаковываем его
+        resolvedFolders.forEach((result, index) => {
             if (Array.isArray(result)) {
-                folders.push(...result.filter(f => f !== null));
+                // Если вернулся массив (дети Feature), добавляем их напрямую
+                const validResults = result.filter(folder => folder !== null);
+                logInfo(`[parentNodeId=${parentNodeId}] Добавляем ${validResults.length} детей из массива (индекс ${index})`);
+                folders.push(...validResults);
             } else if (result !== null) {
+                // Обычный узел
+                logInfo(`[parentNodeId=${parentNodeId}] Добавляем узел: ${result.customFieldName} - ${result.name} (индекс ${index})`);
                 folders.push(result);
+            } else {
+                logInfo(`[parentNodeId=${parentNodeId}] Пропущен null результат (индекс ${index})`);
             }
         });
+        logInfo(`[parentNodeId=${parentNodeId}] Итого папок после обработки: ${folders.length}`);
 
-        hasMore = pageContent.length === 100;
+        // Проверяем, есть ли ещё страницы
+        hasMore = data.children?.content?.length === 100; // Если вернулось 100 узлов, возможно, есть ещё
         page++;
     }
+
+    logInfo(`Отформатировано папок для parentNodeId ${parentNodeId}: ${folders.length}`, JSON.stringify(folders));
     return folders;
 }
 
 /**
  * Проверяет, нужно ли пропустить узел на основе заданных критериев
  * @param {Object} node - Узел дерева (GROUP)
- * @param {Object} skipCriteria - Критерии пропуска ({ customFieldIdsToSkip: [], namePatternsToSkip: [] })
+ * @param {Object} skipCriteria - Критерии пропуска (например, { customFieldIdsToSkip: [], namePatternsToSkip: [] })
  * @returns {boolean} - True, если узел нужно пропустить
  */
 function shouldSkipNode(node, skipCriteria) {
     const { customFieldIdsToSkip = [], namePatternsToSkip = [] } = skipCriteria;
 
-    if (customFieldIdsToSkip.length > 0 && customFieldIdsToSkip.includes(node.customFieldId)) {
+    // Проверяем customFieldId (по умолчанию не пропускаем ничего)
+    if (customFieldIdsToSkip.includes(node.customFieldId)) {
         return true;
     }
 
-    if (namePatternsToSkip.length > 0) {
-        const nodeName = (node.name || '').toLowerCase();
-        if (namePatternsToSkip.some(pattern => nodeName.includes(pattern.toLowerCase()))) {
+    // Проверяем name по регулярным выражениям
+    for (const pattern of namePatternsToSkip) {
+        if (pattern.test(node.name)) {
             return true;
         }
     }

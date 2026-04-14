@@ -1,14 +1,11 @@
 
 import fetch from 'node-fetch';
-import { buildTestCaseTreeEntityUrl } from './tia-mapping-service/utils/allureAuth.js';
 
 const ALLURE_BASE_URL = 'https://abanking.qatools.cloud';
 const ALLURE_TOKEN = 'cc865667-ca13-4f69-a5c9-77579586f571';
 const PROJECT_ID = 2;
 const TREE_ID = 399;
 const GROUP_ID = 540351; // Problematic group
-
-
 
 // Helper for auth headers
 const getAuthHeaders = () => ({
@@ -17,14 +14,8 @@ const getAuthHeaders = () => ({
 });
 
 async function checkGroup(groupId, leaf = false) {
-    const url = buildTestCaseTreeEntityUrl(ALLURE_BASE_URL, {
-        projectId: PROJECT_ID,
-        treeId: TREE_ID,
-        page: 0,
-        size: 100,
-        pathPrefix: [groupId],
-        leaf: leaf || undefined,
-    });
+    const leafParam = leaf ? '&leaf=true' : '';
+    const url = `${ALLURE_BASE_URL}/api/v2/project/${PROJECT_ID}/test-case/tree/tree-node?treeId=${TREE_ID}&parentNodeId=${groupId}&page=0&size=100${leafParam}`;
 
     console.log(`Checking URL: ${url}`);
 
@@ -40,13 +31,10 @@ async function checkGroup(groupId, leaf = false) {
         }
 
         const data = await response.json();
-        const c = data?.children?.content;
-        const t = data?.content;
-        const content = Array.isArray(c) ? c : (Array.isArray(t) ? t : []);
         console.log(`Response for leaf=${leaf}:`);
-        console.log(`Total children: ${content.length}`);
-        if (content.length > 0) {
-            content.forEach(child => {
+        console.log(`Total children: ${data.children?.content?.length || 0}`);
+        if (data.children?.content?.length > 0) {
+            data.children.content.forEach(child => {
                 console.log(` - [${child.type}] ${child.id}: ${child.name}`);
             });
         } else {

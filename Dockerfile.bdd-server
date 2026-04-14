@@ -2,27 +2,23 @@ FROM node:18-alpine
 
 RUN apk update && apk add --no-cache postgresql-client curl
 
-# Создаем структуру директорий
 WORKDIR /app/bdd-server
 
-# Копируем package.json и устанавливаем зависимости
 COPY bdd-server/package*.json ./
 RUN npm install --legacy-peer-deps --production
 
-# Копируем исходники bdd-server
 COPY bdd-server/ ./
 
-# Копируем необходимые файлы из server (для импортов ../server/...)
-# Создаем директорию server на уровень выше
 WORKDIR /app
 COPY server/cloudruClient.mjs server/cloudruClient.mjs
 COPY server/config.json server/config.json
+COPY shared/ shared/
 
-# Возвращаемся в рабочую директорию bdd-server
+WORKDIR /app/bdd-server
+RUN cp -r node_modules /app/
+
 WORKDIR /app/bdd-server
 
 EXPOSE 5002
 
-# Запуск сервера
 CMD ["npm", "start"]
-

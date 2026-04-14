@@ -44,7 +44,7 @@ export async function runInteractiveLLM({
     // ✅ Отслеживание повторяющихся вызовов fetch_context_chunk для защиты от зацикливания
     const fetchContextCallHistory = new Map(); // key: JSON.stringify(args) → count
 
-    const estimateTokens = () => Math.ceil((JSON.stringify(conversation || []).length || 0) / (APPROX_CHARS_PER_TOKEN || 4));
+    const estimateTokens = () => Math.ceil(JSON.stringify(conversation).length / APPROX_CHARS_PER_TOKEN);
 
     // ✅ Функция очистки истории: оставляет system prompt + последние N сообщений
     const compressHistory = (messages, keepLastN = 6) => {

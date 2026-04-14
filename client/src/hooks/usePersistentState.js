@@ -9,7 +9,6 @@ const TASK_STRIP_FIELDS = {
 export function usePersistentState (key, defaultValue, onSaved)
 {
   const [state, setState] = useState(defaultValue);
-  const [isLoaded, setIsLoaded] = useState(false);
   const isFirstMount = useRef(true);
   const onSavedRef = useRef(onSaved);
   onSavedRef.current = onSaved;
@@ -21,19 +20,15 @@ export function usePersistentState (key, defaultValue, onSaved)
       {
         if (stored !== undefined) {
           setState(stored);
+        } else {
+          idbSet(key, defaultValue).catch(console.warn);
         }
-        setIsLoaded(true);
       })
-      .catch(err =>
-      {
-        console.warn(`IDB error loading "${key}":`, err);
-        setIsLoaded(true);
-      });
+      .catch(console.warn);
   }, [key]);
 
   useEffect(() =>
   {
-    if (!isLoaded) return;
     if (isFirstMount.current) {
       isFirstMount.current = false;
       return;

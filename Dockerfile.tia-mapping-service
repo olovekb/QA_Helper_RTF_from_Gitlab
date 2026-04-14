@@ -1,6 +1,6 @@
 FROM node:18-alpine
 
-RUN apk update && apk add --no-cache postgresql-client
+RUN apk update && apk add --no-cache postgresql-client curl
 
 WORKDIR /app
 

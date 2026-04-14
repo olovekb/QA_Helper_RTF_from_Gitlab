@@ -1,4 +1,4 @@
-import databasePool from './connection.js';
+import databasePool from './connection.js'; // Импорт пула подключений к PostgreSQL
 
 /**
  * Получение всех функциональных блоков для указанного проекта
@@ -6,9 +6,9 @@ import databasePool from './connection.js';
  * @returns {Promise<Array>} - Массив объектов функциональных блоков
  */
 export async function getFunctionalBlocks(projectId) {
-  const query = 'SELECT * FROM functional_blocks WHERE project_id = $1';
-  const result = await databasePool.query(query, [projectId]);
-  return result.rows;
+    const query = 'SELECT * FROM functional_blocks WHERE project_id = $1'; // SQL-запрос для выборки блоков
+    const result = await databasePool.query(query, [projectId]); // Выполнение запроса с параметром
+    return result.rows; // Возвращаем строки результата
 }
 
 /**
@@ -17,9 +17,9 @@ export async function getFunctionalBlocks(projectId) {
  * @returns {Promise<Array>} - Массив объектов компонентов
  */
 export async function getComponents(projectId) {
-  const query = 'SELECT * FROM components WHERE project_id = $1';
-  const result = await databasePool.query(query, [projectId]);
-  return result.rows;
+    const query = 'SELECT * FROM components WHERE project_id = $1'; // SQL-запрос для выборки компонентов
+    const result = await databasePool.query(query, [projectId]); // Выполнение запроса
+    return result.rows; // Возвращаем строки результата
 }
 
 /**
@@ -31,13 +31,13 @@ export async function getComponents(projectId) {
  * @returns {Promise<number>} - ID созданного компонента
  */
 export async function createComponent(projectId, componentType, name, functionalBlockId = null) {
-  const query = `
+    const query = `
     INSERT INTO components (project_id, component_type, name, functional_block_id, created_at, updated_at)
     VALUES ($1, $2, $3, $4, NOW(), NOW())
     RETURNING id
   `;
-  const result = await databasePool.query(query, [projectId, componentType, name, functionalBlockId]);
-  return result.rows[0].id;
+    const result = await databasePool.query(query, [projectId, componentType, name, functionalBlockId]);
+    return result.rows[0].id; // Возвращаем ID созданного компонента
 }
 
 /**
@@ -47,14 +47,14 @@ export async function createComponent(projectId, componentType, name, functional
  * @returns {Promise<Object>} - Обновлённая запись компонента
  */
 export async function updateComponent(componentId, functionalBlockId) {
-  const query = `
+    const query = `
     UPDATE components 
     SET functional_block_id = $1, updated_at = NOW()
     WHERE id = $2
     RETURNING *
   `;
-  const result = await databasePool.query(query, [functionalBlockId, componentId]);
-  return result.rows[0];
+    const result = await databasePool.query(query, [functionalBlockId, componentId]);
+    return result.rows[0]; // Возвращаем обновлённую запись
 }
 
 /**
@@ -63,9 +63,9 @@ export async function updateComponent(componentId, functionalBlockId) {
  * @returns {Promise<Object|null>} - Удалённая запись или null, если компонент не найден
  */
 export async function deleteComponent(componentId) {
-  const query = 'DELETE FROM components WHERE id = $1 RETURNING *';
-  const result = await databasePool.query(query, [componentId]);
-  return result.rows[0];
+    const query = 'DELETE FROM components WHERE id = $1 RETURNING *';
+    const result = await databasePool.query(query, [componentId]);
+    return result.rows[0]; // Возвращаем удалённую запись или null
 }
 
 /**
@@ -76,11 +76,11 @@ export async function deleteComponent(componentId) {
  * @returns {Promise<number>} - ID созданного тест-плана
  */
 export async function createTestPlan(projectId, jiraTaskUrl, functionalBlocks) {
-  const query = `
+    const query = `
     INSERT INTO test_plans (project_id, jira_task_url, functional_blocks, created_at)
     VALUES ($1, $2, $3, NOW())
     RETURNING id
   `;
-  const result = await databasePool.query(query, [projectId, jiraTaskUrl, JSON.stringify(functionalBlocks)]);
-  return result.rows[0].id;
+    const result = await databasePool.query(query, [projectId, jiraTaskUrl, JSON.stringify(functionalBlocks)]);
+    return result.rows[0].id; // Возвращаем ID созданного тест-плана
 }

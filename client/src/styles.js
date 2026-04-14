@@ -1,7 +1,7 @@
 const styles = {
     container: {
         padding: '24px',
-        maxWidth: '1440px',
+        maxWidth: '1000px',
         margin: '0 auto',
         height: '100vh',
         display: 'flex',

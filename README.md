@@ -131,31 +131,6 @@ docker-compose ps
 docker-compose down
 ```
 
-### сборка back в Docker 
-Для ускорения работы рекомендуется запускать бэкенд в Docker, а фронтенд - локально.
-
-1.  **подготовить окружение**:
-    ```bash
-    cp docker-compose.override.yml.example docker-compose.override.yml
-    cp .env.example .env
-    ```
-2.  **настроить клиент**:
-    - убедиться в наличии файла `client/.env` (создается автоматически моим скриптом)
-    - проверить параметр `REACT_APP_SERVER_URL=http://localhost:5000/api`
-3.  **запустить бэкенд и БД**:
-    ```bash
-    docker-compose up --build -d
-    ```
-4.  **запустить фронтенд локально**:
-    ```bash
-    cd client
-    npm install --legacy-peer-deps
-    npm start
-    ```
-
-**Особенности работы с изменениями:**
-- править файлы в `server/` — изменения подхватятся через **volume** автоматически
-- перезапускать бэкенд для применения правок: `docker-compose restart allure-test-inspector` (или другой сервис например тиа посмотреть через ps)
 ---
 
 ## Сборка и установка

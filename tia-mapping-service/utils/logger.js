@@ -1,18 +1,18 @@
-import winston from 'winston';
+import winston from 'winston'; // Импорт библиотеки логирования winston
 
 /**
  * Создаём логгер с настройками для информационных, предупреждающих и ошибочных сообщений
  */
 const logger = winston.createLogger({
-  level: 'info',
+  level: 'info', // Уровень логирования по умолчанию (можно настроить на 'debug' для более детального вывода)
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.json()
   ),
   transports: [
-    new winston.transports.File({ filename: 'info.log', level: 'info' }),
-    new winston.transports.File({ filename: 'error.log', level: 'error' }),
-    new winston.transports.Console()
+    new winston.transports.File({ filename: 'info.log', level: 'info' }), // Логи в файл
+    new winston.transports.File({ filename: 'error.log', level: 'error' }), // Логи ошибок в отдельный файл
+    new winston.transports.Console() // Логи в консоль
   ],
 });
 
@@ -29,7 +29,7 @@ export function logInfo(message) {
  * @param {string} message - Сообщение для логирования предупреждения
  */
 export function logWarn(message) {
-  logger.warn(message);
+  logger.warn(message); // Используем уровень 'warn' в winston
 }
 
 /**

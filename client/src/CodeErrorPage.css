@@ -12,7 +12,10 @@ body {
    2. General Layout & Typography
    ================================= */
 .solution-page {
-    /* Layout is handled by .app-page-container */
+    padding: 24px;
+    padding-top: 52px;
+    max-width: 1200px;
+    margin: 0 auto;
 }
 
 h1,
@@ -282,7 +285,7 @@ h2 {
 .page-nav-back {
     position: fixed;
     top: 16px;
-    left: 32px;
+    left: 24px;
     z-index: 2000;
 }
 

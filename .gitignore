@@ -4,4 +4,8 @@
 **/pgdata
 **/report/
 ai-logs/
-docker-compose.override.yml
+nul
+tools/neo4j-mcp/
+tools/allure-testops-mcp/
+tools/allure-testops-mcp.ps1
+/.playwright-test-model.local.yaml

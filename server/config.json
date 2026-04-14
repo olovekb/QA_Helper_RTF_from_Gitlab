@@ -8,22 +8,34 @@
     "huggingfaceToken":  "__REDACTED__",
     "serverUrl":  "https://test-inspector.abanking.ru/api",
     "defaultJiraIntegrationId":  67,
+    "cloudru":  {
+                    "apiKey":  "MGQyOTVlZDYtNDI4Ni00M2Y2LWFkMzItM2NkZWE2ZThlZjAz.8a08cf2f0146293a2ee01df32726d9e7"
+                },
     "cloudruApiKey":  "__REDACTED__",
     "openRouterAiKey":  "__REDACTED__",
     "openAiToken":  "__REDACTED__",
+    "pineconeApiKey":  "__REDACTED__",
     "cloudruModels":  [
                           "Qwen/Qwen3-Coder-Next",
                           "Qwen/Qwen3-235B-A22B-Instruct-2507",
+                          "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+                          "Qwen/Qwen3-Next-80B-A3B-Instruct",
                           "zai-org/GLM-4.7-Flash",
-                          "zai-org/GLM-4.7"
+                          "zai-org/GLM-4.7",
+                          "GigaChat/GigaChat-2-Max",
+                          "ai-sage/GigaChat3-10B-A1.8B",
+                          "openai/gpt-oss-120b",
+                          "MiniMaxAI/MiniMax-M2",
+                          "t-tech/T-lite-it-2.1",
+                          "t-tech/T-pro-it-2.1"
                       ],
     "fallbackModels":  [
                            "openai/gpt-oss-120b",
                            "qwen/qwen3-235b-a22b:free",
                            "deepseek/deepseek-chat-v3.1:free",
-                           "meta-llama/llama-3.1-405b-instruct:free"
+                           "meta-llama/llama-4-maverick:free"
                        ],
-    "debugContextPages":  true,
+    "debugContextPages":  false,
     "bddServerUrl":  "http://localhost:5002",
     "analyticsWebhookUrl":  "https://script.google.com/macros/s/AKfycbzPVb9a8r8hMsPQ5-uW4dxKOTo3An6xiqmHbA5elyJ01Xbd3iZTDd8PNL-GG0Th70I/exec"
 }

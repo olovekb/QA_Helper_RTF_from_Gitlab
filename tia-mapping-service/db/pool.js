@@ -1,5 +1,5 @@
 import knex from 'knex';
-import config from '../config/index.js';
+import config from '../config/index.js'; // Импорт конфигурации базы данных
 
 /**
  * Создаёт пул подключений к базе данных с использованием строки подключения DATABASE_URL
@@ -7,7 +7,7 @@ import config from '../config/index.js';
  * @returns {Object} - Экземпляр пула подключений Knex
  */
 const databasePool = knex({
-    client: config.databaseUrl ? 'pg' : config.dbClient,
+    client: config.databaseUrl ? 'pg' : config.dbClient, // Используем 'pg' для DATABASE_URL или dbClient (по умолчанию 'pg')
     connection: config.databaseUrl || {
         host: config.dbHost,
         port: config.dbPort,
@@ -16,9 +16,9 @@ const databasePool = knex({
         database: config.dbName,
     },
     pool: {
-        min: 2,
-        max: 50,
-        acquireTimeoutMillis: 60000,
+        min: 2, // Минимальное количество подключений в пуле
+        max: 50, // Максимальное количество подключений в пуле
+        acquireTimeoutMillis: 60000, // Дай больше времени на получение коннекта
         createTimeoutMillis: 30000,
         idleTimeoutMillis: 30000,
         reapIntervalMillis: 1000,

@@ -43,7 +43,7 @@ export function createConversationContext(taskId, { systemPrompt, metadata = {} 
         metadata: {
             attemptNumber: 0,
             previousErrors: [],
-            fixAttempts: [],
+            fixAttempts: [], // История попыток исправления для fixTestCasesAsync
             createdAt: new Date().toISOString(),
             lastUpdated: new Date().toISOString(),
             ...metadata
@@ -52,7 +52,7 @@ export function createConversationContext(taskId, { systemPrompt, metadata = {} 
 
     conversationStore.set(taskId, context);
     console.log(`[conversation-context] Создан новый контекст для taskId: ${taskId}`);
-
+    
     return context;
 }
 
@@ -65,7 +65,7 @@ export function createConversationContext(taskId, { systemPrompt, metadata = {} 
  */
 export function addMessageToContext(taskId, role, content) {
     const context = conversationStore.get(taskId);
-
+    
     if (!context) {
         throw new Error(`[conversation-context] Контекст для taskId ${taskId} не найден. Сначала создайте контекст через createConversationContext().`);
     }
@@ -76,13 +76,13 @@ export function addMessageToContext(taskId, role, content) {
     });
 
     context.metadata.lastUpdated = new Date().toISOString();
-
+    
     if (role === 'assistant') {
         context.metadata.attemptNumber++;
     }
 
     console.log(`[conversation-context] Добавлено сообщение ${role} в контекст taskId: ${taskId} (всего сообщений: ${context.messages.length})`);
-
+    
     return context;
 }
 
@@ -94,7 +94,7 @@ export function addMessageToContext(taskId, role, content) {
  */
 export function addErrorToContext(taskId, error, userRequest = null) {
     const context = conversationStore.get(taskId);
-
+    
     if (!context) {
         console.warn(`[conversation-context] Контекст для taskId ${taskId} не найден, ошибка не будет сохранена`);
         return;
@@ -109,6 +109,7 @@ export function addErrorToContext(taskId, error, userRequest = null) {
     context.metadata.previousErrors.push(errorEntry);
     context.metadata.lastUpdated = new Date().toISOString();
 
+    // Ограничиваем количество сохранённых ошибок (последние 10)
     if (context.metadata.previousErrors.length > 10) {
         context.metadata.previousErrors.shift();
     }
@@ -145,12 +146,13 @@ export function saveStateSnapshot(taskId, testCases, label) {
     const snapshot = {
         timestamp: Date.now(),
         label: String(label),
-        testCases: JSON.parse(JSON.stringify(testCases)),
+        testCases: JSON.parse(JSON.stringify(testCases)), // Deep copy
         conversationLength
     };
 
     stateHistory.get(taskId).push(snapshot);
 
+    // Храним только последние 10 снимков
     const history = stateHistory.get(taskId);
     if (history.length > 10) {
         history.shift();
@@ -167,21 +169,23 @@ export function saveStateSnapshot(taskId, testCases, label) {
  */
 export function rollbackToSnapshot(taskId, snapshotIndex = -1) {
     const history = stateHistory.get(taskId);
-
+    
     if (!history || history.length === 0) {
         throw new Error(`[conversation-context] Нет снимков состояния для taskId: ${taskId}`);
     }
 
     const index = snapshotIndex >= 0 ? snapshotIndex : history.length + snapshotIndex;
-
+    
     if (index < 0 || index >= history.length) {
         throw new Error(`[conversation-context] Невалидный индекс снимка: ${index} (всего снимков: ${history.length})`);
     }
 
     const snapshot = history[index];
 
+    // Восстанавливаем тест-кейсы
     const restoredCases = JSON.parse(JSON.stringify(snapshot.testCases));
 
+    // Откатываем контекст LLM до момента снимка
     const context = conversationStore.get(taskId);
     if (context) {
         context.messages = context.messages.slice(0, snapshot.conversationLength);
@@ -189,7 +193,7 @@ export function rollbackToSnapshot(taskId, snapshotIndex = -1) {
     }
 
     console.log(`[conversation-context] Откат к снимку для taskId: ${taskId}, label: "${snapshot.label}" (индекс: ${index})`);
-
+    
     return {
         testCases: restoredCases,
         snapshot: snapshot,
@@ -213,6 +217,7 @@ export function getStateSnapshots(taskId) {
  */
 export function estimateTokenCount(messages) {
     const text = messages.map(m => m.content || '').join(' ');
+    // Грубая оценка: 1 токен ≈ 4 символа
     return Math.ceil(text.length / 4);
 }
 
@@ -225,13 +230,13 @@ export function estimateTokenCount(messages) {
  */
 export async function compressContextIfNeeded(taskId, maxTokens = 100000, summarizeFn = null) {
     const context = conversationStore.get(taskId);
-
+    
     if (!context) {
         return false;
     }
 
     const estimatedTokens = estimateTokenCount(context.messages);
-    const threshold = maxTokens * 0.8;
+    const threshold = maxTokens * 0.8; // Сжимаем при 80% заполнения
 
     if (estimatedTokens <= threshold) {
         return false;
@@ -239,16 +244,18 @@ export async function compressContextIfNeeded(taskId, maxTokens = 100000, summar
 
     console.log(`[conversation-context] Контекст приближается к лимиту: ${estimatedTokens}/${maxTokens} токенов. Выполняю сжатие...`);
 
-    const systemMsg = context.messages[0];
-    const recentMessages = context.messages.slice(-10);
-    const oldMessages = context.messages.slice(1, -10);
+    const systemMsg = context.messages[0]; // System message всегда первый
+    const recentMessages = context.messages.slice(-10); // Последние 10 сообщений
+    const oldMessages = context.messages.slice(1, -10); // Сообщения между system и последними
 
     if (oldMessages.length === 0) {
+        // Нечего сжимать
         return false;
     }
 
+    // Создаём summary старых сообщений
     let summary = '';
-
+    
     if (summarizeFn && typeof summarizeFn === 'function') {
         try {
             summary = await summarizeFn(oldMessages);
@@ -257,16 +264,18 @@ export async function compressContextIfNeeded(taskId, maxTokens = 100000, summar
             summary = `[Сжато ${oldMessages.length} предыдущих сообщений из-за ограничения размера контекста. Основные моменты сохранены в последних сообщениях.]`;
         }
     } else {
+        // Простое резюме без LLM
         const userMessages = oldMessages.filter(m => m.role === 'user').map(m => m.content.substring(0, 200));
         const assistantMessages = oldMessages.filter(m => m.role === 'assistant').length;
         summary = `[Сжато ${oldMessages.length} предыдущих сообщений (${userMessages.length} запросов пользователя, ${assistantMessages} ответов LLM) из-за ограничения размера контекста. Сохранены последние 10 сообщений для продолжения диалога.]`;
     }
 
+    // Формируем новый массив сообщений
     context.messages = [
         systemMsg,
         {
             role: "system",
-            content: `SUMMARY ПРЕДЫДУЩЕГО ДИАЛОГА (сжато для экономии контекста):\n\n${summary}`
+            content: `📝 SUMMARY ПРЕДЫДУЩЕГО ДИАЛОГА (сжато для экономии контекста):\n\n${summary}`
         },
         ...recentMessages
     ];
@@ -275,7 +284,7 @@ export async function compressContextIfNeeded(taskId, maxTokens = 100000, summar
     context.metadata.lastUpdated = new Date().toISOString();
 
     console.log(`[conversation-context] Контекст сжат: ${estimatedTokens} → ${newTokenCount} токенов (сжато ${oldMessages.length} сообщений)`);
-
+    
     return true;
 }
 
@@ -339,6 +348,7 @@ export function getContextStats() {
     return stats;
 }
 
+// Автоматическая очистка старых контекстов каждые 6 часов
 if (typeof setInterval !== 'undefined') {
     setInterval(() => {
         cleanupOldContexts();

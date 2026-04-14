@@ -16,7 +16,7 @@ ab-vsrv-autotest-tc:443 {
     }
 
     # TIA Mapping Service API
-    handle_path /tia-api* {
+    handle /tia-api* {
         reverse_proxy tia-mapping-service:5001 {
             timeout 1200s
         }

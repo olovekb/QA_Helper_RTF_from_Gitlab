@@ -84,17 +84,17 @@ const generateId = () => `case_${Date.now()}_${Math.random().toString(36).substr
 const EditableValueTag = ({ value, onSave, onDelete, autoEdit = false }) => {
     const [isEditing, setIsEditing] = React.useState(autoEdit || !value);
     const [editValue, setEditValue] = React.useState(value);
-
+    
     React.useEffect(() => {
         setEditValue(value);
         if (!value) {
             setIsEditing(true);
         }
     }, [value]);
-
+    
     if (isEditing) {
         return (
-            <div style={{
+            <div style={{ 
                 display: 'flex',
                 alignItems: 'center',
                 margin: '4px 4px 4px 0',
@@ -119,7 +119,7 @@ const EditableValueTag = ({ value, onSave, onDelete, autoEdit = false }) => {
                         }
                     }}
                     autoFocus
-                    style={{
+                    style={{ 
                         flex: 1,
                         padding: '4px 8px',
                         backgroundColor: '#161b22',
@@ -132,9 +132,9 @@ const EditableValueTag = ({ value, onSave, onDelete, autoEdit = false }) => {
             </div>
         );
     }
-
+    
     return (
-        <div style={{
+        <div style={{ 
             display: 'inline-flex',
             alignItems: 'center',
             margin: '4px 4px 4px 0',
@@ -145,10 +145,10 @@ const EditableValueTag = ({ value, onSave, onDelete, autoEdit = false }) => {
             fontSize: '12px',
             cursor: 'pointer'
         }}
-            onClick={() => {
-                setEditValue(value);
-                setIsEditing(true);
-            }}
+        onClick={() => {
+            setEditValue(value);
+            setIsEditing(true);
+        }}
         >
             <span style={{ color: '#c9d1d9', marginRight: '6px' }}>
                 {value || 'Пустое значение'}
@@ -158,7 +158,7 @@ const EditableValueTag = ({ value, onSave, onDelete, autoEdit = false }) => {
                     e.stopPropagation();
                     onDelete();
                 }}
-                style={{
+                style={{ 
                     background: 'none',
                     border: 'none',
                     color: '#8b949e',
@@ -178,38 +178,38 @@ const EditableValueTag = ({ value, onSave, onDelete, autoEdit = false }) => {
 // Функция для генерации всех комбинаций (полный перебор)
 const generateAllCombinations = (parameters) => {
     if (!parameters || parameters.length === 0) return [];
-
+    
     // Фильтруем только валидные параметры, но сохраняем исходный порядок
-    const validParams = parameters.filter(p =>
-        p.name && p.name.trim() &&
-        p.values && Array.isArray(p.values) &&
-        p.values.length > 0 &&
+    const validParams = parameters.filter(p => 
+        p.name && p.name.trim() && 
+        p.values && Array.isArray(p.values) && 
+        p.values.length > 0 && 
         p.values.some(v => v && v.trim())
     );
-
+    
     if (validParams.length === 0) return [];
-
+    
     // Сохраняем исходные имена и значения для правильного сопоставления
     const paramMap = new Map();
     validParams.forEach(p => {
         paramMap.set(p.name.trim(), p.values.filter(v => v && v.trim()).map(v => v.trim()));
     });
-
+    
     const paramNames = Array.from(paramMap.keys());
     const paramValues = Array.from(paramMap.values());
-
+    
     const maxCombinations = 50;
     const combinations = [];
-
+    
     const generate = (paramIndex, currentCombo) => {
         if (combinations.length >= maxCombinations) return;
-
+        
         if (paramIndex >= paramNames.length) {
             // Создаем комбинацию с ВСЕМИ параметрами (включая те, у которых нет значений)
             const exampleParams = parameters.map(p => {
                 const paramName = p.name?.trim();
                 if (!paramName) return { name: '', value: '' };
-
+                
                 // Если это валидный параметр, берем значение из комбинации
                 const validIdx = paramNames.indexOf(paramName);
                 if (validIdx >= 0 && currentCombo[validIdx] !== undefined) {
@@ -218,17 +218,17 @@ const generateAllCombinations = (parameters) => {
                 // Если параметр не валиден (нет значений), ставим пустое значение
                 return { name: paramName, value: '' };
             }).filter(p => p.name); // Убираем пустые имена
-
+            
             combinations.push({ parameters: exampleParams });
             return;
         }
-
+        
         for (const value of paramValues[paramIndex]) {
             if (combinations.length >= maxCombinations) break;
             generate(paramIndex + 1, [...currentCombo, value]);
         }
     };
-
+    
     generate(0, []);
     return combinations;
 };
@@ -237,28 +237,28 @@ const generateAllCombinations = (parameters) => {
 // Покрывает все пары значений между всеми параметрами минимальным набором комбинаций
 const generatePairwiseCombinations = (parameters) => {
     if (!parameters || parameters.length === 0) return [];
-
+    
     // Фильтруем параметры с валидными именами и значениями, но сохраняем исходный порядок
-    const validParams = parameters.filter(p =>
-        p.name && p.name.trim() &&
-        p.values && Array.isArray(p.values) &&
-        p.values.length > 0 &&
+    const validParams = parameters.filter(p => 
+        p.name && p.name.trim() && 
+        p.values && Array.isArray(p.values) && 
+        p.values.length > 0 && 
         p.values.some(v => v && v.trim())
     );
-
+    
     if (validParams.length === 0) return [];
-
+    
     // Сохраняем исходные имена и значения для правильного сопоставления
     const paramMap = new Map();
     validParams.forEach(p => {
         paramMap.set(p.name.trim(), p.values.filter(v => v && v.trim()).map(v => v.trim()));
     });
-
+    
     const paramNames = Array.from(paramMap.keys());
     const paramValues = Array.from(paramMap.values());
-
+    
     const maxCombinations = 50; // Лимит как в TestOps
-
+    
     // Если один параметр - просто все значения
     if (validParams.length === 1) {
         const paramName = paramNames[0];
@@ -275,17 +275,17 @@ const generatePairwiseCombinations = (parameters) => {
             return { parameters: exampleParams };
         });
     }
-
+    
     // Если два параметра - для pairwise это все пары (минимальное покрытие = все комбинации)
     if (validParams.length === 2) {
         const combinations = [];
         const param1Name = paramNames[0];
         const param2Name = paramNames[1];
-
+        
         for (const val1 of paramValues[0]) {
             for (const val2 of paramValues[1]) {
                 if (combinations.length >= maxCombinations) break;
-
+                
                 // Создаем комбинацию с ВСЕМИ параметрами
                 const exampleParams = parameters.map(p => {
                     const pName = p.name?.trim();
@@ -298,17 +298,17 @@ const generatePairwiseCombinations = (parameters) => {
                     }
                     return { name: pName, value: '' };
                 }).filter(p => p.name);
-
+                
                 combinations.push({ parameters: exampleParams });
             }
             if (combinations.length >= maxCombinations) break;
         }
         return combinations;
     }
-
+    
     // Для 3+ параметров используем оптимизированный pairwise алгоритм
     // Цель: покрыть все пары значений минимальным количеством комбинаций
-
+    
     // Шаг 1: Генерируем все возможные пары, которые нужно покрыть
     const allPairsToCover = [];
     for (let i = 0; i < paramNames.length; i++) {
@@ -328,42 +328,42 @@ const generatePairwiseCombinations = (parameters) => {
             }
         }
     }
-
+    
     const combinations = [];
     const coveredPairs = new Set(); // Множество покрытых пар
-
+    
     // Шаг 2: Жадный алгоритм - пытаемся покрыть максимальное количество пар в одной комбинации
     while (coveredPairs.size < allPairsToCover.length && combinations.length < maxCombinations) {
         let bestCombo = null;
         let bestCoverage = 0;
         let bestComboValues = null;
-
+        
         // Пробуем разные комбинации значений для всех параметров
         // Используем ограниченный перебор для оптимизации
         const maxAttempts = 100; // Ограничиваем количество попыток
         let attempts = 0;
-
+        
         for (const pair of allPairsToCover) {
             if (coveredPairs.has(pair.key)) continue; // Пара уже покрыта
             if (attempts >= maxAttempts) break;
             attempts++;
-
+            
             // Создаем комбинацию, начиная с этой пары (используем массив вместо Map)
             const comboValues = new Array(paramNames.length).fill(null);
             comboValues[pair.param1Idx] = pair.val1;
             comboValues[pair.param2Idx] = pair.val2;
-
+            
             // Для остальных параметров выбираем значения, которые максимизируют покрытие
             for (let idx = 0; idx < paramNames.length; idx++) {
                 if (comboValues[idx] !== null) continue; // Уже установлено
-
+                
                 // Пробуем найти значение, которое покрывает больше непокрытых пар
                 let bestValue = paramValues[idx][0];
                 let bestValueCoverage = 0;
-
+                
                 for (const val of paramValues[idx]) {
                     comboValues[idx] = val;
-
+                    
                     // Подсчитываем, сколько новых непокрытых пар покроет эта комбинация
                     let newCoverage = 0;
                     for (let i = 0; i < paramNames.length; i++) {
@@ -371,24 +371,24 @@ const generatePairwiseCombinations = (parameters) => {
                             if (comboValues[i] === null || comboValues[j] === null) continue;
                             const pairKey = `${i}-${comboValues[i]}|${j}-${comboValues[j]}`;
                             if (!coveredPairs.has(pairKey)) {
-                                const exists = allPairsToCover.some(p =>
-                                    p.param1Idx === i && p.param2Idx === j &&
+                                const exists = allPairsToCover.some(p => 
+                                    p.param1Idx === i && p.param2Idx === j && 
                                     p.val1 === comboValues[i] && p.val2 === comboValues[j]
                                 );
                                 if (exists) newCoverage++;
                             }
                         }
                     }
-
+                    
                     if (newCoverage > bestValueCoverage) {
                         bestValueCoverage = newCoverage;
                         bestValue = val;
                     }
                 }
-
+                
                 comboValues[idx] = bestValue;
             }
-
+            
             // Подсчитываем покрытие этой комбинации
             let coverage = 0;
             for (let i = 0; i < paramNames.length; i++) {
@@ -396,21 +396,21 @@ const generatePairwiseCombinations = (parameters) => {
                     if (comboValues[i] === null || comboValues[j] === null) continue;
                     const pairKey = `${i}-${comboValues[i]}|${j}-${comboValues[j]}`;
                     if (!coveredPairs.has(pairKey)) {
-                        const exists = allPairsToCover.some(p =>
-                            p.param1Idx === i && p.param2Idx === j &&
+                        const exists = allPairsToCover.some(p => 
+                            p.param1Idx === i && p.param2Idx === j && 
                             p.val1 === comboValues[i] && p.val2 === comboValues[j]
                         );
                         if (exists) coverage++;
                     }
                 }
             }
-
+            
             if (coverage > bestCoverage) {
                 bestCoverage = coverage;
                 bestComboValues = [...comboValues];
             }
         }
-
+        
         // Если нашли хорошую комбинацию, добавляем её
         if (bestComboValues && bestCoverage > 0) {
             // Создаем комбинацию с ВСЕМИ параметрами
@@ -423,17 +423,17 @@ const generatePairwiseCombinations = (parameters) => {
                 }
                 return { name: pName, value: '' };
             }).filter(p => p.name);
-
+            
             bestCombo = { parameters: exampleParams };
             combinations.push(bestCombo);
-
+            
             // Отмечаем все покрытые пары
             for (let i = 0; i < paramNames.length; i++) {
                 for (let j = i + 1; j < paramNames.length; j++) {
                     if (bestComboValues[i] === null || bestComboValues[j] === null) continue;
                     const pairKey = `${i}-${bestComboValues[i]}|${j}-${bestComboValues[j]}`;
-                    const exists = allPairsToCover.some(p =>
-                        p.param1Idx === i && p.param2Idx === j &&
+                    const exists = allPairsToCover.some(p => 
+                        p.param1Idx === i && p.param2Idx === j && 
                         p.val1 === bestComboValues[i] && p.val2 === bestComboValues[j]
                     );
                     if (exists) {
@@ -446,7 +446,7 @@ const generatePairwiseCombinations = (parameters) => {
             break;
         }
     }
-
+    
     return combinations.slice(0, maxCombinations);
 };
 
@@ -476,11 +476,11 @@ const createNewTestCase = (feature, story, scenario = '', code = '') => ({
 const buildTreeFromCases = (cases) => {
     console.log('buildTreeFromCases: input cases:', cases);
     console.log('buildTreeFromCases: cases length:', cases?.length);
-
+    
     const tree = {};
     (cases || []).forEach((c, index) => {
         console.log(`buildTreeFromCases: processing case ${index}:`, c);
-
+        
         const testCase = {
             ...c,
             id: c.id || generateId(),
@@ -488,14 +488,14 @@ const buildTreeFromCases = (cases) => {
             version: c.version ?? undefined,
         };
         const { feature, story, scenario = '', code = '' } = testCase;
-
+        
         console.log(`buildTreeFromCases: extracted fields - feature: "${feature}", story: "${story}", scenario: "${scenario}", code: "${code}"`);
-
+        
         if (!feature || !story) {
             console.warn(`buildTreeFromCases: skipping case ${index} - missing feature or story:`, testCase);
             return;
         }
-
+        
         if (!tree[feature]) tree[feature] = { stories: {}, isExpanded: true };
         if (!tree[feature].stories[story])
             tree[feature].stories[story] = { scenarios: {}, cases: [], isExpanded: true };
@@ -515,10 +515,10 @@ const buildTreeFromCases = (cases) => {
             tree[feature].stories[story].cases.push(testCase);
         }
     });
-
+    
     console.log('buildTreeFromCases: final tree:', tree);
     console.log('buildTreeFromCases: tree keys:', Object.keys(tree));
-
+    
     return tree;
 };
 
@@ -565,6 +565,54 @@ const flattenTreeToCases = (tree) => {
     return flat;
 };
 
+const normalizeJiraIssueInput = (value, jiraProject) => {
+    const raw = (value || '').trim().toUpperCase();
+    if (!raw) return '';
+    if (/^\d+$/.test(raw) && jiraProject) {
+        return `${jiraProject}-${raw}`;
+    }
+    return raw;
+};
+
+const serializeCasesForComparison = (rawCases = []) => rawCases.map((testCase) => ({
+    id: testCase.id,
+    title: (testCase.title || '').trim(),
+    precondition: (testCase.precondition || '').trim(),
+    steps: (testCase.steps || []).map((step) => {
+        if (typeof step === 'string') {
+            return step.trim();
+        }
+        if (step && typeof step === 'object') {
+            if (step.sharedStepId) {
+                return { sharedStepId: step.sharedStepId };
+            }
+            const normalized = {};
+            if (step.action) normalized.action = step.action;
+            if (step.expectedResult) normalized.expectedResult = step.expectedResult;
+            if (step.description && !normalized.action) normalized.description = step.description;
+            if (step.text && !normalized.action) normalized.text = step.text;
+            return Object.keys(normalized).length > 0 ? normalized : String(step);
+        }
+        return String(step || '').trim();
+    }),
+    expected: (testCase.expected || '').trim(),
+    layer: testCase.layer,
+    feature: testCase.feature,
+    story: testCase.story,
+    scenario: testCase.scenario || '',
+    code: testCase.code || '',
+    tags: (testCase.tags || []).filter(Boolean),
+    priority: testCase.priority || 'Medium',
+    version: testCase.version || 'stable'
+}));
+
+const comparisonClassMeta = {
+    strong: { label: 'Strong', color: '#2ea043', background: 'rgba(46, 160, 67, 0.16)' },
+    weak: { label: 'Weak', color: '#d29922', background: 'rgba(210, 153, 34, 0.16)' },
+    mismatch: { label: 'Mismatch', color: '#f85149', background: 'rgba(248, 81, 73, 0.16)' },
+    unmatched: { label: 'Unmatched', color: '#8b949e', background: 'rgba(139, 148, 158, 0.16)' }
+};
+
 const DND_PATH_DELIMITER = '|';
 
 const encodeDroppablePath = (path = []) =>
@@ -583,7 +631,7 @@ const decodeDroppablePath = (droppableId = '') => {
 // Компонент для отображения diff изменений (как в git)
 const TestCaseDiffView = ({ diff, caseId, onApprove, onReject, hasPendingChanges }) => {
     if (!diff || !hasPendingChanges) return null;
-
+    
     const fieldLabels = {
         title: 'Название',
         precondition: 'Предварительное условие',
@@ -598,7 +646,7 @@ const TestCaseDiffView = ({ diff, caseId, onApprove, onReject, hasPendingChanges
         priority: 'Приоритет',
         version: 'Версия'
     };
-
+    
     const formatValue = (value) => {
         if (value === null || value === undefined) return '(пусто)';
         if (Array.isArray(value)) {
@@ -611,7 +659,7 @@ const TestCaseDiffView = ({ diff, caseId, onApprove, onReject, hasPendingChanges
         }
         return String(value);
     };
-
+    
     return (
         <div style={{
             marginBottom: '16px',
@@ -620,9 +668,9 @@ const TestCaseDiffView = ({ diff, caseId, onApprove, onReject, hasPendingChanges
             border: '1px solid #ffc107',
             borderRadius: '4px'
         }}>
-            <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
+            <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
                 alignItems: 'center',
                 marginBottom: '12px'
             }}>
@@ -666,12 +714,12 @@ const TestCaseDiffView = ({ diff, caseId, onApprove, onReject, hasPendingChanges
                     </button>
                 </div>
             </div>
-
+            
             {Object.entries(diff).map(([field, changes]) => (
                 <div key={field} style={{ marginBottom: '12px' }}>
-                    <div style={{
-                        fontSize: '12px',
-                        fontWeight: 'bold',
+                    <div style={{ 
+                        fontSize: '12px', 
+                        fontWeight: 'bold', 
                         color: '#ffc107',
                         marginBottom: '4px'
                     }}>
@@ -693,9 +741,9 @@ const TestCaseDiffView = ({ diff, caseId, onApprove, onReject, hasPendingChanges
                             maxHeight: '200px',
                             overflow: 'auto'
                         }}>
-                            <div style={{
-                                color: '#dc3545',
-                                fontWeight: 'bold',
+                            <div style={{ 
+                                color: '#dc3545', 
+                                fontWeight: 'bold', 
                                 marginBottom: '4px',
                                 fontSize: '10px'
                             }}>
@@ -715,9 +763,9 @@ const TestCaseDiffView = ({ diff, caseId, onApprove, onReject, hasPendingChanges
                             maxHeight: '200px',
                             overflow: 'auto'
                         }}>
-                            <div style={{
-                                color: '#28a745',
-                                fontWeight: 'bold',
+                            <div style={{ 
+                                color: '#28a745', 
+                                fontWeight: 'bold', 
                                 marginBottom: '4px',
                                 fontSize: '10px'
                             }}>
@@ -817,7 +865,7 @@ export function TestCaseCard({
         const currentValue = newMap.get(stepIdx) || false;
         newMap.set(stepIdx, !currentValue);
         setStepExpectedResultVisible(newMap);
-
+        
         // Если показываем и у шага еще нет expectedResult, создаем объект
         if (!currentValue) {
             const arr = [...testCase.steps];
@@ -888,14 +936,14 @@ export function TestCaseCard({
 
     const diff = testCaseDiffs.get(testCase.id);
     const hasPendingChanges = pendingApprovals.has(testCase.id);
-
+    
     return (
         <div className="case-card">
-            <TestCaseDiffView
+            <TestCaseDiffView 
                 diff={diff}
                 caseId={testCase.id}
-                onApprove={onApproveCase || (() => { })}
-                onReject={onRejectCase || (() => { })}
+                onApprove={onApproveCase || (() => {})}
+                onReject={onRejectCase || (() => {})}
                 hasPendingChanges={hasPendingChanges}
             />
             <div className="case-card-header">
@@ -915,822 +963,822 @@ export function TestCaseCard({
             </div>
 
             <div className="case-card-details">
-                <div className="case-field">
-                    <label>Название*</label>
-                    <input
-                        type="text"
-                        value={testCase.title}
-                        onChange={(e) => handleFieldChange('title', e.target.value)}
-                    />
-                </div>
-                <div className="case-field">
-                    <label>Предварительное условие</label>
-                    <textarea
-                        value={testCase.precondition}
-                        onChange={(e) => handleFieldChange('precondition', e.target.value)}
-                    />
-                </div>
-                <div className="case-field">
-                    <label>Шаги (Сценарий)*</label>
-                    <DragDropContext
-                        onDragEnd={({ source, destination }) => {
-                            if (!destination) return;
-                            const arr = Array.from(testCase.steps);
-                            const [moved] = arr.splice(source.index, 1);
-                            arr.splice(destination.index, 0, moved);
-
-                            // Обновляем состояние видимости expectedResult при перестановке шагов
-                            const newMap = new Map();
-                            stepExpectedResultVisible.forEach((value, key) => {
-                                if (key === source.index) {
-                                    newMap.set(destination.index, value);
-                                } else if (source.index < destination.index) {
-                                    // Движение вниз
-                                    if (key < source.index || key > destination.index) {
-                                        newMap.set(key, value);
-                                    } else if (key > source.index && key <= destination.index) {
-                                        newMap.set(key - 1, value);
-                                    }
-                                } else {
-                                    // Движение вверх
-                                    if (key < destination.index || key > source.index) {
-                                        newMap.set(key, value);
-                                    } else if (key >= destination.index && key < source.index) {
-                                        newMap.set(key + 1, value);
-                                    }
-                                }
-                            });
-                            setStepExpectedResultVisible(newMap);
-
-                            handleFieldChange('steps', arr);
-                        }}
-                    >
-                        <Droppable droppableId={`steps-${testCase.id}`} type="STEP">
-                            {(dropProv) => (
-                                <div ref={dropProv.innerRef} {...dropProv.droppableProps}>
-                                    {testCase.steps.map((step, idx) => {
-                                        // Определяем, является ли тест E2E (для поддержки промежуточных ожидаемых результатов)
-                                        const isE2E = testCase.layer === 'E2E Tests';
-
-                                        // Нормализуем step: может быть строкой, объектом с sharedStepId, или объектом с action/expectedResult
-                                        const stepAction = typeof step === 'string'
-                                            ? step
-                                            : (step?.action || step?.text || '');
-                                        const stepExpectedResult = typeof step === 'object' && step?.expectedResult
-                                            ? step.expectedResult
-                                            : '';
-                                        const isSharedStep = typeof step === 'object' && step?.sharedStepId;
-
-                                        // Проверяем, нужно ли показывать поле expectedResult
-                                        const showExpectedResult = stepExpectedResultVisible.get(idx) !== undefined
-                                            ? stepExpectedResultVisible.get(idx)
-                                            : !!stepExpectedResult; // По умолчанию показываем, если уже есть значение
-
-                                        return (
-                                            <Draggable
-                                                key={idx}
-                                                draggableId={`step-${testCase.id}-${idx}`}
-                                                index={idx}
-                                            >
-                                                {(dragProv) => (
-                                                    <div
-                                                        ref={dragProv.innerRef}
-                                                        {...dragProv.draggableProps}
-                                                        className={`array-item ${isSharedStep ? 'shared-step-item' : ''}`}
-                                                        style={{
-                                                            display: 'flex',
-                                                            flexDirection: 'column',
-                                                            gap: '12px',
-                                                            padding: '12px',
-                                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
-                                                            borderRadius: '6px',
-                                                            marginBottom: '8px',
-                                                            backgroundColor: 'var(--bg-base-secondary, #2c343f)'
-                                                        }}
-                                                    >
-                                                        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-                                                            <div
-                                                                {...dragProv.dragHandleProps}
-                                                                style={{
-                                                                    cursor: 'grab',
-                                                                    display: 'flex',
-                                                                    alignItems: 'center',
-                                                                    padding: '4px',
-                                                                    color: 'var(--on-text-secondary, #8b949e)',
-                                                                    fontSize: '16px',
-                                                                    flexShrink: 0
-                                                                }}
-                                                                title="Перетащите для изменения порядка"
-                                                            >
-                                                                <DragHandleIcon />
-                                                            </div>
-                                                            {isSharedStep ? (
-                                                                <div className="shared-step-label" style={{ flex: 1, padding: '8px', color: 'var(--on-text-secondary, #8b949e)', fontStyle: 'italic' }}>{step.text}</div>
-                                                            ) : (
-                                                                <textarea
-                                                                    value={stepAction}
-                                                                    placeholder={`Шаг ${idx + 1}`}
-                                                                    onChange={(e) => {
-                                                                        const arr = [...testCase.steps];
-                                                                        if (typeof arr[idx] === 'string') {
-                                                                            arr[idx] = e.target.value;
-                                                                        } else if (typeof arr[idx] === 'object') {
-                                                                            arr[idx] = { ...arr[idx], action: e.target.value };
-                                                                        } else {
-                                                                            arr[idx] = e.target.value;
-                                                                        }
-                                                                        handleFieldChange('steps', arr);
-                                                                    }}
-                                                                    style={{
-                                                                        flex: 1,
-                                                                        minHeight: '60px',
-                                                                        padding: '8px 12px',
-                                                                        background: 'var(--bg-base-primary, #1b2129)',
+                            <div className="case-field">
+                                <label>Название*</label>
+                                <input
+                                    type="text"
+                                    value={testCase.title}
+                                    onChange={(e) => handleFieldChange('title', e.target.value)}
+                                />
+                            </div>
+                            <div className="case-field">
+                                <label>Предварительное условие</label>
+                                <textarea
+                                    value={testCase.precondition}
+                                    onChange={(e) => handleFieldChange('precondition', e.target.value)}
+                                />
+                            </div>
+                            <div className="case-field">
+                                <label>Шаги (Сценарий)*</label>
+                                <DragDropContext
+                                    onDragEnd={({ source, destination }) => {
+                                        if (!destination) return;
+                                        const arr = Array.from(testCase.steps);
+                                        const [moved] = arr.splice(source.index, 1);
+                                        arr.splice(destination.index, 0, moved);
+                                        
+                                        // Обновляем состояние видимости expectedResult при перестановке шагов
+                                        const newMap = new Map();
+                                        stepExpectedResultVisible.forEach((value, key) => {
+                                            if (key === source.index) {
+                                                newMap.set(destination.index, value);
+                                            } else if (source.index < destination.index) {
+                                                // Движение вниз
+                                                if (key < source.index || key > destination.index) {
+                                                    newMap.set(key, value);
+                                                } else if (key > source.index && key <= destination.index) {
+                                                    newMap.set(key - 1, value);
+                                                }
+                                            } else {
+                                                // Движение вверх
+                                                if (key < destination.index || key > source.index) {
+                                                    newMap.set(key, value);
+                                                } else if (key >= destination.index && key < source.index) {
+                                                    newMap.set(key + 1, value);
+                                                }
+                                            }
+                                        });
+                                        setStepExpectedResultVisible(newMap);
+                                        
+                                        handleFieldChange('steps', arr);
+                                    }}
+                                >
+                                    <Droppable droppableId={`steps-${testCase.id}`} type="STEP">
+                                        {(dropProv) => (
+                                            <div ref={dropProv.innerRef} {...dropProv.droppableProps}>
+                                                {testCase.steps.map((step, idx) => {
+                                                    // Определяем, является ли тест E2E (для поддержки промежуточных ожидаемых результатов)
+                                                    const isE2E = testCase.layer === 'E2E Tests';
+                                                    
+                                                    // Нормализуем step: может быть строкой, объектом с sharedStepId, или объектом с action/expectedResult
+                                                    const stepAction = typeof step === 'string' 
+                                                        ? step 
+                                                        : (step?.action || step?.text || '');
+                                                    const stepExpectedResult = typeof step === 'object' && step?.expectedResult 
+                                                        ? step.expectedResult 
+                                                        : '';
+                                                    const isSharedStep = typeof step === 'object' && step?.sharedStepId;
+                                                    
+                                                    // Проверяем, нужно ли показывать поле expectedResult
+                                                    const showExpectedResult = stepExpectedResultVisible.get(idx) !== undefined 
+                                                        ? stepExpectedResultVisible.get(idx)
+                                                        : !!stepExpectedResult; // По умолчанию показываем, если уже есть значение
+                                                    
+                                                    return (
+                                                        <Draggable
+                                                            key={idx}
+                                                            draggableId={`step-${testCase.id}-${idx}`}
+                                                            index={idx}
+                                                        >
+                                                            {(dragProv) => (
+                                                                <div
+                                                                    ref={dragProv.innerRef}
+                                                                    {...dragProv.draggableProps}
+                                                                    className={`array-item ${isSharedStep ? 'shared-step-item' : ''}`}
+                                                                    style={{ 
+                                                                        display: 'flex', 
+                                                                        flexDirection: 'column', 
+                                                                        gap: '12px',
+                                                                        padding: '12px',
                                                                         border: '1px solid var(--on-border-light, #bdd4ff36)',
                                                                         borderRadius: '6px',
-                                                                        color: 'var(--on-text-primary, #f6fafef5)',
-                                                                        fontSize: '13px',
-                                                                        fontFamily: 'inherit',
-                                                                        resize: 'vertical',
-                                                                        boxSizing: 'border-box'
-                                                                    }}
-                                                                />
-                                                            )}
-                                                            {/* Кнопка для добавления/удаления ожидаемого результата (только для E2E и не для shared steps) */}
-                                                            {isE2E && !isSharedStep && (
-                                                                <button
-                                                                    onClick={() => toggleStepExpectedResult(idx)}
-                                                                    style={{
-                                                                        background: showExpectedResult ? 'var(--on-support-aldebaran, #7aa8ff)' : 'var(--bg-base-primary, #1b2129)',
-                                                                        border: '1px solid var(--on-border-light, #bdd4ff36)',
-                                                                        color: showExpectedResult ? 'white' : 'var(--on-support-aldebaran, #7aa8ff)',
-                                                                        borderRadius: '6px',
-                                                                        cursor: 'pointer',
-                                                                        padding: '6px 12px',
-                                                                        fontSize: '12px',
-                                                                        whiteSpace: 'nowrap',
-                                                                        fontWeight: showExpectedResult ? 600 : 400,
-                                                                        flexShrink: 0,
-                                                                        transition: 'all 0.2s'
-                                                                    }}
-                                                                    title={showExpectedResult ? 'Скрыть ожидаемый результат' : 'Добавить ожидаемый результат'}
-                                                                    onMouseEnter={(e) => {
-                                                                        if (!showExpectedResult) {
-                                                                            e.currentTarget.style.background = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))';
-                                                                        }
-                                                                    }}
-                                                                    onMouseLeave={(e) => {
-                                                                        if (!showExpectedResult) {
-                                                                            e.currentTarget.style.background = 'var(--bg-base-primary, #1b2129)';
-                                                                        }
+                                                                        marginBottom: '8px',
+                                                                        backgroundColor: 'var(--bg-base-secondary, #2c343f)'
                                                                     }}
                                                                 >
-                                                                    {showExpectedResult ? '✓ ОР' : '+ ОР'}
-                                                                </button>
+                                                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                                                                        <div
+                                                                            {...dragProv.dragHandleProps}
+                                                                            style={{ 
+                                                                                cursor: 'grab',
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                padding: '4px',
+                                                                                color: 'var(--on-text-secondary, #8b949e)',
+                                                                                fontSize: '16px',
+                                                                                flexShrink: 0
+                                                                            }}
+                                                                            title="Перетащите для изменения порядка"
+                                                                        >
+                                                                            <DragHandleIcon />
+                                                                        </div>
+                                                                        {isSharedStep ? (
+                                                                            <div className="shared-step-label" style={{ flex: 1, padding: '8px', color: 'var(--on-text-secondary, #8b949e)', fontStyle: 'italic' }}>{step.text}</div>
+                                                                        ) : (
+                                                                            <textarea
+                                                                                value={stepAction}
+                                                                                placeholder={`Шаг ${idx + 1}`}
+                                                                                onChange={(e) => {
+                                                                                    const arr = [...testCase.steps];
+                                                                                    if (typeof arr[idx] === 'string') {
+                                                                                        arr[idx] = e.target.value;
+                                                                                    } else if (typeof arr[idx] === 'object') {
+                                                                                        arr[idx] = { ...arr[idx], action: e.target.value };
+                                                                                    } else {
+                                                                                        arr[idx] = e.target.value;
+                                                                                    }
+                                                                                    handleFieldChange('steps', arr);
+                                                                                }}
+                                                                                style={{
+                                                                                    flex: 1,
+                                                                                    minHeight: '60px',
+                                                                                    padding: '8px 12px',
+                                                                                    background: 'var(--bg-base-primary, #1b2129)',
+                                                                                    border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                                                    borderRadius: '6px',
+                                                                                    color: 'var(--on-text-primary, #f6fafef5)',
+                                                                                    fontSize: '13px',
+                                                                                    fontFamily: 'inherit',
+                                                                                    resize: 'vertical',
+                                                                                    boxSizing: 'border-box'
+                                                                                }}
+                                                                            />
+                                                                        )}
+                                                                        {/* Кнопка для добавления/удаления ожидаемого результата (только для E2E и не для shared steps) */}
+                                                                        {isE2E && !isSharedStep && (
+                                                                            <button
+                                                                                onClick={() => toggleStepExpectedResult(idx)}
+                                                                                style={{
+                                                                                    background: showExpectedResult ? 'var(--on-support-aldebaran, #7aa8ff)' : 'var(--bg-base-primary, #1b2129)',
+                                                                                    border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                                                    color: showExpectedResult ? 'white' : 'var(--on-support-aldebaran, #7aa8ff)',
+                                                                                    borderRadius: '6px',
+                                                                                    cursor: 'pointer',
+                                                                                    padding: '6px 12px',
+                                                                                    fontSize: '12px',
+                                                                                    whiteSpace: 'nowrap',
+                                                                                    fontWeight: showExpectedResult ? 600 : 400,
+                                                                                    flexShrink: 0,
+                                                                                    transition: 'all 0.2s'
+                                                                                }}
+                                                                                title={showExpectedResult ? 'Скрыть ожидаемый результат' : 'Добавить ожидаемый результат'}
+                                                                                onMouseEnter={(e) => {
+                                                                                    if (!showExpectedResult) {
+                                                                                        e.currentTarget.style.background = 'var(--bg-control-flat-medium, rgba(174, 202, 244, 0.1))';
+                                                                                    }
+                                                                                }}
+                                                                                onMouseLeave={(e) => {
+                                                                                    if (!showExpectedResult) {
+                                                                                        e.currentTarget.style.background = 'var(--bg-base-primary, #1b2129)';
+                                                                                    }
+                                                                                }}
+                                                                            >
+                                                                                {showExpectedResult ? '✓ ОР' : '+ ОР'}
+                                                                            </button>
+                                                                        )}
+                                                                        <button
+                                                                            className="remove-item-btn"
+                                                                            onClick={() => removeArrayItem('steps', idx)}
+                                                                            style={{
+                                                                                background: 'var(--bg-base-primary, #1b2129)',
+                                                                                border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                                                color: 'var(--on-support-capella, #ff584d)',
+                                                                                borderRadius: '6px',
+                                                                                cursor: 'pointer',
+                                                                                padding: '6px 12px',
+                                                                                fontSize: '16px',
+                                                                                lineHeight: 1,
+                                                                                flexShrink: 0,
+                                                                                minWidth: '32px',
+                                                                                transition: 'all 0.2s'
+                                                                            }}
+                                                                            onMouseEnter={(e) => {
+                                                                                e.currentTarget.style.background = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))';
+                                                                            }}
+                                                                            onMouseLeave={(e) => {
+                                                                                e.currentTarget.style.background = 'var(--bg-base-primary, #1b2129)';
+                                                                            }}
+                                                                        >
+                                                                            ×
+                                                                        </button>
+                                                                    </div>
+                                                                    {/* Промежуточный ожидаемый результат (только для E2E, не для shared steps, и только если showExpectedResult = true) */}
+                                                                    {isE2E && !isSharedStep && showExpectedResult && (
+                                                                        <div style={{ 
+                                                                            display: 'flex',
+                                                                            flexDirection: 'column',
+                                                                            gap: '8px',
+                                                                            paddingLeft: '32px'
+                                                                        }}>
+                                                                            <label style={{ 
+                                                                                display: 'block', 
+                                                                                fontSize: '13px', 
+                                                                                fontWeight: '500',
+                                                                                color: 'var(--on-text-primary, #f6fafef5)',
+                                                                                marginBottom: '4px'
+                                                                            }}>
+                                                                                Промежуточный ожидаемый результат (опционально):
+                                                                            </label>
+                                                                            <textarea
+                                                                                value={stepExpectedResult}
+                                                                                placeholder="Например: Разворачивается блок..., Появляется поле..."
+                                                                                onChange={(e) => {
+                                                                                    const arr = [...testCase.steps];
+                                                                                    if (typeof arr[idx] === 'string') {
+                                                                                        arr[idx] = { action: arr[idx], expectedResult: e.target.value };
+                                                                                    } else if (typeof arr[idx] === 'object') {
+                                                                                        arr[idx] = { ...arr[idx], expectedResult: e.target.value };
+                                                                                    } else {
+                                                                                        arr[idx] = { action: '', expectedResult: e.target.value };
+                                                                                    }
+                                                                                    handleFieldChange('steps', arr);
+                                                                                }}
+                                                                                style={{
+                                                                                    width: '100%',
+                                                                                    minHeight: '60px',
+                                                                                    padding: '8px 12px',
+                                                                                    background: 'var(--bg-base-primary, #1b2129)',
+                                                                                    border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                                                    borderRadius: '6px',
+                                                                                    color: 'var(--on-text-primary, #f6fafef5)',
+                                                                                    fontSize: '13px',
+                                                                                    fontFamily: 'inherit',
+                                                                                    resize: 'vertical',
+                                                                                    boxSizing: 'border-box'
+                                                                                }}
+                                                                            />
+                                                                        </div>
+                                                                    )}
+                                                                </div>
                                                             )}
-                                                            <button
-                                                                className="remove-item-btn"
-                                                                onClick={() => removeArrayItem('steps', idx)}
-                                                                style={{
-                                                                    background: 'var(--bg-base-primary, #1b2129)',
-                                                                    border: '1px solid var(--on-border-light, #bdd4ff36)',
-                                                                    color: 'var(--on-support-capella, #ff584d)',
-                                                                    borderRadius: '6px',
-                                                                    cursor: 'pointer',
-                                                                    padding: '6px 12px',
-                                                                    fontSize: '16px',
-                                                                    lineHeight: 1,
-                                                                    flexShrink: 0,
-                                                                    minWidth: '32px',
-                                                                    transition: 'all 0.2s'
-                                                                }}
-                                                                onMouseEnter={(e) => {
-                                                                    e.currentTarget.style.background = 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))';
-                                                                }}
-                                                                onMouseLeave={(e) => {
-                                                                    e.currentTarget.style.background = 'var(--bg-base-primary, #1b2129)';
-                                                                }}
-                                                            >
-                                                                ×
-                                                            </button>
-                                                        </div>
-                                                        {/* Промежуточный ожидаемый результат (только для E2E, не для shared steps, и только если showExpectedResult = true) */}
-                                                        {isE2E && !isSharedStep && showExpectedResult && (
-                                                            <div style={{
-                                                                display: 'flex',
-                                                                flexDirection: 'column',
-                                                                gap: '8px',
-                                                                paddingLeft: '32px'
-                                                            }}>
-                                                                <label style={{
-                                                                    display: 'block',
-                                                                    fontSize: '13px',
-                                                                    fontWeight: '500',
-                                                                    color: 'var(--on-text-primary, #f6fafef5)',
-                                                                    marginBottom: '4px'
-                                                                }}>
-                                                                    Промежуточный ожидаемый результат (опционально):
-                                                                </label>
-                                                                <textarea
-                                                                    value={stepExpectedResult}
-                                                                    placeholder="Например: Разворачивается блок..., Появляется поле..."
-                                                                    onChange={(e) => {
-                                                                        const arr = [...testCase.steps];
-                                                                        if (typeof arr[idx] === 'string') {
-                                                                            arr[idx] = { action: arr[idx], expectedResult: e.target.value };
-                                                                        } else if (typeof arr[idx] === 'object') {
-                                                                            arr[idx] = { ...arr[idx], expectedResult: e.target.value };
-                                                                        } else {
-                                                                            arr[idx] = { action: '', expectedResult: e.target.value };
-                                                                        }
-                                                                        handleFieldChange('steps', arr);
-                                                                    }}
-                                                                    style={{
-                                                                        width: '100%',
-                                                                        minHeight: '60px',
-                                                                        padding: '8px 12px',
-                                                                        background: 'var(--bg-base-primary, #1b2129)',
-                                                                        border: '1px solid var(--on-border-light, #bdd4ff36)',
-                                                                        borderRadius: '6px',
-                                                                        color: 'var(--on-text-primary, #f6fafef5)',
-                                                                        fontSize: '13px',
-                                                                        fontFamily: 'inherit',
-                                                                        resize: 'vertical',
-                                                                        boxSizing: 'border-box'
-                                                                    }}
-                                                                />
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </Draggable>
-                                        );
-                                    })}
-                                    {dropProv.placeholder}
-                                </div>
-                            )}
-                        </Droppable>
-                    </DragDropContext>
-                    <button
-                        className="add-item-btn"
-                        onClick={() => {
-                            // Для E2E тестов создаем объект с action, для Integration - строку
-                            const isE2E = testCase.layer === 'E2E Tests';
-                            const newStep = isE2E ? { action: '' } : '';
-                            addArrayItem('steps', newStep);
-                        }}
-                    >
-                        + Добавить шаг
-                    </button>
-                    <div style={{ marginTop: 8 }}>
-                        <AsyncSelect
-                            classNamePrefix="select"
-                            cacheOptions
-                            defaultOptions
-                            loadOptions={loadSharedStepOptions}
-                            placeholder="+ Добавить общий шаг…"
-                            onChange={(opt) =>
-                                opt &&
-                                addArrayItem('steps', {
-                                    sharedStepId: opt.value,
-                                    text: opt.label,
-                                })
-                            }
-                            noOptionsMessage={() => 'Ничего не найдено'}
-                            styles={{
-                                container: (base) => ({ ...base, marginTop: 4 }),
-                                menuPortal: (base) => ({ ...base, zIndex: 9999 }),
-                            }}
-                            menuPortalTarget={document.body}
-                        />
-                    </div>
-                </div>
-                <div className="case-field">
-                    <label>Ожидаемый результат*</label>
-                    <textarea
-                        value={testCase.expected}
-                        onChange={(e) => handleFieldChange('expected', e.target.value)}
-                    />
-                </div>
-                <div className="field-grid">
-                    <div className="case-field">
-                        <label>Теги (через запятую)*</label>
-                        <input
-                            type="text"
-                            value={(testCase.tags || []).join(', ')}
-                            onChange={(e) =>
-                                handleFieldChange(
-                                    'tags',
-                                    e.target.value.split(',').map((t) => t.trim())
-                                )
-                            }
-                        />
-                    </div>
-                </div>
-
-                <div className="case-field">
-                    <label>Тестовый слой*</label>
-                    <select
-                        value={testCase.layer}
-                        onChange={(e) => handleFieldChange('layer', e.target.value)}
-                    >
-                        <option value="E2E Tests">E2E Tests</option>
-                        <option value="Integration frontend Tests">
-                            Integration frontend Tests
-                        </option>
-                        <option value="Integration backend Tests">
-                            Integration backend Tests
-                        </option>
-                        <option value="Unit frontend Tests">Unit frontend Tests</option>
-                        <option value="Unit backend Tests">Unit backend Tests</option>
-                    </select>
-                </div>
-                <div className="case-field">
-                    <label>Связанные задачи (Jira)*</label>
-                    <AsyncSelect
-                        classNamePrefix="select"
-                        cacheOptions
-                        defaultOptions
-                        loadOptions={loadIssueOptions}
-                        placeholder="Начните вводить..."
-                        value={testCase.jiraIssueOption || null}
-                        onChange={(opt) => handleFieldChange('jiraIssueOption', opt)}
-                        noOptionsMessage={() =>
-                            !jiraProject || !jiraPat
-                                ? 'Укажите проект и PAT'
-                                : 'Ничего не найдено'
-                        }
-                        styles={{
-                            container: (base) => ({ ...base, marginTop: 4 }),
-                            menuPortal: (base) => ({ ...base, zIndex: 9999 }),
-                        }}
-                        menuPortalTarget={document.body}
-                    />
-                </div>
-                <div className="case-field">
-                    <label>Приоритет*</label>
-                    <select
-                        value={testCase.priority}
-                        onChange={(e) => handleFieldChange('priority', e.target.value)}
-                    >
-                        <option value="Medium">Medium</option>
-                        <option value="Critical">Critical</option>
-                        <option value="High">High</option>
-                        <option value="Low">Low</option>
-                    </select>
-                </div>
-                <div className="case-field">
-                    <label>Ссылки (Confluence, Figma)</label>
-                    {(testCase.links || []).map((link, i) => (
-                        <div key={i} className="array-item link-item">
-                            <input
-                                type="text"
-                                placeholder="Текст ссылки"
-                                value={link.text}
-                                onChange={(e) => handleLinkChange(i, 'text', e.target.value)}
-                            />
-                            <input
-                                type="text"
-                                placeholder="URL"
-                                value={link.url}
-                                onChange={(e) => handleLinkChange(i, 'url', e.target.value)}
-                            />
-                            <button
-                                className="remove-item-btn"
-                                onClick={() => removeArrayItem('links', i)}
-                            >
-                                −
-                            </button>
-                        </div>
-                    ))}
-                    <button
-                        className="add-item-btn"
-                        onClick={() => addArrayItem('links', { text: '', url: '' })}
-                    >
-                        + Добавить ссылку
-                    </button>
-                </div>
-
-                {/* Параметры для параметризации */}
-                <div className="case-field">
-                    <label>Параметры (для параметризации теста)</label>
-                    <div style={{ marginBottom: '12px', fontSize: '12px', color: '#8b949e' }}>
-                        Используйте параметры, когда логика теста идентична, но меняются только входные данные
-                    </div>
-
-                    {/* Двухколоночный layout: параметры слева, таблица комбинаций справа */}
-                    <div style={{
-                        display: 'grid',
-                        gridTemplateColumns: testCase.parameters && testCase.parameters.length > 0 ? '1fr 1fr' : '1fr',
-                        gap: '20px',
-                        marginBottom: '16px',
-                        alignItems: 'start'
-                    }}>
-                        {/* Левая колонка: Определение параметров */}
-                        <div style={{ overflowX: 'auto', overflowY: 'visible' }}>
-                            <div style={{
-                                display: 'grid',
-                                gridTemplateColumns: `repeat(${Math.min((testCase.parameters || []).length || 1, 5)}, 1fr)`,
-                                gap: '16px',
-                                marginBottom: '16px'
-                            }}>
-                                {(testCase.parameters || []).map((param, paramIdx) => (
-                                    <div key={paramIdx} style={{
-                                        padding: '16px',
-                                        border: '1px solid var(--on-border-light, #bdd4ff36)',
-                                        borderRadius: '8px',
-                                        backgroundColor: 'var(--bg-base-secondary, #2c343f)',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        gap: '12px',
-                                        minWidth: '200px'
-                                    }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <input
-                                                type="text"
-                                                placeholder="Название параметра"
-                                                value={param.name || ''}
-                                                onChange={(e) => {
-                                                    const newParams = [...(testCase.parameters || [])];
-                                                    newParams[paramIdx] = { ...newParams[paramIdx], name: e.target.value };
-                                                    handleFieldChange('parameters', newParams);
-                                                }}
-                                                style={{
-                                                    flex: 1,
-                                                    padding: '10px 12px',
-                                                    backgroundColor: 'var(--bg-base-primary, #1b2129)',
-                                                    border: '1px solid var(--on-border-light, #bdd4ff36)',
-                                                    borderRadius: '6px',
-                                                    color: 'var(--on-text-primary, #f6fafef5)',
-                                                    fontSize: '13px',
-                                                    boxSizing: 'border-box'
-                                                }}
-                                            />
-                                            <button
-                                                className="remove-item-btn"
-                                                onClick={() => {
-                                                    const newParams = (testCase.parameters || []).filter((_, i) => i !== paramIdx);
-                                                    handleFieldChange('parameters', newParams);
-                                                }}
-                                                style={{
-                                                    padding: '10px 12px',
-                                                    minWidth: '40px',
-                                                    height: '40px',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    fontSize: '16px'
-                                                }}
-                                            >
-                                                ×
-                                            </button>
-                                        </div>
-
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                            {(param.values || []).map((value, valueIdx) => (
-                                                <EditableValueTag
-                                                    key={valueIdx}
-                                                    value={value}
-                                                    autoEdit={!value}
-                                                    onSave={(newValue) => {
-                                                        const newParams = [...(testCase.parameters || [])];
-                                                        const newValues = [...(newParams[paramIdx].values || [])];
-                                                        // Если значение пустое, удаляем его
-                                                        if (!newValue || !newValue.trim()) {
-                                                            const filteredValues = newValues.filter((_, i) => i !== valueIdx);
-                                                            newParams[paramIdx] = { ...newParams[paramIdx], values: filteredValues };
-                                                        } else {
-                                                            newValues[valueIdx] = newValue.trim();
-                                                            newParams[paramIdx] = { ...newParams[paramIdx], values: newValues };
-                                                        }
-                                                        handleFieldChange('parameters', newParams);
-                                                    }}
-                                                    onDelete={() => {
-                                                        const newParams = [...(testCase.parameters || [])];
-                                                        const newValues = (newParams[paramIdx].values || []).filter((_, i) => i !== valueIdx);
-                                                        newParams[paramIdx] = { ...newParams[paramIdx], values: newValues };
-                                                        handleFieldChange('parameters', newParams);
-                                                    }}
-                                                />
-                                            ))}
-                                            <button
-                                                className="add-item-btn"
-                                                onClick={() => {
-                                                    const newParams = [...(testCase.parameters || [])];
-                                                    const newValues = [...(newParams[paramIdx].values || []), ''];
-                                                    newParams[paramIdx] = { ...newParams[paramIdx], values: newValues };
-                                                    handleFieldChange('parameters', newParams);
-                                                }}
-                                                style={{
-                                                    marginTop: '4px',
-                                                    fontSize: '12px',
-                                                    padding: '8px 12px',
-                                                    width: '100%',
-                                                    height: '36px'
-                                                }}
-                                            >
-                                                + Добавить значение
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '12px', flexDirection: 'column' }}>
+                                                        </Draggable>
+                                                    );
+                                                })}
+                                                {dropProv.placeholder}
+                                            </div>
+                                        )}
+                                    </Droppable>
+                                </DragDropContext>
                                 <button
                                     className="add-item-btn"
                                     onClick={() => {
-                                        if ((testCase.parameters || []).length >= 5) {
-                                            alert('Максимальное количество параметров: 5');
-                                            return;
-                                        }
-                                        addArrayItem('parameters', { name: '', values: [''] });
-                                    }}
-                                    disabled={(testCase.parameters || []).length >= 5}
-                                    style={{
-                                        width: '100%',
-                                        padding: '10px 12px',
-                                        height: '40px',
-                                        fontSize: '13px',
-                                        opacity: (testCase.parameters || []).length >= 5 ? 0.5 : 1,
-                                        cursor: (testCase.parameters || []).length >= 5 ? 'not-allowed' : 'pointer'
+                                        // Для E2E тестов создаем объект с action, для Integration - строку
+                                        const isE2E = testCase.layer === 'E2E Tests';
+                                        const newStep = isE2E ? { action: '' } : '';
+                                        addArrayItem('steps', newStep);
                                     }}
                                 >
-                                    + Добавить параметр {(testCase.parameters || []).length >= 5 ? '(максимум 5)' : ''}
+                                    + Добавить шаг
                                 </button>
-                                {testCase.parameters && testCase.parameters.length > 0 && (
-                                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                                        <select
-                                            id={`combo-mode-${testCase.id}`}
-                                            defaultValue="pairwise"
-                                            style={{
-                                                flex: 1,
-                                                padding: '10px 12px',
-                                                backgroundColor: 'var(--bg-base-primary, #1b2129)',
-                                                border: '1px solid var(--on-border-light, #bdd4ff36)',
-                                                borderRadius: '6px',
-                                                color: 'var(--on-text-primary, #f6fafef5)',
-                                                fontSize: '13px',
-                                                cursor: 'pointer',
-                                                height: '40px',
-                                                boxSizing: 'border-box'
-                                            }}
-                                        >
-                                            <option value="all">Все значения</option>
-                                            <option value="pairwise">Pairwise</option>
-                                        </select>
+                                <div style={{ marginTop: 8 }}>
+                                    <AsyncSelect
+                                        classNamePrefix="select"
+                                        cacheOptions
+                                        defaultOptions
+                                        loadOptions={loadSharedStepOptions}
+                                        placeholder="+ Добавить общий шаг…"
+                                        onChange={(opt) =>
+                                            opt &&
+                                            addArrayItem('steps', {
+                                                sharedStepId: opt.value,
+                                                text: opt.label,
+                                            })
+                                        }
+                                        noOptionsMessage={() => 'Ничего не найдено'}
+                                        styles={{
+                                            container: (base) => ({ ...base, marginTop: 4 }),
+                                            menuPortal: (base) => ({ ...base, zIndex: 9999 }),
+                                        }}
+                                        menuPortalTarget={document.body}
+                                    />
+                                </div>
+                            </div>
+                            <div className="case-field">
+                                <label>Ожидаемый результат*</label>
+                                <textarea
+                                    value={testCase.expected}
+                                    onChange={(e) => handleFieldChange('expected', e.target.value)}
+                                />
+                            </div>
+                            <div className="field-grid">
+                                <div className="case-field">
+                                    <label>Теги (через запятую)*</label>
+                                    <input
+                                        type="text"
+                                        value={(testCase.tags || []).join(', ')}
+                                        onChange={(e) =>
+                                            handleFieldChange(
+                                                'tags',
+                                                e.target.value.split(',').map((t) => t.trim())
+                                            )
+                                        }
+                                    />
+                                </div>
+                            </div>
+                            
+                            <div className="case-field">
+                                <label>Тестовый слой*</label>
+                                <select
+                                    value={testCase.layer}
+                                    onChange={(e) => handleFieldChange('layer', e.target.value)}
+                                >
+                                    <option value="E2E Tests">E2E Tests</option>
+                                    <option value="Integration frontend Tests">
+                                        Integration frontend Tests
+                                    </option>
+                                    <option value="Integration backend Tests">
+                                        Integration backend Tests
+                                    </option>
+                                    <option value="Unit frontend Tests">Unit frontend Tests</option>
+                                    <option value="Unit backend Tests">Unit backend Tests</option>
+                                </select>
+                            </div>
+                            <div className="case-field">
+                                <label>Связанные задачи (Jira)*</label>
+                                <AsyncSelect
+                                    classNamePrefix="select"
+                                        cacheOptions
+                                        defaultOptions
+                                        loadOptions={loadIssueOptions}
+                                        placeholder="Начните вводить..."
+                                        value={testCase.jiraIssueOption || null}
+                                        onChange={(opt) => handleFieldChange('jiraIssueOption', opt)}
+                                        noOptionsMessage={() =>
+                                            !jiraProject || !jiraPat
+                                                ? 'Укажите проект и PAT'
+                                                : 'Ничего не найдено'
+                                        }
+                                    styles={{
+                                        container: (base) => ({ ...base, marginTop: 4 }),
+                                        menuPortal: (base) => ({ ...base, zIndex: 9999 }),
+                                    }}
+                                    menuPortalTarget={document.body}
+                                />
+                            </div>
+                            <div className="case-field">
+                                <label>Приоритет*</label>
+                                <select
+                                    value={testCase.priority}
+                                    onChange={(e) => handleFieldChange('priority', e.target.value)}
+                                >
+                                    <option value="Medium">Medium</option>
+                                    <option value="Critical">Critical</option>
+                                    <option value="High">High</option>
+                                    <option value="Low">Low</option>
+                                </select>
+                            </div>
+                            <div className="case-field">
+                                <label>Ссылки (Confluence, Figma)</label>
+                                {(testCase.links || []).map((link, i) => (
+                                    <div key={i} className="array-item link-item">
+                                        <input
+                                            type="text"
+                                            placeholder="Текст ссылки"
+                                            value={link.text}
+                                            onChange={(e) => handleLinkChange(i, 'text', e.target.value)}
+                                        />
+                                        <input
+                                            type="text"
+                                            placeholder="URL"
+                                            value={link.url}
+                                            onChange={(e) => handleLinkChange(i, 'url', e.target.value)}
+                                        />
                                         <button
-                                            className="add-item-btn"
-                                            onClick={() => {
-                                                const mode = document.getElementById(`combo-mode-${testCase.id}`)?.value || 'all';
-
-                                                // Проверяем валидность параметров перед генерацией
-                                                const validParams = (testCase.parameters || []).filter(p =>
-                                                    p.name && p.name.trim() &&
-                                                    p.values && Array.isArray(p.values) &&
-                                                    p.values.length > 0 &&
-                                                    p.values.some(v => v && v.trim())
-                                                );
-
-                                                if (validParams.length === 0) {
-                                                    alert('Невозможно сгенерировать комбинации. Убедитесь, что все параметры имеют имена и хотя бы одно значение.');
-                                                    return;
-                                                }
-
-                                                // Генерируем комбинации в зависимости от выбранного режима
-                                                const combinations = mode === 'pairwise'
-                                                    ? generatePairwiseCombinations(testCase.parameters || [])
-                                                    : generateAllCombinations(testCase.parameters || []);
-
-                                                if (combinations.length === 0) {
-                                                    alert('Невозможно сгенерировать комбинации. Убедитесь, что все параметры имеют имена и хотя бы одно значение.');
-                                                    return;
-                                                }
-
-                                                // Заменяем существующие примеры на сгенерированные
-                                                handleFieldChange('examples', combinations);
-                                            }}
-                                            style={{
-                                                flex: 1,
-                                                backgroundColor: 'var(--on-support-castor, #45e57b)',
-                                                borderColor: 'var(--on-support-castor, #45e57b)',
-                                                color: '#000',
-                                                padding: '10px 12px',
-                                                height: '40px',
-                                                fontSize: '13px',
-                                                fontWeight: '500'
-                                            }}
+                                            className="remove-item-btn"
+                                            onClick={() => removeArrayItem('links', i)}
                                         >
-                                            Комбинировать
+                                            −
                                         </button>
                                     </div>
-                                )}
+                                ))}
+                                <button
+                                    className="add-item-btn"
+                                    onClick={() => addArrayItem('links', { text: '', url: '' })}
+                                >
+                                    + Добавить ссылку
+                                </button>
                             </div>
-                        </div>
-
-                        {/* Правая колонка: Таблица комбинаций */}
-                        {testCase.parameters && testCase.parameters.length > 0 && (
-                            <div style={{
-                                border: '1px solid var(--on-border-light, #bdd4ff36)',
-                                borderRadius: '8px',
-                                backgroundColor: 'var(--bg-base-secondary, #2c343f)',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                height: '100%',
-                                minHeight: '400px'
-                            }}>
-                                <div style={{
-                                    padding: '12px 16px',
-                                    borderBottom: '1px solid var(--on-border-light, #bdd4ff36)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    backgroundColor: 'var(--bg-base-primary, #1b2129)',
-                                    borderRadius: '8px 8px 0 0',
-                                    flexShrink: 0
-                                }}>
-                                    <span style={{ fontSize: '13px', color: 'var(--on-text-hint, #d2e4fe80)', fontWeight: '500' }}>
-                                        Максимальное количество комбинаций: 50
-                                    </span>
+                            
+                            {/* Параметры для параметризации */}
+                            <div className="case-field">
+                                <label>Параметры (для параметризации теста)</label>
+                                <div style={{ marginBottom: '12px', fontSize: '12px', color: '#8b949e' }}>
+                                    Используйте параметры, когда логика теста идентична, но меняются только входные данные
                                 </div>
-
-                                <div style={{ overflow: 'auto', flex: 1, minHeight: 0, paddingBottom: '8px' }}>
-                                    {testCase.examples && testCase.examples.length > 0 ? (
-                                        <table style={{
-                                            width: '100%',
-                                            borderCollapse: 'collapse',
-                                            fontSize: '13px'
+                                
+                                {/* Двухколоночный layout: параметры слева, таблица комбинаций справа */}
+                                <div style={{ 
+                                    display: 'grid', 
+                                    gridTemplateColumns: testCase.parameters && testCase.parameters.length > 0 ? '1fr 1fr' : '1fr',
+                                    gap: '20px',
+                                    marginBottom: '16px',
+                                    alignItems: 'start'
+                                }}>
+                                    {/* Левая колонка: Определение параметров */}
+                                    <div style={{ overflowX: 'auto', overflowY: 'visible' }}>
+                                        <div style={{ 
+                                            display: 'grid',
+                                            gridTemplateColumns: `repeat(${Math.min((testCase.parameters || []).length || 1, 5)}, 1fr)`,
+                                            gap: '16px',
+                                            marginBottom: '16px'
                                         }}>
-                                            <thead>
-                                                <tr style={{
-                                                    backgroundColor: 'var(--bg-base-primary, #1b2129)',
-                                                    borderBottom: '1px solid var(--on-border-light, #bdd4ff36)',
-                                                    height: '44px'
+                                            {(testCase.parameters || []).map((param, paramIdx) => (
+                                                <div key={paramIdx} style={{ 
+                                                    padding: '16px', 
+                                                    border: '1px solid var(--on-border-light, #bdd4ff36)', 
+                                                    borderRadius: '8px',
+                                                    backgroundColor: 'var(--bg-base-secondary, #2c343f)',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    gap: '12px',
+                                                    minWidth: '200px'
                                                 }}>
-                                                    {(testCase.parameters || []).map((param, idx) => (
-                                                        <th key={idx} style={{
-                                                            padding: '0 16px',
-                                                            textAlign: 'left',
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        <input
+                                                            type="text"
+                                                            placeholder="Название параметра"
+                                                            value={param.name || ''}
+                                                            onChange={(e) => {
+                                                                const newParams = [...(testCase.parameters || [])];
+                                                                newParams[paramIdx] = { ...newParams[paramIdx], name: e.target.value };
+                                                                handleFieldChange('parameters', newParams);
+                                                            }}
+                                                            style={{ 
+                                                                flex: 1, 
+                                                                padding: '10px 12px',
+                                                                backgroundColor: 'var(--bg-base-primary, #1b2129)',
+                                                                border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                                borderRadius: '6px',
+                                                                color: 'var(--on-text-primary, #f6fafef5)',
+                                                                fontSize: '13px',
+                                                                boxSizing: 'border-box'
+                                                            }}
+                                                        />
+                                                        <button
+                                                            className="remove-item-btn"
+                                                            onClick={() => {
+                                                                const newParams = (testCase.parameters || []).filter((_, i) => i !== paramIdx);
+                                                                handleFieldChange('parameters', newParams);
+                                                            }}
+                                                            style={{ 
+                                                                padding: '10px 12px',
+                                                                minWidth: '40px',
+                                                                height: '40px',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                fontSize: '16px'
+                                                            }}
+                                                        >
+                                                            ×
+                                                        </button>
+                                                    </div>
+                                                    
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                        {(param.values || []).map((value, valueIdx) => (
+                                                            <EditableValueTag
+                                                                key={valueIdx}
+                                                                value={value}
+                                                                autoEdit={!value}
+                                                                onSave={(newValue) => {
+                                                                    const newParams = [...(testCase.parameters || [])];
+                                                                    const newValues = [...(newParams[paramIdx].values || [])];
+                                                                    // Если значение пустое, удаляем его
+                                                                    if (!newValue || !newValue.trim()) {
+                                                                        const filteredValues = newValues.filter((_, i) => i !== valueIdx);
+                                                                        newParams[paramIdx] = { ...newParams[paramIdx], values: filteredValues };
+                                                                    } else {
+                                                                        newValues[valueIdx] = newValue.trim();
+                                                                        newParams[paramIdx] = { ...newParams[paramIdx], values: newValues };
+                                                                    }
+                                                                    handleFieldChange('parameters', newParams);
+                                                                }}
+                                                                onDelete={() => {
+                                                                    const newParams = [...(testCase.parameters || [])];
+                                                                    const newValues = (newParams[paramIdx].values || []).filter((_, i) => i !== valueIdx);
+                                                                    newParams[paramIdx] = { ...newParams[paramIdx], values: newValues };
+                                                                    handleFieldChange('parameters', newParams);
+                                                                }}
+                                                            />
+                                                        ))}
+                                                        <button
+                                                            className="add-item-btn"
+                                                            onClick={() => {
+                                                                const newParams = [...(testCase.parameters || [])];
+                                                                const newValues = [...(newParams[paramIdx].values || []), ''];
+                                                                newParams[paramIdx] = { ...newParams[paramIdx], values: newValues };
+                                                                handleFieldChange('parameters', newParams);
+                                                            }}
+                                                            style={{ 
+                                                                marginTop: '4px', 
+                                                                fontSize: '12px', 
+                                                                padding: '8px 12px',
+                                                                width: '100%',
+                                                                height: '36px'
+                                                            }}
+                                                        >
+                                                            + Добавить значение
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        
+                                        <div style={{ display: 'flex', gap: '12px', flexDirection: 'column' }}>
+                                            <button
+                                                className="add-item-btn"
+                                                onClick={() => {
+                                                    if ((testCase.parameters || []).length >= 5) {
+                                                        alert('Максимальное количество параметров: 5');
+                                                        return;
+                                                    }
+                                                    addArrayItem('parameters', { name: '', values: [''] });
+                                                }}
+                                                disabled={(testCase.parameters || []).length >= 5}
+                                                style={{ 
+                                                    width: '100%',
+                                                    padding: '10px 12px',
+                                                    height: '40px',
+                                                    fontSize: '13px',
+                                                    opacity: (testCase.parameters || []).length >= 5 ? 0.5 : 1,
+                                                    cursor: (testCase.parameters || []).length >= 5 ? 'not-allowed' : 'pointer'
+                                                }}
+                                            >
+                                                + Добавить параметр {(testCase.parameters || []).length >= 5 ? '(максимум 5)' : ''}
+                                            </button>
+                                            {testCase.parameters && testCase.parameters.length > 0 && (
+                                                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                                    <select
+                                                        id={`combo-mode-${testCase.id}`}
+                                                        defaultValue="pairwise"
+                                                        style={{
+                                                            flex: 1,
+                                                            padding: '10px 12px',
+                                                            backgroundColor: 'var(--bg-base-primary, #1b2129)',
+                                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                            borderRadius: '6px',
                                                             color: 'var(--on-text-primary, #f6fafef5)',
-                                                            fontWeight: '500',
-                                                            borderRight: idx < (testCase.parameters || []).length - 1 ? '1px solid var(--on-border-light, #bdd4ff36)' : 'none',
-                                                            height: '44px',
-                                                            verticalAlign: 'middle'
-                                                        }}>
-                                                            {param.name || `Параметр ${idx + 1}`}
-                                                        </th>
-                                                    ))}
-                                                    <th style={{
-                                                        padding: '0',
-                                                        width: '50px',
-                                                        textAlign: 'center',
-                                                        height: '44px',
-                                                        verticalAlign: 'middle'
-                                                    }}></th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {testCase.examples.map((example, exampleIdx) => (
-                                                    <tr key={exampleIdx} style={{
-                                                        borderBottom: '1px solid var(--on-border-light, #bdd4ff36)',
-                                                        backgroundColor: exampleIdx % 2 === 0 ? 'var(--bg-base-secondary, #2c343f)' : 'transparent',
-                                                        height: '44px'
+                                                            fontSize: '13px',
+                                                            cursor: 'pointer',
+                                                            height: '40px',
+                                                            boxSizing: 'border-box'
+                                                        }}
+                                                    >
+                                                        <option value="all">Все значения</option>
+                                                        <option value="pairwise">Pairwise</option>
+                                                    </select>
+                                                    <button
+                                                        className="add-item-btn"
+                                                        onClick={() => {
+                                                            const mode = document.getElementById(`combo-mode-${testCase.id}`)?.value || 'all';
+                                                            
+                                                            // Проверяем валидность параметров перед генерацией
+                                                            const validParams = (testCase.parameters || []).filter(p => 
+                                                                p.name && p.name.trim() && 
+                                                                p.values && Array.isArray(p.values) && 
+                                                                p.values.length > 0 && 
+                                                                p.values.some(v => v && v.trim())
+                                                            );
+                                                            
+                                                            if (validParams.length === 0) {
+                                                                alert('Невозможно сгенерировать комбинации. Убедитесь, что все параметры имеют имена и хотя бы одно значение.');
+                                                                return;
+                                                            }
+                                                            
+                                                            // Генерируем комбинации в зависимости от выбранного режима
+                                                            const combinations = mode === 'pairwise' 
+                                                                ? generatePairwiseCombinations(testCase.parameters || [])
+                                                                : generateAllCombinations(testCase.parameters || []);
+                                                            
+                                                            if (combinations.length === 0) {
+                                                                alert('Невозможно сгенерировать комбинации. Убедитесь, что все параметры имеют имена и хотя бы одно значение.');
+                                                                return;
+                                                            }
+                                                            
+                                                            // Заменяем существующие примеры на сгенерированные
+                                                            handleFieldChange('examples', combinations);
+                                                        }}
+                                                        style={{ 
+                                                            flex: 1,
+                                                            backgroundColor: 'var(--on-support-castor, #45e57b)',
+                                                            borderColor: 'var(--on-support-castor, #45e57b)',
+                                                            color: '#000',
+                                                            padding: '10px 12px',
+                                                            height: '40px',
+                                                            fontSize: '13px',
+                                                            fontWeight: '500'
+                                                        }}
+                                                    >
+                                                        Комбинировать
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Правая колонка: Таблица комбинаций */}
+                                    {testCase.parameters && testCase.parameters.length > 0 && (
+                                        <div style={{
+                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                            borderRadius: '8px',
+                                            backgroundColor: 'var(--bg-base-secondary, #2c343f)',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            height: '100%',
+                                            minHeight: '400px'
+                                        }}>
+                                            <div style={{ 
+                                                padding: '12px 16px',
+                                                borderBottom: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'space-between',
+                                                backgroundColor: 'var(--bg-base-primary, #1b2129)',
+                                                borderRadius: '8px 8px 0 0',
+                                                flexShrink: 0
+                                            }}>
+                                                <span style={{ fontSize: '13px', color: 'var(--on-text-hint, #d2e4fe80)', fontWeight: '500' }}>
+                                                    Максимальное количество комбинаций: 50
+                                                </span>
+                                            </div>
+                                            
+                                            <div style={{ overflow: 'auto', flex: 1, minHeight: 0, paddingBottom: '8px' }}>
+                                                {testCase.examples && testCase.examples.length > 0 ? (
+                                                    <table style={{ 
+                                                        width: '100%',
+                                                        borderCollapse: 'collapse',
+                                                        fontSize: '13px'
                                                     }}>
-                                                        {(testCase.parameters || []).map((param, paramIdx) => {
-                                                            const exParam = (example.parameters || []).find(p => p.name === param.name);
-                                                            return (
-                                                                <td key={paramIdx} style={{
+                                                        <thead>
+                                                            <tr style={{ 
+                                                                backgroundColor: 'var(--bg-base-primary, #1b2129)',
+                                                                borderBottom: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                                height: '44px'
+                                                            }}>
+                                                                {(testCase.parameters || []).map((param, idx) => (
+                                                                    <th key={idx} style={{ 
+                                                                        padding: '0 16px',
+                                                                        textAlign: 'left',
+                                                                        color: 'var(--on-text-primary, #f6fafef5)',
+                                                                        fontWeight: '500',
+                                                                        borderRight: idx < (testCase.parameters || []).length - 1 ? '1px solid var(--on-border-light, #bdd4ff36)' : 'none',
+                                                                        height: '44px',
+                                                                        verticalAlign: 'middle'
+                                                                    }}>
+                                                                        {param.name || `Параметр ${idx + 1}`}
+                                                                    </th>
+                                                                ))}
+                                                                <th style={{ 
                                                                     padding: '0',
-                                                                    color: 'var(--on-text-primary, #f6fafef5)',
-                                                                    borderRight: paramIdx < (testCase.parameters || []).length - 1 ? '1px solid var(--on-border-light, #bdd4ff36)' : 'none',
-                                                                    verticalAlign: 'middle',
+                                                                    width: '50px',
+                                                                    textAlign: 'center',
+                                                                    height: '44px',
+                                                                    verticalAlign: 'middle'
+                                                                }}></th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {testCase.examples.map((example, exampleIdx) => (
+                                                                <tr key={exampleIdx} style={{
+                                                                    borderBottom: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                                    backgroundColor: exampleIdx % 2 === 0 ? 'var(--bg-base-secondary, #2c343f)' : 'transparent',
                                                                     height: '44px'
                                                                 }}>
-                                                                    <select
-                                                                        value={exParam?.value || ''}
-                                                                        onChange={(e) => {
-                                                                            const newExamples = [...(testCase.examples || [])];
-                                                                            const newExParams = [...(newExamples[exampleIdx].parameters || [])];
-                                                                            const paramIdxInExample = newExParams.findIndex(p => p.name === param.name);
-                                                                            if (paramIdxInExample >= 0) {
-                                                                                newExParams[paramIdxInExample] = { ...newExParams[paramIdxInExample], value: e.target.value };
-                                                                            } else {
-                                                                                newExParams.push({ name: param.name, value: e.target.value });
-                                                                            }
-                                                                            newExamples[exampleIdx] = { ...newExamples[exampleIdx], parameters: newExParams };
-                                                                            handleFieldChange('examples', newExamples);
-                                                                        }}
-                                                                        style={{
-                                                                            width: '100%',
-                                                                            height: '44px',
-                                                                            padding: '0 16px',
-                                                                            backgroundColor: 'var(--bg-base-primary, #1b2129)',
-                                                                            border: 'none',
-                                                                            borderRadius: '0',
-                                                                            color: 'var(--on-text-primary, #f6fafef5)',
-                                                                            fontSize: '13px',
-                                                                            cursor: 'pointer',
-                                                                            boxSizing: 'border-box',
-                                                                            outline: 'none',
-                                                                            display: 'block',
-                                                                            margin: '0',
-                                                                            appearance: 'none',
-                                                                            WebkitAppearance: 'none',
-                                                                            MozAppearance: 'none'
-                                                                        }}
-                                                                    >
-                                                                        <option value="">-</option>
-                                                                        {param.values && param.values.filter(v => v && v.trim()).map((val, valIdx) => (
-                                                                            <option key={valIdx} value={val.trim()}>
-                                                                                {val.trim()}
-                                                                            </option>
-                                                                        ))}
-                                                                    </select>
-                                                                </td>
-                                                            );
-                                                        })}
-                                                        <td style={{
-                                                            padding: '6px',
-                                                            textAlign: 'center',
-                                                            verticalAlign: 'middle',
-                                                            height: '44px',
-                                                            width: '50px'
-                                                        }}>
-                                                            <button
-                                                                onClick={() => {
-                                                                    const newExamples = (testCase.examples || []).filter((_, i) => i !== exampleIdx);
-                                                                    handleFieldChange('examples', newExamples);
-                                                                }}
-                                                                style={{
-                                                                    background: 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))',
-                                                                    border: '1px solid var(--on-support-capella, #ff584d)',
-                                                                    color: 'var(--on-support-capella, #ff584d)',
-                                                                    cursor: 'pointer',
-                                                                    padding: '0',
-                                                                    width: '32px',
-                                                                    height: '32px',
-                                                                    borderRadius: '4px',
-                                                                    fontSize: '16px',
-                                                                    display: 'flex',
-                                                                    alignItems: 'center',
-                                                                    justifyContent: 'center',
-                                                                    margin: '0 auto'
-                                                                }}
-                                                            >
-                                                                ×
-                                                            </button>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    ) : (
-                                        <div style={{
-                                            padding: '24px',
-                                            textAlign: 'center',
-                                            color: '#8b949e',
-                                            fontSize: '12px'
-                                        }}>
-                                            Нет комбинаций. Нажмите "→ Комбинировать" для генерации.
+                                                                    {(testCase.parameters || []).map((param, paramIdx) => {
+                                                                        const exParam = (example.parameters || []).find(p => p.name === param.name);
+                                                                        return (
+                                                                            <td key={paramIdx} style={{ 
+                                                                        padding: '0',
+                                                                        color: 'var(--on-text-primary, #f6fafef5)',
+                                                                        borderRight: paramIdx < (testCase.parameters || []).length - 1 ? '1px solid var(--on-border-light, #bdd4ff36)' : 'none',
+                                                                        verticalAlign: 'middle',
+                                                                        height: '44px'
+                                                                    }}>
+                                                                                <select
+                                                                                    value={exParam?.value || ''}
+                                                                                    onChange={(e) => {
+                                                                                        const newExamples = [...(testCase.examples || [])];
+                                                                                        const newExParams = [...(newExamples[exampleIdx].parameters || [])];
+                                                                                        const paramIdxInExample = newExParams.findIndex(p => p.name === param.name);
+                                                                                        if (paramIdxInExample >= 0) {
+                                                                                            newExParams[paramIdxInExample] = { ...newExParams[paramIdxInExample], value: e.target.value };
+                                                                                        } else {
+                                                                                            newExParams.push({ name: param.name, value: e.target.value });
+                                                                                        }
+                                                                                        newExamples[exampleIdx] = { ...newExamples[exampleIdx], parameters: newExParams };
+                                                                                        handleFieldChange('examples', newExamples);
+                                                                                    }}
+                                                                                    style={{ 
+                                                                                        width: '100%',
+                                                                                        height: '44px',
+                                                                                        padding: '0 16px',
+                                                                                        backgroundColor: 'var(--bg-base-primary, #1b2129)',
+                                                                                        border: 'none',
+                                                                                        borderRadius: '0',
+                                                                                        color: 'var(--on-text-primary, #f6fafef5)',
+                                                                                        fontSize: '13px',
+                                                                                        cursor: 'pointer',
+                                                                                        boxSizing: 'border-box',
+                                                                                        outline: 'none',
+                                                                                        display: 'block',
+                                                                                        margin: '0',
+                                                                                        appearance: 'none',
+                                                                                        WebkitAppearance: 'none',
+                                                                                        MozAppearance: 'none'
+                                                                                    }}
+                                                                                >
+                                                                                    <option value="">-</option>
+                                                                                    {param.values && param.values.filter(v => v && v.trim()).map((val, valIdx) => (
+                                                                                        <option key={valIdx} value={val.trim()}>
+                                                                                            {val.trim()}
+                                                                                        </option>
+                                                                                    ))}
+                                                                                </select>
+                                                                            </td>
+                                                                        );
+                                                                    })}
+                                                                    <td style={{ 
+                                                                        padding: '6px',
+                                                                        textAlign: 'center',
+                                                                        verticalAlign: 'middle',
+                                                                        height: '44px',
+                                                                        width: '50px'
+                                                                    }}>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                const newExamples = (testCase.examples || []).filter((_, i) => i !== exampleIdx);
+                                                                                handleFieldChange('examples', newExamples);
+                                                                            }}
+                                                                            style={{ 
+                                                                                background: 'var(--bg-alpha-capella, rgba(232, 57, 44, 0.12))',
+                                                                                border: '1px solid var(--on-support-capella, #ff584d)',
+                                                                                color: 'var(--on-support-capella, #ff584d)',
+                                                                                cursor: 'pointer',
+                                                                                padding: '0',
+                                                                                width: '32px',
+                                                                                height: '32px',
+                                                                                borderRadius: '4px',
+                                                                                fontSize: '16px',
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                justifyContent: 'center',
+                                                                                margin: '0 auto'
+                                                                            }}
+                                                                        >
+                                                                            ×
+                                                                        </button>
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                ) : (
+                                                    <div style={{ 
+                                                        padding: '24px',
+                                                        textAlign: 'center',
+                                                        color: '#8b949e',
+                                                        fontSize: '12px'
+                                                    }}>
+                                                        Нет комбинаций. Нажмите "→ Комбинировать" для генерации.
+                                                    </div>
+                                                )}
+                                            </div>
+                                            
+                                            {testCase.examples && testCase.examples.length > 0 && (
+                                                <div style={{ 
+                                                    padding: '12px 16px',
+                                                    borderTop: '1px solid var(--on-border-light, #bdd4ff36)',
+                                                    display: 'flex',
+                                                    justifyContent: 'flex-end',
+                                                    backgroundColor: 'var(--bg-base-primary, #1b2129)',
+                                                    borderRadius: '0 0 8px 8px'
+                                                }}>
+                                                    <button
+                                                        className="add-item-btn"
+                                                        onClick={() => {
+                                                            const newExample = {
+                                                                parameters: (testCase.parameters || []).map(p => ({
+                                                                    name: p.name || '',
+                                                                    value: ''
+                                                                }))
+                                                            };
+                                                            addArrayItem('examples', newExample);
+                                                        }}
+                                                        style={{ 
+                                                            fontSize: '13px', 
+                                                            padding: '10px 16px',
+                                                            height: '40px',
+                                                            minWidth: '140px'
+                                                        }}
+                                                    >
+                                                        + Добавить строку
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>
-
-                                {testCase.examples && testCase.examples.length > 0 && (
-                                    <div style={{
-                                        padding: '12px 16px',
-                                        borderTop: '1px solid var(--on-border-light, #bdd4ff36)',
-                                        display: 'flex',
-                                        justifyContent: 'flex-end',
-                                        backgroundColor: 'var(--bg-base-primary, #1b2129)',
-                                        borderRadius: '0 0 8px 8px'
-                                    }}>
-                                        <button
-                                            className="add-item-btn"
-                                            onClick={() => {
-                                                const newExample = {
-                                                    parameters: (testCase.parameters || []).map(p => ({
-                                                        name: p.name || '',
-                                                        value: ''
-                                                    }))
-                                                };
-                                                addArrayItem('examples', newExample);
-                                            }}
-                                            style={{
-                                                fontSize: '13px',
-                                                padding: '10px 16px',
-                                                height: '40px',
-                                                minWidth: '140px'
-                                            }}
-                                        >
-                                            + Добавить строку
-                                        </button>
-                                    </div>
-                                )}
                             </div>
-                        )}
-                    </div>
-                </div>
             </div>
         </div>
     );
@@ -2119,10 +2167,10 @@ const ResizablePanel = ({ children, initialWidth, minWidth, maxWidth, side, onWi
         if (!isResizing) return;
 
         const handleMouseMove = (e) => {
-            const newWidth = side === 'left'
-                ? e.clientX
+            const newWidth = side === 'left' 
+                ? e.clientX 
                 : window.innerWidth - e.clientX;
-
+            
             if (newWidth >= minWidth && newWidth <= maxWidth) {
                 setWidth(newWidth);
                 if (onWidthChange) {
@@ -2147,10 +2195,10 @@ const ResizablePanel = ({ children, initialWidth, minWidth, maxWidth, side, onWi
     return (
         <div style={{ position: 'relative', width: `${width}px`, flexShrink: 0 }}>
             {children}
-            <div
+            <div 
                 className="resizer"
                 onMouseDown={handleMouseDown}
-                style={{
+                style={{ 
                     cursor: isResizing ? 'col-resize' : 'col-resize',
                     userSelect: 'none'
                 }}
@@ -2168,18 +2216,18 @@ const GreenCircleIcon = () => (
 
 // Упрощенное дерево для левой панели (только названия, кликабельные)
 // Мемоизировано для оптимизации производительности при больших списках
-const SimpleTreeView = React.memo(({
-    treeData,
-    selectedCaseId,
+const SimpleTreeView = React.memo(({ 
+    treeData, 
+    selectedCaseId, 
     selectedCaseIds = new Set(),
-    onSelectCase,
+    onSelectCase, 
     onToggleExpand,
     onAddNode,
     onDeleteNode,
     onRenameNode,
     onDeleteCase,
-    onToggleCaseSelection = () => { },
-    onSelectCasesByPath = () => { },
+    onToggleCaseSelection = () => {},
+    onSelectCasesByPath = () => {},
     testCaseDiffs = new Map(),
     pendingApprovals = new Set()
 }) => {
@@ -2224,11 +2272,11 @@ const SimpleTreeView = React.memo(({
         const isSelected = selectedCaseId === testCase.id;
         const isBulkSelected = selectedCaseIds.has(testCase.id);
         const displayTitle = testCase.title || 'Без названия';
-
+        
         // Проверяем, есть ли непринятые изменения для этого ТК
         const hasPendingChanges = pendingApprovals.has(testCase.id);
         const diff = testCaseDiffs.get(testCase.id);
-
+        
         return (
             <Draggable key={testCase.id} draggableId={`case-${testCase.id}`} index={index}>
                 {(provided, snapshot) => (
@@ -2244,9 +2292,9 @@ const SimpleTreeView = React.memo(({
                             padding: '4px 8px',
                             paddingLeft: `${8 + level * 20}px`,
                             cursor: snapshot.isDragging ? 'grabbing' : 'grab',
-                            backgroundColor: hasPendingChanges
-                                ? 'rgba(255, 193, 7, 0.2)'
-                                : isSelected
+                            backgroundColor: hasPendingChanges 
+                                ? 'rgba(255, 193, 7, 0.2)' 
+                                : isSelected 
                                     ? 'rgba(88, 166, 255, 0.15)'
                                     : isBulkSelected
                                         ? 'rgba(63, 185, 80, 0.18)'
@@ -2260,11 +2308,11 @@ const SimpleTreeView = React.memo(({
                             <div style={{ display: 'flex', alignItems: 'center', cursor: 'grab' }}>
                                 <GreenCircleIcon />
                             </div>
-
+                           
                         </div>
                         {hasPendingChanges && (
-                            <span
-                                style={{
+                            <span 
+                                style={{ 
                                     marginRight: '6px',
                                     fontSize: '12px',
                                     color: '#ffc107',
@@ -2275,10 +2323,10 @@ const SimpleTreeView = React.memo(({
                                 ✏️
                             </span>
                         )}
-                        <span
-                            className="test-tree-node-title"
+                        <span 
+                            className="test-tree-node-title" 
                             title={displayTitle}
-                            style={{
+                            style={{ 
                                 flex: 1,
                                 fontSize: '13px',
                                 color: hasPendingChanges ? '#ffc107' : '#c9d1d9',
@@ -2287,7 +2335,7 @@ const SimpleTreeView = React.memo(({
                         >
                             {displayTitle}
                         </span>
-                        <div
+                        <div 
                             className="test-tree-node-controls"
                             onClick={(e) => e.stopPropagation()}
                             style={{ display: 'flex', alignItems: 'center' }}
@@ -2327,7 +2375,7 @@ const SimpleTreeView = React.memo(({
             </Draggable>
         );
     };
-
+    
     const renderNode = (nodeData, path, level = 0) => {
         let nodeName, nodeType;
         if (path.length === 1) {
@@ -2345,9 +2393,9 @@ const SimpleTreeView = React.memo(({
         } else {
             return null;
         }
-
+        
         const isExpanded = nodeData.isExpanded !== false;
-        const hasChildren =
+        const hasChildren = 
             (nodeType === 'feature' && Object.keys(nodeData.stories || {}).length > 0) ||
             (nodeType === 'story' && (
                 (nodeData.cases || []).length > 0 ||
@@ -2358,7 +2406,7 @@ const SimpleTreeView = React.memo(({
                 Object.keys(nodeData.codes || {}).length > 0
             )) ||
             (nodeType === 'code' && (nodeData.cases || []).length > 0);
-
+        
         return (
             <div key={path.join('/')}>
                 {nodeType === 'feature' && (
@@ -2412,10 +2460,10 @@ const SimpleTreeView = React.memo(({
                             />
                         ) : (
                             <>
-                                <span
+                                <span 
                                     className="test-tree-node-title"
-                                    style={{
-                                        fontWeight: '600',
+                                    style={{ 
+                                        fontWeight: '600', 
                                         color: 'var(--on-support-aldebaran, #7aa8ff)',
                                         flex: 1,
                                         fontSize: '13px'
@@ -2429,8 +2477,8 @@ const SimpleTreeView = React.memo(({
                                 >
                                     {nodeName}
                                 </span>
-                                <span style={{
-                                    fontSize: '12px',
+                                <span style={{ 
+                                    fontSize: '12px', 
                                     color: '#8b949e',
                                     marginLeft: '8px',
                                     marginRight: '8px'
@@ -2572,9 +2620,9 @@ const SimpleTreeView = React.memo(({
                             />
                         ) : (
                             <>
-                                <span
+                                <span 
                                     className="test-tree-node-title"
-                                    style={{
+                                    style={{ 
                                         color: 'var(--on-support-castor, #45e57b)',
                                         flex: 1,
                                         fontSize: '13px'
@@ -2588,8 +2636,8 @@ const SimpleTreeView = React.memo(({
                                 >
                                     {nodeName}
                                 </span>
-                                <span style={{
-                                    fontSize: '12px',
+                                <span style={{ 
+                                    fontSize: '12px', 
                                     color: '#8b949e',
                                     marginLeft: '8px',
                                     marginRight: '8px'
@@ -2756,9 +2804,9 @@ const SimpleTreeView = React.memo(({
                             />
                         ) : (
                             <>
-                                <span
+                                <span 
                                     className="test-tree-node-title"
-                                    style={{
+                                    style={{ 
                                         color: 'var(--on-support-betelgeuse, #b17aff)',
                                         flex: 1,
                                         fontSize: '13px'
@@ -2772,8 +2820,8 @@ const SimpleTreeView = React.memo(({
                                 >
                                     {nodeName}
                                 </span>
-                                <span style={{
-                                    fontSize: '12px',
+                                <span style={{ 
+                                    fontSize: '12px', 
                                     color: '#8b949e',
                                     marginLeft: '8px',
                                     marginRight: '8px'
@@ -2914,9 +2962,9 @@ const SimpleTreeView = React.memo(({
                             />
                         ) : (
                             <>
-                                <span
+                                <span 
                                     className="test-tree-node-title"
-                                    style={{
+                                    style={{ 
                                         color: 'var(--on-support-atlas, #ffa94d)',
                                         flex: 1,
                                         fontSize: '13px'
@@ -2930,8 +2978,8 @@ const SimpleTreeView = React.memo(({
                                 >
                                     {nodeName}
                                 </span>
-                                <span style={{
-                                    fontSize: '12px',
+                                <span style={{ 
+                                    fontSize: '12px', 
                                     color: '#8b949e',
                                     marginLeft: '8px',
                                     marginRight: '8px'
@@ -2996,7 +3044,7 @@ const SimpleTreeView = React.memo(({
                         )}
                     </div>
                 )}
-
+                
                 {isExpanded && (
                     <div>
                         {/* Кейсы на уровне story */}
@@ -3018,7 +3066,7 @@ const SimpleTreeView = React.memo(({
                                 )}
                             </Droppable>
                         )}
-
+                        
                         {/* Кейсы на уровне scenario */}
                         {nodeType === 'scenario' && (
                             <Droppable droppableId={encodeDroppablePath(path)} type="CASE">
@@ -3038,7 +3086,7 @@ const SimpleTreeView = React.memo(({
                                 )}
                             </Droppable>
                         )}
-
+                        
                         {/* Кейсы на уровне code */}
                         {nodeType === 'code' && (
                             <Droppable droppableId={encodeDroppablePath(path)} type="CASE">
@@ -3058,7 +3106,7 @@ const SimpleTreeView = React.memo(({
                                 )}
                             </Droppable>
                         )}
-
+                        
                         {/* Вложенные узлы */}
                         {nodeType === 'feature' && Object.entries(nodeData.stories || {}).map(([storyName, storyData]) =>
                             renderNode(storyData, [path[0], storyName], level + 1)
@@ -3074,7 +3122,7 @@ const SimpleTreeView = React.memo(({
             </div>
         );
     };
-
+    
     return (
         <div className="test-tree-container">
             {Object.entries(treeData).map(([featureName, featureData]) =>
@@ -3133,7 +3181,7 @@ export default function TestModelReviewModal({
 }) {
     const [treeData, setTreeData] = useState({});
     const [selectedCase, setSelectedCase] = useState(null);
-
+    
     // Логирование изменений treeData
     useEffect(() => {
         console.log('TestModelReviewModal: treeData state changed:', treeData);
@@ -3148,13 +3196,20 @@ export default function TestModelReviewModal({
     const [showFixPanel, setShowFixPanel] = useState(false);
     const [history, setHistory] = useState([]);
     const MAX_HISTORY = 10;
-
+    
     // Состояние для хранения diff'ов изменений: Map<caseId, diffObject>
     // diffObject = { field: { old: value, new: value }, ... }
     const [testCaseDiffs, setTestCaseDiffs] = useState(new Map());
-
+    
     // Состояние для непринятых изменений: Set<caseId>
     const [pendingApprovals, setPendingApprovals] = useState(new Set());
+    const [comparisonJiraIssue, setComparisonJiraIssue] = useState('');
+    const [comparisonTaskId, setComparisonTaskId] = useState(null);
+    const [comparisonProgress, setComparisonProgress] = useState(0);
+    const [comparisonReport, setComparisonReport] = useState(null);
+    const [comparisonError, setComparisonError] = useState('');
+    const [expandedComparisonRows, setExpandedComparisonRows] = useState(new Set());
+    const [isComparing, setIsComparing] = useState(false);
 
     // Функция для копирования ссылки в буфер обмена
     const copyToClipboard = (text) => {
@@ -3212,14 +3267,14 @@ export default function TestModelReviewModal({
     // Функция для проверки соответствия сохраненных данных текущим initialCases
     const validateSavedState = (savedState, currentCases) => {
         if (!savedState || !currentCases || !Array.isArray(currentCases)) return false;
-
+        
         // Проверяем количество
         const savedCases = flattenTreeToCases(savedState.treeData || {});
         if (savedCases.length !== currentCases.length) {
             console.log(`TestModelReviewModal: Количество не совпадает: сохранено ${savedCases.length}, текущее ${currentCases.length}`);
             return false;
         }
-
+        
         // Проверяем первые несколько ID для быстрой проверки
         const savedIds = new Set(savedCases.slice(0, 5).map(c => c.id).sort());
         const currentIds = new Set(currentCases.slice(0, 5).map(c => c.id).sort());
@@ -3227,7 +3282,7 @@ export default function TestModelReviewModal({
             console.log('TestModelReviewModal: ID не совпадают, данные устарели');
             return false;
         }
-
+        
         return true;
     };
 
@@ -3280,26 +3335,26 @@ export default function TestModelReviewModal({
     // Сохранение состояния в localStorage при изменении treeData и обновление счетчика
     useEffect(() => {
         if (!isOpen || !treeData || Object.keys(treeData).length === 0) return;
-
+        
         const storageKey = getStorageKey();
         if (!storageKey) return;
-
+        
         const dataToSave = {
             treeData,
             selectedCaseId: selectedCase?.id || null,
             timestamp: Date.now(),
             initialCasesCount: initialCases?.length || 0 // Сохраняем количество для проверки
         };
-
+        
         // Используем debounced сохранение для оптимизации
         saveToLocalStorageDebounced(storageKey, dataToSave);
-
+        
         // Обновляем счетчик в родительском компоненте (синхронно, т.к. это важно для UI)
         const count = countTestCases(treeData);
         if (onCasesCountChange) {
             onCasesCountChange(count);
         }
-
+        
         // Cleanup: отменяем отложенное сохранение при размонтировании
         return () => {
             // Сохраняем синхронно при размонтировании
@@ -3316,7 +3371,7 @@ export default function TestModelReviewModal({
             // При закрытии не очищаем состояние сразу - оно уже сохранено в localStorage
             return;
         }
-
+        
         // Если initialCases пустой массив, очищаем все состояние
         if (initialCases && Array.isArray(initialCases) && initialCases.length === 0) {
             console.log('TestModelReviewModal: initialCases пустой, очищаем состояние');
@@ -3333,10 +3388,10 @@ export default function TestModelReviewModal({
             setSelectedCase(null);
             return;
         }
-
+        
         const storageKey = getStorageKey();
         let savedState = null;
-
+        
         // Пытаемся загрузить сохраненное состояние
         if (storageKey) {
             try {
@@ -3346,10 +3401,10 @@ export default function TestModelReviewModal({
                     // Проверяем, что сохраненное состояние не слишком старое (например, не старше 7 дней)
                     const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 дней
                     const isNotExpired = savedState.timestamp && (Date.now() - savedState.timestamp) < maxAge;
-
+                    
                     // Проверяем соответствие сохраненных данных текущим initialCases
                     const isValid = isNotExpired && validateSavedState(savedState, initialCases);
-
+                    
                     if (isValid) {
                         console.log('TestModelReviewModal: Загружено валидное сохраненное состояние из localStorage');
                     } else {
@@ -3372,15 +3427,15 @@ export default function TestModelReviewModal({
                 savedState = null;
             }
         }
-
+        
         // Используем сохраненное состояние или строим из initialCases
         let treeDataToUse;
         let selectedCaseToUse = null;
-
+        
         if (savedState && savedState.treeData && Object.keys(savedState.treeData).length > 0) {
             treeDataToUse = savedState.treeData;
             console.log('TestModelReviewModal: Используем сохраненное treeData');
-
+            
             // Восстанавливаем выбранный кейс
             if (savedState.selectedCaseId) {
                 const allCases = flattenTreeToCases(treeDataToUse);
@@ -3394,17 +3449,17 @@ export default function TestModelReviewModal({
             console.log('TestModelReviewModal: initialCases length:', initialCases?.length);
             treeDataToUse = buildTreeFromCases(initialCases);
             console.log('TestModelReviewModal: built tree data:', treeDataToUse);
-
+            
             // Автоматически выбираем первый тест-кейс, если есть
             const allCases = flattenTreeToCases(treeDataToUse);
             selectedCaseToUse = allCases[0] || null;
         }
-
+        
         console.log('TestModelReviewModal: setting treeData state...');
         setTreeData(treeDataToUse);
         setSelectedCase(selectedCaseToUse);
         console.log('TestModelReviewModal: treeData state set');
-
+        
         if (projectId) {
             axios
                 .get(`${config.serverUrl}/shared-steps`, { params: { projectId } })
@@ -3422,6 +3477,60 @@ export default function TestModelReviewModal({
         }
     }, [isOpen, projectId, initialCases]);
 
+    useEffect(() => {
+        if (!isOpen || comparisonJiraIssue) return;
+        const currentCases = flattenTreeToCases(treeData);
+        const firstIssue = currentCases.find((testCase) => testCase?.jiraIssueOption?.value || testCase?.jiraIssue);
+        if (firstIssue) {
+            setComparisonJiraIssue(firstIssue.jiraIssueOption?.value || firstIssue.jiraIssue || '');
+        }
+    }, [isOpen, treeData, comparisonJiraIssue]);
+
+    useEffect(() => {
+        if (!comparisonTaskId) return undefined;
+
+        let cancelled = false;
+        setIsComparing(true);
+        setComparisonError('');
+
+        const pollTaskStatus = async () => {
+            try {
+                const { data } = await axios.get(
+                    `${config.serverUrl}/task-status/${comparisonTaskId}`,
+                    { params: { nocache: Date.now() } }
+                );
+
+                if (cancelled) return;
+
+                setComparisonProgress(Number(data?.progress || 0));
+
+                if (data?.status === 'completed') {
+                    setComparisonReport(data.result || null);
+                    setComparisonTaskId(null);
+                    setIsComparing(false);
+                } else if (data?.status === 'failed') {
+                    setComparisonError(data?.error_message || 'Сравнение завершилось с ошибкой');
+                    setComparisonTaskId(null);
+                    setIsComparing(false);
+                }
+            } catch (error) {
+                if (cancelled) return;
+                console.error('TestModelReviewModal: comparison polling failed:', error);
+                setComparisonError(error.response?.data?.error || error.message);
+                setComparisonTaskId(null);
+                setIsComparing(false);
+            }
+        };
+
+        pollTaskStatus();
+        const timerId = setInterval(pollTaskStatus, 2500);
+
+        return () => {
+            cancelled = true;
+            clearInterval(timerId);
+        };
+    }, [comparisonTaskId]);
+    
     // Функция для поиска тест-кейса в дереве по ID
     const findCaseInTree = (tree, caseId) => {
         for (const f in tree) {
@@ -3430,13 +3539,13 @@ export default function TestModelReviewModal({
                 // Кейсы на уровне story
                 const caseInStory = (storyNode.cases || []).find(c => c.id === caseId);
                 if (caseInStory) return caseInStory;
-
+                
                 // Кейсы в сценариях
                 for (const sc in storyNode.scenarios || {}) {
                     const scenarioNode = storyNode.scenarios[sc];
                     const caseInScenario = (scenarioNode.cases || []).find(c => c.id === caseId);
                     if (caseInScenario) return caseInScenario;
-
+                    
                     // Кейсы в code-узлах
                     for (const code in scenarioNode.codes || {}) {
                         const codeNode = scenarioNode.codes[code];
@@ -3448,7 +3557,7 @@ export default function TestModelReviewModal({
         }
         return null;
     };
-
+    
     const handleSelectCase = (testCase) => {
         // ✅ ИСПРАВЛЕНО: Всегда используем актуальные данные из переданного testCase
         // Сначала пытаемся найти в дереве (может быть обновлен), но если не найдено - используем переданный
@@ -3460,13 +3569,13 @@ export default function TestModelReviewModal({
         setSelectedCase({ ...updatedCase });
     };
     const handleCloseWithConfirm = useCallback(() => {
-        if (isGenerating || isSending) return; // не даём закрыть во время процессов
-
+        if (isGenerating || isSending || isComparing) return; // не даём закрыть во время процессов
+        
         // Состояние уже сохраняется автоматически при изменении treeData
         // Просто закрываем модалку
         setAllureLink(null); // на всякий случай очищаем состояние успеха
         onClose();
-    }, [isGenerating, isSending, onClose]);
+    }, [isGenerating, isSending, isComparing, onClose]);
     const handleUpdateCase = useCallback((caseId, updatedCase) => {
         setTreeData((prevTree) => {
             const newTree = JSON.parse(JSON.stringify(prevTree));
@@ -3808,7 +3917,7 @@ export default function TestModelReviewModal({
                         }
                     }
                 }
-
+            
             // Если удалили выбранный кейс, очищаем выбор или выбираем первый доступный
             setSelectedCase((prevSelected) => {
                 if (prevSelected?.id === caseId) {
@@ -3818,7 +3927,7 @@ export default function TestModelReviewModal({
                 }
                 return prevSelected;
             });
-
+            
             return newTree;
         });
     }, []);
@@ -3826,12 +3935,12 @@ export default function TestModelReviewModal({
     const onDragEnd = (result) => {
         const { source, destination, type } = result;
         console.log('[onDragEnd] Событие drag end:', { source, destination, type });
-
+        
         if (!destination) {
             console.log('[onDragEnd] Нет destination, отмена');
             return;
         }
-
+        
         if (type === 'STRUCTURE') {
             setTreeData((prev) => {
                 const keys = Object.keys(prev);
@@ -3909,7 +4018,7 @@ export default function TestModelReviewModal({
 
         setTreeData((prevTree) => {
             const newTree = JSON.parse(JSON.stringify(prevTree));
-
+            
             try {
                 // Получаем исходный массив
                 const srcArr = getCasesArrayByPath(newTree, srcPath, false);
@@ -3917,7 +4026,7 @@ export default function TestModelReviewModal({
                     console.error('[onDragEnd] Индекс вне границ или массив пуст:', source.index, srcArr?.length);
                     return prevTree;
                 }
-
+                
                 // Удаляем элемент из исходного массива
                 const [moved] = srcArr.splice(source.index, 1);
                 if (!moved) {
@@ -3933,11 +4042,11 @@ export default function TestModelReviewModal({
 
                 // Получаем целевой массив (создаём если нужно)
                 const dstArr = getCasesArrayByPath(newTree, dstPath, true);
-
+                
                 // Вставляем элемент в целевой массив
                 const insertIndex = Math.min(destination.index, dstArr.length);
                 dstArr.splice(insertIndex, 0, moved);
-
+                
                 console.log('[onDragEnd] Перемещён тест-кейс:', moved.id, 'из', srcPath, 'в', dstPath);
                 return newTree;
             } catch (error) {
@@ -3974,7 +4083,7 @@ export default function TestModelReviewModal({
             return newTree;
         });
     };
-
+    
     const handleRenameNode = (path, newName) => {
         setTreeData((prevTree) => {
             const newTree = JSON.parse(JSON.stringify(prevTree));
@@ -4093,24 +4202,24 @@ export default function TestModelReviewModal({
     const calculateDiff = (oldCase, newCase) => {
         const diff = {};
         const fieldsToCompare = [
-            'title', 'precondition', 'steps', 'expected', 'layer',
+            'title', 'precondition', 'steps', 'expected', 'layer', 
             'scenario', 'code', 'feature', 'story', 'tags', 'priority', 'version'
         ];
-
+        
         fieldsToCompare.forEach(field => {
             const oldValue = oldCase[field];
             const newValue = newCase[field];
-
+            
             // Нормализация для сравнения
             const normalize = (val) => {
                 if (val === null || val === undefined) return '';
                 if (Array.isArray(val)) return JSON.stringify(val);
                 return String(val).trim();
             };
-
+            
             const oldNormalized = normalize(oldValue);
             const newNormalized = normalize(newValue);
-
+            
             if (oldNormalized !== newNormalized) {
                 diff[field] = {
                     old: oldValue,
@@ -4118,7 +4227,7 @@ export default function TestModelReviewModal({
                 };
             }
         });
-
+        
         return Object.keys(diff).length > 0 ? diff : null;
     };
 
@@ -4132,10 +4241,10 @@ export default function TestModelReviewModal({
         setIsFixing(true);
         try {
             const rawCases = flattenTreeToCases(treeData);
-
+            
             // Создаём Map для быстрого доступа к старым ТК по ID
             const oldCasesMap = new Map(rawCases.map(c => [c.id, { ...c }]));
-
+            
             const snapshot = {
                 id: `snapshot_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
                 timestamp: new Date().toISOString(),
@@ -4145,10 +4254,10 @@ export default function TestModelReviewModal({
 
             const resp = await axios.post(
                 `${config.serverUrl}/fix-test-cases`,
-                {
+                { 
                     testCases: rawCases,
                     fixPrompt: fixPrompt.trim(),
-                    projectId
+                    projectId 
                 },
                 { headers: { 'Content-Type': 'application/json' } }
             );
@@ -4157,7 +4266,7 @@ export default function TestModelReviewModal({
                 // Вычисляем diff'ы для всех изменённых ТК
                 const newDiffsMap = new Map();
                 const newPendingApprovals = new Set();
-
+                
                 resp.data.fixedTestCases.forEach(newCase => {
                     const oldCase = oldCasesMap.get(newCase.id);
                     if (oldCase) {
@@ -4168,20 +4277,20 @@ export default function TestModelReviewModal({
                         }
                     }
                 });
-
+                
                 // Обновляем состояния diff'ов и непринятых изменений
                 setTestCaseDiffs(newDiffsMap);
                 setPendingApprovals(newPendingApprovals);
-
+                
                 setHistory(prev => {
                     const next = [...prev, snapshot];
                     return next.slice(-MAX_HISTORY);
                 });
-
+                
                 // Обновляем treeData с исправленными ТК
                 const newTreeData = buildTreeFromCases(resp.data.fixedTestCases);
                 setTreeData(newTreeData);
-
+                
                 // Обновляем выбранный кейс если он был изменен
                 if (selectedCase) {
                     const updatedCase = resp.data.fixedTestCases.find(c => c.id === selectedCase.id);
@@ -4189,11 +4298,11 @@ export default function TestModelReviewModal({
                         setSelectedCase(updatedCase);
                     }
                 }
-
+                
                 // Очищаем промпт и закрываем панель
                 setFixPrompt('');
                 setShowFixPanel(false);
-
+                
                 const changedCount = newDiffsMap.size;
                 if (changedCount > 0) {
                     alert(`✅ Исправлено ${changedCount} тест-кейсов. Проверьте изменения и подтвердите их.`);
@@ -4236,14 +4345,14 @@ export default function TestModelReviewModal({
         setTreeData(restoredTree);
         setSelectedCase(null);
         setHistory(prev => prev.slice(0, -1));
-
+        
         // Очищаем diff'ы и непринятые изменения при откате
         setTestCaseDiffs(new Map());
         setPendingApprovals(new Set());
-
+        
         alert(`✅ Откат выполнен. Версия от ${new Date(lastSnapshot.timestamp).toLocaleString()} восстановлена.`);
     };
-
+    
     // Функция для принятия изменений для одного ТК
     const handleApproveCase = (caseId) => {
         setPendingApprovals(prev => {
@@ -4251,23 +4360,23 @@ export default function TestModelReviewModal({
             newSet.delete(caseId);
             return newSet;
         });
-
+        
         // Не удаляем diff, чтобы можно было посмотреть историю изменений
         // Можно оставить или удалить в зависимости от требований
     };
-
+    
     // Функция для отклонения изменений для одного ТК (откатить к старому значению)
     const handleRejectCase = (caseId) => {
         if (!window.confirm('Отклонить изменения и вернуть предыдущее значение?')) {
             return;
         }
-
+        
         const diff = testCaseDiffs.get(caseId);
         if (!diff || history.length === 0) {
             alert('Нет данных для отката');
             return;
         }
-
+        
         // Находим старую версию ТК из истории
         const lastSnapshot = history[history.length - 1];
         const oldCase = lastSnapshot.cases.find(c => c.id === caseId);
@@ -4275,7 +4384,7 @@ export default function TestModelReviewModal({
             alert('Не найдена старая версия тест-кейса');
             return;
         }
-
+        
         // Восстанавливаем старую версию в treeData
         setTreeData(prevTree => {
             const newTree = JSON.parse(JSON.stringify(prevTree));
@@ -4284,17 +4393,17 @@ export default function TestModelReviewModal({
             if (caseIndex !== -1) {
                 allCases[caseIndex] = { ...oldCase };
                 const restoredTree = buildTreeFromCases(allCases);
-
+                
                 // Обновляем selectedCase если он был изменён
                 if (selectedCase?.id === caseId) {
                     setSelectedCase(oldCase);
                 }
-
+                
                 return restoredTree;
             }
             return prevTree;
         });
-
+        
         // Удаляем diff и убираем из непринятых
         setTestCaseDiffs(prev => {
             const newMap = new Map(prev);
@@ -4306,10 +4415,10 @@ export default function TestModelReviewModal({
             newSet.delete(caseId);
             return newSet;
         });
-
+        
         alert('✅ Изменения отклонены, предыдущая версия восстановлена.');
     };
-
+    
     // Функция для принятия всех изменений
     const handleApproveAll = () => {
         trackEvent('approve_all_cases', { page: '/solution', projectId });
@@ -4317,12 +4426,12 @@ export default function TestModelReviewModal({
             alert('Нет непринятых изменений');
             return;
         }
-
+        
         const count = pendingApprovals.size;
         if (!window.confirm(`Принять все изменения для ${count} тест-кейсов?`)) {
             return;
         }
-
+        
         setPendingApprovals(new Set());
         alert(`✅ Все изменения приняты для ${count} тест-кейсов.`);
     };
@@ -4331,7 +4440,7 @@ export default function TestModelReviewModal({
     const handleSavePerfectExamples = async () => {
         trackEvent('save_perfect_examples', { page: '/solution', projectId });
         const rawCases = flattenTreeToCases(treeData);
-
+        
         if (rawCases.length === 0) {
             alert('Нет тест-кейсов для сохранения');
             return;
@@ -4359,6 +4468,67 @@ export default function TestModelReviewModal({
         } catch (err) {
             console.error('Ошибка при сохранении идеальных примеров:', err);
             alert('Ошибка при сохранении: ' + (err.response?.data?.error || err.message));
+        }
+    };
+
+    const toggleComparisonRow = (generatedIndex) => {
+        setExpandedComparisonRows((prev) => {
+            const next = new Set(prev);
+            if (next.has(generatedIndex)) {
+                next.delete(generatedIndex);
+            } else {
+                next.add(generatedIndex);
+            }
+            return next;
+        });
+    };
+
+    const handleRunComparison = async () => {
+        const jiraIssue = normalizeJiraIssueInput(comparisonJiraIssue, jiraProject);
+        const rawCases = flattenTreeToCases(treeData);
+
+        if (!projectId) {
+            alert('Не найден projectId для сравнения');
+            return;
+        }
+        if (!jiraIssue) {
+            alert('Укажите Jira issue для сравнения');
+            return;
+        }
+        if (rawCases.length === 0) {
+            alert('Нет тест-кейсов для сравнения');
+            return;
+        }
+
+        trackEvent('compare_generated_vs_manual', {
+            page: '/solution',
+            projectId,
+            extra: { jiraIssue, casesCount: rawCases.length }
+        });
+
+        setComparisonError('');
+        setComparisonProgress(0);
+        setComparisonReport(null);
+        setExpandedComparisonRows(new Set());
+
+        try {
+            const { data } = await axios.post(
+                `${config.serverUrl}/compare-test-cases-async`,
+                {
+                    projectId,
+                    jiraIssue,
+                    generatedCases: serializeCasesForComparison(rawCases)
+                },
+                { headers: { 'Content-Type': 'application/json' } }
+            );
+
+            setComparisonJiraIssue(jiraIssue);
+            setComparisonTaskId(data?.taskId || null);
+            setIsComparing(true);
+        } catch (error) {
+            console.error('TestModelReviewModal: comparison start failed:', error);
+            setComparisonError(error.response?.data?.error || error.message);
+            setIsComparing(false);
         }
     };
 
@@ -4633,8 +4803,8 @@ export default function TestModelReviewModal({
                         {isGenerating
                             ? 'Генерация XMind…'
                             : isFixing
-                                ? 'Применение правок к тест-кейсам…'
-                                : 'Отправка тест-кейсов в ТестОпс…'}
+                            ? 'Применение правок к тест-кейсам…'
+                            : 'Отправка тест-кейсов в Allure…'}
                     </div>
                 </div>
             )}
@@ -4643,13 +4813,13 @@ export default function TestModelReviewModal({
                 // --- экран успешной загрузки ---
                 <>
                     <div className="modal-header">
-                        <h2>ТестОпс успешно загрузил тест-кейсы!</h2>
+                        <h2>Allure успешно загрузил тест-кейсы!</h2>
                         <button className="close-btn" onClick={() => {
                             setAllureLink(null);
                             handleCloseWithConfirm();
                         }}>×</button>
                     </div>
-
+                    
                     <div className="modal-body">
                         <div className="case-field">
                             <label>Ссылка:</label>
@@ -4685,7 +4855,7 @@ export default function TestModelReviewModal({
                             </div>
                         </div>
                     </div>
-
+                    
                     <footer className="modal-footer">
                         <a
                             href={allureLink}
@@ -4724,7 +4894,7 @@ export default function TestModelReviewModal({
                             <button
                                 className="button-secondary"
                                 onClick={() => setShowFixPanel(!showFixPanel)}
-                                disabled={isFixing || isSending}
+                                disabled={isFixing || isSending || isComparing}
                                 style={{
                                     fontSize: '13px',
                                     padding: '6px 12px',
@@ -4733,10 +4903,10 @@ export default function TestModelReviewModal({
                             >
                                 {showFixPanel ? '✕ Скрыть' : '🔄 Быстрая правка'}
                             </button>
-                            <button className="close-btn" onClick={handleCloseWithConfirm} disabled={isSending || isFixing}>×</button>
+                            <button className="close-btn" onClick={handleCloseWithConfirm} disabled={isSending || isFixing || isComparing}>×</button>
                         </div>
                     </div>
-
+                    
                     {/* Панель быстрой правки */}
                     {showFixPanel && (
                         <div style={{
@@ -4758,7 +4928,7 @@ export default function TestModelReviewModal({
                                     value={fixPrompt}
                                     onChange={(e) => setFixPrompt(e.target.value)}
                                     placeholder={'Пиши конкретно: 1) Для одного теста укажи точное название и опиши изменение. 2) Для одной проблемы в нескольких тестах перечисли их названия или укажи story/слой с формулировкой типа "все E2E в story «Выбор тарифа» — ...". 3) Для массовой чистки напиши правило: "убери шаги с \\"Проверить\\"", "добавь scenario во все Integration backend". 4) Не проси общие улучшения, всегда указывай конкретные действия.'}
-                                    disabled={isFixing}
+                                    disabled={isFixing || isComparing}
                                     style={{
                                         width: '100%',
                                         minHeight: '80px',
@@ -4774,10 +4944,10 @@ export default function TestModelReviewModal({
                                     }}
                                 />
                                 <p style={{ marginTop: '6px', fontSize: '12px', color: '#9fb3d1', lineHeight: 1.45 }}>
-                                    💡 Как формировать запросы:<br />
-                                    • Один тест: «Загрузка изображения в недоступный блок — замени файл .pdf на .png и не трогай шаги».<br />
-                                    • Одна проблема в нескольких тестах: «Настройка уведомлений (оба варианта) — убери шаг с проверкой 404, остальное оставить».<br />
-                                    • Массовая правка: «Все Integration frontend тесты в story "Фильтрация" — добавь scenario и убери шаги с "Проверить"».<br />
+                                    💡 Как формировать запросы:<br/>
+                                    • Один тест: «Загрузка изображения в недоступный блок — замени файл .pdf на .png и не трогай шаги».<br/>
+                                    • Одна проблема в нескольких тестах: «Настройка уведомлений (оба варианта) — убери шаг с проверкой 404, остальное оставить».<br/>
+                                    • Массовая правка: «Все Integration frontend тесты в story "Фильтрация" — добавь scenario и убери шаги с "Проверить"».<br/>
                                     ➜ Чем конкретнее формулировка (название, слой, story, шаблон шага), тем точнее будет правка.
                                 </p>
                             </div>
@@ -4788,7 +4958,7 @@ export default function TestModelReviewModal({
                                         setFixPrompt('');
                                         setShowFixPanel(false);
                                     }}
-                                    disabled={isFixing}
+                                    disabled={isFixing || isComparing}
                                     style={{ fontSize: '13px', padding: '8px 16px' }}
                                 >
                                     Отмена
@@ -4840,8 +5010,8 @@ export default function TestModelReviewModal({
                                     <button
                                         className="button-primary"
                                         onClick={handleApproveAll}
-                                        disabled={isFixing || isSending}
-                                        style={{
+                                        disabled={isFixing || isSending || isComparing}
+                                        style={{ 
                                             minWidth: '180px',
                                             backgroundColor: '#28a745',
                                             borderColor: '#28a745'
@@ -4853,7 +5023,7 @@ export default function TestModelReviewModal({
                                 <button
                                     className="button-secondary"
                                     onClick={handleUndoLastFix}
-                                    disabled={isFixing || isSending}
+                                    disabled={isFixing || isSending || isComparing}
                                     style={{ minWidth: '200px' }}
                                 >
                                     ↩️ Откатить последнюю правку
@@ -4861,7 +5031,7 @@ export default function TestModelReviewModal({
                             </div>
                         </div>
                     )}
-
+                    
                     {pendingApprovals.size > 0 && !history.length && (
                         <div style={{
                             padding: '12px 24px',
@@ -4878,8 +5048,8 @@ export default function TestModelReviewModal({
                             <button
                                 className="button-primary"
                                 onClick={handleApproveAll}
-                                disabled={isFixing || isSending}
-                                style={{
+                                disabled={isFixing || isSending || isComparing}
+                                style={{ 
                                     minWidth: '180px',
                                     backgroundColor: '#28a745',
                                     borderColor: '#28a745'
@@ -4889,6 +5059,232 @@ export default function TestModelReviewModal({
                             </button>
                         </div>
                     )}
+
+                    <div style={{
+                        padding: '16px 24px',
+                        borderBottom: '1px solid var(--on-border-light, #bdd4ff36)',
+                        background: 'var(--bg-base-secondary, #2c343f)'
+                    }}>
+                        <div style={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: '12px',
+                            alignItems: 'center',
+                            marginBottom: comparisonReport || comparisonError || isComparing ? '14px' : 0
+                        }}>
+                            <div style={{ minWidth: '280px', flex: '1 1 320px' }}>
+                                <div style={{
+                                    fontSize: '12px',
+                                    color: '#9fb3d1',
+                                    marginBottom: '6px'
+                                }}>
+                                    Jira issue с ручными тест-кейсами из Allure
+                                </div>
+                                <input
+                                    type="text"
+                                    value={comparisonJiraIssue}
+                                    onChange={(event) => setComparisonJiraIssue(event.target.value)}
+                                    placeholder={jiraProject ? `${jiraProject}-12345 или 12345` : 'Например: SADO-12345'}
+                                    disabled={isComparing || isSending || isFixing}
+                                    style={{
+                                        width: '100%',
+                                        padding: '10px 12px',
+                                        backgroundColor: 'var(--bg-base-primary, #1b2129)',
+                                        border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                        borderRadius: '6px',
+                                        color: 'var(--on-text-primary, #f6fafef5)',
+                                        fontSize: '13px',
+                                        boxSizing: 'border-box'
+                                    }}
+                                />
+                            </div>
+                            <button
+                                className="button-primary"
+                                onClick={handleRunComparison}
+                                disabled={isComparing || isSending || isFixing || !Object.keys(treeData).length}
+                                style={{ minWidth: '220px', alignSelf: 'flex-end' }}
+                            >
+                                {isComparing ? `Сравниваю... ${comparisonProgress}%` : 'Сравнить с ручными ТК'}
+                            </button>
+                        </div>
+
+                        {comparisonError && (
+                            <div style={{
+                                marginBottom: '12px',
+                                padding: '10px 12px',
+                                borderRadius: '6px',
+                                background: 'rgba(248, 81, 73, 0.12)',
+                                border: '1px solid rgba(248, 81, 73, 0.35)',
+                                color: '#ffb3ad',
+                                fontSize: '13px'
+                            }}>
+                                {comparisonError}
+                            </div>
+                        )}
+
+                        {comparisonReport && (
+                            <>
+                                <div style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                                    gap: '10px',
+                                    marginBottom: '14px'
+                                }}>
+                                    <div style={{ padding: '12px', borderRadius: '8px', background: '#1b2129', border: '1px solid #30363d' }}>
+                                        <div style={{ fontSize: '11px', color: '#9fb3d1', marginBottom: '4px' }}>matchedMacroF1</div>
+                                        <div style={{ fontSize: '20px', fontWeight: 700 }}>{comparisonReport.summary?.matchedMacroF1 ?? 0}</div>
+                                    </div>
+                                    <div style={{ padding: '12px', borderRadius: '8px', background: '#1b2129', border: '1px solid #30363d' }}>
+                                        <div style={{ fontSize: '11px', color: '#9fb3d1', marginBottom: '4px' }}>allGeneratedCoverage</div>
+                                        <div style={{ fontSize: '20px', fontWeight: 700 }}>{comparisonReport.summary?.allGeneratedCoverage ?? 0}</div>
+                                    </div>
+                                    <div style={{ padding: '12px', borderRadius: '8px', background: '#1b2129', border: '1px solid #30363d' }}>
+                                        <div style={{ fontSize: '11px', color: '#9fb3d1', marginBottom: '4px' }}>allManualCoverage</div>
+                                        <div style={{ fontSize: '20px', fontWeight: 700 }}>{comparisonReport.summary?.allManualCoverage ?? 0}</div>
+                                    </div>
+                                    <div style={{ padding: '12px', borderRadius: '8px', background: '#1b2129', border: '1px solid #30363d' }}>
+                                        <div style={{ fontSize: '11px', color: '#9fb3d1', marginBottom: '4px' }}>strong / weak / unmatched</div>
+                                        <div style={{ fontSize: '18px', fontWeight: 700 }}>
+                                            {(comparisonReport.summary?.strongCount ?? 0)} / {(comparisonReport.summary?.weakCount ?? 0)} / {(comparisonReport.summary?.unmatchedCount ?? 0)}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div style={{
+                                    maxHeight: '280px',
+                                    overflowY: 'auto',
+                                    border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                    borderRadius: '8px',
+                                    background: '#1b2129'
+                                }}>
+                                    {(comparisonReport.pairReports || []).map((pair) => {
+                                        const meta = comparisonClassMeta[pair.matchClass] || comparisonClassMeta.unmatched;
+                                        const isExpanded = expandedComparisonRows.has(pair.generatedIndex);
+                                        return (
+                                            <div
+                                                key={`comparison-${pair.generatedIndex}`}
+                                                style={{
+                                                    borderBottom: '1px solid #30363d'
+                                                }}
+                                            >
+                                                <button
+                                                    type="button"
+                                                    onClick={() => toggleComparisonRow(pair.generatedIndex)}
+                                                    style={{
+                                                        width: '100%',
+                                                        display: 'flex',
+                                                        justifyContent: 'space-between',
+                                                        alignItems: 'center',
+                                                        gap: '12px',
+                                                        padding: '12px 14px',
+                                                        background: 'transparent',
+                                                        border: 'none',
+                                                        color: 'inherit',
+                                                        cursor: 'pointer',
+                                                        textAlign: 'left'
+                                                    }}
+                                                >
+                                                    <div style={{ minWidth: 0, flex: 1 }}>
+                                                        <div style={{ fontSize: '13px', fontWeight: 600, color: '#f0f6fc', marginBottom: '4px' }}>
+                                                            {pair.generatedCase?.title || 'Без названия'}
+                                                        </div>
+                                                        <div style={{ fontSize: '12px', color: '#9fb3d1' }}>
+                                                            {pair.manualCase?.title || 'Ручной кейс не сопоставлен'}
+                                                        </div>
+                                                    </div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+                                                        <span style={{
+                                                            padding: '4px 8px',
+                                                            borderRadius: '999px',
+                                                            background: meta.background,
+                                                            color: meta.color,
+                                                            fontSize: '12px',
+                                                            fontWeight: 600
+                                                        }}>
+                                                            {meta.label}
+                                                        </span>
+                                                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#f0f6fc', minWidth: '56px', textAlign: 'right' }}>
+                                                            {pair.weighted?.f1 ?? 0}
+                                                        </span>
+                                                    </div>
+                                                </button>
+
+                                                {isExpanded && (
+                                                    <div style={{ padding: '0 14px 14px 14px', fontSize: '12px', color: '#c9d1d9' }}>
+                                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px', marginBottom: '10px' }}>
+                                                            <div>Precision: {pair.weighted?.precision ?? 0}</div>
+                                                            <div>Recall: {pair.weighted?.recall ?? 0}</div>
+                                                            <div>Shortlist: {pair.shortlistSize ?? 0}</div>
+                                                            <div>Structural valid: {pair.generatedValidation?.valid ? 'yes' : 'no'}</div>
+                                                        </div>
+
+                                                        {pair.retrieval?.stages && (
+                                                            <div style={{ marginBottom: '10px', color: '#9fb3d1' }}>
+                                                                Retrieval: {Object.entries(pair.retrieval.stages).map(([stage, score]) => `${stage}=${Number(score).toFixed(3)}`).join(', ')}
+                                                            </div>
+                                                        )}
+
+                                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px', marginBottom: '10px' }}>
+                                                            {Object.entries(pair.blockScores || {}).map(([blockName, score]) => (
+                                                                <div key={`${pair.generatedIndex}-${blockName}`} style={{ padding: '10px', borderRadius: '6px', background: '#21262d', border: '1px solid #30363d' }}>
+                                                                    <div style={{ fontWeight: 600, marginBottom: '4px' }}>{blockName}</div>
+                                                                    <div>F1: {score.f1}</div>
+                                                                    <div>P: {score.precision}</div>
+                                                                    <div>R: {score.recall}</div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+
+                                                        {pair.generatedValidation?.errors?.length > 0 && (
+                                                            <div style={{ marginBottom: '8px', color: '#ffb3ad' }}>
+                                                                Generated validation: {pair.generatedValidation.errors.join(' | ')}
+                                                            </div>
+                                                        )}
+                                                        {pair.manualCompatValidation?.warnings?.length > 0 && (
+                                                            <div style={{ marginBottom: '8px', color: '#d2a8ff' }}>
+                                                                Manual warnings: {pair.manualCompatValidation.warnings.join(' | ')}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                {(comparisonReport.uncoveredManualCases || []).length > 0 && (
+                                    <div style={{ marginTop: '12px', fontSize: '12px', color: '#9fb3d1' }}>
+                                        <div style={{ marginBottom: '6px' }}>
+                                            Ваши тест-кейсы, которые не были учтены в тест-кейсах LLM:
+                                        </div>
+                                        <div style={{
+                                            maxHeight: '240px',
+                                            overflowY: 'auto',
+                                            overflowX: 'hidden',
+                                            padding: '10px 12px',
+                                            border: '1px solid var(--on-border-light, #bdd4ff36)',
+                                            borderRadius: '8px',
+                                            background: '#1b2129',
+                                            scrollbarGutter: 'stable'
+                                        }}>
+                                            <ol style={{ margin: 0, paddingLeft: '18px' }}>
+                                            {(comparisonReport.uncoveredManualCases || []).map((item, index) => {
+                                                const manualCaseId = item.manualCase?.id || 'ID не указан';
+                                                const manualCaseTitle = item.manualCase?.title || 'Без названия';
+
+                                                return (
+                                                    <li key={`${manualCaseId}-${index}`} style={{ marginBottom: '4px' }}>
+                                                        {manualCaseTitle} (id: {manualCaseId})
+                                                    </li>
+                                                );
+                                            })}
+                                            </ol>
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
 
                     <div className="modal-layout">
                         {/* Левая панель - упрощенное дерево структуры */}
@@ -4926,7 +5322,7 @@ export default function TestModelReviewModal({
                             <div className="modal-right-content">
                                 {selectedCase ? (
                                     <TestCaseCard
-                                        key={selectedCase.id}
+                                        key={selectedCase.id} 
                                         testCase={selectedCase}
                                         index={0}
                                         onUpdate={(caseId, updatedCase) => {
@@ -4946,10 +5342,10 @@ export default function TestModelReviewModal({
                                         onRejectCase={handleRejectCase}
                                     />
                                 ) : (
-                                    <div style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
+                                    <div style={{ 
+                                        display: 'flex', 
+                                        alignItems: 'center', 
+                                        justifyContent: 'center', 
                                         height: '100%',
                                         color: '#8b949e',
                                         fontSize: '14px'
@@ -4962,13 +5358,13 @@ export default function TestModelReviewModal({
                     </div>
 
                     <footer className="modal-footer">
-                        <button className="button-secondary" onClick={handleCloseWithConfirm} disabled={isSending || isFixing}>
+                        <button className="button-secondary" onClick={handleCloseWithConfirm} disabled={isSending || isFixing || isComparing}>
                             Отмена
                         </button>
                         <button
                             className="button-primary"
                             onClick={handleGenerateXmind}
-                            disabled={isSending || isFixing || !Object.keys(treeData).length}
+                            disabled={isSending || isFixing || isComparing || !Object.keys(treeData).length}
                             style={{ marginRight: '8px' }}
                         >
                             Сгенерировать Xmind
@@ -4976,8 +5372,8 @@ export default function TestModelReviewModal({
                         <button
                             className="button-secondary"
                             onClick={handleSavePerfectExamples}
-                            disabled={isSending || isFixing || !Object.keys(treeData).length}
-                            style={{
+                            disabled={isSending || isFixing || isComparing || !Object.keys(treeData).length}
+                            style={{ 
                                 marginRight: '8px',
                                 backgroundColor: '#6c757d',
                                 borderColor: '#6c757d',
@@ -4985,9 +5381,9 @@ export default function TestModelReviewModal({
                             }}
                             title="Сохранить тест-кейсы как идеальные примеры для улучшения следующей генерации"
                         >
-                            Добавить в идеальный пример
+                        Добавить в идеальный пример
                         </button>
-                        <button className="button-primary" onClick={handleConfirm} disabled={isSending || isFixing}>
+                        <button className="button-primary" onClick={handleConfirm} disabled={isSending || isFixing || isComparing}>
                             Отправить в Allure
                         </button>
                     </footer>

@@ -1,18 +1,17 @@
-import { fetchWithAuth, authHeaders, buildTestCaseTreeEntityUrl, getTestCaseTreeEntityContent } from '../utils/allureAuth.js';
+import { fetchWithAuth, authHeaders } from '../utils/allureAuth.js';
 import config from '../config/index.js';
 import { logError, logInfo, logWarn } from '../utils/logger.js';
 import { savePageComponentDependencies } from './components.js';
-import { resolveGroupPathFromDb } from '../utils/testCaseTreeEntity.js';
 import pLimit from 'p-limit';
 
+// Кеш и лимит для параллельных запросов
 const cache = new Map();
 const limit = pLimit(5);
 
 /**
  * Рекурсивно собирает данные всех листьев (тест-кейсов) для заданного узла (папки)
  */
-async function collectAllLeaves(projectId, treeId, currentPath, visitedNodes = new Set()) {
-    const nodeId = currentPath[currentPath.length - 1];
+async function collectAllLeaves(projectId, treeId, nodeId, visitedNodes = new Set()) {
     if (visitedNodes.has(nodeId)) return [];
     visitedNodes.add(nodeId);
 
@@ -22,13 +21,7 @@ async function collectAllLeaves(projectId, treeId, currentPath, visitedNodes = n
 
     const MAX_PAGES = 50;
     while (hasMore && page < MAX_PAGES) {
-        const url = buildTestCaseTreeEntityUrl(config.allureBaseUrl, {
-            projectId,
-            treeId,
-            page,
-            size: 100,
-            pathPrefix: currentPath
-        });
+        const url = `${config.allureBaseUrl}/api/v2/project/${projectId}/test-case/tree/tree-node?treeId=${treeId}&parentNodeId=${nodeId}&page=${page}&size=100`;
         logInfo(`[collectAllLeaves] Requesting: ${url}`);
 
         try {
@@ -38,13 +31,13 @@ async function collectAllLeaves(projectId, treeId, currentPath, visitedNodes = n
                 break;
             }
             const data = await response.json();
-            const children = getTestCaseTreeEntityContent(data);
+            const children = data.children?.content || [];
 
             logInfo(`[collectAllLeaves] Node ${nodeId}: Found ${children.length} children. Page ${page}.`);
 
             children.filter(child => child.type === 'LEAF').forEach(leaf => {
                 leavesInfo.push({
-                    nodeId: Number(leaf.id),
+                    nodeId: leaf.id,
                     testCaseId: leaf.testCaseId
                 });
             });
@@ -52,12 +45,12 @@ async function collectAllLeaves(projectId, treeId, currentPath, visitedNodes = n
             const groupChildren = children.filter(child => child.type === 'GROUP');
             if (groupChildren.length > 0) {
                 const nestedResults = await Promise.all(groupChildren.map(group =>
-                    limit(() => collectAllLeaves(projectId, treeId, [...currentPath, Number(group.id)], visitedNodes))
+                    limit(() => collectAllLeaves(projectId, treeId, group.id, visitedNodes))
                 ));
                 nestedResults.forEach(res => leavesInfo.push(...res));
             }
 
-            if (data.children?.last !== false && data.last !== false) {
+            if (data.children?.last) {
                 hasMore = false;
             } else {
                 page++;
@@ -92,7 +85,7 @@ async function getTreeId(projectId) {
 
             const treeData = await treeResponse.json();
             let structureTree = null;
-            const nocodeProjectIds = ['1', '307', '377'];
+            const nocodeProjectIds = ['1', '307'];
             if (nocodeProjectIds.includes(String(projectId))) {
                 structureTree = treeData.content?.find(item => item.name === "Global Structure") || treeData.content?.find(item => item.name === "Structure");
             } else {
@@ -173,8 +166,7 @@ export async function createTestPlanAPI(req, res) {
         const leavesPromises = folderIds.map(folderId =>
             limit(async () => {
                 try {
-                    const pathToFolder = await resolveGroupPathFromDb(projectId, folderId);
-                    const leavesInfo = await collectAllLeaves(projectId, treeId, pathToFolder);
+                    const leavesInfo = await collectAllLeaves(projectId, treeId, folderId);
                     leavesInfo.forEach(info => {
                         allNodeIds.add(info.nodeId);
                         allTestCaseIds.add(info.testCaseId);
@@ -197,16 +189,17 @@ export async function createTestPlanAPI(req, res) {
             throw new Error('Не найдено ни одного тест-кейса в выбранных папках');
         }
 
+        // Шотган подход: плоский groupsInclude (как в launch.js) + подробные списки тест-кейсов
         const requestBody = {
             selection: {
                 projectId: parseInt(projectId, 10),
                 treeId: parseInt(treeId, 10),
                 inverted: false,
-                groupsInclude: folderIds,
+                groupsInclude: folderIds,        // ПЛОСКИЙ МАССИВ (как в launch.js!)
                 groupsExclude: [],
-                leavesInclude: finalNodeIds,
-                leafsInclude: finalNodeIds,
-                testCasesInclude: finalTestCaseIds,
+                leavesInclude: finalNodeIds,     // Node IDs
+                leafsInclude: finalNodeIds,      // Alias
+                testCasesInclude: finalTestCaseIds, // Global TestCase IDs
                 leavesExclude: [],
                 testCasesExclude: [],
                 path: [],
@@ -214,6 +207,7 @@ export async function createTestPlanAPI(req, res) {
                 search: ""
             },
             testPlanName: testPlanName,
+            // Для bulk testplan create некоторые версии ожидают tree в корне
             tree: { id: parseInt(treeId, 10) }
         };
 

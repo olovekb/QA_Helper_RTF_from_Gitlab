@@ -2,7 +2,7 @@
 .page-nav-back {
   position: fixed;
   top: 16px;
-  left: 32px;
+  left: 24px;
   z-index: 2000;
 }
 
@@ -14,7 +14,7 @@
   right: 0;
   display: flex;
   justify-content: flex-end;
-  padding: 0 32px;
+  padding: 0 24px;
   pointer-events: none;
   z-index: 2000;
 }
@@ -33,7 +33,10 @@
 }
 
 .solution-page {
-  /* Layout is handled by .app-page-container */
+  padding: 24px;
+  padding-top: 52px;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
 .solution-page h1,
@@ -70,8 +73,7 @@
 
 @media (min-width: 1024px) {
   .confluence-inputs {
-    display: grid;
-    grid-template-columns: 1fr 1.5fr auto;
+    grid-template-columns: 1fr 2fr 2fr;
     gap: 12px;
   }
 }
@@ -128,73 +130,6 @@
 .confluence-inputs {
   display: flex;
   gap: 10px;
-  margin-bottom: 12px;
-}
-
-/**
- * Стили для опций Confluence (чекбоксы и переключатели)
- */
-.confluence-options {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 12px;
-  background: var(--bg-input);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  height: 38px;
-  box-sizing: border-box;
-  flex-shrink: 0;
-}
-
-.confluence-option-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  user-select: none;
-  font-size: 13px;
-  color: var(--text-secondary);
-  transition: color 0.2s;
-  white-space: nowrap;
-}
-
-.confluence-option-item:hover {
-  color: var(--text-primary);
-}
-
-.confluence-option-item input[type="checkbox"] {
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  border: 1.5px solid var(--border-color);
-  border-radius: 4px;
-  background: var(--bg-content);
-  cursor: pointer;
-  position: relative;
-  margin: 0;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.confluence-option-item input[type="checkbox"]:checked {
-  background-color: var(--primary-accent);
-  border-color: var(--primary-accent);
-}
-
-.confluence-option-item input[type="checkbox"]:checked::after {
-  content: '✓';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  color: white;
-  font-size: 11px;
-  font-weight: bold;
-}
-
-.confluence-option-item input[type="checkbox"]:focus-visible {
-  outline: 2px solid var(--primary-accent);
-  outline-offset: 2px;
 }
 
 .analyze-button {
@@ -562,37 +497,4 @@
 
 .solution-page .task-controls {
   width: 100%;
-}
-
-.source-link-icon {
-  margin-left: 8px;
-  color: var(--primary-accent);
-  display: inline-flex;
-  align-items: center;
-  transition: opacity 0.2s, transform 0.2s;
-  vertical-align: middle;
-}
-
-.source-link-icon:hover {
-  opacity: 0.8;
-  transform: scale(1.1);
-}
-
-.input-with-button {
-  display: flex;
-  gap: 8px;
-  width: 100%;
-}
-
-.input-with-button input {
-  flex: 1;
-  margin-bottom: 0 !important;
-}
-
-.ai-feedback {
-  margin-top: 4px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  border-left: 2px solid var(--primary-accent);
-  padding-left: 10px;
 }

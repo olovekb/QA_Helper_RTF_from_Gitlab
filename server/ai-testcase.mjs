@@ -1,25 +1,12 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { callWithCloudRuFallback } from './cloudruClient.mjs';
 import config from './config.json' assert { type: 'json' };
 import { getAIRulesForProject } from './validation-engine.mjs';
 import { formatStepsForPrompt } from './stepsNormalizer.mjs';
 
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-
-export async function callOpenRouterForAnalyze (messages, apiKey, opts = {})
-{
-    const { callWithBackoff } = await import('./server.js');
-    return callWithBackoff(OPENROUTER_URL, messages, apiKey, {
-        models: ['google/gemma-4-31b-it', ...(config.fallbackModels || [])],
-        reduceTokensOn400: true,
-        ...opts
-    });
-}
-
 // Папка для запросов/ответов AI
-const AI_LOGS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'ai-logs');
+const AI_LOGS_DIR = './ai-logs';
 
 /** Максимальное количество тест-кейсов в одном запросе к AI */
 export const BATCH_SIZE = 20;
@@ -73,12 +60,11 @@ const LAYER_TO_MD = {
 };
 
 const EXAMPLES_MD_DIR = path.join('./server/config/examples', 'test-cases');
-const EXAMPLES_TEST_MODEL_DIR = path.join('./server/config/examples', 'test-model');
 
 /**
  * Парсит содержимое .md-файла в массив блоков примеров (разделители: --- или ## Пример)
  */
-export function parseMdExamples (content)
+function parseMdExamples (content)
 {
     const blocks = content
         .split(/\r?\n---\r?\n/)
@@ -93,7 +79,6 @@ export function parseMdExamples (content)
  */
 function getExamplesForLayer (layer)
 {
-    /* TODO: раскомментировать после проверки гипотезы с антипримерами
     const filename = LAYER_TO_MD[layer] || 'integration-fe.md';
     const filepath = path.join(EXAMPLES_MD_DIR, filename);
 
@@ -107,17 +92,6 @@ function getExamplesForLayer (layer)
     }
 
     return [];
-    */
-
-    const filepath = path.join(EXAMPLES_MD_DIR, 'antiexamples.md');
-    try {
-        if (fs.existsSync(filepath)) {
-            return parseMdExamples(fs.readFileSync(filepath, 'utf8'));
-        }
-    } catch (error) {
-        console.warn(`[getExamplesForLayer] Не удалось загрузить antiexamples.md:`, error.message);
-    }
-    return [];
 }
 
 /**
@@ -125,7 +99,6 @@ function getExamplesForLayer (layer)
  */
 function loadAllExamples ()
 {
-    /* TODO: раскомментировать после проверки гипотезы с антипримерами
     const allExamples = {};
 
     Object.entries(LAYER_TO_MD).forEach(([layerName, filename]) =>
@@ -145,40 +118,12 @@ function loadAllExamples ()
     });
 
     return allExamples;
-    */
-
-    const filepath = path.join(EXAMPLES_MD_DIR, 'antiexamples.md');
-    try {
-        if (fs.existsSync(filepath)) {
-            return parseMdExamples(fs.readFileSync(filepath, 'utf8'));
-        }
-    } catch (error) {
-        console.warn(`[loadAllExamples] Не удалось загрузить antiexamples.md:`, error.message);
-    }
-    return [];
-}
-
-/**
- * Опциональные антипримеры для AI-анализа тестовой модели (отдельный каталог от test-cases).
- * Файл: `server/config/examples/test-model/antiexamples.md`
- */
-export function loadTestModelExamples ()
-{
-    const filepath = path.join(EXAMPLES_TEST_MODEL_DIR, 'antiexamples.md');
-    try {
-        if (fs.existsSync(filepath)) {
-            return parseMdExamples(fs.readFileSync(filepath, 'utf8'));
-        }
-    } catch (error) {
-        console.warn(`[loadTestModelExamples] Не удалось загрузить ${filepath}:`, error.message);
-    }
-    return [];
 }
 
 /**
  * Объединить примеры для промпта
  */
-export function prepareExamplesForPrompt (examples)
+function prepareExamplesForPrompt (examples)
 {
     if (!examples) return 'Примеры отсутствуют';
 
@@ -209,17 +154,18 @@ export function prepareExamplesForPrompt (examples)
 /**
  * Создать сообщение для роли developer с примерами
  */
-export function createDeveloperContent (examples)
+function createDeveloperContent (examples)
 {
     const hasExamples = (Array.isArray(examples) && examples.length > 0) ||
         (typeof examples === 'object' && Object.keys(examples).length > 0);
 
     if (!hasExamples) return null;
 
-    return `Эти примеры показывают ситуации, в которых рекомендацию создавать НЕ нужно.
-Используй их для калибровки границы: нарушение есть vs. нарушения нет.:
+    return `Вот примеры эталонных тест-кейсов из нашего проекта, которые полностью соответствуют стайлгайду:
 
-${prepareExamplesForPrompt(examples)}`;
+${prepareExamplesForPrompt(examples)}
+
+Используй эти примеры как образец для анализа: они демонстрируют правильную структуру названий, шагов, ожидаемых результатов и работу с параметрами.`;
 }
 
 /**
@@ -298,7 +244,6 @@ export async function analyzeTestCaseWithAI (testCase, apiKey = null, jiraIssue 
 
 ${STYLE_GUIDE}
 
-${developerContent ? '# АНТИПРИМЕРЫ\n' + developerContent + '\n' : ''}
 Проведи детальный анализ по следующим пунктам, ссылаясь на наш стайлгайд:
 1.  **Анализ Названия:** Насколько оно соответствует правилу №1?
 2.  **Анализ Шагов:** Все ли шаги соответствуют правилу №2? Есть ли лишние или недостающие действия? Если это API-тест, все ли данные на месте?
@@ -322,14 +267,14 @@ ${formattedStepsForPrompt || 'не указаны'}
 ----------------------------------------------------------`;
 
         console.log('SYSTEM:', systemContentSingle);
-        // TODO: раскомментировать после проверки гипотезы с антипримерами: console.log(developerContent ? 'DEVELOPER:' + developerContent : 'DEVELOPER: не передается (примеры отсутствуют)');
+        console.log(developerContent ? 'DEVELOPER:' + developerContent : 'DEVELOPER: не передается (примеры отсутствуют)');
         console.log('USER:', userContentSingle);
 
         ensureAILogsDir();
         const jiraPrefix = jiraIssue ? `${jiraIssue}-` : '';
         const promptFile = path.join(AI_LOGS_DIR, `ai-prompt-single-${jiraPrefix}last.txt`);
         let fullPromptSingleForLog = `=== SYSTEM ===\n${systemContentSingle}`;
-        // TODO: раскомментировать после проверки гипотезы с антипримерами:  if (developerContent) fullPromptSingleForLog += `\n\n=== DEVELOPER ===\n${developerContent}`;
+        if (developerContent) fullPromptSingleForLog += `\n\n=== DEVELOPER ===\n${developerContent}`;
         fullPromptSingleForLog += `\n\n=== USER ===\n${userContentSingle}`;
         fs.writeFileSync(promptFile, `${new Date().toISOString()}\n\n${fullPromptSingleForLog}`, 'utf8');
         console.log(`Промпт сохранён в ${promptFile}`);
@@ -337,10 +282,10 @@ ${formattedStepsForPrompt || 'не указаны'}
         const API_TOKEN = config.openRouterAiKey;
         if (!API_TOKEN) throw new Error('Не найден OPENROUTER_API_KEY. Проверьте ваш .env файл.');
 
-        const URL = OPENROUTER_URL;
+        const URL = 'https://openrouter.ai/api/v1/chat/completions';
 
         const messages = [{ role: 'system', content: systemContentSingle }];
-        // TODO: раскомментировать после проверки гипотезы с антипримерами: if (developerContent) messages.push({ role: 'system', content: developerContent });
+        if (developerContent) messages.push({ role: 'system', content: developerContent });
         messages.push({ role: 'user', content: userContentSingle });
 
         const data = await callWithCloudRuFallback(URL, messages, apiKey || API_TOKEN, {
@@ -731,6 +676,7 @@ JSON. Ключи — ID тест-кейсов. Значения — массив
     const API_TOKEN = config.openRouterAiKey;
     if (!API_TOKEN) throw new Error('Не найден OPENROUTER_API_KEY');
 
+    const URL = 'https://openrouter.ai/api/v1/chat/completions';
     const messages = [
         { role: 'system', content: systemContent },
         { role: 'user', content: userContent }
@@ -746,18 +692,13 @@ JSON. Ключи — ID тест-кейсов. Значения — массив
         }
     };
 
-    const data = await callOpenRouterForAnalyze(messages, apiKey || API_TOKEN, {
+    const data = await callWithCloudRuFallback(URL, messages, apiKey || API_TOKEN, {
         max_tokens: 16000,
         temperature: 0.2,
-        response_format
+        reduceTokensOn400: true,
+        response_format,
+        useResponseFormatForCloudRu: true
     });
-    // const data = await callWithCloudRuFallback(URL, messages, apiKey || API_TOKEN, {
-    //     max_tokens: 16000,
-    //     temperature: 0.2,
-    //     reduceTokensOn400: true,
-    //     response_format,
-    //     useResponseFormatForCloudRu: true
-    // });
 
     let responseText = '';
     if (data.choices?.[0]?.message?.content) {
@@ -837,33 +778,7 @@ ${safeExpectedResult}
 ---`;
     }).join('\n');
 
-    const systemContent = `
-
-# ЗАДАЧА:
-Проведи ревью тест-кейсов и проверь соответствие каждого тест-кейса стайлгайду.
-Ты не оцениваешь полноту покрытия, не предлагаешь добавить проверки, которых нет в стайлгайде, и не используешь знания о предметной области для оценки ОР.
-Выяви:
-1. Нарушения стайлгайда;
-2. Потенциальные улучшения, которые повысят воспроизводимость или проверяемость теста.
-
-Правила анализа:
-- Оценивай предусловие, шаги и ОР в связке — не изолированно;
-- Анализируй только то, что явно написано в тест-кейсе; не предполагай внешний контекст;
-- Одна рекомендация — одна проблема. Если у тест-кейса несколько нарушений — создай отдельную запись для каждого;
-- Если тест полностью соответствует стайлгайду — верни пустой массив для его ID;
-- Создавай рекомендацию только если нарушено правило стайлгайда;
-- Не создавай рекомендацию, если она завершается выводом «Нарушений стайлгайда не обнаружено»;
-- Не создавай рекомендации о том, как технически реализовать проверку (инструменты, конкретные команды и т.д.);
-
-Перед тем как создать рекомендацию, ВЫПОЛНИ ВНУТРЕННЮЮ ПРОВЕРКУ:
-1. Процитируй точный фрагмент текста тест-кейса, который нарушает правило;
-2. Назови правило, которое нарушено;
-3. Проверь, что нарушение не попадает под валидные практики и антипримеры.
-Если все пункты выполнены — создай рекомендацию, иначе рекомендацию НЕ СОЗДАВАЙ.
-
-# SEVERITY
-- error: явные нарушения стайлгайда;
-- warning: если влияет на воспроизводимость, однозначность или структуру теста.
+    const systemContent = `Ты — ведущий QA-инженер. Проведи ревью тест-кейсов.
 
 # ФОРМАТ ВХОДНЫХ ДАННЫХ
 Шаги тест-кейса отформатированы по следующим правилам:
@@ -871,24 +786,56 @@ ${safeExpectedResult}
 - Подшаги и шаги внутри общего шага: маркированный список с отступом (   - текст)
 - Шаг с пометкой "(общий шаг)" — это ссылка на переиспользуемый блок.
   Его подшаги (строки с отступом и "-") уже атомарны по определению.
-- Ожидаемый результат (ОР) шага — всегда блок под шагом:
+- Ожидаемый результат шага — всегда блок под шагом:
     Ожидаемый результат:
       - пункт 1
       - пункт 2
-- Итоговый ОР тест-кейса — секция "### Ожидаемый результат" в конце
+- Итоговый ОР всего тест-кейса — секция "### Ожидаемый результат" в конце
 - {{имя}} в предусловиях, шагах или ОР = ссылка на столбец в "###Параметры".  Найди такой столбец и анализируй тест-кейс с учетом его значений;
 
 ${STYLE_GUIDE}
 
-# ВАЛИДНЫЕ ПРАКТИКИ — не создавай рекомендацию, если:
-- Шаг помечен «(общий шаг)» — его подшаги атомарны по определению, не анализируй их как самостоятельные шаги;
-- {{X}} в шаге, ОР или предусловии — найди столбец X в таблице параметров; если столбец есть и содержит конкретные значения — тест воспроизводим;
-- Несколько пунктов в ОР относятся к одному экрану — не требуй разбивки на отдельные тест-кейсы;
-- В предусловии есть моки или подмена запросов — допустимо на любом слое включая E2E;
-- ОР описывает видимое состояние UI («отображается лоадер», «кнопка задизейблена») — детализация до DOM, CSS-селекторов и координат не обязательна;
-- Объединение вариаций сценария (разные кнопки, разные тексты) в одном тест-кейсе через "### Параметры"
+# ЗАДАЧА:
+Для каждого тест-кейса найди:
+1. Нарушения стайлгайда;
+2. Потенциальные улучшения, которые повысят воспроизводимость или проверяемость теста.
 
-${developerContent ? '# АНТИПРИМЕРЫ\n' + developerContent + '\n' : ''}
+Правила анализа:
+- Оценивай предусловие, шаги и ОР в связке — не изолированно;
+- Анализируй только то, что явно написано; не предполагай внешний контекст;
+- Одна рекомендация — одна проблема. Если у тест-кейса несколько нарушений — создай отдельную запись для каждого;
+- Если тест полностью соответствует стайлгайду — верни пустой массив для его ID;
+- Создавай рекомендацию (error / warning) только если нарушено правило стайлгайда, ИЛИ тест невоспроизводим / непроверяем / логически некорректен
+
+Проверь каждый тест-кейс по следующим точкам:
+- Тест-кейс атомарный и независимый;
+- Один логический ожидаемый результат;
+- Шаги запускают проверяемое поведение;
+- Предусловия описывают состояние системы, не проверяемое поведение;
+- Слой тестирования выбран корректно;
+
+# ПРИОРИТЕТ
+Сначала нарушения, которые делают тест невоспроизводимым или непроверяемым. Если правило применимо неоднозначно — не создавай рекомендацию уровня error.
+
+# SEVERITY
+- error: формальные нарушения, без правки которых тест нельзя использовать (нет ОР, неверный слой, шаги не запускают проверку)
+- warning: если влияет на воспроизводимость, однозначность или структуру теста. Не используй warning для чисто стилистических или вкусовых замечаний.
+
+# ВАЛИДНЫЕ ПРАКТИКИ
+ - Название длинное, но точно описывает проверку;
+ - ОР содержит конкретные значения (даты, суммы) для детерминированных проверок;
+ - Критерий проверки однозначно вытекает из предусловий;
+ - Условие из предусловия повторяется в ОР (например. разрешение экрана);
+ - Шаг помечен как "(общий шаг)" — это переиспользуемый шаг с атомарными подшагами;
+ - В тексте шага есть GET, POST, PUT, DELETE, PATCH — HTTP-метод уже указан;
+ - Несколько пунктов в ОР относятся к одной странице/экрану и одному логическому результату — не требуй разбивки на тест-кейсы;
+ - В предусловии есть подмена / моки;
+ - Присутствуют плейсхолдеры в угловых скобках <Название>;
+ - Шаги или ОР содержат теги (M), (D);
+ - ОР или предусловия содержат {{имя}} — ссылку на столбец в "### Параметры"; если столбец существует и в строках таблицы указаны конкретные значения — это валидная параметризация;
+ - Отсутствие детализации до уровня DOM;
+ - Объединение вариаций сценария (разные кнопки, разные тексты) в одном тест-кейсе через "### Параметры"
+
 # CATEGORY
 - required_fields — отсутствуют обязательные поля
 - naming — проблемы с названием (теги, не отражает суть, начинается с глагола)
@@ -924,7 +871,7 @@ ${developerContent ? '# АНТИПРИМЕРЫ\n' + developerContent + '\n' : ''
     console.log(`Количество тест-кейсов: ${batch.length}`);
     console.log(`\nДАННЫЕ ДЛЯ AI:\n${casesForPrompt}`);
     console.log(`\nSYSTEM:\n${systemContent}`);
-    // TODO: раскомментировать после проверки гипотезы с антипримерами: console.log(developerContent ? `\nDEVELOPER:\n${developerContent}` : '\nDEVELOPER: не передается (примеры отсутствуют)');
+    console.log(developerContent ? `\nDEVELOPER:\n${developerContent}` : '\nDEVELOPER: не передается (примеры отсутствуют)');
     console.log(`\nUSER:\n${userContent}\n\nОтправляем запрос...`);
 
     ensureAILogsDir();
@@ -932,7 +879,7 @@ ${developerContent ? '# АНТИПРИМЕРЫ\n' + developerContent + '\n' : ''
     const batchLabel = totalBatches > 1 ? `batch-${batchIndex + 1}` : 'last';
     const promptFile = path.join(AI_LOGS_DIR, `ai-prompt-bulk-${jiraPrefix}${batchLabel}.txt`);
     let fullPromptForLog = `=== SYSTEM ===\n${systemContent}`;
-    // TODO: раскомментировать после проверки гипотезы с антипримерами: if (developerContent) fullPromptForLog += `\n\n=== DEVELOPER ===\n${developerContent}`;
+    if (developerContent) fullPromptForLog += `\n\n=== DEVELOPER ===\n${developerContent}`;
     fullPromptForLog += `\n\n=== USER ===\n${userContent}`;
     fs.writeFileSync(promptFile, `${new Date().toISOString()}\n\n${fullPromptForLog}`, 'utf8');
     console.log(`Промпт сохранён в ${promptFile}`);
@@ -940,8 +887,9 @@ ${developerContent ? '# АНТИПРИМЕРЫ\n' + developerContent + '\n' : ''
     const API_TOKEN = config.openRouterAiKey;
     if (!API_TOKEN) throw new Error('Не найден OPENROUTER_API_KEY');
 
+    const URL = 'https://openrouter.ai/api/v1/chat/completions';
     const messages = [{ role: 'system', content: systemContent }];
-    // TODO: раскомментировать после проверки гипотезы с антипримерами: if (developerContent) messages.push({ role: 'system', content: developerContent });
+    if (developerContent) messages.push({ role: 'system', content: developerContent });
     messages.push({ role: 'user', content: userContent });
 
     const response_format = {
@@ -954,18 +902,13 @@ ${developerContent ? '# АНТИПРИМЕРЫ\n' + developerContent + '\n' : ''
         }
     };
 
-    const data = await callOpenRouterForAnalyze(messages, apiKey || API_TOKEN, {
+    const data = await callWithCloudRuFallback(URL, messages, apiKey || API_TOKEN, {
         max_tokens: 16000,
         temperature: 0.25,
-        response_format
+        reduceTokensOn400: true,
+        response_format,
+        useResponseFormatForCloudRu: true
     });
-    // const data = await callWithCloudRuFallback(URL, messages, apiKey || API_TOKEN, {
-    //     max_tokens: 16000,
-    //     temperature: 0.25,
-    //     reduceTokensOn400: true,
-    //     response_format,
-    //     useResponseFormatForCloudRu: true
-    // });
 
     let responseText = '';
     if (data.choices?.[0]?.message?.content) {

@@ -1,5 +1,5 @@
-import { logError } from '../utils/logger.js';
-import databasePool from '../db/pool.js';
+import { logError } from '../utils/logger.js'; // Импорт логгера для записи ошибок
+import databasePool from '../db/pool.js'; // Импорт пула подключений к базе данных (если хочешь сохранять в БД)
 
 /**
  * Логирование ошибки на сервер
@@ -15,15 +15,17 @@ export async function logServerError(req, res) {
             return res.status(400).json({ error: 'Необходимо указать errorType, description и timestamp.' });
         }
 
+        // Логируем ошибку в файл через logger.js
         logError(`Ошибка клиента: ${errorType}`, `Описание: ${description}, Время: ${timestamp}`);
 
-
+        // сохраняем в базе данных 
+        
         await databasePool('errors_log').insert({
             error_type: errorType,
             description,
             timestamp
         });
-
+        
 
         res.status(200).json({ message: 'Ошибка успешно записана.' });
     } catch (error) {

@@ -3,8 +3,7 @@
  * @param xmindData
  * @returns {*[]}
  */
-export function extractAllureJSONStructure (xmindData)
-{
+export function extractAllureJSONStructure(xmindData) {
     const rootTopic = xmindData[0].rootTopic;
 
     // Процесс начинается с дочерних элементов rootTopic
@@ -12,13 +11,11 @@ export function extractAllureJSONStructure (xmindData)
 }
 
 // Преобразование первого уровня children в формат Allure
-function convertTopicToAllureFormat (children)
-{
+function convertTopicToAllureFormat(children) {
     try {
         const result = [];
 
-        children.forEach(child =>
-        {
+        children.forEach(child => {
             // Каждый child является feature
             const feature = {
                 feature: child.title, // Название feature
@@ -42,8 +39,7 @@ function convertTopicToAllureFormat (children)
 }
 
 // Преобразование подпункта в story
-function convertSubtopicToStory (subtopic)
-{
+function convertSubtopicToStory(subtopic) {
     try {
         return {
             story: subtopic.title, // Каждое подзаголовок - это story
@@ -58,8 +54,7 @@ function convertSubtopicToStory (subtopic)
 
 
 // Преобразование более глубокого подпункта в сценарий
-function convertSubtopicToScenario (scenario)
-{
+function convertSubtopicToScenario(scenario) {
     try {
         return {
             scenario: scenario.title, // Название сценария
@@ -74,15 +69,11 @@ function convertSubtopicToScenario (scenario)
 }
 
 // Получение поля code
-function convertScenarioToCode (code)
-{
+function convertScenarioToCode(code) {
     try {
-        const tests = code.children && code.children.attached
-            ? code.children.attached.map(child => ({ test: child.title }))
-            : [];
-        return tests.length > 0
-            ? { code: code.title, tests }
-            : { code: code.title };
+        return {
+            code: code.title
+        }
     } catch (error) {
         console.error(`Ошибка при преобразовании 4-го уровня в Code. ${error}`);
     }
