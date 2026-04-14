@@ -24,13 +24,11 @@ export async function getHeatmapData(req, res) {
     try {
         const { projectId, startDate, endDate, isBugFix, componentType } = req.query;
 
-        // releaseVersions может прийти как массив или как строка
         let releaseVersions = req.query.releaseVersions;
         if (releaseVersions && !Array.isArray(releaseVersions)) {
             releaseVersions = [releaseVersions];
         }
 
-        // Валидация входных данных
         const parsedReleaseVersions = releaseVersions && releaseVersions.length > 0 ? releaseVersions : undefined;
         const parsedIsBugFix = isBugFix !== undefined && isBugFix !== '' ? isBugFix === 'true' : undefined;
 
@@ -50,8 +48,6 @@ export async function getHeatmapData(req, res) {
 
         logInfo(`Получение данных тепловой карты для проекта ${projectId}, isBugFix=${parsedIsBugFix}, releaseVersions=${parsedReleaseVersions?.join(',') || 'all'}`);
 
-        // Строим запрос к БД через новую структуру
-        // Считаем количество записей в component_defects (каждая запись = одна загрузка от CI/CD)
         let query = databasePool('component_defects')
             .join('components', 'component_defects.component_id', 'components.id')
             .where({ 'components.project_id': projectId })
@@ -63,7 +59,6 @@ export async function getHeatmapData(req, res) {
             )
             .groupBy('components.component_name');
 
-        // Фильтр по диапазону дат (мягкий фильтр - если указан только один конец диапазона, он все равно работает)
         if (startDate && endDate) {
             query = query.whereBetween('component_defects.change_date', [startDate, endDate]);
         } else if (startDate) {
@@ -72,39 +67,32 @@ export async function getHeatmapData(req, res) {
             query = query.where('component_defects.change_date', '<=', endDate);
         }
 
-        // Фильтр по версиям релиза
         if (parsedReleaseVersions && parsedReleaseVersions.length > 0) {
             query = query.where(builder => {
-                // Если есть "Без версии", добавляем условие OR release_version IS NULL
                 if (parsedReleaseVersions.includes('Без версии')) {
                     builder.whereNull('component_defects.release_version');
 
-                    // Если есть другие версии кроме "Без версии"
                     const concreteVersions = parsedReleaseVersions.filter(v => v !== 'Без версии');
                     if (concreteVersions.length > 0) {
                         builder.orWhereIn('component_defects.release_version', concreteVersions);
                     }
                 } else {
-                    // Стандартная фильтрация
                     builder.whereIn('component_defects.release_version', parsedReleaseVersions);
                 }
             });
         }
 
-        // Фильтр по типу (баги или общий)
         if (parsedIsBugFix !== undefined) {
             query = query.where('component_defects.is_bug_fix', parsedIsBugFix);
         }
 
-        // Фильтр по типу компонента (Front/Back)
         if (componentType) {
             query = query.where('components.component_type', componentType);
         }
 
         const results = await query;
 
-        // --- PAGE STATS ---
-        // Total unique pages for this project
+
         const totalPagesResult = await databasePool('page_component_dependencies as pcd')
             .join('components as c', 'pcd.component_id', 'c.id')
             .where({ 'c.project_id': projectId })
@@ -112,14 +100,12 @@ export async function getHeatmapData(req, res) {
 
         const totalProjectPagesCount = totalPagesResult.length;
 
-        // Affected pages (with filters)
         let affectedPagesQuery = databasePool('component_defects as cd')
             .join('components as c', 'cd.component_id', 'c.id')
             .join('page_component_dependencies as pcd', 'pcd.component_id', 'c.id')
             .where({ 'c.project_id': projectId })
             .distinct('pcd.page_name', 'pcd.page_route');
 
-        // Apply same filters as for component defects
         if (startDate && endDate) {
             affectedPagesQuery = affectedPagesQuery.whereBetween('cd.change_date', [startDate, endDate]);
         } else if (startDate) {
@@ -143,15 +129,13 @@ export async function getHeatmapData(req, res) {
         const affectedPagesResult = await affectedPagesQuery;
         const affectedPagesCount = affectedPagesResult.length;
 
-        // --- UNMAPPED STATS ---
-        // Get all unique issues that are NOT mapped to any page
+
         const issuesMappedToPagesQuery = databasePool('component_defects as cd')
             .join('components as c', 'cd.component_id', 'c.id')
             .join('page_component_dependencies as pcd', 'pcd.component_id', 'c.id')
             .where({ 'c.project_id': projectId })
             .distinct('cd.issue_key');
 
-        // Apply filters to mapped issues
         let filteredMappedIssues = issuesMappedToPagesQuery;
         if (startDate && endDate) filteredMappedIssues = filteredMappedIssues.whereBetween('cd.change_date', [startDate, endDate]);
         else if (startDate) filteredMappedIssues = filteredMappedIssues.where('cd.change_date', '>=', startDate);
@@ -164,7 +148,6 @@ export async function getHeatmapData(req, res) {
         const mappedIssuesResult = await filteredMappedIssues;
         const mappedIssueKeys = new Set(mappedIssuesResult.map(r => r.issue_key).filter(Boolean));
 
-        // Get total unique issues for the timeframe
         let totalIssuesQuery = databasePool('component_defects as cd')
             .join('components as c', 'cd.component_id', 'c.id')
             .where({ 'c.project_id': projectId })
@@ -185,12 +168,11 @@ export async function getHeatmapData(req, res) {
         const unmappedIssueKeys = totalIssueKeys.filter(key => !mappedIssueKeys.has(key));
         const unmappedIssuesCount = unmappedIssueKeys.length;
 
-        // Top-10 Unmapped Components (components causing impact but not mapped to pages)
         const unmappedComponentsQuery = databasePool('component_defects as cd')
             .join('components as c', 'cd.component_id', 'c.id')
             .leftJoin('page_component_dependencies as pcd', 'pcd.component_id', 'c.id')
             .where({ 'c.project_id': projectId })
-            .whereNull('pcd.id') // Not in page dependencies
+            .whereNull('pcd.id')
             .select('c.component_name')
             .count('cd.id as defect_count')
             .groupBy('c.component_name')
@@ -204,8 +186,7 @@ export async function getHeatmapData(req, res) {
 
         const topUnmappedComponents = await unmappedComponentsQuery;
 
-        // Группируем по компонентам и считаем количество уникальных загрузок
-        // Каждая уникальная комбинация (release_version, change_date) = одна загрузка компонента в маппинг
+
         const componentMap = new Map();
         let totalDefects = 0;
 
@@ -220,7 +201,7 @@ export async function getHeatmapData(req, res) {
             });
         });
 
-        // Преобразуем в массив для ответа
+
         const heatmapData = Array.from(componentMap.entries())
             .map(([componentName, data]) => ({
                 componentName,
@@ -229,7 +210,7 @@ export async function getHeatmapData(req, res) {
                 issueKeys: data.issueKeys,
                 percentage: totalDefects > 0 ? ((data.count / totalDefects) * 100).toFixed(1) : '0.0',
             }))
-            .sort((a, b) => b.count - a.count); // Сортируем по убыванию количества
+            .sort((a, b) => b.count - a.count);
 
         logInfo(`Получено ${heatmapData.length} компонентов для тепловой карты, всего уникальных загрузок: ${totalDefects}. Pages: ${affectedPagesCount}/${totalProjectPagesCount}`);
 
@@ -274,14 +255,13 @@ export async function getReleaseVersions(req, res) {
             return res.status(400).json({ error: 'Необходимо указать projectId.' });
         }
 
-        // Получаем версии, включая NULL (для которых нет версии)
         let query = databasePool('component_defects')
             .join('components', 'component_defects.component_id', 'components.id')
             .where({ 'components.project_id': projectId })
             .distinct('component_defects.release_version')
             .orderBy('component_defects.release_version', 'desc');
 
-        // Фильтр по дате для ограничения списка версий
+
         if (startDate) {
             query = query.where('component_defects.change_date', '>=', startDate);
         }
@@ -291,10 +271,8 @@ export async function getReleaseVersions(req, res) {
 
         const results = await query;
 
-        // Преобразуем результаты: null -> 'Без версии'
         const versions = results.map(row => row.release_version || 'Без версии');
 
-        // Убираем дубликаты, если 'Без версии' встретилось несколько раз (хотя distinct должен сработать, но null и '' могут быть разными)
         const uniqueVersions = [...new Set(versions)];
 
         res.status(200).json({ versions: uniqueVersions });
@@ -315,13 +293,11 @@ export async function getTestCoverageData(req, res) {
     try {
         const { projectId, startDate, endDate, isBugFix, componentType } = req.query;
 
-        // releaseVersions может прийти как массив или как строка
         let releaseVersions = req.query.releaseVersions;
         if (releaseVersions && !Array.isArray(releaseVersions)) {
             releaseVersions = [releaseVersions];
         }
 
-        // Валидация входных данных
         const parsedReleaseVersions = releaseVersions && releaseVersions.length > 0 ? releaseVersions : undefined;
         const parsedIsBugFix = isBugFix !== undefined && isBugFix !== '' ? isBugFix === 'true' : undefined;
 
@@ -340,17 +316,9 @@ export async function getTestCoverageData(req, res) {
         }
 
         logInfo(`Получение данных Test Coverage для проекта ${projectId}, isBugFix=${parsedIsBugFix}, releaseVersions=${parsedReleaseVersions?.join(',') || 'all'}`);
-
-        // Строим запрос: для каждого функционального блока суммируем дефекты всех связанных компонентов
-        // Стратегия связывания:
-        //   1. Прямой маппинг: FB напрямую связан с компонентом
-        //   2. FB -> Page -> дочерние компоненты: если FB замаплен на Page,
-        //      берём все дочерние компоненты этой Page (у них есть реальные дефекты)
         const relevantComponents = databasePool('component_functional_blocks as cfb')
             .select('cfb.functional_block_id', 'cfb.component_id')
             .union(function () {
-                // FB -> Page -> Child Code Components
-                // Если FB замаплен на компонент типа Page, находим все дочерние компоненты этой Page
                 this.select('cfb.functional_block_id', 'pcd.component_id')
                     .from('component_functional_blocks as cfb')
                     .join('components as c', 'cfb.component_id', 'c.id')
@@ -367,11 +335,7 @@ export async function getTestCoverageData(req, res) {
             .leftJoin('component_defects as cd', 'cd.component_id', 'c.id')
             .where({ 'fb.project_id': projectId });
 
-        // НЕ фильтруем по componentType здесь!
-        // Функциональный блок должен собирать дефекты от ВСЕХ связанных компонентов
-        // (включая Pages), чтобы приоритизация была полной.
 
-        // Применяем фильтры к дефектам (ВСЕ фильтры ДО select/groupBy)
         if (startDate && endDate) {
             query = query.whereBetween('cd.change_date', [startDate, endDate]);
         } else if (startDate) {
@@ -403,9 +367,6 @@ export async function getTestCoverageData(req, res) {
 
         const results = await query;
 
-        // Глобальные итоги: считаем ВСЕ дефекты проекта (как Code tab),
-        // чтобы касания/инциденты/время совпадали между вкладками,
-        // а проценты показывали долю каждого блока от ВСЕХ дефектов.
         let subQueryForTotal = databasePool('component_defects as cd')
             .join('components as c', 'cd.component_id', 'c.id')
             .where({ 'c.project_id': projectId });
@@ -446,7 +407,6 @@ export async function getTestCoverageData(req, res) {
             });
         });
 
-        // Преобразуем в массив с процентами от ГЛОБАЛЬНОГО итога
         const functionalBlocksData = Array.from(functionalBlocksMap.values())
             .map(fb => ({
                 ...fb,
@@ -454,12 +414,7 @@ export async function getTestCoverageData(req, res) {
             }))
             .sort((a, b) => b.defectCount - a.defectCount);
 
-        // Теперь получаем данные по роутам
-        // ВАЖНО: Каждый дефект должен быть посчитан только ОДИН РАЗ глобально,
-        // а не для каждого роута, с которым связан компонент.
-        // Для этого сначала получаем уникальные дефекты и назначаем каждому "основной" роут.
 
-        // Сначала получаем все уникальные дефекты и их роуты
         let defectRouteQuery = databasePool('component_defects as cd')
             .join('components as c', 'cd.component_id', 'c.id')
             .join('page_component_dependencies as pcd', 'pcd.component_id', 'c.id')
@@ -467,7 +422,6 @@ export async function getTestCoverageData(req, res) {
             .whereNotNull('pcd.page_route')
             .where('pcd.page_route', '!=', '');
 
-        // Применяем фильтры к дефектам
         if (startDate && endDate) {
             defectRouteQuery = defectRouteQuery.whereBetween('cd.change_date', [startDate, endDate]);
         } else if (startDate) {
@@ -488,12 +442,10 @@ export async function getTestCoverageData(req, res) {
             defectRouteQuery = defectRouteQuery.where('c.component_type', componentType);
         }
 
-        // Получаем для каждого дефекта первый (алфавитно) роут - так каждый дефект будет посчитан только один раз
         const defectToRouteSubquery = defectRouteQuery
             .select('cd.id as defect_id', databasePool.raw('MIN(pcd.page_route) as primary_route'))
             .groupBy('cd.id');
 
-        // Теперь группируем по роутам и считаем
         const routesResults = await databasePool
             .from(defectToRouteSubquery.as('defect_routes'))
             .select('primary_route as page_route')
@@ -501,7 +453,6 @@ export async function getTestCoverageData(req, res) {
             .groupBy('primary_route')
             .orderBy('total_defects', 'desc');
 
-        // Считаем общее количество дефектов по роутам
         let totalRoutesDefects = 0;
         const routesMap = new Map();
 
@@ -515,7 +466,6 @@ export async function getTestCoverageData(req, res) {
             });
         });
 
-        // Преобразуем в массив с процентами
         const routesData = Array.from(routesMap.values())
             .map(route => ({
                 ...route,
@@ -524,10 +474,6 @@ export async function getTestCoverageData(req, res) {
             .sort((a, b) => b.defectCount - a.defectCount);
 
 
-        // --- СТАТИСТИКА ПО СТРАНИЦАМ (PAGES) ---
-        // Аналогично роутам, но группируем по page_name
-
-        // 1. Строим базовый запрос для дефектов, связанных со страницами
         let defectPageQuery = databasePool('component_defects as cd')
             .join('components as c', 'cd.component_id', 'c.id')
             .join('page_component_dependencies as pcd', 'pcd.component_id', 'c.id')
@@ -535,7 +481,6 @@ export async function getTestCoverageData(req, res) {
             .whereNotNull('pcd.page_name')
             .where('pcd.page_name', '!=', '');
 
-        // 2. Применяем те же фильтры
         if (startDate && endDate) {
             defectPageQuery = defectPageQuery.whereBetween('cd.change_date', [startDate, endDate]);
         } else if (startDate) {
@@ -556,17 +501,10 @@ export async function getTestCoverageData(req, res) {
             defectPageQuery = defectPageQuery.where('c.component_type', componentType);
         }
 
-        // 3. Для каждого дефекта берем первую страницу (чтобы не дублировать дефект, если компонент на 2 страницах)
-        // ИЛИ можно считать "вхождений" дефектов (как в функциональных блоках).
-        // В функциональных блоках: "Считает сумму дефектов всех компонентов, связанных с каждым функциональным блоком" - там дублирование разрешено (Logic + UI).
-        // Если хотим "Test Coverage" pie chart, то сумма должна быть 100%. Значит дефект должен принадлежать ОДНОЙ категории.
-        // Для роутов мы делали MIN(page_route). Сделаем так же для страниц, чтобы сумма сходилась.
 
-        // 3. Для каждого дефекта находим ПЕРВУЮ страницу (чтобы не дублировать дефект в общем итоге)
-        const defectToPageSubquery = databasePool('component_defects as cd')
-            .join('components as c', 'cd.component_id', 'c.id')
-            .join('page_component_dependencies as pcd', 'pcd.component_id', 'c.id')
-            .where({ 'c.project_id': projectId })
+
+        const defectToPageSubquery = defectPageQuery
+            .clone()
             .select('cd.id as defect_id')
             .min('pcd.page_name as primary_page')
             .groupBy('cd.id');
@@ -589,7 +527,6 @@ export async function getTestCoverageData(req, res) {
             .groupBy('pcd.page_name', 'pcd.page_route')
             .orderBy('total_defects', 'desc');
 
-        // Считаем общее количество дефектов по страницам
         let totalPagesDefects = 0;
         const pagesMap = new Map();
 
@@ -653,9 +590,8 @@ export async function bulkImportHistory(req, res) {
         logInfo(`Начало массового импорта истории для проекта ${projectId}. Количество записей: ${items.length}`);
 
         await databasePool.transaction(async (trx) => {
-            // 1. Собираем все уникальные компоненты из всех записей
             const allComponentNames = new Set();
-            const componentTypeMap = new Map(); // compName -> type
+            const componentTypeMap = new Map();
 
             items.forEach(item => {
                 if (item.affected_components && Array.isArray(item.affected_components)) {
@@ -671,7 +607,6 @@ export async function bulkImportHistory(req, res) {
                 }
             });
 
-            // 2. Гарантируем, что все компоненты созданы в таблице components
             for (const name of allComponentNames) {
                 const type = componentTypeMap.get(name) || 'frontend';
                 await trx('components')
@@ -684,16 +619,13 @@ export async function bulkImportHistory(req, res) {
                     .ignore();
             }
 
-            // 3. Получаем ID всех компонентов проекта
             const components = await trx('components')
                 .where({ project_id: projectId })
                 .select('id', 'component_name');
 
             const nameToIdMap = new Map(components.map(c => [c.component_name, c.id]));
 
-            // 4. Обновляем маппинги функциональных блоков (если переданы)
             if (mappings && typeof mappings === 'object') {
-                // НОВОЕ: Собираем все уникальные Allure ID из маппингов для перевода в UUID
                 const allureFbIds = new Set();
                 Object.values(mappings).forEach(fbIds => {
                     if (Array.isArray(fbIds)) {
@@ -703,7 +635,6 @@ export async function bulkImportHistory(req, res) {
                     }
                 });
 
-                // Получаем маппинг allure_id -> id (UUID) из БД
                 const fbMappings = await trx('functional_blocks')
                     .where({ project_id: projectId })
                     .whereIn('allure_id', Array.from(allureFbIds))
@@ -714,12 +645,10 @@ export async function bulkImportHistory(req, res) {
                 for (const [compName, fbIds] of Object.entries(mappings)) {
                     const compId = nameToIdMap.get(compName);
                     if (compId && Array.isArray(fbIds)) {
-                        // Переводим Allure ID в UUID
                         const validFbUuids = fbIds
                             .map(id => id ? allureToUuidMap.get(id.toString()) : null)
                             .filter(uuid => uuid != null);
 
-                        // Удаляем старые маппинги этого компонента перед вставкой новых
                         await trx('component_functional_blocks')
                             .where({ component_id: compId })
                             .del();
@@ -736,12 +665,10 @@ export async function bulkImportHistory(req, res) {
             }
 
 
-            // 5. Вставляем историю дефектов
             const defectInserts = [];
             items.forEach(item => {
                 if (item.affected_components && Array.isArray(item.affected_components)) {
                     item.affected_components.forEach(comp => {
-                        // Handle both string format and object format {name, type}
                         const compName = typeof comp === 'string' ? comp : comp.name;
                         const compId = nameToIdMap.get(compName);
                         if (compId) {
@@ -763,12 +690,17 @@ export async function bulkImportHistory(req, res) {
                 }
             });
 
-            if (defectInserts.length > 0) {
+            const uniqueDefectInsertsMap = new Map();
+            defectInserts.forEach(defect => {
+                const uniqueKey = `${defect.component_id}_${defect.change_date}_${defect.issue_key}_${defect.mr_iid}`;
+                uniqueDefectInsertsMap.set(uniqueKey, defect);
+            });
+            const uniqueDefectInserts = Array.from(uniqueDefectInsertsMap.values());
+
+            if (uniqueDefectInserts.length > 0) {
                 const chunkSize = 500;
-                for (let i = 0; i < defectInserts.length; i += chunkSize) {
-                    const chunk = defectInserts.slice(i, i + chunkSize);
-                    // Используем onConflict для дедупликации и UPSERT - индекс idx_component_defects_unique_v4
-                    // включает: component_id, change_date, issue_key, mr_iid
+                for (let i = 0; i < uniqueDefectInserts.length; i += chunkSize) {
+                    const chunk = uniqueDefectInserts.slice(i, i + chunkSize);
                     await trx('component_defects')
                         .insert(chunk)
                         .onConflict(['component_id', 'change_date', 'issue_key', 'mr_iid'])
@@ -784,8 +716,6 @@ export async function bulkImportHistory(req, res) {
                 }
             }
 
-            // 6. Обрабатываем зависимости страниц (Page Dependencies) из items
-            // Если в item есть pages с depends_on_components, сохраняем их
             const pageDepInserts = [];
             items.forEach(item => {
                 if (item.pages && Array.isArray(item.pages)) {
@@ -795,11 +725,9 @@ export async function bulkImportHistory(req, res) {
 
                         if (pageName && page.depends_on_components && Array.isArray(page.depends_on_components)) {
                             page.depends_on_components.forEach(comp => {
-                                // Handle both string format and object format {name, type}
                                 const compName = typeof comp === 'string' ? comp : comp.name;
                                 const compId = nameToIdMap.get(compName);
                                 if (compId) {
-                                    // Проверяем, не добавляли ли мы уже такую зависимость в этом батче
                                     const exists = pageDepInserts.some(p =>
                                         p.component_id === compId && p.page_name === pageName && p.page_route === pageRoute
                                     );
@@ -823,16 +751,12 @@ export async function bulkImportHistory(req, res) {
             });
 
             if (pageDepInserts.length > 0) {
-                // Вставляем зависимости страниц, игнорируя дубликаты
-                // Предполагаем, что есть уникальный индекс или ограничение (обычно component_id + page_name)
-                // Если уникального индекса нет, то может быть дублирование. 
-                // Но лучше попробовать insert.
+
                 const pdChunkSize = 500;
                 for (let i = 0; i < pageDepInserts.length; i += pdChunkSize) {
                     const chunk = pageDepInserts.slice(i, i + pdChunkSize);
 
-                    // Используем onConflict. Теперь используем idx_page_deps_unique_v2
-                    // которое включает: project_id, component_id, page_name, page_route
+
                     await trx('page_component_dependencies')
                         .insert(chunk)
                         .onConflict(['project_id', 'component_id', 'page_name', 'page_route'])

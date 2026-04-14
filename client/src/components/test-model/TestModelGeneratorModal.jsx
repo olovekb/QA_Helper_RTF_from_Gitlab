@@ -4,13 +4,13 @@ import { v4 as uuidv4 } from 'uuid';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import axios from 'axios';
-import { ReactFlow, MiniMap, Controls, Background, Handle, Position, useNodesState, useEdgesState, MarkerType } from '@xyflow/react';
+import { ReactFlow, MiniMap, Controls, Background, useNodesState, useEdgesState, MarkerType } from '@xyflow/react';
 import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
 import config from '../../config';
 import JSZip from 'jszip';
 import { trackEvent } from '../../analytics';
-import { formatProgressWithEta, getProgressEtaLabel } from '../../utils/progressEta';
+import styles from '../../styles';
 
 // --- Component-specific styles ---
 export const StyleInjector = () => {
@@ -49,7 +49,7 @@ export const StyleInjector = () => {
             right: 0;
             bottom: 0;
             background-color: rgba(0, 0, 0, 0.85);
-            z-index: 1000;
+            z-index: 10000;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -505,15 +505,6 @@ const TreeVisualizer = ({ treeData }) => {
     const nodeWidth = 220;
     const nodeHeight = 50;
 
-    // Диагностика
-    console.log('TreeVisualizer: treeData:', treeData?.length || 0, 'features');
-    if (treeData && treeData.length > 0) {
-        const totalStories = treeData.reduce((acc, f) => acc + (f.stories?.length || 0), 0);
-        const totalScenarios = treeData.reduce((acc, f) => acc + (f.stories || []).reduce((a, s) => a + (s.scenarios?.length || 0), 0), 0);
-        const totalCodes = treeData.reduce((acc, f) => acc + (f.stories || []).reduce((a, s) => a + (s.scenarios || []).reduce((a2, sc) => a2 + (sc.codes?.length || 0), 0), 0), 0);
-        console.log('TreeVisualizer: stories:', totalStories, 'scenarios:', totalScenarios, 'codes:', totalCodes);
-    }
-
     const { nodes: initialNodes, edges: initialEdges } = useMemo(() => {
         const allNodes = [];
         const allEdges = [];
@@ -618,308 +609,6 @@ const TreeVisualizer = ({ treeData }) => {
     );
 };
 
-void TreeVisualizer;
-
-const FLOW_NODE_COLORS = {
-    feature: { background: '#16324f', border: '#58a6ff', label: 'Feature' },
-    story: { background: '#2f2615', border: '#d39d34', label: 'Story' },
-    scenario: { background: '#1f3a2d', border: '#3fb950', label: 'Scenario' },
-    code: { background: '#30223f', border: '#a371f7', label: 'Code' }
-};
-
-const getReadableNodeDimensions = (text = '', kind = 'story') => {
-    const normalizedLength = String(text || '').trim().length;
-    const minWidth = kind === 'feature' ? 240 : kind === 'code' ? 230 : 250;
-    const maxWidth = kind === 'code' ? 320 : 360;
-    const width = Math.min(maxWidth, Math.max(minWidth, 170 + normalizedLength * 1.4));
-    const rows = Math.min(kind === 'code' ? 4 : 3, Math.max(2, Math.ceil(normalizedLength / 34)));
-    return {
-        width,
-        height: 58 + rows * 18
-    };
-};
-
-const ReadableFlowNode = ({ data }) => {
-    const palette = FLOW_NODE_COLORS[data.kind] || FLOW_NODE_COLORS.story;
-
-    return (
-        <div
-            title={data.fullText || data.label}
-            style={{
-                width: '100%',
-                height: '100%',
-                padding: '10px 12px',
-                borderRadius: 14,
-                border: `1px solid ${data.isMatch ? '#f85149' : palette.border}`,
-                background: data.isMatch ? 'rgba(248, 81, 73, 0.16)' : palette.background,
-                color: 'var(--text-primary)',
-                boxSizing: 'border-box',
-                boxShadow: data.isMatch
-                    ? '0 0 0 2px rgba(248, 81, 73, 0.22)'
-                    : '0 8px 20px rgba(0, 0, 0, 0.18)',
-                cursor: data.kind === 'scenario' ? 'pointer' : 'default',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 6
-            }}
-        >
-            <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
-            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)' }}>
-                {palette.label}
-            </div>
-            <div
-                style={{
-                    fontSize: 13,
-                    fontWeight: 600,
-                    lineHeight: 1.3,
-                    overflow: 'hidden',
-                    display: '-webkit-box',
-                    WebkitLineClamp: data.kind === 'code' ? 3 : 2,
-                    WebkitBoxOrient: 'vertical',
-                    wordBreak: 'break-word'
-                }}
-            >
-                {data.label}
-            </div>
-            {data.meta ? (
-                <div
-                    style={{
-                        fontSize: 11,
-                        color: 'var(--text-secondary)',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap'
-                    }}
-                >
-                    {data.meta}
-                </div>
-            ) : null}
-            <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
-        </div>
-    );
-};
-
-const readableTreeNodeTypes = {
-    modelNode: ReadableFlowNode
-};
-
-const ReadableTreeVisualizer = ({ treeData, modelSource = 'current_task' }) => {
-    const [searchQuery, setSearchQuery] = useState('');
-    const [expandedScenarioIds, setExpandedScenarioIds] = useState({});
-    const normalizedSearch = searchQuery.trim().toLowerCase();
-
-    const scenarioIdsMatchingCodes = useMemo(() => {
-        if (!normalizedSearch) return new Set();
-
-        const matches = new Set();
-        (treeData || []).forEach((feature) => {
-            for (const story of feature.stories || []) {
-                for (const scenario of story.scenarios || []) {
-                    if ((scenario.codes || []).some(code => String(code.text || '').toLowerCase().includes(normalizedSearch))) {
-                        matches.add(scenario.id);
-                    }
-                }
-            }
-        });
-        return matches;
-    }, [treeData, normalizedSearch]);
-
-    const visibleScenarioIds = useMemo(() => {
-        const expanded = Object.entries(expandedScenarioIds)
-            .filter(([, isExpanded]) => Boolean(isExpanded))
-            .map(([scenarioId]) => scenarioId);
-        return new Set([...expanded, ...Array.from(scenarioIdsMatchingCodes)]);
-    }, [expandedScenarioIds, scenarioIdsMatchingCodes]);
-
-    const { nodes: initialNodes, edges: initialEdges, matchCount } = useMemo(() => {
-        const allNodes = [];
-        const allEdges = [];
-        let yOffset = 0;
-        let matches = 0;
-
-        const matchesSearch = (value = '') => normalizedSearch && String(value || '').toLowerCase().includes(normalizedSearch);
-
-        (treeData || []).forEach((feature) => {
-            const dagreGraph = new dagre.graphlib.Graph();
-            dagreGraph.setDefaultEdgeLabel(() => ({}));
-            dagreGraph.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 90, marginx: 20, marginy: 20 });
-
-            const addNodeToGraph = (node, kind, parentId = null) => {
-                const nodeText = node.text || `Unnamed ${kind}`;
-                const { width, height } = getReadableNodeDimensions(nodeText, kind);
-                const isMatch = matchesSearch(nodeText) || (kind === 'scenario' && scenarioIdsMatchingCodes.has(node.id));
-
-                if (isMatch) matches++;
-
-                let meta = '';
-                if (kind === 'scenario' && Array.isArray(node.codes) && node.codes.length > 0) {
-                    meta = visibleScenarioIds.has(node.id)
-                        ? `Codes: ${node.codes.length} раскрыто`
-                        : `Codes: ${node.codes.length} скрыто`;
-                } else if (kind === 'story') {
-                    meta = `Scenarios: ${node.scenarios?.length || 0}`;
-                } else if (kind === 'feature') {
-                    meta = `Stories: ${node.stories?.length || 0}`;
-                }
-
-                dagreGraph.setNode(node.id, {
-                    width,
-                    height,
-                    originalNode: node,
-                    kind,
-                    isMatch,
-                    meta
-                });
-
-                if (parentId) {
-                    dagreGraph.setEdge(parentId, node.id);
-                }
-
-                const nextChildren =
-                    kind === 'feature' ? (node.stories || []) :
-                        kind === 'story' ? (node.scenarios || []) :
-                            kind === 'scenario' ? (visibleScenarioIds.has(node.id) ? (node.codes || []) : []) :
-                                [];
-
-                nextChildren.forEach(child => {
-                    const childKind = kind === 'feature'
-                        ? 'story'
-                        : kind === 'story'
-                            ? 'scenario'
-                            : 'code';
-                    addNodeToGraph(child, childKind, node.id);
-                });
-            };
-
-            addNodeToGraph(feature, 'feature');
-            dagre.layout(dagreGraph);
-
-            let maxY = 0;
-            dagreGraph.nodes().forEach(nodeId => {
-                const layoutNode = dagreGraph.node(nodeId);
-                const yPos = layoutNode.y - layoutNode.height / 2 + yOffset;
-
-                allNodes.push({
-                    id: nodeId,
-                    type: 'modelNode',
-                    data: {
-                        label: layoutNode.originalNode.text || `Unnamed ${layoutNode.kind}`,
-                        fullText: layoutNode.originalNode.text || `Unnamed ${layoutNode.kind}`,
-                        kind: layoutNode.kind,
-                        meta: layoutNode.meta,
-                        isMatch: layoutNode.isMatch
-                    },
-                    position: {
-                        x: layoutNode.x - layoutNode.width / 2,
-                        y: yPos
-                    },
-                    style: {
-                        width: layoutNode.width,
-                        height: layoutNode.height
-                    }
-                });
-
-                if (yPos + layoutNode.height > maxY) {
-                    maxY = yPos + layoutNode.height;
-                }
-            });
-
-            dagreGraph.edges().forEach(edge => {
-                allEdges.push({
-                    id: `e-${edge.v}-${edge.w}`,
-                    source: edge.v,
-                    target: edge.w,
-                    markerEnd: { type: MarkerType.ArrowClosed },
-                    type: 'smoothstep'
-                });
-            });
-
-            yOffset = maxY + 110;
-        });
-
-        return { nodes: allNodes, edges: allEdges, matchCount: matches };
-    }, [treeData, normalizedSearch, scenarioIdsMatchingCodes, visibleScenarioIds]);
-
-    const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-    const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-
-    useEffect(() => {
-        setNodes(initialNodes);
-        setEdges(initialEdges);
-    }, [initialNodes, initialEdges, setNodes, setEdges]);
-
-    const handleNodeClick = useCallback((_, node) => {
-        if (node?.data?.kind !== 'scenario') return;
-        setExpandedScenarioIds(prev => ({
-            ...prev,
-            [node.id]: !prev[node.id]
-        }));
-    }, []);
-
-    const sourceLabel = modelSource === 'local_cache'
-        ? 'Источник: восстановлено из локального кэша'
-        : 'Источник: текущая задача';
-
-    return (
-        <div style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}>
-            <div
-                style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 12,
-                    padding: '12px 14px',
-                    borderBottom: '1px solid var(--border-primary)',
-                    background: 'rgba(22, 27, 34, 0.82)'
-                }}
-            >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-                    <input
-                        type="search"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Поиск по feature, story, scenario и code"
-                        style={{
-                            width: '100%',
-                            maxWidth: 360,
-                            padding: '9px 12px',
-                            borderRadius: 10,
-                            border: '1px solid var(--border-primary)',
-                            background: 'var(--bg-secondary)',
-                            color: 'var(--text-primary)',
-                            outline: 'none'
-                        }}
-                    />
-                    <span style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                        {normalizedSearch ? `Совпадений: ${matchCount}` : 'Показаны Feature → Story → Scenario'}
-                    </span>
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                    {sourceLabel}
-                </div>
-            </div>
-
-            <div style={{ flex: 1, minHeight: 0 }}>
-                <ReactFlow
-                    nodes={nodes}
-                    edges={edges}
-                    nodeTypes={readableTreeNodeTypes}
-                    onNodesChange={onNodesChange}
-                    onEdgesChange={onEdgesChange}
-                    onNodeClick={handleNodeClick}
-                    fitView
-                    fitViewOptions={{ padding: 0.15 }}
-                    proOptions={{ hideAttribution: true }}
-                >
-                    <MiniMap pannable zoomable />
-                    <Controls />
-                    <Background variant="dots" gap={18} size={1} color="#484848" />
-                </ReactFlow>
-            </div>
-        </div>
-    );
-};
-
 
 // --- Refactored TreeNode Component ---
 const TreeNode = ({ node, index, path, handlers }) => {
@@ -1015,8 +704,6 @@ export default function TestModelGeneratorModal({
     setModelGenerationProgress,
     modelGenerationStatus,
     setModelGenerationStatus,
-    modelGenerationStartedAt,
-    setModelGenerationStartedAt,
     modelIsMinimized,
     setModelIsMinimized,
     checkModelGenerationStatus,
@@ -1037,56 +724,6 @@ export default function TestModelGeneratorModal({
     const [modelHistory, setModelHistory] = useState([]); // [{ version, model, timestamp, comment }]
     const [modelDiff, setModelDiff] = useState(null); // diff между v1 и v2
     const [showDiffView, setShowDiffView] = useState(false);
-    const modelEtaLabel = getProgressEtaLabel({
-        status: modelGenerationStatus,
-        progress: modelGenerationProgress,
-        startedAt: modelGenerationStartedAt
-    });
-    const [availableModels, setAvailableModels] = useState([]);
-    const [selectedModel, setSelectedModel] = useState('');
-    const [modelDataSource, setModelDataSource] = useState('current_task');
-
-    const storagePageScope = useMemo(() => {
-        const rawValue = String(confluencePageId || '').trim();
-        if (/^\d+$/.test(rawValue)) return rawValue;
-
-        try {
-            const url = new URL(rawValue);
-            return url.searchParams.get('pageId') || rawValue || 'manual';
-        } catch {
-            const match = rawValue.match(/([0-9]{5,})/);
-            return match ? match[1] : 'manual';
-        }
-    }, [confluencePageId]);
-
-    const storageTaskScope = useMemo(
-        () => String(modelGenerationTaskId || 'latest'),
-        [modelGenerationTaskId]
-    );
-
-    const getScopedStorageKey = useCallback((baseKey, taskScope = storageTaskScope) => (
-        `${baseKey}:${storagePageScope}:${taskScope}`
-    ), [storagePageScope, storageTaskScope]);
-
-    const idbGetModelValue = useCallback(async (baseKey) => {
-        const scopedValue = await idbGet(getScopedStorageKey(baseKey)).catch(() => null);
-        return scopedValue !== undefined ? scopedValue : null;
-    }, [getScopedStorageKey]);
-
-    const idbSetModelValueForScope = useCallback((baseKey, taskScope, value) => (
-        idbSet(getScopedStorageKey(baseKey, taskScope), value)
-    ), [getScopedStorageKey]);
-
-    const idbSetModelValue = useCallback((baseKey, value) => {
-        if (storageTaskScope === 'latest') {
-            return idbSetModelValueForScope(baseKey, 'latest', value);
-        }
-
-        return Promise.all([
-            idbSetModelValueForScope(baseKey, storageTaskScope, value),
-            idbSetModelValueForScope(baseKey, 'latest', value)
-        ]);
-    }, [idbSetModelValueForScope, storageTaskScope]);
 
     // Функция для подсчета всех узлов в дереве
     const countAllNodes = (treeData) => {
@@ -1452,45 +1089,6 @@ export default function TestModelGeneratorModal({
         };
     }, [isResizing, handleMouseMove, handleMouseUp]);
 
-    // Загрузка доступных моделей Cloud.ru
-    useEffect(() => {
-        const fetchModels = async () => {
-            try {
-                const { data } = await axios.get(`${config.serverUrl}/cloudru-models`);
-                if (data.models && data.models.length > 0) {
-                    setAvailableModels(data.models);
-                    setSelectedModel(data.models[0]); // По умолчанию первая модель
-                }
-            } catch (error) {
-                console.warn('Не удалось загрузить список моделей:', error);
-            }
-        };
-        fetchModels();
-    }, []);
-
-    useEffect(() => {
-        if (availableModels.length === 0) return;
-
-        let cancelled = false;
-
-        const restoreSelectedModel = async () => {
-            const savedModel = await idbGet('selectedCloudRuModel').catch(() => null);
-            if (!cancelled && savedModel && availableModels.includes(savedModel)) {
-                setSelectedModel(savedModel);
-            }
-        };
-
-        restoreSelectedModel();
-        return () => {
-            cancelled = true;
-        };
-    }, [availableModels]);
-
-    useEffect(() => {
-        if (!selectedModel) return;
-        idbSet('selectedCloudRuModel', selectedModel).catch(console.warn);
-    }, [selectedModel]);
-
 
     // --- Core Logic (with minor refactoring for clarity) ---
     const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
@@ -1500,7 +1098,7 @@ export default function TestModelGeneratorModal({
      * @param {Array} items  — массив из фич или историй или сценариев в зависимости от depth
      * @param {number} depth — 1=features, 2=stories, 3=scenarios, 4=codes
      */
-    const buildTreeWithIds = useCallback((items, depth = 1) => {
+    const buildTreeWithIds = (items, depth = 1) => {
         return (items || []).map(item => {
             // Сначала задаём базовые поля
             const newItem = {
@@ -1529,7 +1127,7 @@ export default function TestModelGeneratorModal({
 
             return newItem;
         });
-    }, []);
+    };
 
     // ✅ Функция для преобразования treeData обратно в формат модели (удаляет служебные поля)
     const convertTreeToModel = (treeData) => {
@@ -1580,14 +1178,13 @@ export default function TestModelGeneratorModal({
 
     useEffect(() => {
         if (!isOpen) { setIsLoading(true); return; }
-        if (modelGenerationStatus === 'processing') { return; }
 
         // Загружаем сохраненные данные из IndexedDB при открытии модального окна
         const loadSavedData = async () => {
             try {
                 const [savedTree, savedModel] = await Promise.all([
-                    idbGetModelValue('testModelTree'),
-                    idbGetModelValue('generatedTestModel')
+                    idbGet('testModelTree'),
+                    idbGet('generatedTestModel')
                 ]);
                 
                 if (savedTree && savedTree.length > 0) {
@@ -1596,10 +1193,8 @@ export default function TestModelGeneratorModal({
                     console.log('TestModelGeneratorModal: savedTree features:', savedTree.length);
                     console.log('TestModelGeneratorModal: savedModel:', savedModel ? 'есть' : 'нет');
                     setTreeData(savedTree);
-                    setModelDataSource('local_cache');
                     if (savedModel) {
                         setLocalGeneratedModel(savedModel);
-                        setModelGenerationStartedAt(null);
                         setModelGenerationStatus('completed'); // Устанавливаем статус как завершенный
                     }
                 } else {
@@ -1607,8 +1202,7 @@ export default function TestModelGeneratorModal({
         const dataToBuild = (initialCases && initialCases.length > 0) ? initialCases : [];
         const builtTree = buildTreeWithIds(dataToBuild);
         setTreeData(builtTree);
-        setModelDataSource('current_task');
-        idbSetModelValue('testModelTree', builtTree).catch(console.warn);
+        idbSet('testModelTree', builtTree).catch(console.warn);
                 }
             } catch (error) {
                 console.warn('Ошибка загрузки сохраненных данных:', error);
@@ -1616,34 +1210,20 @@ export default function TestModelGeneratorModal({
                 const dataToBuild = (initialCases && initialCases.length > 0) ? initialCases : [];
                 const builtTree = buildTreeWithIds(dataToBuild);
                 setTreeData(builtTree);
-                setModelDataSource('current_task');
-                idbSetModelValue('testModelTree', builtTree).catch(console.warn);
+                idbSet('testModelTree', builtTree).catch(console.warn);
             }
         setIsLoading(false);
         };
 
         loadSavedData();
-    }, [
-        buildTreeWithIds,
-        idbGetModelValue,
-        idbSetModelValue,
-        initialCases,
-        isOpen,
-        modelGenerationStatus,
-        setModelGenerationStartedAt,
-        setModelGenerationStatus,
-        storagePageScope,
-        storageTaskScope
-    ]);
+    }, [isOpen, initialCases]);
 
 
     useEffect(() => {
-        if (!isOpen || isLoading || isGeneratingModel || modelGenerationStatus === 'processing') {
-            return;
+        if (isOpen && !isLoading) {
+            idbSet('testModelTree', treeData).catch(console.warn);
         }
-
-        idbSetModelValue('testModelTree', treeData).catch(console.warn);
-    }, [treeData, isOpen, isLoading, isGeneratingModel, modelGenerationStatus, idbSetModelValue]);
+    }, [treeData, isOpen, isLoading]);
 
     // Обработка завершения генерации тестовой модели
     useEffect(() => {
@@ -1652,7 +1232,6 @@ export default function TestModelGeneratorModal({
             const newTree = buildTreeWithIds(generatedModel);
             setTreeData(newTree);
             setLocalGeneratedModel(generatedModel);
-            setModelDataSource('current_task');
             
             // Сохраняем v1 в историю при первой генерации
             if (modelVersion === 1 && modelHistory.length === 0) {
@@ -1663,15 +1242,14 @@ export default function TestModelGeneratorModal({
                     comment: 'Первичная генерация'
                 };
                 setModelHistory([v1Snapshot]);
-                idbSetModelValue('modelHistory', [v1Snapshot]).catch(console.warn);
+                idbSet('modelHistory', [v1Snapshot]).catch(console.warn);
             }
             
             // Сохраняем в IndexedDB
-            idbSetModelValue('generatedTestModel', generatedModel).catch(console.warn);
-            idbSetModelValue('testModelTree', newTree).catch(console.warn);
+            idbSet('testModelTree', newTree).catch(console.warn);
             console.log('Тестовая модель загружена в редактор');
         }
-    }, [buildTreeWithIds, generatedModel, idbSetModelValue, modelGenerationStatus, modelHistory.length, modelVersion]);
+    }, [modelGenerationStatus, generatedModel, modelVersion, modelHistory.length]);
 
     const findNodeAndParent = (nodes, path, parent = null) => {
         const [head, ...tail] = path;
@@ -1741,15 +1319,12 @@ export default function TestModelGeneratorModal({
         setLocalGeneratedModel(null);
         // Очищаем предыдущие результаты при новой генерации
         setModelGenerationStatus(null);
-        setModelGenerationStartedAt(null);
         setModelGenerationProgress(0);
         // ✅ Очищаем treeData и IndexedDB, чтобы не использовать старые данные
         setTreeData([]);
-        setModelDataSource('current_task');
-        idbSetModelValueForScope('generatedTestModel', 'latest', null).catch(console.warn);
+        idbSet('generatedTestModel', null).catch(console.warn);
         idbSet('modelGenerationProgress', 0).catch(console.warn);
-        idbSetModelValueForScope('testModelTree', 'latest', null).catch(console.warn); // ✅ Очищаем старый treeData
-        idbSetModelValueForScope('modelHistory', 'latest', []).catch(console.warn);
+        idbSet('testModelTree', null).catch(console.warn); // ✅ Очищаем старый treeData
         console.log('TestModelGeneratorModal: ✅ Очищены все данные перед новой генерацией модели');
         
         // Сбрасываем версию и историю при новой генерации
@@ -1765,11 +1340,6 @@ export default function TestModelGeneratorModal({
         try {
             // Используем переданные данные вместо чтения из IndexedDB
             const payload = buildRequirementsPayload({ includeRequirements: true });
-            
-            // Добавляем выбранную модель в payload
-            if (selectedModel) {
-                payload.models = [selectedModel];
-            }
 
             // Сначала пробуем асинхронный API
             try {
@@ -1779,7 +1349,6 @@ export default function TestModelGeneratorModal({
                 );
                 
                 setModelGenerationTaskId(data.taskId);
-                setModelGenerationStartedAt(new Date().toISOString());
                 setModelGenerationProgress(0);
                 setModelGenerationStatus('processing');
                 checkModelGenerationStatus(data.taskId);
@@ -1799,7 +1368,6 @@ export default function TestModelGeneratorModal({
             setTreeData(newTree);
 
             setLocalGeneratedModel(data);
-            setModelDataSource('current_task');
             
             // Сохраняем v1 в историю
             const v1Snapshot = {
@@ -1809,9 +1377,7 @@ export default function TestModelGeneratorModal({
                 comment: 'Первичная генерация'
             };
             setModelHistory([v1Snapshot]);
-            idbSetModelValue('generatedTestModel', data).catch(console.warn);
-            idbSetModelValue('testModelTree', newTree).catch(console.warn);
-            idbSetModelValue('modelHistory', [v1Snapshot]).catch(console.warn);
+            idbSet('modelHistory', [v1Snapshot]).catch(console.warn);
 
         } catch (error) {
             console.error('Ошибка при генерации тестовой модели:', error);
@@ -1838,7 +1404,6 @@ export default function TestModelGeneratorModal({
         }
 
         setIsGeneratingModel(true);
-        setModelGenerationStartedAt(null);
         setModelGenerationStatus('processing');
         setModelGenerationProgress(0);
 
@@ -1862,11 +1427,8 @@ export default function TestModelGeneratorModal({
                 reviewNotes: reviewComment.trim() || '',
                 issues: issues,
                 baselineMetrics: baselineMetrics,
-                requirements: requirementsPayload.requirements || '',
-                ...(selectedModel ? { models: [selectedModel] } : {})
+                requirements: requirementsPayload.requirements || ''
             };
-
-            console.log('TestModelGeneratorModal: selectedModel for refine:', selectedModel || '(default from config)');
 
             const { data } = await axios.post(
                 `${config.serverUrl}/refine-test-model`,
@@ -1894,7 +1456,6 @@ export default function TestModelGeneratorModal({
             const newTree = buildTreeWithIds(data.refinedModel);
             setTreeData(newTree);
             setLocalGeneratedModel(data.refinedModel);
-            setModelDataSource('current_task');
 
             // Сохраняем v2 в историю
             const v2Snapshot = {
@@ -1909,9 +1470,9 @@ export default function TestModelGeneratorModal({
             setModelVersion(modelVersion + 1);
             
             // Сохраняем в IndexedDB
-            idbSetModelValue('generatedTestModel', data.refinedModel).catch(console.warn);
-            idbSetModelValue('testModelTree', newTree).catch(console.warn);
-            idbSetModelValue('modelHistory', [...modelHistory, v2Snapshot]).catch(console.warn);
+            idbSet('generatedTestModel', data.refinedModel).catch(console.warn);
+            idbSet('testModelTree', newTree).catch(console.warn);
+            idbSet('modelHistory', [...modelHistory, v2Snapshot]).catch(console.warn);
 
             // Показываем предупреждения, если есть
             const warnings = validation.errors.filter(e => e.type === 'warning');
@@ -2305,10 +1866,9 @@ export default function TestModelGeneratorModal({
                 console.log('TestModelGeneratorModal: modelStructure (без служебных полей):', modelStructure);
                 console.log('TestModelGeneratorModal: количество Features:', modelStructure.length);
                 console.log('TestModelGeneratorModal: includeBackendTests:', includeBackendTests);
-                console.log('TestModelGeneratorModal: selectedModel for test cases:', selectedModel);
                 
                 // ✅ Передаем преобразованную модель и флаг includeBackendTests
-                onGenerate(modelStructure, includeBackendTests, selectedModel);
+                onGenerate(modelStructure, includeBackendTests);
                 onClose(); // Закрываем модалку сразу
             } else {
                 console.error("onGenerate prop is not a function!");
@@ -2335,7 +1895,7 @@ export default function TestModelGeneratorModal({
     const getLoaderText = () => {
         if (isGeneratingModel) {
             if (modelGenerationStatus === 'processing') {
-                return `Генерация тестовой модели... ${formatProgressWithEta(modelGenerationProgress, modelEtaLabel)}`;
+                return `Генерация тестовой модели... ${modelGenerationProgress}%`;
             }
             return "Генерация тестовой модели...";
         }
@@ -2374,9 +1934,7 @@ export default function TestModelGeneratorModal({
                                     }} />
                                     <h4 style={{ margin: 0, color: '#c9d1d9', fontSize: 16, fontWeight: 600 }}>Генерация тестовой модели</h4>
                                 </div>
-                                <span style={{ fontSize: 14, fontWeight: 'bold', color: '#58a6ff', whiteSpace: 'nowrap' }}>
-                                    {formatProgressWithEta(modelGenerationProgress, modelEtaLabel)}
-                                </span>
+                                <span style={{ fontSize: 14, fontWeight: 'bold', color: '#58a6ff' }}>{modelGenerationProgress}%</span>
                             </div>
                             
                             <div style={{ 
@@ -2440,53 +1998,27 @@ export default function TestModelGeneratorModal({
             <div className="modal-header">
                 <h2>Редактор тестовой модели {modelVersion > 1 && <span style={{ fontSize: '0.8em', color: 'var(--text-secondary)' }}>(v{modelVersion})</span>}</h2>
                 <div className="header-actions">
-                    <div style={{ display: 'flex', gap: '16px', alignItems: 'center', marginRight: '12px' }}>
-                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            <label style={{ fontSize: '0.9em', color: 'var(--text-secondary)', marginRight: '8px' }}>
-                                Модель:
-                            </label>
-                            <select
-                                value={selectedModel}
-                                onChange={(e) => setSelectedModel(e.target.value)}
-                                disabled={isBusy || modelGenerationStatus === 'processing' || availableModels.length === 0}
-                                style={{
-                                    background: 'var(--bg-content)',
-                                    border: '1px solid var(--border-primary)',
-                                    color: 'var(--text-primary)',
-                                    borderRadius: '4px',
-                                    padding: '6px 12px',
-                                    fontSize: '0.85em',
-                                    cursor: (isBusy || modelGenerationStatus === 'processing' || availableModels.length === 0) ? 'default' : 'pointer',
-                                    maxWidth: '220px'
-                                }}
-                            >
-                                {availableModels.map(model => (
-                                    <option key={model} value={model}>{model}</option>
-                                ))}
-                            </select>
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            <label style={{ fontSize: '0.9em', color: 'var(--text-secondary)', marginRight: '8px' }}>
-                                Режим:
-                            </label>
-                            <select
-                                value={generationMode}
-                                onChange={(e) => setGenerationMode(e.target.value)}
-                                disabled={isBusy || modelGenerationStatus === 'processing'}
-                                style={{
-                                    background: 'var(--bg-content)',
-                                    border: '1px solid var(--border-primary)',
-                                    color: 'var(--text-primary)',
-                                    borderRadius: '4px',
-                                    padding: '6px 12px',
-                                    fontSize: '0.9em',
-                                    cursor: (isBusy || modelGenerationStatus === 'processing') ? 'default' : 'pointer'
-                                }}
-                            >
-                                <option value="create">Создать с нуля</option>
-                                <option value="refine" disabled={!localGeneratedModel || localGeneratedModel.length === 0}>Доработать текущую</option>
-                            </select>
-                        </div>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginRight: '12px' }}>
+                        <label style={{ fontSize: '0.9em', color: 'var(--text-secondary)', marginRight: '8px' }}>
+                            Режим:
+                        </label>
+                        <select
+                            value={generationMode}
+                            onChange={(e) => setGenerationMode(e.target.value)}
+                            disabled={isBusy || modelGenerationStatus === 'processing'}
+                            style={{
+                                background: 'var(--bg-content)',
+                                border: '1px solid var(--border-primary)',
+                                color: 'var(--text-primary)',
+                                borderRadius: '4px',
+                                padding: '6px 12px',
+                                fontSize: '0.9em',
+                                cursor: (isBusy || modelGenerationStatus === 'processing') ? 'default' : 'pointer'
+                            }}
+                        >
+                            <option value="create">Создать с нуля</option>
+                            <option value="refine" disabled={!localGeneratedModel || localGeneratedModel.length === 0}>Доработать текущую</option>
+                        </select>
                     </div>
                     <button
                         type="button"
@@ -2643,13 +2175,7 @@ export default function TestModelGeneratorModal({
                 <div className={`resizer ${isResizing ? 'is-resizing' : ''}`} onMouseDown={handleMouseDown}></div>
 
                 <div className="visualizer-pane">
-                    {treeData && treeData.length > 0 ? (
-                        <ReadableTreeVisualizer treeData={treeData} modelSource={modelDataSource} />
-                    ) : (
-                        <div style={{ padding: 20, color: 'var(--text-secondary)', textAlign: 'center' }}>
-                            Нет данных для отображения диаграммы
-                        </div>
-                    )}
+                    <TreeVisualizer treeData={treeData} />
                 </div>
             </div>
         </Modal>
@@ -2682,9 +2208,7 @@ export default function TestModelGeneratorModal({
                         }} />
                         <h4 style={{ margin: 0, color: '#c9d1d9', fontSize: 14, fontWeight: 600 }}>Генерация тестовой модели</h4>
                     </div>
-                    <span style={{ fontSize: 12, fontWeight: 'bold', color: '#58a6ff', whiteSpace: 'nowrap' }}>
-                        {formatProgressWithEta(modelGenerationProgress, modelEtaLabel)}
-                    </span>
+                    <span style={{ fontSize: 12, fontWeight: 'bold', color: '#58a6ff' }}>{modelGenerationProgress}%</span>
                 </div>
                 
                 <div style={{ marginBottom: 12 }}>

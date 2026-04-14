@@ -2,17 +2,19 @@ import React from 'react';
 import { useTheme } from '../ThemeContext';
 import './ThemeToggle.css';
 
-export default function ThemeToggle ()
-{
+export default function ThemeToggle() {
   const { theme, toggleTheme } = useTheme();
 
   return (
     <button
       type="button"
       className="btn-link theme-toggle"
-      onClick={ toggleTheme }
+      style={{
+        marginTop: '-1px'
+      }}
+      onClick={toggleTheme}
     >
-      { theme === 'dark' ? '(⊙_⊙)' : '( u_u )' }
+      {theme === 'dark' ? '(⊙_⊙)' : '( u_u )'}
     </button>
   );
 }

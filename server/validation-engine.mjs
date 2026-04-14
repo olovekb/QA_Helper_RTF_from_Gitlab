@@ -217,7 +217,7 @@ function loadRules() {
         
         // Загрузка проектных правил из projects/
         const projectsDir = join(__dirname, 'config', 'projects');
-        const project_rules = {};
+        const cases_rules = {};
         
         try {
             const projectFiles = readdirSync(projectsDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
@@ -227,8 +227,8 @@ function loadRules() {
                 const projectYaml = readFileSync(projectFilePath, 'utf8');
                 const projectConfig = yaml.load(projectYaml);
                 
-                if (projectConfig.project_rules) {
-                    Object.assign(project_rules, projectConfig.project_rules);
+                if (projectConfig.cases_rules) {
+                    Object.assign(cases_rules, projectConfig.cases_rules);
                     console.log(`[loadRules] Загружены проектные правила из: ${file}`);
                 }
             }
@@ -238,7 +238,7 @@ function loadRules() {
         
         rulesConfig = {
             base_rules: baseConfig.base_rules || [],
-            project_rules: { ...baseConfig.project_rules, ...project_rules }
+            cases_rules: { ...baseConfig.cases_rules, ...cases_rules }
         };
         
         validateRulesConfig(rulesConfig);
@@ -268,10 +268,10 @@ function validateRulesConfig(config) {
         });
     }
     
-    if (config.project_rules) {
-        Object.entries(config.project_rules).forEach(([projectId, rules]) => {
+    if (config.cases_rules) {
+        Object.entries(config.cases_rules).forEach(([projectId, rules]) => {
             rules.forEach((rule, index) => {
-                const ruleErrors = validateRule(rule, `project_rules[${projectId}][${index}]`);
+                const ruleErrors = validateRule(rule, `cases_rules[${projectId}][${index}]`);
                 errors.push(...ruleErrors);
             });
         });
@@ -445,7 +445,7 @@ export function getRulesForProject(projectId) {
     const rules = loadRules();
     const baseRules = rules.base_rules || [];
     const projectIdStr = String(projectId);
-    const projectRules = rules.project_rules?.[projectIdStr] || [];
+    const projectRules = rules.cases_rules?.[projectIdStr] || [];
 
     const rulesMap = new Map();
 
@@ -490,7 +490,7 @@ export function getAIRulesForProject(projectId) {
     const rules = loadRules();
     const baseRules = rules.base_rules || [];
     const projectIdStr = String(projectId);
-    const projectRules = rules.project_rules?.[projectIdStr] || [];
+    const projectRules = rules.cases_rules?.[projectIdStr] || [];
 
     const rulesMap = new Map();
 
@@ -882,7 +882,7 @@ export function analyzeProjectRules(projectId) {
     const rules = loadRules();
     const baseRules = rules.base_rules || [];
     const projectIdStr = String(projectId);
-    const projectRules = rules.project_rules?.[projectIdStr] || [];
+    const projectRules = rules.cases_rules?.[projectIdStr] || [];
 
     const analysis = {
         projectId,
@@ -983,7 +983,7 @@ export function getAllRulesForDocumentation(projectId) {
     const rules = loadRules();
     const baseRules = rules.base_rules || [];
     const projectIdStr = String(projectId);
-    const projectRules = rules.project_rules?.[projectIdStr] || [];
+    const projectRules = rules.cases_rules?.[projectIdStr] || [];
     const rulesMap = new Map();
     const projectIds = new Set();
 
@@ -1015,7 +1015,7 @@ export function getBaseRulesDocumentation() {
 export function getProjectRulesDocumentation(projectId) {
     const rules = loadRules();
     const projectIdStr = String(projectId);
-    const projectRules = rules.project_rules?.[projectIdStr] || [];
+    const projectRules = rules.cases_rules?.[projectIdStr] || [];
     return projectRules.map(toRuleDoc);
 }
 

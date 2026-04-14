@@ -7,7 +7,6 @@ import knex from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 import compression from 'compression';
 import AdmZip from 'adm-zip';
-import { createHash } from 'crypto';
 
 const CONFLUENCE_BASE_URL = process.env.CONFLUENCE_BASE || 'https://confluence.artsofte.ru';
 
@@ -18,15 +17,16 @@ const CONFLUENCE_BASE_URL = process.env.CONFLUENCE_BASE || 'https://confluence.a
  * @param {Object} opts - Опции
  * @returns {Promise<Object>} - Объединенный результат
  */
-async function processLargeOpenRouterRequest(messages, opts, apiKey) {
+async function processLargeOpenRouterRequest (messages, opts, apiKey)
+{
     const { model, models, temperature, max_tokens, response_format } = opts;
 
-    // Находим самое большое сообщение (обычно user content)
     let largestMessage = null;
     let largestIndex = -1;
     let maxSize = 0;
 
-    messages.forEach((msg, index) => {
+    messages.forEach((msg, index) =>
+    {
         const size = JSON.stringify(msg.content).length;
         if (size > maxSize) {
             maxSize = size;
@@ -36,64 +36,57 @@ async function processLargeOpenRouterRequest(messages, opts, apiKey) {
     });
 
     if (!largestMessage || largestIndex === -1) {
-        throw new Error('Could not find largest message to split');
+        throw new Error('Не удалось найти большое сообщение для разделения');
     }
 
-    console.log(`[callWithBackoff] Splitting message ${largestIndex} (${maxSize} chars) into chunks...`);
+    console.log(`[callWithBackoff] Разделение сообщения ${largestIndex} (${maxSize} симв.) на чанки...`);
 
-    // Разбиваем большое сообщение на чанки
     const content = largestMessage.content;
-    const chunkSize = 80000; // Размер чанка в символах (примерно 20,000 токенов)
+    const chunkSize = 80000;
     const chunks = [];
 
     for (let i = 0; i < content.length; i += chunkSize) {
         chunks.push(content.slice(i, i + chunkSize));
     }
 
-    console.log(`[callWithBackoff] Created ${chunks.length} chunks`);
+    console.log(`[callWithBackoff] Создано ${chunks.length} чанков`);
 
-    // Обрабатываем каждый чанк
     const results = [];
     for (let i = 0; i < chunks.length; i++) {
-        console.log(`[callWithBackoff] Processing chunk ${i + 1}/${chunks.length}...`);
+        console.log(`[callWithBackoff] Обработка чанка ${i + 1}/${chunks.length}...`);
 
-        // Создаем копию сообщений с текущим чанком
         const chunkMessages = [...messages];
         chunkMessages[largestIndex] = {
             ...largestMessage,
             content: chunks[i]
         };
 
-        // Добавляем инструкцию для чанка
         if (chunks.length > 1) {
             chunkMessages[largestIndex].content = `ЧАСТЬ ${i + 1} ИЗ ${chunks.length}:\n\n${chunks[i]}`;
         }
 
         try {
-            // Используем прямую отправку без проверки размера
             const chunkResult = await makeDirectOpenRouterCall(chunkMessages, apiKey, {
                 model,
                 models,
                 temperature,
-                max_tokens: Math.min(max_tokens, 4000), // Ограничиваем размер ответа
+                max_tokens: Math.min(max_tokens, 4000),
                 response_format
             });
 
             results.push(chunkResult.choices?.[0]?.message?.content || '');
-            console.log(`[callWithBackoff] Chunk ${i + 1} processed successfully`);
+            console.log(`[callWithBackoff] Чанк ${i + 1} успешно обработан`);
 
         } catch (error) {
-            console.error(`[callWithBackoff] Chunk ${i + 1} failed:`, error.message);
-            results.push(''); // Добавляем пустую строку для неудачного чанка
+            console.error(`[callWithBackoff] Ошибка в чанке ${i + 1}:`, error.message);
+            results.push('');
         }
     }
 
-    // Объединяем результаты
     const combinedContent = results.filter(r => r.trim()).join('\n\n');
 
-    console.log(`[callWithBackoff] Combined ${results.length} chunks into final result (${combinedContent.length} chars)`);
+    console.log(`[callWithBackoff] Объединено ${results.length} чанков в итоговый результат (${combinedContent.length} симв.)`);
 
-    // Возвращаем результат в формате, ожидаемом вызывающим кодом
     return {
         choices: [{
             message: {
@@ -101,9 +94,9 @@ async function processLargeOpenRouterRequest(messages, opts, apiKey) {
             }
         }],
         usage: {
-            prompt_tokens: Math.ceil(JSON.stringify(messages).length / 4),
-            completion_tokens: Math.ceil(combinedContent.length / 4),
-            total_tokens: Math.ceil((JSON.stringify(messages).length + combinedContent.length) / 4)
+            prompt_tokens: Math.ceil((JSON.stringify(messages || []).length || 0) / 4),
+            completion_tokens: Math.ceil((combinedContent?.length || 0) / 4),
+            total_tokens: Math.ceil(((JSON.stringify(messages || []).length || 0) + (combinedContent?.length || 0)) / 4)
         },
         model: model
     };
@@ -115,7 +108,8 @@ async function processLargeOpenRouterRequest(messages, opts, apiKey) {
  * @param {Object} opts - Опции
  * @returns {Promise<Object>} - Результат API
  */
-async function makeDirectOpenRouterCall(messages, apiKey, opts) {
+async function makeDirectOpenRouterCall (messages, apiKey, opts)
+{
     const { model, models, temperature, max_tokens, response_format } = opts;
 
     const modelQueue = Array.isArray(models) && models.length
@@ -143,109 +137,92 @@ async function makeDirectOpenRouterCall(messages, apiKey, opts) {
 
     if (!response.ok) {
         const errorText = await response.text().catch(() => '');
-        throw new Error(`OpenRouter API error ${response.status}: ${errorText}`);
+        throw new Error(`Ошибка OpenRouter API ${response.status}: ${errorText}`);
     }
 
     return await response.json();
 }
 
-import {
-getAllureDefectById,
-getSharedStepsList,
-getStepsForDefect,
-analyzeBugWithAI,
-getAllureDefects,
-getAllureLaunches,
-getLaunchDefects,
-linkIssueToAllureDefect,
-getAllTestCases,
-getTestCaseOverview,
-getTestCaseExpectedResult,
-getTestCaseLayer,
-getCaseIssue,
-getCaseTags,
-getTestCasePrecondition,
-getTestCaseStatus,
-getTestCaseSteps,
-getTestCaseCustomFields,
-createTestCaseAllure,
-setTestCaseCustomFieldValues,
-updateTestCase,
-deleteTestCase,
-addStepToTestCase,
-addExpectedResultToStep,
-linkIssueToTestCase,
-setTestCaseLayer,
-suggestTestLayers,
-getProjectCustomFieldSchema,
-fetchWithAuth,
-suggestTags,
-createTag,
-addParameterToTestCase,
-createTestCaseExamples,
-generatePairwiseExamples,
-createSharedStep,
-addStepToSharedStep,
-getSharedStepDetails
+import
+{
+    getAllureDefectById,
+    getSharedStepsList,
+    getStepsForDefect,
+    analyzeBugWithAI,
+    getAllureDefects,
+    getAllureLaunches,
+    getLaunchDefects,
+    linkIssueToAllureDefect,
+    getAllTestCases,
+    getTestCaseOverview,
+    getTestCaseExpectedResult,
+    getTestCaseLayer,
+    getCaseIssue,
+    getCaseTags,
+    getTestCasePrecondition,
+    getTestCaseStatus,
+    getTestCaseSteps,
+    getTestCaseCustomFields,
+    createTestCaseAllure,
+    setTestCaseCustomFieldValues,
+    updateTestCase,
+    deleteTestCase,
+    addStepToTestCase,
+    addExpectedResultToStep,
+    linkIssueToTestCase,
+    setTestCaseLayer,
+    suggestTestLayers,
+    getProjectCustomFieldSchema,
+    fetchWithAuth,
+    suggestTags,
+    createTag,
+    addParameterToTestCase,
+    createTestCaseExamples,
+    generatePairwiseExamples,
+    createSharedStep,
+    addStepToSharedStep,
+    getSharedStepDetails,
+    findTestCaseByName
 } from './http-service.mjs';
 import { spinningLoader } from './spinning-loader.mjs';
 import pLimit from 'p-limit';
 import { formatTestCaseAsJson } from './generate-json.mjs';
 import { staticAnalysis } from './static-analysis.mjs';
-import {
-getAllRulesDocumentation,
-getAllRulesForDocumentation,
-getAllProjects,
-getProjectSettings,
-getBaseRulesDocumentation,
-getProjectRulesDocumentation
+import
+{
+    getAllRulesDocumentation,
+    getAllRulesForDocumentation,
+    getAllProjects,
+    getProjectSettings,
+    getBaseRulesDocumentation,
+    getProjectRulesDocumentation
 } from './validation-engine.mjs';
 import { writeValidationRulesMarkdown } from './scripts/generate-validation-rules-md.mjs';
+import { writeTestModelRulesMarkdown } from './scripts/generate-test-model-rules-md.mjs';
 import { exportStructureAllure, exportStructureAllureNocode } from './xmind-parce/export-structure-allure.mjs';
 import { analyzeTestCaseWithAI, analyzeBulkTestCasesWithAI, analyzeRecheckWithAI, extractExpectedResult } from './ai-testcase.mjs';
-import { getLatestIssuesByJiraIssue, getLatestRunInfo, saveAnalysisResults, deleteAnalysisResultsByJiraIssue } from './static-analysis-db.mjs';
+import { analyzeTestModelWithAI, analyzeTestModelRecheckWithAI } from './ai-model.mjs';
+import { staticAnalysisModel } from './static-analysis-model.mjs';
+import
+{
+    getLatestIssuesByJiraIssue,
+    getLatestRunInfo,
+    getLatestModelRunInfo,
+    saveAnalysisResults,
+    saveModelAnalysisResults,
+    getLatestModelIssuesForRecheck,
+    deleteAnalysisResultsByJiraIssue
+} from './static-analysis-db.mjs';
 import { fetchConfluencePage } from './confluenceFetcher.mjs';
 import { analyzeRequirementWithAI } from './analyzeRequirementWithAI.mjs';
 import { Buffer } from 'buffer';
 import multer from 'multer';
 import axios from 'axios';
-import config from './config.json' assert { type: 'json'};
+import config from './config.mjs';
 import http from 'http';
 import https from 'https';
 import { prepareContextWithAI } from './contextRefiner.mjs';
 import { callWithCloudRuFallback, callCloudRuAPI } from './cloudruClient.mjs';
-import {
-    chunkify,
-    linkChunks,
-    RETRIEVAL_CLASSES,
-    ELIGIBILITY_STATUSES
-} from './semanticChunking.mjs';
-import { 
-    initPgVectorStore, 
-    isPgVectorInitialized, 
-    indexChunks, 
-    semanticSearch,
-    multiHopStructuredSearch,
-    deleteChunksByDocId,
-    findChunksByReferences
-} from './pgvectorStore.mjs';
-import {
-    buildEnrichmentQuery,
-    getChunkAuxMetadata as getBehavioralAuxMetadata,
-    isBehavioralRetrievalCandidate,
-    rerankRetrievedChunksByMetadata
-} from './behavioralRetrieval.mjs';
-import { 
-    initNeo4j, isNeo4jAvailable, isNeo4jInitialized, 
-    upsertNodes, upsertRelationships,
-    createChunks, createChunkRelationships,
-    createEntities, createEntityRelationships,
-    getLocalContext, getContextForScenarioSeed, getContextForRequirementFragment,
-    getGraphStats, getAllNodes, getAllRelationships,
-    clearSession 
-} from './graphStore.mjs';
-import { extractEntitiesFromChunks, extractUIFromText, convertUIToEntities } from './entityExtractor.mjs';
-import { refineCodesWithSemanticSearch } from './semanticSearchRefiner.mjs';
 
 import { createContextSourceRegistry, createContextToolset } from './contextToolset.mjs';
 import { runInteractiveLLM } from './interactiveLLM.mjs';
@@ -256,70 +233,44 @@ import RULES from './config/rules/core-rules.js';
 import { validateAndFixTestCases, validateE2ECoverage } from './post-processors/validate-and-fix.js';
 import { aggregateToParametrized } from './post-processors/aggregate-to-parametrized.js';
 import { validateUntilClean } from './agents/post-generation-validator.mjs';
-import {
-savePerfectExamples,
-getPerfectExamples,
-getAllPerfectExamplesByLayer,
-getPerfectExamplesStats,
-deletePerfectExample
+import
+{
+    savePerfectExamples,
+    getPerfectExamples,
+    getAllPerfectExamplesByLayer,
+    getPerfectExamplesStats,
+    deletePerfectExample
 } from './perfect-examples.mjs';
-import {
-getConversationContext,
-createConversationContext,
-addMessageToContext,
-addErrorToContext,
-clearErrors,
-saveStateSnapshot,
-rollbackToSnapshot,
-getStateSnapshots,
-deleteConversationContext
+import
+{
+    getConversationContext,
+    createConversationContext,
+    addMessageToContext,
+    addErrorToContext,
+    clearErrors,
+    saveStateSnapshot,
+    rollbackToSnapshot,
+    getStateSnapshots,
+    deleteConversationContext
 } from './conversation-context.mjs';
-import {
-buildSystemPrompt,
-addPerfectExamplesAsFewShot
+import
+{
+    buildSystemPrompt,
+    addPerfectExamplesAsFewShot
 } from './prompt-composer.mjs';
-import {
-runTestCaseLLMWithContext,
-validateFixedCases
+import
+{
+    runTestCaseLLMWithContext,
+    validateFixedCases
 } from './llm-with-context.mjs';
-import { readFileSync, mkdirSync, writeFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import knexfile from './db/knexfile.js';
 import { compareGeneratedCasesAgainstAllure } from './metrics/test-case-comparison.mjs';
-import { GENERATION_TASK_TYPES, buildGenerationTaskTypeCheckClause } from '../shared/generation-task-types.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-
-function readBooleanEnv(name, fallback = false) {
-    const raw = process.env[name];
-    if (raw == null || raw === '') return fallback;
-    return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
-}
-
-function getDefaultPipelineFlags() {
-    return {
-        ENABLE_CANONICAL_DEFAULT_PIPELINE: readBooleanEnv('ENABLE_CANONICAL_DEFAULT_PIPELINE', true),
-        ENABLE_GRAPH_PIPELINE: readBooleanEnv('ENABLE_GRAPH_PIPELINE', false),
-        ENABLE_CONTEXT_TOOLS: readBooleanEnv('ENABLE_CONTEXT_TOOLS', false),
-        ENABLE_GLOBAL_PREPROCESSORS: readBooleanEnv('ENABLE_GLOBAL_PREPROCESSORS', false),
-        ENABLE_CHUNK_DUMP: readBooleanEnv('ENABLE_CHUNK_DUMP', false),
-        ENABLE_WIDE_MULTIHOP_RETRIEVAL: readBooleanEnv('ENABLE_WIDE_MULTIHOP_RETRIEVAL', false),
-        ENABLE_GLOBAL_SEMANTIC_REFINEMENT: readBooleanEnv('ENABLE_GLOBAL_SEMANTIC_REFINEMENT', false),
-        ENABLE_BEHAVIORAL_RETRIEVAL_V2: readBooleanEnv('', true)
-    };
-}
-
-const DEFAULT_SEGMENT_CONCURRENCY = 3;
-const DEFAULT_SEGMENT_TARGET_TOKENS = 1400;
-const DEFAULT_SEGMENT_HARD_MAX_TOKENS = 2200;
-const DEFAULT_SEGMENT_MAX_CHUNKS = 8;
-const AGGRESSIVE_SEGMENT_TARGET_TOKENS = 1800;
-const AGGRESSIVE_SEGMENT_HARD_MAX_TOKENS = 2600;
-const MAX_SEGMENTS_BEFORE_AGGRESSIVE_REBUILD = 64;
-const MAX_SEGMENT_LLM_ATTEMPTS = 2;
-const TARGETED_REFINEMENT_TOP_K = 6;
 
 const FALLBACK_TEST_MODEL_EXAMPLE = `[
   {
@@ -476,7 +427,8 @@ try {
  * @param {string} fullText - Полный текст требований
  * @returns {Promise<Object>} Глобальный контекст с ролями, сущностями, правилами
  */
-async function extractGlobalContext(fullText) {
+async function extractGlobalContext (fullText)
+{
     if (!fullText || typeof fullText !== 'string' || !fullText.trim()) {
         console.warn('[extractGlobalContext] Пустой текст, возвращаю пустой контекст');
         return {
@@ -596,7 +548,8 @@ ${fullText.substring(0, 300000)}${fullText.length > 100000 ? '\n\n... (текс�
 /**
  * Возвращает пустой глобальный контекст
  */
-function getEmptyGlobalContext() {
+function getEmptyGlobalContext ()
+{
     return {
         roles: [],
         entities: [],
@@ -605,7 +558,8 @@ function getEmptyGlobalContext() {
     };
 }
 
-function buildModelSystemPrompt(globalContext = null) {
+function buildModelSystemPrompt (globalContext = null)
+{
     const globalContextSection = globalContext && (
         globalContext.roles.length > 0 ||
         globalContext.entities.length > 0 ||
@@ -669,19 +623,14 @@ E2E тесты будут сгенерированы ОТДЕЛЬНО после
    - Если в дополнительных логических ограничениях (ниже в промпте) встречаются негативные примеры (таймаут, пустой ответ и т.п.), НО в исходном тексте требований этих случаев нет, НЕ добавляй такие негативные сценарии в модель.
 
 2. 🎯 ГРАНУЛЯРНОСТЬ SCENARIO:
-   - Один Scenario = ОДНО конкретное и выполнимое действие пользователя.
-   - Scenario должен описывать, что именно делает пользователь: куда переходит, на что нажимает, что вводит, что выбирает, какой файл загружает.
-   - Scenario НЕ может описывать действие системы, состояние интерфейса, внутреннюю логику или требование к реализации.
-   - Если требование описывает ожидаемое состояние интерфейса или системы, это должен быть Code, а не Scenario.
-   - Для проверки такого требования Scenario должен описывать пользовательский путь к экрану или элементу, где это состояние можно наблюдать.
-   - Запрещены абстрактные и невыполнимые формулировки: "Выполнить пользовательское действие", "Проверить состояние чек-бокса", "Просмотреть данные", "Удалить старый текст рекомендаций".
-   - Пиши конкретно: "Открыть страницу рекомендаций", "Нажать кнопку 'Сохранить'", "Ввести ИНН в поле 'ИНН'", "Выбрать чек-бокс 'Без бумаги'".
-   - ПЛОХО: Scenario "Удалить старый текст рекомендаций".
-   - ХОРОШО: Scenario "Открыть страницу рекомендаций" + Code "Старый текст рекомендаций не отображается".
+   - Один Scenario = ОДНО действие пользователя (Нажать, Ввести) ИЛИ ОДНО значимое действие системы (Рассчитать, Загрузить, Проверить).
    - НЕ объединяй действия! "Ввести данные и нажать отправить" — это ДВА сценария (или сценарий заполнения + сценарий отправки в разных Story).
    - Каждый вариант исхода (Успех, Ошибка, Отмена) — это ОТДЕЛЬНЫЙ Scenario.
    - Если в требованиях упомянута кнопка "Отмена", "Назад" или возможность "прервать/отменить" процесс — это ОБЯЗАТЕЛЬНО отдельный Scenario! Не забывай "минорные" действия.
    - НЕЛЬЗЯ в одном Scenario описывать и успешный ответ, и таймаут, и пустой/ошибочный ответ одновременно. Если в требованиях есть несколько исходов для одного действия — каждый исход оформи отдельным Scenario.
+   - System Reactions (Реакции системы): Если ввод данных вызывает сложные вычисления на бэкенде (расчет цены, ставки, фильтрация), создай ОТДЕЛЬНЫЙ сценарий для проверки этого расчета.
+Пример: Scenario "Рассчитать ставку и платеж (валидные данные)".
+   - State Verification (Проверка состояния): Если требование описывает поведение элемента без явного действия пользователя (например, "Чекбокс заблокирован при условии X"), создай сценарий вида: "Проверить состояние [Элемента] (Условие X)". Это тоже Scenario! Никогда не оставляй Story без сценариев.
 3. 🛠️ СТРУКТУРА CODE (РЕАКЦИИ):
    - Code.type = "frontend" (UI изменения, отправка запросов, переходы).
    - Code.type = "backend" (Ответы API, логика сервера, записи в БД).
@@ -692,16 +641,17 @@ E2E тесты будут сгенерированы ОТДЕЛЬНО после
    - Если есть условия (например, "доступно только для юрлиц"), создай Scenario для "доступно" и Scenario для "недоступно".
    - В Scenario "недоступно" Code должен описывать отсутствие элемента или его неактивность.
 5. 🔄 DEDUPLICATION BY CODES (Дедупликация по реакциям):
-   Если внутри одного Scenario один и тот же Code повторяется несколько раз,
-   оставь только ОДИН экземпляр этого Code.
+   Если два или более Scenario имеют ИДЕНТИЧНЫЕ Codes (одинаковое поведение системы),
+   объедини их в ОДИН Scenario с обобщённым названием.
 
-   ❌ ПЛОХО (дубли внутри одного Scenario):
-   Scenario: "Ввести недопустимую сумму" -> Codes: ["Поле красное", "Кнопка блокируется", "Поле красное"]
+   ❌ ПЛОХО (дубли по Codes):
+   Scenario 1: "Ввести сумму меньше 50 000 ₽" -> Codes: ["Поле красное", "Кнопка блокируется"]
+   Scenario 2: "Ввести сумму больше 5 000 000 ₽" -> Codes: ["Поле красное", "Кнопка блокируется"]
 
-   ✅ ХОРОШО:
-   Scenario: "Ввести недопустимую сумму" -> Codes: ["Поле красное", "Кнопка блокируется"]
+   ✅ ХОРОШО (объединено):
+   Scenario: "Ввести сумму вне допустимого диапазона" -> Codes: ["Поле красное", "Кнопка блокируется"]
 
-   ПРАВИЛО: Дубли Code запрещены не только внутри одного Scenario, но и на уровне Story. Если две Story приводят к одному и тому же набору Scenario и Code, оставь только одну Story. Не создавай разные Story с одинаковой проверкой под разными названиями.
+   ПРАВИЛО: Если Codes идентичны — Scenario ОДИН. Детализация условий (меньше/больше) — на уровне тест-кейсов через параметризацию.
 6. 🚫 ЗАПРЕТ НА СМЕШИВАНИЕ ИСХОДОВ (ATOMICITY RULE):
    - Строго соблюдай принцип атомарности: Один Scenario = Один конкретный исход.
    - ЗАПРЕЩЕНО описывать в одном Scenario и успешное выполнение, и ошибку/недоступность.
@@ -813,7 +763,8 @@ Scenario 2: "Нажать кнопку Отправить (Ошибка вали
 }
 
 
-function buildRefineModelSystemPrompt() {
+function buildRefineModelSystemPrompt ()
+{
     return `
 Твоя роль: Code Reviewer & JSON Patcher.
 Твоя задача: Внести ТОЧЕЧНЫЕ изменения в существующую тестовую модель (JSON) на основе Code Review замечаний.
@@ -849,7 +800,8 @@ function buildRefineModelSystemPrompt() {
 }
 
 
-function buildRefineModelUserPrompt({ oldModel, reviewNotes, issues, requirements }) {
+function buildRefineModelUserPrompt ({ oldModel, reviewNotes, issues, requirements })
+{
     const issuesList = issues && issues.length > 0
         ? issues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')
         : 'Не указаны';
@@ -905,16 +857,15 @@ ${requirementsPreview}
 `.trim();
 }
 
-function buildModelUserPrompt({
+function buildModelUserPrompt ({
     reqChunk,
     chunkIdx,
     totalChunks,
     previousContext,
     logicSection,
-    interactiveInstructionBlock,
-    ragContext,
-    graphContext
-}) {
+    interactiveInstructionBlock
+})
+{
     const chunkNotice = totalChunks > 1
         ? `ВАЖНО: Это ЧАСТЬ ${chunkIdx + 1} из ${totalChunks} большого документа.`
         : 'Это полный текст документа.';
@@ -925,7 +876,8 @@ function buildModelUserPrompt({
     Уже сгенерировано: ${previousContext.totalScenarios} сценариев.
 
     Features:
-    ${previousContext.features.map(f => {
+    ${previousContext.features.map(f =>
+        {
             const storySummary = f.stories.map(s =>
                 `  - Story "${s.text}" (${s.scenarioCount} сценариев): [${s.scenarioSummaries.map(sc => sc.text).join('; ')}]`
             ).join('\n');
@@ -941,7 +893,6 @@ function buildModelUserPrompt({
     `
         : "";
 
-    const graphSection = formatGraphContextForPrompt(graphContext);
 
     return `
 ${chunkNotice}
@@ -966,8 +917,6 @@ ${reqChunk}
 ---
 
 ${logicSection ? `ДОПОЛНИТЕЛЬНЫЕ ЛОГИЧЕСКИЕ ОГРАНИЧЕНИЯ:\n${logicSection}\n` : ''}
-
-${ragContext ? `📚 КОНТЕКСТ ИЗ ДОКУМЕНТАЦИИ (RAG):\n${ragContext}\n` : ''}
 ⚠️ ИНСТРУКЦИЯ ПО УСЛОВИЯМ:
 Если в требованиях или логике есть развилка (например, "доступно только для бизнеса"), ты обязан создать ОТДЕЛЬНЫЕ сценарии для каждой ветки:
 1. Сценарий для позитивного кейса (условие выполнено).
@@ -987,70 +936,15 @@ ${ragContext ? `📚 КОНТЕКСТ ИЗ ДОКУМЕНТАЦИИ (RAG):\n${ra
   }
 ]
 
-${graphSection ? `GRAPH CONTEXT (NEO4J):\n${graphSection}\n` : ''}
 ${interactiveInstructionBlock || ''}
 `.trim();
 }
 
 /**
- * Форматирует графовый контекст для включения в промпт LLM.
- * @param {Object} graphContext - Контекст из Neo4j графа
- * @returns {string} Отформатированная строка для промпта
- */
-function formatGraphContextForPrompt(graphContext) {
-    if (!graphContext) return '';
-    
-    const { apiEndpoints, uiElements, businessRules, externalRefs, sessionId } = graphContext;
-    
-    let section = '';
-    
-    if (apiEndpoints && apiEndpoints.length > 0) {
-        section += '\n📡 API-ЭНДПОИНТЫ:\n';
-        apiEndpoints.forEach((ep, i) => {
-            section += `  ${i + 1}. ${ep.name || 'Неизвестно'}\n`;
-            if (ep.description) section += `     Описание: ${ep.description}\n`;
-            if (ep.properties?.method) section += `     Метод: ${ep.properties.method}\n`;
-            if (ep.properties?.url) section += `     URL: ${ep.properties.url}\n`;
-        });
-    }
-    
-    if (uiElements && uiElements.length > 0) {
-        section += '\n🖱️ UI-ЭЛЕМЕНТЫ:\n';
-        uiElements.forEach((el, i) => {
-            section += `  ${i + 1}. ${el.name || 'Неизвестно'}\n`;
-            if (el.relationship) section += `     Связь: ${el.relationship}\n`;
-            if (el.properties?.elementType) section += `     Тип: ${el.properties.elementType}\n`;
-            if (el.properties?.action) section += `     Действие: ${el.properties.action}\n`;
-        });
-    }
-    
-    if (businessRules && businessRules.length > 0) {
-        section += '\n📋 БИЗНЕС-ПРАВИЛА:\n';
-        businessRules.forEach((rule, i) => {
-            section += `  ${i + 1}. ${rule.name || 'Неизвестно'}\n`;
-            if (rule.description) section += `     ${rule.description}\n`;
-        });
-    }
-    
-    if (externalRefs && externalRefs.length > 0) {
-        section += '\n🔗 ВНЕШНИЕ ССЫЛКИ:\n';
-        externalRefs.forEach((ref, i) => {
-            section += `  ${i + 1}. ${ref.name || 'Неизвестно'}\n`;
-            if (ref.properties?.url) section += `     URL: ${ref.properties.url}\n`;
-        });
-    }
-    
-    if (!section) {
-        return '📊 Граф связей: сущности не извлечены';
-    }
-    
-    return section.trim();
-}
-
-/**
  * Удаляет дубли Scenarios и Stories после слияния всех чанков.
  */
-function deduplicateModel(model) {
+function deduplicateModel (model)
+{
     const deduped = [];
 
     for (const feature of model) {
@@ -1089,7 +983,6 @@ function deduplicateModel(model) {
             dedupedFeature.stories.push(dedupedStory);
         }
 
-        deduplicateStoriesInFeature(dedupedFeature);
         deduped.push(dedupedFeature);
     }
 
@@ -1247,6 +1140,7 @@ const TEST_CASE_RESPONSE_FORMAT_FIX = {
 };
 
 // Добавляем gzip сжатие для всех ответов
+/*
 app.use(compression({
     threshold: 1024, // Сжимать файлы больше 1KB
     level: 6, // Уровень сжатия (1-9, 6 оптимальный)
@@ -1259,6 +1153,7 @@ app.use(compression({
         return false;
     }
 }));
+*/
 
 const db = knex({
     client: 'pg',
@@ -1268,31 +1163,43 @@ const db = knex({
         max: 50
     }
 });
+
+// Автоматическая проверка и обновление схемы базы данных
+(async () => {
+    try {
+        console.log('[Server] 🔍 Проверка таблицы generation_tasks...');
+        const hasTable = await db.schema.hasTable('generation_tasks');
+        if (hasTable) {
+            try {
+                const constraintCheck = await db.raw(`
+                    SELECT constraint_name 
+                    FROM information_schema.table_constraints 
+                    WHERE table_name = 'generation_tasks' 
+                    AND constraint_name = 'generation_tasks_type_check'
+                `);
+
+                if (constraintCheck.rows.length > 0) {
+                    console.log('[Server] 🔧 Обновляем CHECK constraint для поддержки всех типов задач...');
+                    await db.raw('ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_type_check');
+                    await db.raw(`
+                        ALTER TABLE generation_tasks 
+                        ADD CONSTRAINT generation_tasks_type_check 
+                        CHECK (type IN ('test_cases', 'test_model', 'bdd_tests', 'cleanup_duplicates', 'qa_agent_review', 'test_impact_analysis'))
+                    `);
+                    console.log('[Server] ✅ CHECK constraint успешно обновлен');
+                }
+            } catch (err) {
+                console.warn('[Server] ⚠️ Не удалось обновить constraint (возможно, база в процессе миграции):', err.message);
+            }
+        }
+    } catch (error) {
+        console.error('[Server] ❌ Ошибка при инициализации БД:', error.message);
+    }
+})();
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 50 * 1024 * 1024, files: 20 }
 });
-
-async function ensureGenerationTaskTypeConstraint() {
-    try {
-        const tableExists = await db.schema.hasTable('generation_tasks');
-        if (!tableExists) {
-            console.warn('[startup] generation_tasks table not found, skipping type constraint sync');
-            return;
-        }
-
-        await db.raw('ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_type_check');
-        await db.raw(`
-            ALTER TABLE generation_tasks
-            ADD CONSTRAINT generation_tasks_type_check
-            ${buildGenerationTaskTypeCheckClause()}
-        `);
-
-        console.log(`[startup] ✅ generation_tasks_type_check synced: ${GENERATION_TASK_TYPES.join(', ')}`);
-    } catch (error) {
-        console.warn('[startup] ⚠️ Failed to sync generation_tasks_type_check:', error.message);
-    }
-}
 
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'https://test-inspector.abanking.ru')
@@ -1301,15 +1208,7 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'https://test-inspector.a
     .filter(Boolean);
 
 const corsOptions = {
-    origin(origin, callback) {
-        if (!origin) return callback(null, true);
-
-        if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
-            return callback(null, true);
-        }
-
-        return callback(new Error('Не разрешено конфигурацией CORS'));
-    },
+    origin: true, // Разрешаем всё для отладки
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-OpenRouter-Key', 'X-Atlassian-Token'],
     credentials: true,
@@ -1320,95 +1219,9 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '200mb' }));
 app.options('*', cors(corsOptions));
 const limit = pLimit(100);
-const confluenceChunkIndexCache = new Map();
 
-function normalizeContentForHash(content) {
-    return String(content || '')
-        .replace(/\r\n/g, '\n')
-        .trim();
-}
-
-function computeContentHash(content) {
-    return createHash('sha256')
-        .update(normalizeContentForHash(content))
-        .digest('hex');
-}
-
-async function indexConfluencePageChunksWithCache({
-    docId,
-    content,
-    title,
-    sourceType,
-    apiKey,
-    precomputedChunks = null
-}) {
-    const normalizedContent = normalizeContentForHash(content);
-    if (!normalizedContent) {
-        return {
-            processed: 0,
-            chunkCount: 0,
-            cacheHit: false
-        };
-    }
-
-    const contentHash = computeContentHash(normalizedContent);
-    const cacheKey = `${String(sourceType || 'linked')}:${String(docId)}`;
-    const cached = confluenceChunkIndexCache.get(cacheKey);
-
-    if (cached?.contentHash === contentHash) {
-        console.log(
-            `[generate-test-model-async] ♻️ Пропускаю переиндексацию pageId=${docId}: контент не изменился (${cached.chunkCount || 0} chunk(s) в кэше)`
-        );
-
-        return {
-            processed: cached.chunkCount || 0,
-            chunkCount: cached.chunkCount || 0,
-            cacheHit: true
-        };
-    }
-
-    const chunks = Array.isArray(precomputedChunks) && precomputedChunks.length > 0
-        ? precomputedChunks
-        : await chunkify(normalizedContent, {
-            pageId: docId,
-            title
-        });
-
-    const indexableChunks = chunks.filter(chunk => !(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval));
-
-    for (const chunk of indexableChunks) {
-        chunk.source_type = sourceType;
-        chunk.authority = sourceType === 'main' ? 1.0 : (sourceType === 'context' ? 0.85 : 0.65);
-        chunk.metadata = {
-            ...(chunk.metadata || {}),
-            source_scope: sourceType
-        };
-    }
-
-    await deleteChunksByDocId(String(docId));
-    const indexResult = await indexChunks(indexableChunks, apiKey);
-
-    if ((indexResult.errors || 0) === 0 && indexResult.processed === indexableChunks.length) {
-        confluenceChunkIndexCache.set(cacheKey, {
-            contentHash,
-            chunkCount: indexableChunks.length,
-            updatedAt: Date.now()
-        });
-    } else {
-        console.warn(
-            `[generate-test-model-async] ⚠️ Не сохраняю индексный кэш для pageId=${docId}: ` +
-            `индексация неполная (${indexResult.processed}/${indexableChunks.length}, errors=${indexResult.errors || 0})`
-        );
-    }
-
-    return {
-        ...indexResult,
-        chunkCount: indexableChunks.length,
-        cacheHit: false
-    };
-}
-
-app.get('/health/db', async (req, res) => {
+app.get('/health/db', async (req, res) =>
+{
     try {
         const { default: pool } = await import('./db/pool.js');
         await pool.raw('SELECT 1');
@@ -1425,7 +1238,8 @@ app.get('/health/db', async (req, res) => {
 registerDebugRoutes(app);
 
 // Отправка событий в google-таблицу
-app.post('/api/analytics/event', async (req, res) => {
+app.post('/api/analytics/event', async (req, res) =>
+{
     const webhookUrl = config.analyticsWebhookUrl;
     if (!webhookUrl) {
         return res.status(200).json({ ok: true });
@@ -1464,7 +1278,7 @@ app.post('/api/analytics/event', async (req, res) => {
 
 // Универсальный рефайнер требований: подтягивает Confluence, сжимает глоссарий/контекст через prepareContextWithAI,
 // возвращает совместимый интерфейс: { refinedArray, refinedText }
-async function contextRefiner({
+async function contextRefiner ({
     requirements,            // string | string[] | undefined
     text,                    // string | undefined
     pageId,                  // string|number | undefined
@@ -1477,8 +1291,10 @@ async function contextRefiner({
     contextPages,            // string[] | undefined - дополнительные страницы контекста
     maxGlossary = 40,        // можно прокидывать из тела запроса (увеличено с 25)
     maxContext = 50         // можно прокидывать из тела запроса (увеличено с 16)
-}) {
-    const normIds = (v) => {
+})
+{
+    const normIds = (v) =>
+    {
         if (!v) return [];
         if (Array.isArray(v)) return v.map(String).filter(Boolean);
         return String(v).split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
@@ -1549,17 +1365,12 @@ async function contextRefiner({
         console.log(`[contextRefiner] Добавлено ${contextPages.length} contextPages, finalContextText.length=${finalContextText.length}`);
     }
 
-    const preferredRefinerModel = Array.isArray(arguments[0]?.models) && arguments[0].models.length > 0
-        ? arguments[0].models[0]
-        : undefined;
-
     const { requirements_md, mini_glossary_md, context_md } = await prepareContextWithAI({
         requirements: reqJoined || '',
         glossary: glossaryText || '',
         context: finalContextText || '',
         contextHint: contextInstruction || '—',
         contextPages: contextPages || [], // Передаем contextPages для joinContextPages
-        model: preferredRefinerModel,
         maxGlossary,
         maxContext
     });
@@ -1582,9 +1393,12 @@ async function contextRefiner({
 
 
 
+
 // ✅ ВОССТАНОВЛЕНО: функция normalizeModelStructure критически важна для стабильной структуры
-function normalizeModelStructure(model) {
-    const walk = (arr, depth = 1) => (arr || []).map(item => {
+function normalizeModelStructure (model)
+{
+    const walk = (arr, depth = 1) => (arr || []).map(item =>
+    {
         const out = { ...item };
         if (depth === 1 && Array.isArray(out.stories)) {
             out.stories = walk(out.stories, 2);
@@ -1603,8 +1417,10 @@ function normalizeModelStructure(model) {
     });
 
     // Merge nodes with identical text on the same level (Feature→Story→Scenario→Code)
-    const dedupeByText = (features) => {
-        const dedupedFeatures = (features || []).map(feature => {
+    const dedupeByText = (features) =>
+    {
+        const dedupedFeatures = (features || []).map(feature =>
+        {
             const stories = feature.stories || [];
             const storyMap = new Map();
             for (const st of stories) {
@@ -1619,7 +1435,8 @@ function normalizeModelStructure(model) {
             }
 
             // dedupe scenarios inside each story by text
-            const mergedStories = [...storyMap.values()].map(st => {
+            const mergedStories = [...storyMap.values()].map(st =>
+            {
                 const scenMap = new Map();
                 for (const sc of (st.scenarios || [])) {
                     const k = String(sc.text || '').trim();
@@ -1632,7 +1449,8 @@ function normalizeModelStructure(model) {
                 }
 
                 // dedupe codes by text
-                const mergedScenarios = [...scenMap.values()].map(sc => {
+                const mergedScenarios = [...scenMap.values()].map(sc =>
+                {
                     const codeMap = new Map();
                     const removedCodes = [];
                     for (const cd of (sc.codes || [])) {
@@ -1654,7 +1472,8 @@ function normalizeModelStructure(model) {
                     }
                     if (removedCodes.length > 0) {
                         console.warn(`[normalizeModelStructure] ⚠️ Удалено ${removedCodes.length} дубликат(ов) Code в Scenario "${sc.text}":`);
-                        removedCodes.forEach(removed => {
+                        removedCodes.forEach(removed =>
+                        {
                             console.warn(`  - Удален Code: id=${removed.removedId}, type=${removed.removedType || 'N/A'}, text="${removed.text}"`);
                             console.warn(`    Оставлен Code: id=${removed.keptId}, type=${removed.keptType || 'N/A'}`);
                         });
@@ -1789,119 +1608,46 @@ const SYSTEM_ACTION_REGEX = new RegExp(
     'i'
 );
 
-const GENERIC_SCENARIO_START_PATTERNS = [
-    /^выполнить\b/i,
-    /^проверить\b/i,
-    /^просмотреть\b/i,
-    /^прочитать\b/i,
-    /^настроить\b/i
-];
-
-const NON_USER_EXECUTABLE_SCENARIO_PATTERNS = [
-    /\bпользовательск(?:ое|ие)?\s+действ/i,
-    /\bдействи[ея]\s+пользователя\b/i,
-    /\bне\s+долж(?:ен|на|но|ны)\b/i,
-    /\bдолж(?:ен|на|но|ны)\b/i,
-    /\b(отображается|показывается|скрывается|становится|подсвечивается|рассчитывается|сохраняется|создается|удаляется|обновляется|загружается|вызывается|передается)\b/i,
-    /\b(состояни[ея]|видимост[ьи]|доступност[ьи]|недоступност[ьи]|обязательност[ьи]|необязательност[ьи]|блокировк[аи]|подсветк[аи]|валидац(?:ия|ии)|реакци[ия]|логик[аи]|расчет[а]?|api|endpoint)\b/i,
-    /\bстар\w+\s+текст\w*/i,
-    /\bтекст\w*\s+рекомендац\w*/i
-];
-
-const GENERIC_SCENARIO_TEXT_PATTERNS = [
-    /^(нажать|кликнуть)\s+(кнопк\w*|ссылк\w*|элемент\w*)\s*$/i,
-    /^(открыть|перейти)\s+(страниц\w*|раздел\w*|экран\w*|форм\w*)\s*$/i,
-    /^(ввести|заполнить|изменить|выбрать|установить|снять|создать|добавить|удалить|обновить|сохранить|отправить)\s+(данн\w*|информаци\w*|значени\w*|текст\w*|поле|форм\w*|элемент\w*|запись|объект\w*|параметр\w*|действи\w*|операци\w*)\s*$/i
-];
-
-function analyzeScenarioActionability(text) {
-    const originalText = String(text || '').trim();
-    const normalizedText = originalText
-        .replace(/^\s*\[\s*step\s*\d+\s*]\s*/i, '')
-        .replace(/^\s*\d+\s*[\.)]\s*/i, '')
-        .trim();
-
-    if (!normalizedText) {
-        return {
-            valid: false,
-            reason: 'пустой текст Scenario',
-            normalizedText: ''
-        };
-    }
-
-    if (/^(POST|GET|PUT|DELETE|PATCH)\b/i.test(normalizedText) || /^система\b/i.test(normalizedText)) {
-        return {
-            valid: false,
-            reason: 'Scenario описывает действие системы, а не пользователя',
-            normalizedText
-        };
-    }
-
-    if (!USER_ACTION_REGEX.test(normalizedText)) {
-        return {
-            valid: false,
-            reason: 'Scenario не начинается с пользовательского действия',
-            normalizedText
-        };
-    }
-
-    if (GENERIC_SCENARIO_START_PATTERNS.some(pattern => pattern.test(normalizedText))) {
-        return {
-            valid: false,
-            reason: 'Scenario начинается с абстрактного глагола без конкретного пользовательского шага',
-            normalizedText
-        };
-    }
-
-    if (NON_USER_EXECUTABLE_SCENARIO_PATTERNS.some(pattern => pattern.test(normalizedText))) {
-        return {
-            valid: false,
-            reason: 'Scenario описывает требование к фиче или состояние системы вместо действия пользователя',
-            normalizedText
-        };
-    }
-
-    if (GENERIC_SCENARIO_TEXT_PATTERNS.some(pattern => pattern.test(normalizedText))) {
-        return {
-            valid: false,
-            reason: 'Scenario слишком общий и не указывает конкретную точку взаимодействия',
-            normalizedText
-        };
-    }
-
-    if (normalizedText.split(/\s+/).filter(Boolean).length < 2) {
-        return {
-            valid: false,
-            reason: 'Scenario не содержит конкретного объекта действия',
-            normalizedText
-        };
-    }
-
-    return {
-        valid: true,
-        reason: null,
-        normalizedText: normalizedText.charAt(0).toUpperCase() + normalizedText.slice(1)
-    };
-}
-
-function generatePrefixedId(prefix) {
+function generatePrefixedId (prefix)
+{
     return `${prefix}-${uuidv4()}`;
 }
 
-function ensurePrefixedId(originalId, prefix) {
+function ensurePrefixedId (originalId, prefix)
+{
     if (typeof originalId === 'string' && originalId.startsWith(prefix)) {
         return originalId;
     }
     return generatePrefixedId(prefix);
 }
 
-function ensureScenarioStepText(text, index) {
-    const analysis = analyzeScenarioActionability(text);
-    return analysis.valid ? analysis.normalizedText : '';
+function ensureScenarioStepText (text, index)
+{
+    let trimmed = String(text || '').trim();
+    if (!trimmed) {
+        return 'Выполнить пользовательское действие';
+    }
+
+    // Убираем любые старые префиксы вида [step N]
+    trimmed = trimmed.replace(/^\s*\[\s*step\s*\d+\s*]\s*/i, '').trim();
+
+    // Если фраза начинается с "Система ..." — это реакция, превратим её в действие
+    if (/^система\s+/i.test(trimmed)) {
+        const withoutSystem = trimmed.replace(/^система\s+/i, '');
+        trimmed = `Выполнить ${withoutSystem}`;
+    }
+
+    if (USER_ACTION_REGEX.test(trimmed)) {
+        return trimmed;
+    }
+
+    const lower = trimmed.charAt(0).toLowerCase() + trimmed.slice(1);
+    return `Выполнить ${lower}`;
 }
 
 // ✅ Функция для определения типа Code (backend/frontend/integration)
-function detectCodeType(codeText) {
+function detectCodeType (codeText)
+{
     const text = String(codeText || '').trim().toLowerCase();
 
     // Backend паттерны
@@ -1969,7 +1715,8 @@ function detectCodeType(codeText) {
  * Исправляет двойное экранирование placeholder'ов {{}} → {{}}
  * Убирает все варианты экранирования: \\{\\{, \{\{, {{ → {{
  */
-function fixPlaceholderEscaping(text) {
+function fixPlaceholderEscaping (text)
+{
     if (typeof text !== 'string') return text;
     // Исправляем все варианты двойного экранирования:
     // \\{\\{ → {{ (двойной обратный слэш + фигурные скобки)
@@ -1982,7 +1729,8 @@ function fixPlaceholderEscaping(text) {
         .replace(/\\\}\}/g, '}}');     // \}\} → }}
 }
 
-function normalizeCodeText(rawText) {
+function normalizeCodeText (rawText)
+{
     let text = String(rawText || '').trim();
     if (!text) return '';
 
@@ -2051,20 +1799,79 @@ function normalizeCodeText(rawText) {
     return text;
 }
 
-function repairStoryStructure(story) {
+function convertScenarioToCodes (scenario, fallbackRequirement)
+{
+    const codes = [];
+    const scenarioText = String(scenario?.text || '').trim();
+    const scenarioRequirement = scenario?.requirement || fallbackRequirement;
+
+    if (scenarioText) {
+        const normalizedScenarioCode = normalizeCodeText(scenarioText);
+        if (normalizedScenarioCode) {
+            codes.push({
+                id: scenario?.id || uuidv4(),
+                text: normalizedScenarioCode,
+                requirement: scenarioRequirement
+            });
+        }
+    }
+
+    const originalCodes = Array.isArray(scenario?.codes) ? scenario.codes : [];
+    for (const code of originalCodes) {
+        const normalized = normalizeCodeText(code?.text);
+        if (!normalized) continue;
+        codes.push({
+            ...code,
+            id: code?.id || uuidv4(),
+            text: normalized,
+            requirement: code?.requirement || scenarioRequirement
+        });
+    }
+
+    return codes;
+}
+
+function repairStoryStructure (story)
+{
+    let stepCounter = 0;
     const repairedScenarios = [];
-    const deferredCodes = [];
     let lastScenario = null;
 
-    const appendScenario = (scenario) => {
+    const appendScenario = (scenario) =>
+    {
         repairedScenarios.push(scenario);
         lastScenario = scenario;
     };
 
+    const ensureLastScenario = (sourceScenario) =>
+    {
+        if (lastScenario) return lastScenario;
+        const synthetic = {
+            id: sourceScenario?.id || uuidv4(),
+            text: ensureScenarioStepText('Выполнить пользовательское действие', ++stepCounter),
+            requirement: sourceScenario?.requirement || story?.requirement,
+            codes: []
+        };
+        appendScenario(synthetic);
+        return synthetic;
+    };
+
     for (const originalScenario of (story?.scenarios || [])) {
         const scenarioText = String(originalScenario?.text || '').trim();
-        const scenarioAnalysis = analyzeScenarioActionability(scenarioText);
+        const isUserAction = scenarioText && USER_ACTION_REGEX.test(scenarioText);
+
+        if (!isUserAction) {
+            const targetScenario = ensureLastScenario(originalScenario);
+            const convertedCodes = convertScenarioToCodes(originalScenario, targetScenario.requirement || story?.requirement);
+            if (convertedCodes.length) {
+                targetScenario.codes = [...(targetScenario.codes || []), ...convertedCodes];
+            }
+            continue;
+        }
+
+        const scenarioId = ensurePrefixedId(originalScenario?.id, 'sc');
         const scenarioRequirement = originalScenario?.requirement || story?.requirement;
+        const normalizedScenarioText = ensureScenarioStepText(scenarioText, ++stepCounter);
 
         const normalizedCodes = [];
         for (const code of (originalScenario?.codes || [])) {
@@ -2078,35 +1885,24 @@ function repairStoryStructure(story) {
             });
         }
 
-        if (!scenarioAnalysis.valid) {
-            if (normalizedCodes.length > 0) {
-                if (lastScenario) {
-                    lastScenario.codes = [...(lastScenario.codes || []), ...normalizedCodes];
-                } else {
-                    deferredCodes.push(...normalizedCodes);
-                }
-            }
-            continue;
-        }
-
-        const scenarioId = ensurePrefixedId(originalScenario?.id, 'sc');
         const scenarioClone = {
             ...originalScenario,
             id: scenarioId,
-            text: scenarioAnalysis.normalizedText,
+            text: normalizedScenarioText,
             requirement: scenarioRequirement,
             codes: normalizedCodes
         };
 
-        if (deferredCodes.length > 0) {
-            scenarioClone.codes = [...deferredCodes.splice(0), ...(scenarioClone.codes || [])];
-        }
-
         appendScenario(scenarioClone);
     }
 
-    if (repairedScenarios.length > 0 && deferredCodes.length > 0) {
-        repairedScenarios[0].codes = [...deferredCodes, ...(repairedScenarios[0].codes || [])];
+    if (!repairedScenarios.length) {
+        repairedScenarios.push({
+            id: ensurePrefixedId(null, 'sc'),
+            text: `Выполнить пользовательское действие`,
+            requirement: story?.requirement,
+            codes: []
+        });
     }
 
     return {
@@ -2115,11 +1911,14 @@ function repairStoryStructure(story) {
     };
 }
 
-function repairModelStructure(model) {
-    return (model || []).map(feature => {
+function repairModelStructure (model)
+{
+    return (model || []).map(feature =>
+    {
         return {
             ...feature,
-            stories: (feature?.stories || []).map(story => {
+            stories: (feature?.stories || []).map(story =>
+            {
                 return {
                     ...story,
                     ...repairStoryStructure(story)
@@ -2129,85 +1928,23 @@ function repairModelStructure(model) {
     });
 }
 
-function isNonCriticalStoryIssue(issue) {
-    return typeof issue === 'string' &&
-        issue.includes('Story') &&
-        (issue.includes('техническую формулировку') || issue.includes('описанием контрола'));
-}
-
-function isRepairableStoryStructureIssue(issue) {
-    const text = String(issue || '');
-    return text.includes('Story') && (
-        text.includes('техническую формулировку') ||
-        text.includes('описанием контрола')
-    );
-}
-
-function buildStructureIssueProfile(issues) {
-    const list = Array.isArray(issues) ? issues : [];
-
-    return {
-        total: list.length,
-        critical: list.filter(issue => !isNonCriticalStoryIssue(issue)).length,
-        scenario: list.filter(issue => String(issue || '').includes('Scenario')).length,
-        code: list.filter(issue => String(issue || '').includes('Code')).length,
-        feature: list.filter(issue => String(issue || '').includes('Feature')).length,
-        story: list.filter(issue => String(issue || '').includes('Story')).length
-    };
-}
-
-function isIssueProfileBetter(candidateIssues, baselineIssues) {
-    const candidate = buildStructureIssueProfile(candidateIssues);
-    const baseline = buildStructureIssueProfile(baselineIssues);
-
-    if (candidate.critical !== baseline.critical) {
-        return candidate.critical < baseline.critical;
-    }
-
-    if (candidate.scenario !== baseline.scenario) {
-        return candidate.scenario < baseline.scenario;
-    }
-
-    if (candidate.code !== baseline.code) {
-        return candidate.code < baseline.code;
-    }
-
-    if (candidate.feature !== baseline.feature) {
-        return candidate.feature < baseline.feature;
-    }
-
-    if (candidate.total !== baseline.total) {
-        return candidate.total < baseline.total;
-    }
-
-    return false;
-}
-
-function sanitizeModelForValidation(model) {
-    let nextModel = repairModelStructure(model);
-    nextModel = validateAndCleanModel(nextModel);
-
-    const pruneResult = pruneEmptyModelBranches(nextModel);
-    nextModel = pruneResult.model;
-
-    return {
-        model: validateAndCleanModel(nextModel),
-        pruneReport: pruneResult.report
-    };
-}
-
 // ✅ Функция для автоматического исправления Code с пользовательскими действиями
-function autoFixCodeWithUserActions(model) {
-    return (model || []).map(feature => {
+function autoFixCodeWithUserActions (model)
+{
+    return (model || []).map(feature =>
+    {
         return {
             ...feature,
-            stories: (feature?.stories || []).map(story => {
+            stories: (feature?.stories || []).map(story =>
+            {
                 return {
                     ...story,
-                    scenarios: (story?.scenarios || []).map(scenario => {
+                    scenarios: (story?.scenarios || []).map(scenario =>
+                    {
                         return {
                             ...scenario,
-                            codes: (scenario?.codes || []).map(code => {
+                            codes: (scenario?.codes || []).map(code =>
+                            {
                                 // Применяем normalizeCodeText для автоматического исправления
                                 const fixedText = normalizeCodeText(code?.text);
                                 return {
@@ -2224,7 +1961,8 @@ function autoFixCodeWithUserActions(model) {
 }
 
 // ✅ Функция для валидации и очистки модели от requirement и префиксов, добавления типа Code
-function validateAndCleanModel(model) {
+function validateAndCleanModel (model)
+{
     const errors = [];
     const warnings = [];
 
@@ -2247,20 +1985,9 @@ function validateAndCleanModel(model) {
                     errors.push(`[CLEANED] Удалено поле 'requirement' из Scenario: ${scenario.text}`);
                 }
 
-                const originalCodeCount = Array.isArray(scenario.codes) ? scenario.codes.length : 0;
-                deduplicateCodesInScenario(scenario);
-                const cleanedCodeCount = Array.isArray(scenario.codes) ? scenario.codes.length : 0;
-                if (cleanedCodeCount < originalCodeCount) {
-                    errors.push(
-                        `[CLEANED] Удалено ${originalCodeCount - cleanedCodeCount} дубликат(ов) Code из Scenario: ${scenario.text}`
-                    );
-                }
-
-                const scenarioAnalysis = analyzeScenarioActionability(scenario.text);
-                if (scenarioAnalysis.valid && scenarioAnalysis.normalizedText !== scenario.text) {
-                    scenario.text = scenarioAnalysis.normalizedText;
-                } else if (!scenarioAnalysis.valid) {
-                    warnings.push(`[WARNING] Scenario содержит неконкретное или невыполнимое пользовательское действие: "${scenario.text}" (${scenarioAnalysis.reason})`);
+                // ✅ Проверка: Scenario должен начинаться с "N."
+                if (!/^\d+\./.test(scenario.text)) {
+                    warnings.push(`[WARNING] Scenario не начинается с номера: "${scenario.text}"`);
                 }
 
                 for (const code of scenario.codes || []) {
@@ -2295,16 +2022,6 @@ function validateAndCleanModel(model) {
                 }
             }
         }
-
-        const originalStoryCount = Array.isArray(feature.stories) ? feature.stories.length : 0;
-        deduplicateStoriesInFeature(feature);
-        consolidateDenseFeatureStories(feature);
-        const cleanedStoryCount = Array.isArray(feature.stories) ? feature.stories.length : 0;
-        if (cleanedStoryCount < originalStoryCount) {
-            errors.push(
-                `[CLEANED] Удалено ${originalStoryCount - cleanedStoryCount} дубликат(ов) Story по названию или содержимому из Feature: ${feature.text}`
-            );
-        }
     }
 
     if (errors.length > 0) {
@@ -2323,9 +2040,11 @@ function validateAndCleanModel(model) {
 const TECHNICAL_PREFIXES = /^(реализовать|алгоритм|функция|метод|api|система|доработка|реализация)\s+/i;
 const CONTROL_PATTERNS = /^(чек-бокс|чекбокс|checkbox|переключатель|radio|toggle|поле|field|input|кнопка|button|btn)\s*["']?/i;
 
-function detectModelStructureIssues(model, contextLabel = 'model') {
+function detectModelStructureIssues (model, contextLabel = 'model')
+{
     const issues = [];
-    (model || []).forEach((feature, featureIdx) => {
+    (model || []).forEach((feature, featureIdx) =>
+    {
         const featureTitle = String(feature?.text || `Feature#${featureIdx + 1}`).trim();
 
         // Проверка Feature на технические формулировки
@@ -2346,7 +2065,8 @@ function detectModelStructureIssues(model, contextLabel = 'model') {
             }
         }
 
-        (feature?.stories || []).forEach((story, storyIdx) => {
+        (feature?.stories || []).forEach((story, storyIdx) =>
+        {
             const storyTitle = String(story?.text || `Story#${storyIdx + 1}`).trim();
 
             // Проверка Story на технические формулировки
@@ -2359,15 +2079,19 @@ function detectModelStructureIssues(model, contextLabel = 'model') {
                 issues.push(`Story "${storyTitle}" является описанием контрола, а не пользовательской историей (${featureTitle})`);
             }
 
-            (story?.scenarios || []).forEach((scenario, scenarioIdx) => {
+            let lastValidScenario = null;
+
+            (story?.scenarios || []).forEach((scenario, scenarioIdx) =>
+            {
                 const scenarioTitle = String(scenario?.text || '').trim();
                 const labelBase = `${featureTitle} → ${storyTitle}`;
-                const scenarioAnalysis = analyzeScenarioActionability(scenarioTitle);
 
                 if (!scenarioTitle) {
                     issues.push(`Scenario без текста (${labelBase})`);
-                } else if (!scenarioAnalysis.valid) {
-                    issues.push(`Scenario "${scenarioTitle}" не является конкретным выполнимым действием пользователя (${labelBase}; причина: ${scenarioAnalysis.reason})`);
+                } else if (!USER_ACTION_REGEX.test(scenarioTitle)) {
+                    issues.push(`Scenario "${scenarioTitle}" не начинается с действия пользователя (${labelBase})`);
+                } else {
+                    lastValidScenario = scenarioTitle;
                 }
 
                 const codes = Array.isArray(scenario?.codes) ? scenario.codes : [];
@@ -2375,7 +2099,8 @@ function detectModelStructureIssues(model, contextLabel = 'model') {
                     issues.push(`Scenario "${scenarioTitle || `#${scenarioIdx + 1}`}" не содержит системных реакций (codes) (${labelBase})`);
                 }
 
-                codes.forEach(code => {
+                codes.forEach(code =>
+                {
                     const codeTitle = String(code?.text || '').trim();
                     const detailedLabel = `${labelBase}${scenarioTitle ? ` → ${scenarioTitle}` : ''}`;
 
@@ -2398,7 +2123,8 @@ function detectModelStructureIssues(model, contextLabel = 'model') {
     return issues;
 }
 
-function summarizeStructureIssuesForPrompt(issues, limit = 3) {
+function summarizeStructureIssuesForPrompt (issues, limit = 3)
+{
     if (!Array.isArray(issues) || issues.length === 0) return '';
     const top = issues.slice(0, limit);
     const rest = issues.length - top.length;
@@ -2406,7 +2132,8 @@ function summarizeStructureIssuesForPrompt(issues, limit = 3) {
 }
 
 // Выделение релевантных секций из markdown страницы по ключам из цитаты
-function extractRelevantSectionsLegacy(markdown, mentionText, { maxSections = 6, maxChars = 50000 } = {}) {
+function extractRelevantSections (markdown, mentionText, { maxSections = 6, maxChars = 50000 } = {})
+{
     const md = String(markdown || '');
     const mention = String(mentionText || '').toLowerCase();
     const tokens = new Set(
@@ -2418,7 +2145,8 @@ function extractRelevantSectionsLegacy(markdown, mentionText, { maxSections = 6,
     );
     // Разбиваем по секциям заголовков второго уровня и ниже
     const sections = md.split(/\n(?=##+\s)/).map(s => s.trim()).filter(Boolean);
-    const scoreSection = (s) => {
+    const scoreSection = (s) =>
+    {
         const text = s.toLowerCase();
         let score = 0;
         tokens.forEach(t => { if (text.includes(t)) score += 1; });
@@ -2439,651 +2167,9 @@ function extractRelevantSectionsLegacy(markdown, mentionText, { maxSections = 6,
     return out || md.slice(0, Math.min(maxChars, md.length));
 }
 
-const LINKED_SECTION_STOPWORDS = new Set([
-    'для', 'или', 'при', 'это', 'как', 'так', 'что', 'если', 'его', 'еще', 'ещё',
-    'над', 'под', 'без', 'с', 'со', 'в', 'во', 'на', 'по', 'к', 'ко', 'из', 'от',
-    'и', 'а', 'но', 'the', 'and', 'for', 'with', 'from', 'into', 'that'
-]);
 
-const PASSWORD_TOPIC_HINTS = [
-    'парол', 'password', 'passwd', 'смена пароля', 'новый пароль',
-    'рекомендац', 'надежност', 'надежность', 'simplepasslist', 'passwd/change'
-];
-
-const PASSWORD_TOPIC_NOISE_HINTS = [
-    'логин', 'login', 'подписк', 'push', 'touchid', 'rutoken',
-    'paycontrol', 'биометр', 'сертификат', 'уведомл', 'notification'
-];
-
-function normalizeRelevantSearchText(text = '') {
-    return String(text || '')
-        .toLowerCase()
-        .replace(/[^\p{L}\p{N}\/]+/gu, ' ')
-        .trim();
-}
-
-function tokenizeRelevantSearchText(text = '') {
-    return Array.from(new Set(
-        normalizeRelevantSearchText(text)
-            .split(/\s+/)
-            .filter(token => token.length > 2 && !LINKED_SECTION_STOPWORDS.has(token))
-    ));
-}
-
-function extractQuotedSearchPhrases(text = '') {
-    return Array.from(
-        new Set(
-            Array.from(String(text || '').matchAll(/"([^"]{3,})"/g))
-                .map(match => match[1].trim().toLowerCase())
-                .filter(Boolean)
-        )
-    );
-}
-
-function extractEndpointHints(text = '') {
-    const source = String(text || '');
-    const methodMatches = Array.from(
-        source.matchAll(/\b(?:GET|POST|PUT|DELETE|PATCH)\b\s*([/A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+)/gi)
-    );
-    const directHints = methodMatches
-        .map(match => `${String(match[0] || '').trim().toLowerCase()}`)
-        .filter(Boolean);
-    const pathHints = Array.from(
-        source.matchAll(/((?:\/?rest|\/api)[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+)/gi)
-    )
-        .map(match => String(match[1] || '').trim().toLowerCase())
-        .filter(Boolean);
-
-    return Array.from(new Set([...directHints, ...pathHints])).slice(0, 8);
-}
-
-function splitMarkdownIntoSearchSections(markdown = '') {
-    const sections = String(markdown || '')
-        .split(/\n(?=#+\s)/)
-        .map(section => section.trim())
-        .filter(Boolean);
-
-    return sections.length ? sections : [String(markdown || '').trim()].filter(Boolean);
-}
-
-function hasAnyRelevantHint(text, hints = []) {
-    const normalized = normalizeRelevantSearchText(text);
-    return hints.some(hint => hint && normalized.includes(String(hint).toLowerCase()));
-}
-
-function isLinkedSectionNoise(sectionText = '') {
-    const text = String(sectionText || '');
-    return [
-        /^```/m,
-        /^-\s*\[[^\]]+\]\(#/m,
-        /table of contents/i,
-        /change\s*log|changelog|история изменений/i,
-        /вложения|attachments/i,
-        /актуальная уз/i,
-        /\.mp4\b/i
-    ].some(pattern => pattern.test(text));
-}
-
-function splitRelevantSearchBlocks(text = '', passwordFocused = false) {
-    const paragraphs = String(text || '')
-        .split(/\n{2,}/)
-        .map(part => part.trim())
-        .filter(Boolean);
-
-    if (!passwordFocused) {
-        return paragraphs;
-    }
-
-    const blocks = [];
-
-    for (const paragraph of paragraphs) {
-        if (!paragraph) {
-            continue;
-        }
-
-        const numberedBlocks = paragraph
-            .split(/\n(?=\d+\.\s+)/)
-            .map(part => part.trim())
-            .filter(Boolean);
-        const expandedNumberedBlocks = numberedBlocks.length > 1 ? numberedBlocks : [paragraph];
-
-        for (const block of expandedNumberedBlocks) {
-            const lines = block.split(/\n/).map(line => line.trim()).filter(Boolean);
-            const tableRows = lines.filter(line => /^\|/.test(line) && !/^\|\s*-{3,}/.test(line));
-
-            if (tableRows.length >= 3) {
-                blocks.push(...tableRows);
-                continue;
-            }
-
-            blocks.push(block);
-        }
-    }
-
-    return blocks;
-}
-
-function trimRelevantSection(sectionText, profile) {
-    const text = String(sectionText || '').trim();
-    if (!text) {
-        return '';
-    }
-
-    const paragraphs = splitRelevantSearchBlocks(text, profile.passwordFocused);
-    if (paragraphs.length <= 3) {
-        return text;
-    }
-
-    const kept = [];
-    let keepNeighbor = 0;
-
-    for (let index = 0; index < paragraphs.length; index++) {
-        const paragraph = paragraphs[index];
-        const isHeading = /^#+\s/.test(paragraph);
-        const hasStrongMatch =
-            hasAnyRelevantHint(paragraph, profile.quotedPhrases) ||
-            hasAnyRelevantHint(paragraph, profile.endpointHints) ||
-            hasAnyRelevantHint(paragraph, profile.tokens);
-        const hasTopicMatch = hasAnyRelevantHint(paragraph, profile.topicHints);
-        const looksIrrelevant =
-            profile.passwordFocused &&
-            hasAnyRelevantHint(paragraph, PASSWORD_TOPIC_NOISE_HINTS) &&
-            !hasTopicMatch;
-
-        if (isHeading || hasStrongMatch || (keepNeighbor > 0 && !looksIrrelevant)) {
-            kept.push(paragraph);
-            keepNeighbor = hasStrongMatch ? 1 : Math.max(0, keepNeighbor - 1);
-            continue;
-        }
-
-        if (hasTopicMatch && !looksIrrelevant) {
-            kept.push(paragraph);
-        }
-    }
-
-    const trimmed = kept.join('\n\n').trim();
-    return trimmed || text;
-}
-
-function buildRelevantSectionProfile(mentionText = '') {
-    const tokens = tokenizeRelevantSearchText(mentionText);
-    const quotedPhrases = extractQuotedSearchPhrases(mentionText);
-    const endpointHints = extractEndpointHints(mentionText);
-    const passwordFocused =
-        hasAnyRelevantHint(mentionText, PASSWORD_TOPIC_HINTS) ||
-        endpointHints.some(hint => /passwd|password|simplepasslist/.test(hint));
-
-    return {
-        tokens,
-        quotedPhrases,
-        endpointHints,
-        passwordFocused,
-        topicHints: passwordFocused ? PASSWORD_TOPIC_HINTS : tokens
-    };
-}
-
-function scoreRelevantSection(sectionText, profile) {
-    const text = String(sectionText || '');
-    if (!text || isLinkedSectionNoise(text)) {
-        return Number.NEGATIVE_INFINITY;
-    }
-
-    const headingLine = text.split('\n', 1)[0] || '';
-    let score = 0;
-
-    for (const phrase of profile.quotedPhrases) {
-        if (phrase && text.toLowerCase().includes(phrase)) {
-            score += 5;
-        }
-    }
-
-    for (const endpointHint of profile.endpointHints) {
-        if (endpointHint && text.toLowerCase().includes(endpointHint)) {
-            score += 4;
-        }
-    }
-
-    for (const token of profile.tokens) {
-        if (!token) continue;
-        if (headingLine.toLowerCase().includes(token)) {
-            score += 3;
-        }
-        if (text.toLowerCase().includes(token)) {
-            score += 1;
-        }
-    }
-
-    const hasPasswordMatch = hasAnyRelevantHint(text, PASSWORD_TOPIC_HINTS);
-    const hasIrrelevantTopic = hasAnyRelevantHint(text, PASSWORD_TOPIC_NOISE_HINTS);
-
-    if (profile.passwordFocused && hasPasswordMatch) {
-        score += 6;
-    }
-
-    if (profile.passwordFocused && hasIrrelevantTopic && !hasPasswordMatch) {
-        score -= 8;
-    }
-
-    return score;
-}
-
-function extractRelevantSections(markdown, mentionText, { maxSections = 6, maxChars = 50000 } = {}) {
-    const md = String(markdown || '');
-    const sections = splitMarkdownIntoSearchSections(md);
-    const profile = buildRelevantSectionProfile(mentionText);
-
-    const ranked = sections
-        .map(section => {
-            const score = scoreRelevantSection(section, profile);
-            const trimmed = trimRelevantSection(section, profile);
-            return { section, score, trimmed };
-        })
-        .filter(item => Number.isFinite(item.score))
-        .sort((a, b) => b.score - a.score);
-
-    const selected = ranked
-        .filter(item => item.score > 0)
-        .slice(0, Math.min(maxSections, profile.passwordFocused ? 8 : maxSections));
-
-    const fallbackSelected = selected.length
-        ? selected
-        : ranked.slice(0, Math.min(2, ranked.length));
-
-    let out = fallbackSelected
-        .map(item => item.trimmed || item.section)
-        .filter(Boolean)
-        .join('\n\n---\n\n');
-
-    if (!out.trim()) {
-        out = sections.slice(0, Math.min(2, sections.length)).join('\n\n---\n\n');
-    }
-
-    if (out.length > maxChars) {
-        out = out.slice(0, maxChars);
-    }
-
-    return out || md.slice(0, Math.min(maxChars, md.length));
-}
-
-function extractBestLinkedPageMention(markdown, linkedPageId, preferredText = '') {
-    const linkedId = String(linkedPageId || '').trim();
-    if (!linkedId) {
-        return '';
-    }
-
-    const lines = String(markdown || '').split(/\n/);
-    const profiles = buildRelevantSectionProfile(preferredText);
-    const markers = [
-        `pageId=${linkedId}`,
-        `viewpage.action?pageId=${linkedId}`,
-        `/pages/${linkedId}`
-    ];
-
-    const candidateIndexes = lines
-        .map((line, index) => (markers.some(marker => line.includes(marker)) ? index : -1))
-        .filter(index => index >= 0);
-
-    if (!candidateIndexes.length) {
-        return '';
-    }
-
-    let bestMention = '';
-    let bestScore = Number.NEGATIVE_INFINITY;
-
-    for (const index of candidateIndexes) {
-        const start = Math.max(0, index - 2);
-        const end = Math.min(lines.length, index + 3);
-        const candidate = lines.slice(start, end).join('\n').trim();
-        if (!candidate) {
-            continue;
-        }
-
-        const normalizedCandidate = normalizeRelevantSearchText(candidate);
-        let score = 0;
-
-        if (/change\s*log|источник требований|список изменений|версия/i.test(candidate)) {
-            score -= 10;
-        }
-
-        if (hasAnyRelevantHint(candidate, PASSWORD_TOPIC_HINTS)) {
-            score += 8;
-        }
-
-        if (/новый пароль|смен[аы]\s+парол|рекомендац|надежност|пароли не совпадают|simplepasslist|passwd\/change/i.test(normalizedCandidate)) {
-            score += 8;
-        }
-
-        if (profiles.passwordFocused && hasAnyRelevantHint(candidate, PASSWORD_TOPIC_HINTS)) {
-            score += 4;
-        }
-
-        if (profiles.tokens.length) {
-            for (const token of profiles.tokens.slice(0, 24)) {
-                if (token && normalizedCandidate.includes(token)) {
-                    score += 1;
-                }
-            }
-        }
-
-        if (
-            /логин|login|подписк|push|touchid|rutoken|paycontrol/i.test(candidate) &&
-            !/парол|password|passwd/i.test(candidate)
-        ) {
-            score -= 6;
-        }
-
-        score += index / Math.max(lines.length, 1);
-
-        if (score > bestScore) {
-            bestScore = score;
-            bestMention = candidate;
-        }
-    }
-
-    return bestMention;
-}
-
-const GRAPH_CONTEXT_ALLOWED_ENTITY_TYPES = new Set(['APIEndpoint', 'ResponseParam', 'ExternalRef']);
-const GRAPH_CONTEXT_NOISE_HINTS = Array.from(new Set([
-    ...PASSWORD_TOPIC_NOISE_HINTS,
-    'restore',
-    'восстанов',
-    '/rest/public/restore'
-]));
-const GRAPH_CONTEXT_PASSWORD_HINTS = Array.from(new Set([
-    ...PASSWORD_TOPIC_HINTS,
-    'пароли не совпадают',
-    'не совпадают',
-    'настройки'
-]));
-
-function normalizeGraphText(text = '') {
-    return String(text || '')
-        .toLowerCase()
-        .replace(/["'`«»„”“]/g, ' ')
-        .replace(/[^\p{L}\p{N}\/]+/gu, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function normalizeEndpointCanonicalKey(text = '') {
-    const source = String(text || '')
-        .replace(/^отправляется\s+/i, '')
-        .replace(/^вызывается\s+/i, '')
-        .replace(/^выполняется\s+/i, '')
-        .trim();
-    const methodMatch = source.match(/\b(GET|POST|PUT|DELETE|PATCH)\b/i);
-    const pathMatch = source.match(/((?:\/?rest|\/api)[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+)/i);
-
-    if (!pathMatch) {
-        return '';
-    }
-
-    let normalizedPath = String(pathMatch[1] || '')
-        .trim()
-        .replace(/^\/+/, '/')
-        .replace(/^rest\b/i, '/rest')
-        .replace(/^api\b/i, '/api')
-        .replace(/\/{2,}/g, '/')
-        .toLowerCase();
-
-    return `${methodMatch ? methodMatch[1].toUpperCase() + ' ' : ''}${normalizedPath}`.trim();
-}
-
-function buildGraphCanonicalKey(text = '', prefix = 'chunk') {
-    const endpointKey = normalizeEndpointCanonicalKey(text);
-    if (endpointKey) {
-        return `${prefix}:${endpointKey}`;
-    }
-
-    const normalized = normalizeRelevantSearchText(text)
-        .replace(/\b(отображается|отправляется|вызывается|открыть|открывается|показать|показывается|должен|должна|должны)\b/gi, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-    return `${prefix}:${normalized || normalizeGraphText(text) || 'empty'}`;
-}
-
-function hasGraphPasswordIntent(text = '') {
-    return hasAnyRelevantHint(text, GRAPH_CONTEXT_PASSWORD_HINTS) ||
-        /парол|password|passwd|simplepasslist|passwd\/change|change\/v2|рекомендац|надежност/i.test(String(text || ''));
-}
-
-function hasGraphNoiseOnly(text = '') {
-    return hasAnyRelevantHint(text, GRAPH_CONTEXT_NOISE_HINTS) && !hasGraphPasswordIntent(text);
-}
-
-function looksLikeClauseFragment(text = '') {
-    const normalized = String(text || '').trim().toLowerCase();
-    if (!normalized) {
-        return false;
-    }
-
-    const shortFragment = normalized.split(/\s+/).length <= 20;
-    return shortFragment &&
-        /^(если|при|когда|в случае|после|для|чтобы)\b/.test(normalized) &&
-        !/(отображ|вызыва|отправ|возвращ|показыва|скрыва|очища|удаля|станов|подсвеч|блокир)/.test(normalized);
-}
-
-function summarizeModelCounts(model = []) {
-    const featuresCount = Array.isArray(model) ? model.length : 0;
-    let storiesCount = 0;
-    let scenariosCount = 0;
-    let codesCount = 0;
-
-    for (const feature of model || []) {
-        storiesCount += feature?.stories?.length || 0;
-        for (const story of feature?.stories || []) {
-            scenariosCount += story?.scenarios?.length || 0;
-            for (const scenario of story?.scenarios || []) {
-                codesCount += scenario?.codes?.length || 0;
-            }
-        }
-    }
-
-    return { featuresCount, storiesCount, scenariosCount, codesCount };
-}
-
-function evaluateGraphContextChunk(chunk, profile, scope = 'linked') {
-    const text = String(chunk?.cleaned_text || chunk?.content || chunk?.text || '').trim();
-    const explicitEndpoint = extractEndpointHints(text).length > 0;
-    const passwordDomainIntent = hasGraphPasswordIntent(text);
-    const noiseOnly = hasGraphNoiseOnly(text);
-    const clauseFragment = looksLikeClauseFragment(text);
-    let relevanceScore = scoreRelevantSection(text, profile);
-
-    if (!Number.isFinite(relevanceScore)) {
-        relevanceScore = -100;
-    }
-    if (passwordDomainIntent) {
-        relevanceScore += 6;
-    }
-    if (explicitEndpoint) {
-        relevanceScore += 4;
-    }
-    if (noiseOnly) {
-        relevanceScore -= 10;
-    }
-
-    let graphEligible = true;
-    let dropReason = null;
-
-    if (chunk?.exclude_from_graph || chunk?.metadata?.exclude_from_graph || chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval) {
-        graphEligible = false;
-        dropReason = 'excluded_by_chunk_metadata';
-    } else if (clauseFragment && !passwordDomainIntent && !explicitEndpoint) {
-        graphEligible = false;
-        dropReason = 'clause_fragment';
-    } else if (profile.passwordFocused && noiseOnly && !explicitEndpoint) {
-        graphEligible = false;
-        dropReason = 'password_noise';
-    } else if (profile.passwordFocused && !passwordDomainIntent && relevanceScore <= 0 && !explicitEndpoint) {
-        graphEligible = false;
-        dropReason = 'low_password_relevance';
-    } else if (!profile.passwordFocused && relevanceScore < 0) {
-        graphEligible = false;
-        dropReason = 'negative_relevance';
-    }
-
-    return {
-        graphEligible,
-        dropReason,
-        relevanceScore,
-        passwordDomainIntent,
-        explicitEndpoint,
-        canonicalKey: buildGraphCanonicalKey(text, scope),
-        entityScope: scope === 'main' || passwordDomainIntent ? 'full' : 'api_only'
-    };
-}
-
-async function buildGraphContextChunks({ pages = [], requirementText = '' } = {}) {
-    const profile = buildRelevantSectionProfile(requirementText);
-    const eligibleChunks = [];
-    const rejectedChunks = [];
-    const pageSummaries = [];
-
-    for (const [pageIndex, page] of (pages || []).entries()) {
-        const pageText = String(page?.graphText || page?.content || page?.title || '').trim();
-        const sourceScope = page?.sourceScope || 'linked';
-
-        if (!pageText) {
-            pageSummaries.push({
-                pageId: page?.pageId || `context-${pageIndex}`,
-                title: page?.title || `Context page ${pageIndex + 1}`,
-                sourceScope,
-                totalChunks: 0,
-                eligibleChunks: 0,
-                rejectedChunks: 0
-            });
-            continue;
-        }
-
-        const rawChunks = await chunkify(pageText, {
-            pageId: String(page?.pageId || `context-${pageIndex}`),
-            title: page?.title || `Context page ${pageIndex + 1}`,
-            source_scope: sourceScope
-        });
-
-        let eligibleForPage = 0;
-        let rejectedForPage = 0;
-
-        rawChunks.forEach((rawChunk, chunkIndex) => {
-            const evaluation = evaluateGraphContextChunk(rawChunk, profile, sourceScope);
-            const chunkText = String(rawChunk?.cleaned_text || rawChunk?.content || '').trim();
-            const normalizedChunk = {
-                text: chunkText,
-                content: chunkText,
-                chunkId: rawChunk?.id || `context-page-${page?.pageId || pageIndex}-chunk-${chunkIndex}`,
-                position: chunkIndex,
-                pageId: String(page?.pageId || `context-${pageIndex}`),
-                sectionId: Array.isArray(rawChunk?.section_path) && rawChunk.section_path.length
-                    ? rawChunk.section_path.join(' > ')
-                    : (rawChunk?.heading || page?.title || `Context page ${pageIndex + 1}`),
-                documentId: rawChunk?.doc_id || String(page?.pageId || `context-${pageIndex}`),
-                metadata: {
-                    ...(rawChunk?.metadata || {}),
-                    chunk_type: rawChunk?.chunk_type,
-                    heading: rawChunk?.heading,
-                    section_path: rawChunk?.section_path,
-                    explicit_refs: rawChunk?.explicit_refs,
-                    source_scope: sourceScope,
-                    graph_eligible: evaluation.graphEligible,
-                    relevance_score: evaluation.relevanceScore,
-                    canonical_key: evaluation.canonicalKey,
-                    drop_reason: evaluation.dropReason,
-                    password_domain_intent: evaluation.passwordDomainIntent,
-                    entity_scope: evaluation.entityScope
-                },
-                exclude_from_graph: !evaluation.graphEligible
-            };
-
-            if (evaluation.graphEligible && chunkText.length >= 50) {
-                eligibleChunks.push(normalizedChunk);
-                eligibleForPage++;
-            } else {
-                rejectedChunks.push(normalizedChunk);
-                rejectedForPage++;
-            }
-        });
-
-        pageSummaries.push({
-            pageId: String(page?.pageId || `context-${pageIndex}`),
-            title: page?.title || `Context page ${pageIndex + 1}`,
-            sourceScope,
-            totalChunks: rawChunks.length,
-            eligibleChunks: eligibleForPage,
-            rejectedChunks: rejectedForPage
-        });
-    }
-
-    const dropReasons = rejectedChunks.reduce((acc, chunk) => {
-        const reason = chunk?.metadata?.drop_reason || 'unknown';
-        acc[reason] = (acc[reason] || 0) + 1;
-        return acc;
-    }, {});
-
-    return {
-        eligibleChunks,
-        rejectedChunks,
-        summary: {
-            totalPages: pageSummaries.length,
-            totalChunks: eligibleChunks.length + rejectedChunks.length,
-            eligibleChunks: eligibleChunks.length,
-            rejectedChunks: rejectedChunks.length,
-            dropReasons,
-            pageSummaries
-        }
-    };
-}
-
-function filterContextGraphExtraction(entities = [], relationships = [], contextChunks = []) {
-    const chunkMetadataById = new Map(
-        (contextChunks || []).map(chunk => [String(chunk?.chunkId || ''), chunk?.metadata || {}])
-    );
-    const keptEntities = [];
-    const keptEntityKeys = new Set();
-
-    for (const entity of entities || []) {
-        const chunkMetadata = chunkMetadataById.get(String(entity?.sourceChunkId || '')) || {};
-        const entityScope = chunkMetadata?.entity_scope || 'api_only';
-        const keepEntity = entityScope === 'full' || GRAPH_CONTEXT_ALLOWED_ENTITY_TYPES.has(entity?.type);
-        if (!keepEntity) {
-            continue;
-        }
-
-        keptEntities.push(entity);
-        keptEntityKeys.add(`${entity?.type}:${entity?.name}`);
-    }
-
-    const keptRelationships = (relationships || []).filter((relationship) => {
-        const fromKey = `${relationship?.fromType}:${relationship?.fromName}`;
-        const toKey = `${relationship?.toType}:${relationship?.toName}`;
-
-        if (relationship?.toType === 'Chunk') {
-            return keptEntityKeys.has(fromKey);
-        }
-
-        if (relationship?.fromType === 'Chunk') {
-            return keptEntityKeys.has(toKey);
-        }
-
-        return keptEntityKeys.has(fromKey) && keptEntityKeys.has(toKey);
-    });
-
-    return {
-        entities: keptEntities,
-        relationships: keptRelationships,
-        stats: {
-            inputEntities: entities.length,
-            keptEntities: keptEntities.length,
-            inputRelationships: relationships.length,
-            keptRelationships: keptRelationships.length
-        }
-    };
-}
-
-
-async function fetchJiraMeta(pat, projectKey, issueTypeId) {
+async function fetchJiraMeta (pat, projectKey, issueTypeId)
+{
     const body = { pat, projectKey };
     if (issueTypeId) body.issueTypeId = issueTypeId;
     const { data } = await axios.post(
@@ -3107,7 +2193,8 @@ async function fetchJiraMeta(pat, projectKey, issueTypeId) {
  *  S    — Backend
  *  PWA  — Progressive Web App
  */
-function detectPlatforms(summary, env) {
+function detectPlatforms (summary, env)
+{
     const result = [];
 
     // 1) Парсим префикс из summary: "КОД | остальное"
@@ -3159,7 +2246,8 @@ function detectPlatforms(summary, env) {
     return ['D'];
 }
 
-function buildFillJiraFieldsTool({ sevOptions, platOptions, sympOptions, prioOptions = [] }) {
+function buildFillJiraFieldsTool ({ sevOptions, platOptions, sympOptions, prioOptions = [] })
+{
     const sevEnum = sevOptions.map(o => o.name);
     const platEnum = platOptions.map(o => o.name);
     const sympEnum = sympOptions.map(o => o.name);
@@ -3193,7 +2281,8 @@ function buildFillJiraFieldsTool({ sevOptions, platOptions, sympOptions, prioOpt
 
 
 
-function extractJsonArray(text) {
+function extractJsonArray (text)
+{
     // 1) fenced ```json``` — самый честный путь
     const fence = text.match(/```json\s*([\s\S]*?)```/i);
     if (fence) return fence[1].trim();
@@ -3220,21 +2309,15 @@ function extractJsonArray(text) {
                         break;
                     }
                 }
-
-                deduplicateCodesInScenario(scenario);
-                trimScenarioCodesByIntentFamily(scenario);
             }
-
-            deduplicateScenariosInStory(story);
         }
-
-        consolidateDenseFeatureStories(feature);
     }
 
     // 3) Если найдено несколько массивов, объединяем их
     if (candidates.length > 1) {
         console.log(`[extractJsonArray] 🚨 ВНИМАНИЕ: Найдено ${candidates.length} JSON массивов!`);
-        console.log(`[extractJsonArray] 📊 Размеры массивов:`, candidates.map((c, i) => {
+        console.log(`[extractJsonArray] 📊 Размеры массивов:`, candidates.map((c, i) =>
+        {
             const parsed = JSON5.parse(c);
             return `[${i}]: ${Array.isArray(parsed) ? parsed.length : 'не массив'} элементов`;
         }).join(', '));
@@ -3288,7 +2371,8 @@ function extractJsonArray(text) {
     return candidates[0] || null;
 }
 
-function cleanupJsonText(s) {
+function cleanupJsonText (s)
+{
     // Подчистить наиболее частые артефакты
     let t = s;
 
@@ -3312,9 +2396,11 @@ function cleanupJsonText(s) {
 }
 
 
-function buildPlatformMap(platOptions) {
+function buildPlatformMap (platOptions)
+{
     const m = {};
-    platOptions.forEach(o => {
+    platOptions.forEach(o =>
+    {
         const n = o.name.toLowerCase();
         if (n.includes('desktop') || n.includes('web')) m['D'] = o.id;
         else if (n.includes('adaptive')) m['A'] = o.id;
@@ -3326,7 +2412,8 @@ function buildPlatformMap(platOptions) {
 }
 
 // префикс платформы для поля Тема
-function getPlatformPrefix(name) {
+function getPlatformPrefix (name)
+{
     if (!name || typeof name !== 'string') return null;
     const n = name.toLowerCase().replace(/\s+/g, '-').trim();
     const map = {
@@ -3353,7 +2440,8 @@ function getPlatformPrefix(name) {
  * @param {string} layer - Слой тестирования (для проверки E2E)
  * @returns {Array} - Массив шагов в нашем формате
  */
-function convertAllureStepsToFormat(stepsRaw, layer) {
+function convertAllureStepsToFormat (stepsRaw, layer)
+{
     // API Allure возвращает структуру с root и scenarioSteps на верхнем уровне
     // Поддерживаем обе структуры: старую (с scenario) и новую (без scenario)
     const root = stepsRaw?.scenario?.root || stepsRaw?.root;
@@ -3423,12 +2511,14 @@ function convertAllureStepsToFormat(stepsRaw, layer) {
 }
 
 // Функция фильтрации тест-кейсов
-async function filterCases(allCases, jiraIssue, projectId) {
+async function filterCases (allCases, jiraIssue, projectId)
+{
     console.log(`filterCases принял: ${jiraIssue} ${projectId}`)
     const filteredCases = [];
 
     const promises = allCases.map((testCase) =>
-        limit(async () => {
+        limit(async () =>
+        {
             const { id, name } = testCase;
 
             // Условие: Связь с Jira
@@ -3497,13 +2587,20 @@ async function filterCases(allCases, jiraIssue, projectId) {
 }
 
 // Статус последнего ревью задачи для хинта
-app.get('/api/analyze/status', async (req, res) => {
+app.get('/api/analyze/status', async (req, res) =>
+{
     const jiraIssue = req.query.jiraIssue?.trim();
     if (!jiraIssue) {
         return res.json({ hasReview: false });
     }
+    const analysisType = String(req.query.analysisType || 'cases').trim().toLowerCase();
     try {
-        const info = await getLatestRunInfo(jiraIssue);
+        let info = null;
+        if (analysisType === 'model') {
+            info = await getLatestModelRunInfo(jiraIssue);
+        } else {
+            info = await getLatestRunInfo(jiraIssue);
+        }
         if (!info) {
             return res.json({ hasReview: false });
         }
@@ -3517,13 +2614,18 @@ app.get('/api/analyze/status', async (req, res) => {
     }
 });
 
-app.delete('/api/analyze/status', async (req, res) => {
+app.delete('/api/analyze/status', async (req, res) =>
+{
     const jiraIssue = req.query.jiraIssue?.trim();
     if (!jiraIssue) {
         return res.status(400).json({ error: 'jiraIssue обязателен' });
     }
+    const analysisType = String(req.query.analysisType || 'cases').trim().toLowerCase();
+    if (analysisType !== 'cases' && analysisType !== 'model') {
+        return res.status(400).json({ error: 'unknown analysisType' });
+    }
     try {
-        await deleteAnalysisResultsByJiraIssue(jiraIssue);
+        await deleteAnalysisResultsByJiraIssue(jiraIssue, analysisType);
         return res.json({ ok: true });
     } catch (err) {
         console.error(`[analyze/status DELETE] ${err.message}`);
@@ -3532,13 +2634,60 @@ app.delete('/api/analyze/status', async (req, res) => {
 });
 
 // API для анализа тест-кейсов
-app.post('/api/analyze', async (req, res) => {
-    const { projectId, jiraIssue } = req.body;
+app.post('/api/analyze', async (req, res) =>
+{
+    const { projectId, jiraIssue, analysisType, modelData, modelFileName } = req.body;
     console.log(`Запрос /api/analyze получил: ${JSON.stringify(req.body)}`);
 
     if (!projectId) {
         return res.status(400).json({ error: 'projectId обязателен для анализа' });
     }
+
+    if (analysisType === 'model' || modelData) {
+        const jiraForModel = typeof jiraIssue === 'string' && jiraIssue.trim() ? jiraIssue.trim() : null;
+        try {
+            const apiKey = req.headers['x-openrouter-key'] || null;
+            let aiRecommendations = [];
+            try {
+                let previousModelIssues = null;
+                try {
+                    previousModelIssues = await getLatestModelIssuesForRecheck(projectId, jiraForModel);
+                } catch (dbErr) {
+                    console.log(`[analyze/model] БД недоступна для истории модели: ${dbErr.message}`);
+                }
+                if (previousModelIssues?.issues?.length > 0) {
+                    console.log(`[analyze/model] Повторный анализ: ${previousModelIssues.issues.length} замечаний из последнего run ${previousModelIssues.runId}`);
+                    aiRecommendations = await analyzeTestModelRecheckWithAI(
+                        modelData,
+                        previousModelIssues.issues,
+                        apiKey,
+                        projectId,
+                        jiraForModel
+                    );
+                } else {
+                    aiRecommendations = await analyzeTestModelWithAI(modelData, apiKey, projectId);
+                }
+            } catch (err) {
+                console.error(`[analyze/model] Ошибка при AI-анализе тестовой модели:`, err);
+            }
+            const analysisResult = await staticAnalysisModel(modelData, projectId, aiRecommendations, modelFileName, jiraForModel);
+            try {
+                if (Array.isArray(aiRecommendations) && aiRecommendations.length > 0) {
+                    await saveModelAnalysisResults(projectId, jiraForModel, modelFileName || null, aiRecommendations);
+                } else {
+                    console.log(`[analyze/model] Пропуск сохранения в БД: нет замечаний (${aiRecommendations?.length ?? 0})`);
+                }
+            } catch (saveErr) {
+                console.error(`[analyze/model] Ошибка сохранения в БД:`, saveErr.message);
+                console.error(`[analyze/model] Stack:`, saveErr.stack);
+            }
+            return res.json(analysisResult.html);
+        } catch (error) {
+            console.error(`[analyze/model] Ошибка при анализе модели: ${error.message}`);
+            return res.status(500).json({ error: error.message });
+        }
+    }
+
     if (!jiraIssue) {
         return res.status(400).json({ error: 'jiraIssue обязателен для анализа' });
     }
@@ -3579,17 +2728,20 @@ app.post('/api/analyze', async (req, res) => {
 
             const subsetA = [];
             const subsetB = [];
-            if (previousIssues?.idsWithIssues?.size > 0) {
-                console.log(`[analyze] Задача ${jiraIssue} уже была проанализирована ранее, используем промпт для проверки`);
+            const cleanSet = previousIssues?.cleanTestCaseIds ?? new Set();
+            if (previousIssues) {
                 for (const tc of filteredCases) {
                     const tcId = String(tc.id);
+                    if (cleanSet.has(tcId) && !previousIssues.idsWithIssues.has(tcId)) {
+                        continue;
+                    }
                     if (previousIssues.idsWithIssues.has(tcId)) {
                         subsetA.push(tc);
                     } else {
                         subsetB.push(tc);
                     }
                 }
-                console.log(`[analyze] Повторный анализ: ${subsetA.length} тест-кейсов с замечаниями`);
+                console.log(`[analyze] повторная проверка=${subsetA.length}, проверка с нуля=${subsetB.length}, пропуск=${filteredCases.length - subsetA.length - subsetB.length}`);
             } else {
                 subsetB.push(...filteredCases);
             }
@@ -3609,9 +2761,11 @@ app.post('/api/analyze', async (req, res) => {
             console.log(`Получено рекомендаций: ${Object.keys(aiRecommendations).length}`);
 
             const severityStats = {};
-            Object.values(aiRecommendations).forEach(recs => {
+            Object.values(aiRecommendations).forEach(recs =>
+            {
                 const arr = Array.isArray(recs) ? recs : (recs && recs.recommendation ? [recs] : []);
-                arr.forEach(rec => {
+                arr.forEach(rec =>
+                {
                     if (rec && rec.severity) {
                         severityStats[rec.severity] = (severityStats[rec.severity] || 0) + 1;
                     }
@@ -3627,14 +2781,16 @@ app.post('/api/analyze', async (req, res) => {
             aiRecommendations = null;
         }
 
-        const analysisResult = await staticAnalysis(jsonResult, projectId, aiRecommendations);
+        const analysisResult = await staticAnalysis(jsonResult, projectId, aiRecommendations, {
+            persistCleanIds: aiRecommendations != null
+        });
         const { html: htmlReport, metadata } = analysisResult;
 
         try {
-            if (metadata?.testCasesWithIssues?.length > 0) {
+            if (aiRecommendations != null) {
                 await saveAnalysisResults(projectId, jiraIssue, metadata);
             } else {
-                console.log(`[analyze] Пропуск сохранения: нет AI-замечаний (testCasesWithIssues: ${metadata?.testCasesWithIssues?.length ?? 0})`);
+                console.log(`[analyze] Пропуск сохранения: AI-ревью не выполнено или завершилось ошибкой`);
             }
         } catch (saveErr) {
             console.error(`[analyze] Ошибка сохранения в БД:`, saveErr.message);
@@ -3650,7 +2806,8 @@ app.post('/api/analyze', async (req, res) => {
 });
 
 // Запрос на экспорт тестовой модели
-app.post('/api/export', async (req, res) => {
+app.post('/api/export', async (req, res) =>
+{
     console.log('Вошли в експорт')
     const { allureData, projectId, jiraIssue } = req.body;
 
@@ -3662,7 +2819,7 @@ app.post('/api/export', async (req, res) => {
 
     try {
         // Если проект - "Nocode 2.0", то делаем экспорт по новой структуре
-        const nocodeProjectIds = ['1', '307'];
+        const nocodeProjectIds = ['1', '307', '377'];
         if (nocodeProjectIds.includes(String(projectId))) {
             console.log('Экспортируем по новой структуре для НОУКОДА')
             await exportStructureAllureNocode(allureData, projectId, jiraIssue);
@@ -3679,7 +2836,8 @@ app.post('/api/export', async (req, res) => {
     }
 });
 
-app.post('/api/ai-recommendation', async (req, res) => {
+app.post('/api/ai-recommendation', async (req, res) =>
+{
     try {
         // Получаем OpenRouter API Key из header (с фоллбэком на config)
         const apiKey = req.headers['x-openrouter-key']?.trim() || config.openRouterAiKey;
@@ -3767,7 +2925,8 @@ app.post('/api/ai-recommendation', async (req, res) => {
 });
 
 /** Строка/массив -> массив pageId */
-function normalizePageIds(v) {
+function normalizePageIds (v)
+{
     if (!v) return [];
     if (Array.isArray(v)) return v.filter(Boolean).map(String);
     return String(v)
@@ -3777,7 +2936,8 @@ function normalizePageIds(v) {
 }
 
 /** Строка или массив строк -> единый markdown-блок с разделителями */
-function normalizeContextInput(v) {
+function normalizeContextInput (v)
+{
     if (!v) return '';
     if (Array.isArray(v)) {
         return v
@@ -3788,636 +2948,13 @@ function normalizeContextInput(v) {
     return String(v);
 }
 
-function formatExplicitRefForDebug(ref) {
-    if (!ref) return '';
-    if (typeof ref === 'string') return ref;
-
-    const type = ref.type ? String(ref.type).trim() : 'ref';
-    const target = ref.target ? String(ref.target).trim() : '';
-    const original = ref.original ? String(ref.original).trim() : '';
-
-    if (target && original && original !== target) {
-        return `${type}:${target} <- ${original}`;
-    }
-    if (target) {
-        return `${type}:${target}`;
-    }
-    if (original) {
-        return `${type}:${original}`;
-    }
-
-    return JSON.stringify(ref);
-}
-
-function serializeDebugChunk(chunk, index, { includeFullText = true, maxPreviewLength = 1500 } = {}) {
-    const text = String(chunk?.cleaned_text || chunk?.content || '').trim();
-    const coreText = String(chunk?.core_text || chunk?.metadata?.core_text || '').trim();
-    const embeddingText = String(chunk?.embedding_text || chunk?.metadata?.embedding_text || '').trim();
-    const auxMetadata = getBehavioralAuxMetadata(chunk);
-    const preview = text.length > maxPreviewLength
-        ? `${text.slice(0, maxPreviewLength)}...`
-        : text;
-
-    return {
-        index,
-        id: chunk?.id || `chunk-${index}`,
-        chunkType: chunk?.chunk_type || null,
-        heading: chunk?.heading || null,
-        sectionPath: Array.isArray(chunk?.section_path) ? chunk.section_path : [],
-        explicitRefs: Array.isArray(chunk?.explicit_refs) ? chunk.explicit_refs.map(formatExplicitRefForDebug).filter(Boolean) : [],
-        excludeFromRetrieval: Boolean(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval),
-        excludeFromGraph: Boolean(chunk?.exclude_from_graph || chunk?.metadata?.exclude_from_graph),
-        isAtomic: Boolean(chunk?.is_atomic),
-        isComposite: Boolean(chunk?.is_composite),
-        linkedChunkIds: Array.isArray(chunk?.linked_chunk_ids) ? chunk.linked_chunk_ids : [],
-        sourceScope: chunk?.metadata?.source_scope || chunk?.source_scope || 'main',
-        graphEligible: chunk?.metadata?.graph_eligible,
-        relevanceScore: Number.isFinite(chunk?.metadata?.relevance_score) ? Number(chunk.metadata.relevance_score) : null,
-        canonicalKey: chunk?.metadata?.canonical_key || null,
-        retrievalClass: chunk?.retrieval_class || chunk?.metadata?.retrieval_class || null,
-        eligibilityStatus: chunk?.eligibility_status || chunk?.metadata?.eligibility_status || null,
-        contentRatio: chunk?.content_ratio || chunk?.metadata?.content_ratio || null,
-        retrievalPenalty: Number.isFinite(chunk?.retrieval_penalty)
-            ? Number(chunk.retrieval_penalty)
-            : (Number(chunk?.metadata?.retrieval_penalty) || 0),
-        dropReason: chunk?.drop_reason || chunk?.metadata?.drop_reason || null,
-        auxMetadata,
-        length: text.length,
-        preview,
-        ...(includeFullText ? {
-            text,
-            coreText,
-            embeddingText
-        } : {})
-    };
-}
-
-async function chunkDocumentForDebug(text, metadata = {}, options = {}) {
-    const normalizedText = String(text || '').trim();
-    if (!normalizedText) {
-        return {
-            title: metadata?.title || null,
-            length: 0,
-            chunkCount: 0,
-            chunks: []
-        };
-    }
-
-    const chunks = await chunkify(normalizedText, metadata);
-    return {
-        title: metadata?.title || null,
-        length: normalizedText.length,
-        chunkCount: chunks.length,
-        chunks: chunks.map((chunk, index) => serializeDebugChunk(chunk, index, options))
-    };
-}
-
-async function assembleRequirementChunkDebugPayload({
-    requirements,
-    text,
-    pageId,
-    glossary,
-    context,
-    reqStringForModel,
-    usedContextRefinerFallback = false,
-    graphDocumentId,
-    deriveTitleFromContent,
-    mainTitle = null,
-    baseRequirement = '',
-    autoPageDocs = [],
-    explicitContextPageDocs = [],
-    includeFullText = true,
-    includeSourceTexts = true,
-    precomputedModelInputChunks = null
-}) {
-    if (!reqStringForModel || !String(reqStringForModel).trim()) {
-        throw new Error('Не удалось получить текст требований для chunk debug payload');
-    }
-
-    const modelInputTitle = deriveTitleFromContent(
-        reqStringForModel,
-        'Requirements',
-        pageId || graphDocumentId
-    );
-    const requestContextText = normalizeContextInput(context);
-
-    const modelInput = precomputedModelInputChunks
-        ? {
-            title: modelInputTitle,
-            ...(includeSourceTexts ? { text: reqStringForModel } : {}),
-            length: String(reqStringForModel).length,
-            chunkCount: precomputedModelInputChunks.length,
-            chunks: precomputedModelInputChunks.map((chunk, index) => serializeDebugChunk(chunk, index, { includeFullText }))
-        }
-        : {
-            ...(includeSourceTexts ? { text: reqStringForModel } : {}),
-            ...(await chunkDocumentForDebug(reqStringForModel, {
-                pageId: graphDocumentId,
-                title: modelInputTitle
-            }, { includeFullText }))
-        };
-
-    const primarySourceText = baseRequirement && baseRequirement.trim()
-        ? baseRequirement
-        : (typeof requirements === 'string' && requirements.trim()
-            ? requirements.trim()
-            : (Array.isArray(requirements) && requirements.length
-                ? requirements.map(item => String(item || '').trim()).filter(Boolean).join('\n\n---\n\n')
-                : String(text || '').trim()));
-
-    const primarySource = await chunkDocumentForDebug(primarySourceText, {
-        pageId: graphDocumentId,
-        title: deriveTitleFromContent(primarySourceText, mainTitle || 'Primary requirement source', pageId || graphDocumentId)
-    }, { includeFullText });
-
-    const autoLinkedPages = [];
-    for (const page of autoPageDocs) {
-        const promptChunks = await chunkDocumentForDebug(page.promptText || '', {
-            pageId: page.pageId,
-            title: `${page.title} [prompt]`
-        }, { includeFullText });
-
-        const graphChunks = await chunkDocumentForDebug(page.graphText || '', {
-            pageId: page.pageId,
-            title: `${page.title} [graph]`
-        }, { includeFullText });
-
-        autoLinkedPages.push({
-            pageId: page.pageId,
-            title: page.title,
-            mention: page.mention || '',
-            error: page.error || null,
-            promptTextLength: String(page.promptText || '').length,
-            graphTextLength: String(page.graphText || '').length,
-            ...(includeSourceTexts ? {
-                promptText: page.promptText || '',
-                graphText: page.graphText || '',
-                sourceText: page.content || ''
-            } : {}),
-            promptChunks,
-            graphChunks
-        });
-    }
-
-    const explicitContextPages = [];
-    for (const page of explicitContextPageDocs) {
-        explicitContextPages.push({
-            pageId: page.pageId,
-            title: page.title,
-            error: page.error || null,
-            ...(includeSourceTexts ? { sourceText: page.content || '' } : {}),
-            chunks: await chunkDocumentForDebug(page.graphText || '', {
-                pageId: page.pageId,
-                title: page.title
-            }, { includeFullText })
-        });
-    }
-
-    return {
-        summary: {
-            pageId: pageId ? String(pageId) : null,
-            usedContextRefinerFallback,
-            mainRequirementLength: reqStringForModel.length,
-            mainChunkCount: modelInput.chunkCount,
-            autoLinkedPageCount: autoLinkedPages.length,
-            explicitContextPageCount: explicitContextPages.length,
-            note: 'По текущей логике генерации context pages обычно не входят в основной reqStringForModel. Они живут отдельно: как linked/context sources, graph context и fallback contextRefiner.'
-        },
-        modelInput,
-        primarySource: {
-            title: primarySource.title,
-            ...(includeSourceTexts ? { text: primarySourceText } : {}),
-            ...primarySource
-        },
-        requestContext: requestContextText
-            ? {
-                length: requestContextText.length,
-                ...(includeSourceTexts ? { text: requestContextText } : {})
-            }
-            : null,
-        glossary: glossary
-            ? {
-                length: String(glossary).length,
-                ...(includeSourceTexts ? { text: String(glossary) } : {})
-            }
-            : null,
-        autoLinkedPages,
-        explicitContextPages
-    };
-}
-
-async function buildRequirementChunkDebugPayload(inputData = {}, options = {}) {
-    const {
-        requirements,
-        text,
-        pageId,
-        glossary,
-        glossaryPageId,
-        context,
-        contextPageIds,
-        contextInstruction,
-        bearerToken
-    } = inputData;
-
-    const {
-        includeFullText = true,
-        includeSourceTexts = true
-    } = options;
-
-    const sourceRegistry = createContextSourceRegistry();
-    const { deriveTitleFromContent } = sourceRegistry;
-
-    let baseRequirement = '';
-    let mainTitle = null;
-    let usedContextRefinerFallback = false;
-    let autoPages = [];
-    const autoPageDocs = [];
-    const autoPageIds = new Set();
-    const explicitContextPageDocs = [];
-
-    const formatMention = (mention) => String(mention || '')
-        .replace(/\r?\n/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 200);
-
-    if (pageId) {
-        if (!bearerToken) {
-            throw new Error('bearerToken обязателен для загрузки страницы Confluence');
-        }
-
-        const { markdown, title } = await fetchConfluencePage(String(bearerToken).trim(), pageId, { inlineTextAttachments: true });
-        baseRequirement = markdown || '';
-        mainTitle = deriveTitleFromContent(baseRequirement, title || `Confluence page ${pageId}`, pageId);
-
-        const ids = new Set();
-        Array.from(String(markdown || '').matchAll(/pageId=(\d{4,})/g)).forEach(m => ids.add(m[1]));
-        Array.from(String(markdown || '').matchAll(/viewpage\.action\?pageId=(\d{4,})/gi)).forEach(m => ids.add(m[1]));
-        Array.from(String(markdown || '').matchAll(/\/pages\/(\d{4,})/g)).forEach(m => ids.add(m[1]));
-        ids.delete(String(pageId));
-
-        for (const linkedPageId of ids) {
-            try {
-                const { markdown: linkedMarkdown, title: linkedTitle } = await fetchConfluencePage(String(bearerToken).trim(), linkedPageId, { inlineTextAttachments: true });
-                const mention = extractBestLinkedPageMention(markdown, linkedPageId, baseRequirement);
-
-                const relevant = extractRelevantSections(linkedMarkdown, mention, { maxSections: 15, maxChars: 100000 });
-                const linkedPageTitle = deriveTitleFromContent(linkedMarkdown, linkedTitle || `Связанная страница ${linkedPageId}`, linkedPageId);
-                const promptText = [
-                    `### Контекст по ссылке из основной статьи (pageId=${linkedPageId})`,
-                    mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${linkedPageId})`,
-                    '',
-                    relevant
-                ].join('\n');
-
-                autoPages.push(promptText);
-                autoPageDocs.push({
-                    pageId: String(linkedPageId),
-                    title: linkedPageTitle,
-                    mention: formatMention(mention),
-                    content: linkedMarkdown,
-                    graphText: (relevant && relevant.trim()) ? relevant : linkedMarkdown,
-                    promptText,
-                    sourceScope: 'linked'
-                });
-                autoPageIds.add(String(linkedPageId));
-            } catch (error) {
-                autoPageDocs.push({
-                    pageId: String(linkedPageId),
-                    title: `Связанная страница ${linkedPageId}`,
-                    mention: '',
-                    error: error.message,
-                    content: '',
-                    graphText: '',
-                    promptText: ''
-                });
-            }
-        }
-    }
-
-    const explicitContextPageIds = normalizePageIds(contextPageIds)
-        .map(String)
-        .filter(Boolean)
-        .filter((cid) => cid !== String(pageId || ''))
-        .filter((cid, index, arr) => arr.indexOf(cid) === index);
-
-    if (explicitContextPageIds.length > 0 && bearerToken) {
-        for (const cid of explicitContextPageIds) {
-            if (autoPageIds.has(cid)) continue;
-
-            try {
-                const { markdown: contextMarkdown, title: contextTitle } = await fetchConfluencePage(String(bearerToken).trim(), cid, { inlineTextAttachments: true });
-                explicitContextPageDocs.push({
-                    pageId: cid,
-                    title: deriveTitleFromContent(contextMarkdown, contextTitle || `Context page ${cid}`, cid),
-                    content: contextMarkdown,
-                    graphText: contextMarkdown,
-                    sourceScope: 'explicit_context'
-                });
-            } catch (error) {
-                explicitContextPageDocs.push({
-                    pageId: cid,
-                    title: `Context page ${cid}`,
-                    content: '',
-                    graphText: '',
-                    error: error.message
-                });
-            }
-        }
-    }
-
-    const requirementsPool = [];
-
-    if (Array.isArray(requirements) && requirements.length) {
-        requirementsPool.push(
-            requirements
-                .map((item) => String(item || '').trim())
-                .filter(Boolean)
-                .join('\n\n---\n\n')
-        );
-    } else if (typeof requirements === 'string' && requirements.trim()) {
-        requirementsPool.push(requirements.trim());
-    }
-
-    if (baseRequirement && baseRequirement.trim()) {
-        requirementsPool.push(baseRequirement.trim());
-    } else if (text && String(text).trim()) {
-        requirementsPool.push(String(text).trim());
-    }
-
-    let reqStringForModel = requirementsPool.filter(Boolean).join('\n\n---\n\n');
-
-    if (!reqStringForModel) {
-        const { refinedText, refinedArray } = await contextRefiner({
-            requirements,
-            text,
-            glossary,
-            glossaryPageId,
-            context,
-            contextInstruction,
-            contextPageIds,
-            bearerToken,
-            contextPages: autoPages
-        });
-        reqStringForModel = refinedText || (refinedArray?.join('\n\n') ?? '');
-        usedContextRefinerFallback = true;
-    }
-
-    if (!reqStringForModel || !reqStringForModel.trim()) {
-        throw new Error('Не удалось получить текст требований для debug chunk inspection');
-    }
-
-    const graphDocumentId = String(pageId || 'debug-inline-requirements');
-    return await assembleRequirementChunkDebugPayload({
-        requirements,
-        text,
-        pageId,
-        glossary,
-        context,
-        reqStringForModel,
-        usedContextRefinerFallback,
-        graphDocumentId,
-        deriveTitleFromContent,
-        mainTitle,
-        baseRequirement,
-        autoPageDocs,
-        explicitContextPageDocs,
-        includeFullText,
-        includeSourceTexts
-    });
-}
-
-app.post('/api/debug/requirement-chunks', async (req, res) => {
-    try {
-        const payload = await buildRequirementChunkDebugPayload(req.body || {}, {
-            includeFullText: req.body?.includeFullText !== false,
-            includeSourceTexts: req.body?.includeSourceTexts !== false
-        });
-        let dumpFiles = null;
-        if (req.body?.persistToFile !== false) {
-            const markdown = buildRequirementChunkDumpMarkdown(payload, {
-                taskId: req.body?.taskId || req.body?.pageId || 'manual'
-            });
-            dumpFiles = persistRequirementChunkDumpMarkdown(markdown, {
-                taskId: req.body?.taskId || req.body?.pageId || 'manual'
-            });
-        }
-
-        res.json({
-            ...payload,
-            dumpFiles
-        });
-    } catch (error) {
-        console.error('[debug/requirement-chunks]', error.message);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-function renderChunkMarkdownSection(title, chunkGroup, { includeSourceText = true } = {}) {
-    if (!chunkGroup) return `## ${title}\n\nНет данных.\n`;
-
-    const lines = [
-        `## ${title}`,
-        '',
-        `- title: ${chunkGroup.title || '—'}`,
-        `- length: ${chunkGroup.length || 0}`,
-        `- chunkCount: ${chunkGroup.chunkCount || 0}`,
-        ''
-    ];
-
-    if (includeSourceText && chunkGroup.text) {
-        lines.push('### Source Text');
-        lines.push('');
-        lines.push('```text');
-        lines.push(chunkGroup.text);
-        lines.push('```');
-        lines.push('');
-    }
-
-    for (const chunk of chunkGroup.chunks || []) {
-        lines.push(`### Chunk ${chunk.index + 1}`);
-        lines.push('');
-        lines.push(`- id: ${chunk.id}`);
-        lines.push(`- type: ${chunk.chunkType || '—'}`);
-        lines.push(`- heading: ${chunk.heading || '—'}`);
-        lines.push(`- length: ${chunk.length}`);
-        lines.push(`- sectionPath: ${(chunk.sectionPath || []).join(' > ') || '—'}`);
-        lines.push(`- explicitRefs: ${(chunk.explicitRefs || []).join(', ') || '—'}`);
-        lines.push(`- excludeFromRetrieval: ${chunk.excludeFromRetrieval ? 'yes' : 'no'}`);
-        lines.push(`- excludeFromGraph: ${chunk.excludeFromGraph ? 'yes' : 'no'}`);
-        lines.push(`- sourceScope: ${chunk.sourceScope || 'вЂ”'}`);
-        lines.push(`- graphEligible: ${chunk.graphEligible == null ? 'вЂ”' : (chunk.graphEligible ? 'yes' : 'no')}`);
-        lines.push(`- relevanceScore: ${chunk.relevanceScore == null ? 'вЂ”' : chunk.relevanceScore}`);
-        lines.push(`- canonicalKey: ${chunk.canonicalKey || 'вЂ”'}`);
-        lines.push(`- retrievalClass: ${chunk.retrievalClass || 'вЂ”'}`);
-        lines.push(`- eligibilityStatus: ${chunk.eligibilityStatus || 'вЂ”'}`);
-        lines.push(`- contentRatio: ${chunk.contentRatio == null ? 'вЂ”' : chunk.contentRatio}`);
-        lines.push(`- retrievalPenalty: ${chunk.retrievalPenalty == null ? 'вЂ”' : chunk.retrievalPenalty}`);
-        lines.push(`- dropReason: ${chunk.dropReason || 'вЂ”'}`);
-        lines.push(`- auxMetadata: ${Object.keys(chunk.auxMetadata || {}).length ? JSON.stringify(chunk.auxMetadata) : 'вЂ”'}`);
-        lines.push('');
-        lines.push('```text');
-        lines.push(chunk.text || chunk.preview || '');
-        lines.push('```');
-        lines.push('');
-        if (chunk.coreText) {
-            lines.push('```text');
-            lines.push(`CORE_TEXT:\n${chunk.coreText}`);
-            lines.push('```');
-            lines.push('');
-        }
-        if (chunk.embeddingText) {
-            lines.push('```text');
-            lines.push(`EMBEDDING_TEXT:\n${chunk.embeddingText}`);
-            lines.push('```');
-            lines.push('');
-        }
-    }
-
-    return lines.join('\n');
-}
-
-function buildRequirementChunkDumpMarkdown(payload, { taskId = null } = {}) {
-    const lines = [
-        '# Requirement Chunk Dump',
-        '',
-        `- generatedAt: ${new Date().toISOString()}`,
-        `- taskId: ${taskId || '—'}`,
-        `- pageId: ${payload?.summary?.pageId || '—'}`,
-        `- usedContextRefinerFallback: ${payload?.summary?.usedContextRefinerFallback ? 'yes' : 'no'}`,
-        `- mainRequirementLength: ${payload?.summary?.mainRequirementLength || 0}`,
-        `- mainChunkCount: ${payload?.summary?.mainChunkCount || 0}`,
-        `- autoLinkedPageCount: ${payload?.summary?.autoLinkedPageCount || 0}`,
-        `- explicitContextPageCount: ${payload?.summary?.explicitContextPageCount || 0}`,
-        '',
-        payload?.summary?.note || '',
-        '',
-        renderChunkMarkdownSection('Model Input', payload?.modelInput),
-        '',
-        renderChunkMarkdownSection('Primary Source', payload?.primarySource),
-        ''
-    ];
-
-    if (payload?.requestContext) {
-        lines.push('## Request Context');
-        lines.push('');
-        lines.push(`- length: ${payload.requestContext.length || 0}`);
-        lines.push('');
-        lines.push('```text');
-        lines.push(payload.requestContext.text || '');
-        lines.push('```');
-        lines.push('');
-    }
-
-    if (payload?.glossary) {
-        lines.push('## Glossary');
-        lines.push('');
-        lines.push(`- length: ${payload.glossary.length || 0}`);
-        lines.push('');
-        lines.push('```text');
-        lines.push(payload.glossary.text || '');
-        lines.push('```');
-        lines.push('');
-    }
-
-    lines.push('## Auto-Linked Pages');
-    lines.push('');
-    if (!payload?.autoLinkedPages?.length) {
-        lines.push('Нет auto-linked pages.');
-        lines.push('');
-    } else {
-        for (const page of payload.autoLinkedPages) {
-            lines.push(`### Auto Page ${page.pageId || '—'}: ${page.title || '—'}`);
-            lines.push('');
-            lines.push(`- mention: ${page.mention || '—'}`);
-            lines.push(`- error: ${page.error || '—'}`);
-            lines.push(`- promptTextLength: ${page.promptTextLength || 0}`);
-            lines.push(`- graphTextLength: ${page.graphTextLength || 0}`);
-            lines.push('');
-            if (page.promptText) {
-                lines.push('#### Prompt Text');
-                lines.push('');
-                lines.push('```text');
-                lines.push(page.promptText);
-                lines.push('```');
-                lines.push('');
-            }
-            lines.push(renderChunkMarkdownSection(`Prompt Chunks for ${page.pageId || 'auto-page'}`, page.promptChunks, { includeSourceText: false }));
-            lines.push('');
-            if (page.graphText) {
-                lines.push('#### Graph Text');
-                lines.push('');
-                lines.push('```text');
-                lines.push(page.graphText);
-                lines.push('```');
-                lines.push('');
-            }
-            lines.push(renderChunkMarkdownSection(`Graph Chunks for ${page.pageId || 'auto-page'}`, page.graphChunks, { includeSourceText: false }));
-            lines.push('');
-        }
-    }
-
-    lines.push('## Explicit Context Pages');
-    lines.push('');
-    if (!payload?.explicitContextPages?.length) {
-        lines.push('Нет explicit context pages.');
-        lines.push('');
-    } else {
-        for (const page of payload.explicitContextPages) {
-            lines.push(`### Context Page ${page.pageId || '—'}: ${page.title || '—'}`);
-            lines.push('');
-            lines.push(`- error: ${page.error || '—'}`);
-            lines.push('');
-            if (page.sourceText) {
-                lines.push('#### Source Text');
-                lines.push('');
-                lines.push('```text');
-                lines.push(page.sourceText);
-                lines.push('```');
-                lines.push('');
-            }
-            lines.push(renderChunkMarkdownSection(`Chunks for context page ${page.pageId || 'context-page'}`, page.chunks, { includeSourceText: false }));
-            lines.push('');
-        }
-    }
-
-    return lines.join('\n');
-}
-
-function persistRequirementChunkDumpMarkdown(markdown, { taskId = null } = {}) {
-    const dumpDir = join(__dirname, '..', 'report', 'chunk-dumps');
-    mkdirSync(dumpDir, { recursive: true });
-
-    const safeTaskId = String(taskId || 'manual').replace(/[^a-zA-Z0-9._-]+/g, '_');
-    const taskFilePath = join(dumpDir, `test-model-chunks-${safeTaskId}.md`);
-    const latestFilePath = join(dumpDir, 'test-model-chunks-latest.md');
-
-    writeFileSync(taskFilePath, markdown, 'utf8');
-    writeFileSync(latestFilePath, markdown, 'utf8');
-
-    return { taskFilePath, latestFilePath };
-}
-
-function persistGeneratedTestModelJson(testModel, { taskId = null } = {}) {
-    const outputDir = join(__dirname, '..', 'report', 'test-models');
-    mkdirSync(outputDir, { recursive: true });
-
-    const safeTaskId = String(taskId || 'manual').replace(/[^a-zA-Z0-9._-]+/g, '_');
-    const filename = `${safeTaskId}-test-model.json`;
-    const absoluteFilePath = join(outputDir, filename);
-    const relativeFilePath = join('report', 'test-models', filename).replace(/\\/g, '/');
-
-    writeFileSync(absoluteFilePath, JSON.stringify(testModel, null, 2), 'utf8');
-
-    return { absoluteFilePath, relativeFilePath };
-}
-
 // API для работы с правилами валидации
 
 /**
  * Получить список всех правил валидации для проекта
  */
-app.get('/api/validation/rules', async (req, res) => {
+app.get('/api/validation/rules', async (req, res) =>
+{
     try {
         const { projectId } = req.query;
 
@@ -4453,7 +2990,8 @@ app.get('/api/validation/rules', async (req, res) => {
 /**
  * Получить список всех проектов с настройками
  */
-app.get('/api/validation/projects', async (req, res) => {
+app.get('/api/validation/projects', async (req, res) =>
+{
     try {
         const projects = getAllProjects();
 
@@ -4471,71 +3009,102 @@ app.get('/api/validation/projects', async (req, res) => {
 });
 
 /**
- * Экспорт правил в Markdown формат для документации
+ * Разбирает markdown-файл правил и возвращает { markdown, projectName } для projectId
+ * Если секции не найдены и передана regenerateFn — пересобирает файл и читает повторно
+ * @param {string} mdPath
+ * @param {string} h1Title
+ * @param {string|number} projectId
+ * @param {((force: boolean) => void)|null} regenerateFn
  */
-app.get('/api/validation/rules/export', async (req, res) => {
+function exportRulesMarkdown (mdPath, h1Title, projectId, regenerateFn = null)
+{
+    if (regenerateFn && !existsSync(mdPath)) {
+        regenerateFn(true);
+    }
+
+    let fullMd = readFileSync(mdPath, 'utf8');
+    let baseStart = fullMd.indexOf('## Базовые правила');
+    let projectsStart = fullMd.indexOf('## Проекты');
+
+    if ((baseStart === -1 || projectsStart === -1) && regenerateFn) {
+        regenerateFn(true);
+        fullMd = readFileSync(mdPath, 'utf8');
+        baseStart = fullMd.indexOf('## Базовые правила');
+        projectsStart = fullMd.indexOf('## Проекты');
+    }
+
+    if (baseStart === -1 || projectsStart === -1) {
+        throw new Error('Невалидный формат файла правил: не найдены секции «Базовые правила» / «Проекты»');
+    }
+
+    let baseSection = fullMd.slice(baseStart, projectsStart).trimEnd();
+    baseSection = baseSection.replace(/\n---\s*$/m, '').trimEnd();
+
+    const projectIdStr = String(projectId);
+    const escapedId = projectIdStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const projectHeaderRe = new RegExp(`^###\\s+.*\\(ID:\\s*${escapedId}\\)\\s*$`, 'm');
+    const match = fullMd.match(projectHeaderRe);
+
+    let markdown;
+    let projectName;
+
+    if (match && match.index != null) {
+        const projectStart = match.index;
+        const projectEnd = fullMd.indexOf('\n---', projectStart);
+        const projectSection = (projectEnd !== -1 ? fullMd.slice(projectStart, projectEnd) : fullMd.slice(projectStart)).trimEnd();
+        projectName = String(match[0] || '').trim();
+        markdown = [`# ${h1Title}`, '', baseSection, '---', '', projectSection].join('\n');
+    } else {
+        projectName = `ID: ${projectIdStr} (только базовые правила)`;
+        markdown = [`# ${h1Title}`, '', baseSection].join('\n');
+    }
+
+    return { markdown, projectName: projectName || `ID: ${projectIdStr}` };
+}
+
+/**
+ * Экспорт правил в .md-файл для документации
+ */
+app.get('/api/validation/rules/export', async (req, res) =>
+{
     try {
         const { projectId } = req.query;
-
         if (!projectId) {
-            return res.status(400).json({
-                success: false,
-                error: 'Параметр projectId обязателен'
-            });
+            return res.status(400).json({ success: false, error: 'Параметр projectId обязателен' });
         }
-
-        const validationMdPath = join(__dirname, 'config', 'validation-rules.md');
-        const fullMd = readFileSync(validationMdPath, 'utf8');
-        const projectIdStr = String(projectId);
-
-        const baseStart = fullMd.indexOf('## Базовые правила');
-        const projectsStart = fullMd.indexOf('## Проекты');
-        if (baseStart === -1 || projectsStart === -1) {
-            throw new Error('Невалидный формат validation-rules.md: не найдены секции "Базовые правила" / "Проекты"');
-        }
-        let baseSection = fullMd.slice(baseStart, projectsStart).trimEnd();
-        baseSection = baseSection.replace(/\n---\s*$/m, '').trimEnd();
-
-        const escapedId = projectIdStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const projectHeaderRe = new RegExp(`^###\\s+.*\\(ID:\\s*${escapedId}\\)\\s*$`, 'm');
-        const match = fullMd.match(projectHeaderRe);
-
-        let markdown;
-        let projectName;
-
-        if (match && match.index != null) {
-            const projectStart = match.index;
-            const projectEnd = fullMd.indexOf('\n---', projectStart);
-            const projectSection = (projectEnd !== -1 ? fullMd.slice(projectStart, projectEnd) : fullMd.slice(projectStart)).trimEnd();
-            projectName = String(match[0] || '').trim();
-            markdown = [
-                '# Правила статического анализа тест-кейсов',
-                '',
-                baseSection,
-                '---',
-                '',
-                projectSection
-            ].join('\n');
-        } else {
-            projectName = `ID: ${projectIdStr} (только базовые правила)`;
-            markdown = [
-                '# Правила статического анализа тест-кейсов',
-                '',
-                baseSection
-            ].join('\n');
-        }
-
-        res.json({
-            success: true,
-            markdown,
-            projectName: projectName || `ID: ${projectIdStr}`
-        });
+        const result = exportRulesMarkdown(
+            join(__dirname, 'config', 'validation-rules.md'),
+            'Правила статического анализа тест-кейсов',
+            projectId,
+            writeValidationRulesMarkdown
+        );
+        res.json({ success: true, ...result });
     } catch (error) {
         console.error('[API] Ошибка экспорта правил:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Экспорт правил тестовой модели в Markdown
+ */
+app.get('/api/validation/test-model-rules/export', async (req, res) =>
+{
+    try {
+        const { projectId } = req.query;
+        if (!projectId) {
+            return res.status(400).json({ success: false, error: 'Параметр projectId обязателен' });
+        }
+        const result = exportRulesMarkdown(
+            join(__dirname, 'config', 'test-model-rules.md'),
+            'Правила ревью тестовой модели',
+            projectId,
+            writeTestModelRulesMarkdown
+        );
+        res.json({ success: true, ...result });
+    } catch (error) {
+        console.error('[API] Ошибка экспорта правил тестовой модели:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
@@ -4547,13 +3116,16 @@ app.get('/api/validation/rules/export', async (req, res) => {
  *         contextPageIds?: string|string[]|number[],
  *         contextInstruction?: string }
  */
-app.post('/api/analyze/solution', async (req, res) => {
+app.post('/api/analyze/solution', async (req, res) =>
+{
     try {
         const {
             text, pageId, context, project, glossary, bearerToken,
             glossaryPageId,
             contextPageIds,
-            contextInstruction
+            contextInstruction,
+            includeChildren,
+            processImages
         } = req.body;
 
         // Получаем OpenRouter API Key из header (с фоллбэком на config)
@@ -4571,20 +3143,77 @@ app.post('/api/analyze/solution', async (req, res) => {
             if (!bearerToken) {
                 return res.status(400).json({ success: false, error: 'Для получения страницы Confluence требуется bearerToken' });
             }
-            const { markdown, attachments } = await fetchConfluencePage(bearerToken, pageId);
-            requirementText = markdown;
-            collectedAttachments = attachments || [];
-            // AUTO-CONTEXT: извлечь ссылки вида ...pageId=123456 из основной статьи и подтянуть их как дополнительный контекст (без рекурсии)
+            const rootPage = await fetchConfluencePage(bearerToken, pageId, {
+                includeChildren,
+                ocr: processImages
+            });
+
+            // Поиск страницы "Детализация"
+            const findDetailingPage = (p) =>
+            {
+                if (String(p.title || '').toLowerCase().includes('детализация')) return p;
+                if (p.childPages) {
+                    for (const child of p.childPages) {
+                        const found = findDetailingPage(child);
+                        if (found) return found;
+                    }
+                }
+                return null;
+            };
+
+            const detailingPage = findDetailingPage(rootPage);
+            let finalMarkdown = '';
+            const contextPages = [];
+
+            if (detailingPage && detailingPage.childPages && detailingPage.childPages.length > 0) {
+                console.log(`[analyze/solution] Найдена страница Детализация: "${detailingPage.title}". Схлопываем ${detailingPage.childPages.length} дочерних страниц.`);
+                // Схлопываем детей Детализации в основной анализ с маркерами
+                finalMarkdown = detailingPage.childPages.map(p =>
+                    `[CONFLUENCE_PAGE: id=${p.id}, title=${p.title}]\n\n${p.markdown}`
+                ).join('\n\n---\n\n');
+
+                // Родительская и сама страница Детализация — в контекст
+                contextPages.push(`[CONFLUENCE_PAGE: id=${rootPage.id}, title=${rootPage.title}]\n\n${rootPage.markdown}`);
+                if (detailingPage.id !== rootPage.id) {
+                    contextPages.push(`[CONFLUENCE_PAGE: id=${detailingPage.id}, title=${detailingPage.title}]\n\n${detailingPage.markdown}`);
+                }
+            } else {
+                finalMarkdown = `[CONFLUENCE_PAGE: id=${rootPage.id}, title=${rootPage.title}]\n\n${rootPage.markdown}`;
+                // Все дочерние (если есть) — в контекст с маркерами
+                const collectAllChildren = (p, acc = []) =>
+                {
+                    if (p.childPages) {
+                        for (const child of p.childPages) {
+                            acc.push(`[CONFLUENCE_PAGE: id=${child.id}, title=${child.title}]\n\n${child.markdown}`);
+                            collectAllChildren(child, acc);
+                        }
+                    }
+                    return acc;
+                };
+                contextPages.push(...collectAllChildren(rootPage));
+            }
+
+            requirementText = finalMarkdown;
+            collectedAttachments = rootPage.attachments || [];
+            req._hierarchicalContextPages = contextPages;
+
             try {
                 const linkedIds = new Set();
-                // 1. Извлекаем pageId= из markdown
-                Array.from(String(markdown || '').matchAll(/pageId=(\d{4,})/g)).forEach(m => linkedIds.add(m[1]));
-                // 2. Извлекаем pageId из обычных URL вида https://confluence.../pages/viewpage.action?pageId=123456
-                Array.from(String(markdown || '').matchAll(/viewpage\.action\?pageId=(\d{4,})/gi)).forEach(m => linkedIds.add(m[1]));
-                // 3. Извлекаем pageId из коротких ссылок вида /pages/123456
-                Array.from(String(markdown || '').matchAll(/\/pages\/(\d{4,})/g)).forEach(m => linkedIds.add(m[1]));
-                // не включаем саму страницу
-                linkedIds.delete(String(pageId));
+                const allMarkdown = [finalMarkdown, ...contextPages].join('\n');
+                Array.from(allMarkdown.matchAll(/pageId=(\d{4,})/g)).forEach(m => linkedIds.add(m[1]));
+                Array.from(allMarkdown.matchAll(/viewpage\.action\?pageId=(\d{4,})/gi)).forEach(m => linkedIds.add(m[1]));
+                Array.from(allMarkdown.matchAll(/\/pages\/(\d{4,})/g)).forEach(m => linkedIds.add(m[1]));
+
+                // Убираем уже загруженные ID (чтобы не фетчить по кругу)
+                const loadedIds = new Set();
+                const collectLoadedIds = (p) =>
+                {
+                    loadedIds.add(String(p.id));
+                    if (p.childPages) p.childPages.forEach(collectLoadedIds);
+                };
+                collectLoadedIds(rootPage);
+
+                for (const id of loadedIds) linkedIds.delete(id);
                 console.log(`[analyze/solution] Найдено ${linkedIds.size} ссылок на другие страницы: [${Array.from(linkedIds).join(', ')}]`);
                 if (linkedIds.size) {
                     // подготовим список markdown‑блоков для contextPages
@@ -4594,9 +3223,15 @@ app.post('/api/analyze/solution', async (req, res) => {
                         try {
                             const { markdown: md } = await fetchConfluencePage(bearerToken, lid, { inlineTextAttachments: true });
                             if (autoIds.has(String(lid))) continue;
-                            // найдём наиболее содержательное упоминание ссылки в основной статье,
-                            // а не первое попавшееся changelog-совпадение
-                            const mention = extractBestLinkedPageMention(markdown, lid, markdown);
+                            // найдём строку(и) в основной статье, где эта ссылка упомянута, чтобы сохранить семантику отсылки
+                            const lines = String(markdown || '').split(/\n/);
+                            const refIdx = lines.findIndex(l => l.includes(`pageId=${lid}`));
+                            let mention = '';
+                            if (refIdx !== -1) {
+                                const start = Math.max(0, refIdx - 2);
+                                const end = Math.min(lines.length, refIdx + 3);
+                                mention = lines.slice(start, end).join('\n').trim();
+                            }
                             autoCtx.push([
                                 `### Контекст по ссылке из основной статьи (pageId=${lid})`,
                                 mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${lid})`,
@@ -4650,10 +3285,14 @@ app.post('/api/analyze/solution', async (req, res) => {
 
                     contextPages.push(markdown);
                 } catch (e) {
-
                     contextPages.push(`Confluence pageId=${cid}\n\n(Не удалось загрузить: ${e.message})`);
                 }
             }
+        }
+
+        // Добавляем ранее извлеченную иерархию (детей/родителей при Detailing)
+        if (req._hierarchicalContextPages) {
+            contextPages.push(...req._hierarchicalContextPages);
         }
 
         // 4) Анализ (с префильтром)
@@ -4689,7 +3328,8 @@ app.post('/api/analyze/solution', async (req, res) => {
 });
 
 
-app.post('/api/jira/create-issue', async (req, res) => {
+app.post('/api/jira/create-issue', async (req, res) =>
+{
     const { pat, payload } = req.body;
 
     if (!pat || !payload) {
@@ -4740,7 +3380,8 @@ app.post('/api/jira/create-issue', async (req, res) => {
 
 
 // Эндпоинт для получения метаданных проекта (поля, пользователи, версии)
-app.post('/api/jira/meta', async (req, res) => {
+app.post('/api/jira/meta', async (req, res) =>
+{
     const jiraBase = 'https://jira.abanking.ru';
     const { pat, projectKey } = req.body;     // передаёте с фронта
 
@@ -4820,7 +3461,8 @@ app.post('/api/jira/meta', async (req, res) => {
                         fieldIds.Platform = platformField.fieldId;
                         options.Platform = (platformField.allowedValues || [])
                             .filter(o => !o.disabled)
-                            .map(o => {
+                            .map(o =>
+                            {
                                 const name = o.value ?? o.name;
                                 return { id: String(o.id), name, prefix: getPlatformPrefix(name) };
                             });
@@ -4839,7 +3481,8 @@ app.post('/api/jira/meta', async (req, res) => {
                 fieldIds.Platform = pfId;
                 options.Platform = (pfMeta.allowedValues || [])
                     .filter(o => !o.disabled)
-                    .map(o => {
+                    .map(o =>
+                    {
                         const name = o.value ?? o.name;
                         return { id: String(o.id), name, prefix: getPlatformPrefix(name) };
                     });
@@ -4858,7 +3501,8 @@ app.post('/api/jira/meta', async (req, res) => {
 
 
 // 1. Поиск assignable пользователей
-app.get('/api/jira/users', async (req, res) => {
+app.get('/api/jira/users', async (req, res) =>
+{
     const { projectKey, pat, query = '', startAt = 0, maxResults = 50 } = req.query;
     const jiraBase = 'https://jira.abanking.ru';
     const headers = {
@@ -4879,7 +3523,8 @@ app.get('/api/jira/users', async (req, res) => {
 });
 
 // 2. Поиск версий (фильтрация по имени)
-app.get('/api/jira/versions', async (req, res) => {
+app.get('/api/jira/versions', async (req, res) =>
+{
     const { projectKey, pat, query = '' } = req.query;
     const jiraBase = 'https://jira.abanking.ru';
     const headers = {
@@ -4902,7 +3547,8 @@ app.get('/api/jira/versions', async (req, res) => {
 });
 
 // GET /jira/transitions?issueKey=JMT-123
-app.get('/api/jira/transitions', async (req, res) => {
+app.get('/api/jira/transitions', async (req, res) =>
+{
     const { pat, issueKey } = req.query;
     if (!pat || !issueKey) {
         return res.status(400).json({ error: 'Нужны pat и issueKey' });
@@ -4928,7 +3574,8 @@ app.get('/api/jira/transitions', async (req, res) => {
     }
 });
 
-app.post('/api/jira/transition-issues', async (req, res) => {
+app.post('/api/jira/transition-issues', async (req, res) =>
+{
     let { pat, issueKeys, issueKey, transitionId } = req.body;
 
     // если пришёл одиночный issueKey, упакуем его в массив
@@ -4971,7 +3618,8 @@ app.post('/api/jira/transition-issues', async (req, res) => {
 });
 
 // GET /allure/defects
-app.get('/api/allure/defects', async (req, res) => {
+app.get('/api/allure/defects', async (req, res) =>
+{
     try {
         const { projectId, query, page, size } = req.query;
         const defects = await getAllureDefects(projectId, query, page, size);
@@ -4983,7 +3631,8 @@ app.get('/api/allure/defects', async (req, res) => {
 });
 
 // GET /allure/launches
-app.get('/api/allure/launches', async (req, res) => {
+app.get('/api/allure/launches', async (req, res) =>
+{
     try {
         const { projectId, query, page, size } = req.query;
         const launches = await getAllureLaunches(projectId, query, page, size);
@@ -4995,7 +3644,8 @@ app.get('/api/allure/launches', async (req, res) => {
 });
 
 // GET /allure/launch/:launchId/defect
-app.get('/api/allure/launch/:launchId/defect', async (req, res) => {
+app.get('/api/allure/launch/:launchId/defect', async (req, res) =>
+{
     try {
         const { launchId } = req.params;
         const { page, size } = req.query;
@@ -5008,7 +3658,8 @@ app.get('/api/allure/launch/:launchId/defect', async (req, res) => {
 });
 
 // POST /allure/defect/:defectId/issue
-app.post('/api/allure/defect/:defectId/issue', async (req, res) => {
+app.post('/api/allure/defect/:defectId/issue', async (req, res) =>
+{
     const { defectId } = req.params;
     const { integrationId, name } = req.body;
     if (!defectId || !integrationId || !name) {
@@ -5024,7 +3675,8 @@ app.post('/api/allure/defect/:defectId/issue', async (req, res) => {
 });
 
 
-app.post('/api/bug/ai-review', async (req, res) => {
+app.post('/api/bug/ai-review', async (req, res) =>
+{
     const task = req.body.task || req.body.testCase;
     if (!task || typeof task !== 'object') {
         return res.status(400).json({ error: 'Нужен объект task' });
@@ -5042,7 +3694,8 @@ app.post('/api/bug/ai-review', async (req, res) => {
     }
 });
 
-app.get('/api/allure/defect/:defectId/details', async (req, res) => {
+app.get('/api/allure/defect/:defectId/details', async (req, res) =>
+{
     try {
         const defectId = req.params.defectId;
         if (!defectId) return res.status(400).json({ error: 'Нужен defectId' });
@@ -5062,7 +3715,8 @@ app.get('/api/allure/defect/:defectId/details', async (req, res) => {
     }
 });
 
-app.get('/api/jira/issue/picker', async (req, res) => {
+app.get('/api/jira/issue/picker', async (req, res) =>
+{
     const { pat, query } = req.query;
     if (!pat) {
         return res.status(400).json({ error: 'pat is required' });
@@ -5111,7 +3765,8 @@ app.get('/api/jira/issue/picker', async (req, res) => {
 });
 
 // GET /api/jira/issueLinkTypes — вернуть все типы связей из Jira
-app.get('/api/jira/issueLinkTypes', async (req, res) => {
+app.get('/api/jira/issueLinkTypes', async (req, res) =>
+{
     const { pat } = req.query;
     if (!pat) {
         return res.status(400).json({ error: 'pat is required' });
@@ -5131,7 +3786,8 @@ app.get('/api/jira/issueLinkTypes', async (req, res) => {
 });
 
 // POST /api/jira/issueLink — связать две задачи
-app.post('/api/jira/issueLink', async (req, res) => {
+app.post('/api/jira/issueLink', async (req, res) =>
+{
     const { pat, typeName, inwardIssueKey, outwardIssueKey } = req.body;
     if (!pat || !typeName || !inwardIssueKey || !outwardIssueKey) {
         return res.status(400).json({
@@ -5168,7 +3824,8 @@ app.post('/api/jira/issueLink', async (req, res) => {
 app.post(
     '/api/jira/issue/:issueKey/attachments',
     upload.array('file'),
-    async (req, res) => {
+    async (req, res) =>
+    {
         const auth = req.headers.authorization;
         const { issueKey } = req.params;
         const form = new (await import('form-data')).default();
@@ -5207,7 +3864,8 @@ app.post(
 );
 
 // Обновление полей задачи (например, description с маркерами !file.png!)
-app.put('/api/jira/issue/:issueKey', async (req, res) => {
+app.put('/api/jira/issue/:issueKey', async (req, res) =>
+{
     const { issueKey } = req.params;
     const { pat, payload } = req.body;   // payload ожидаем вида { fields: { description: desc, ... } }
 
@@ -5251,14 +3909,16 @@ app.put('/api/jira/issue/:issueKey', async (req, res) => {
 });
 
 
-app.post('/api/jira/ai-fill-fields', async (req, res) => {
+app.post('/api/jira/ai-fill-fields', async (req, res) =>
+{
     try {
         const { summary, description, steps, stand, env, pat, projectKey, issueTypeId } = req.body;
         if (!pat || !projectKey) {
             return res.status(400).json({ error: 'pat и projectKey обязательны' });
         }
         const stepsStr = Array.isArray(steps)
-            ? steps.map(s => {
+            ? steps.map(s =>
+            {
                 if (typeof s === 'string') return s;
                 if (typeof s === 'object' && s !== null) {
                     return s.action || s.text || s.body || '';
@@ -5273,7 +3933,8 @@ app.post('/api/jira/ai-fill-fields', async (req, res) => {
         // 2) Хелперы маппинга → id
         const nameToId = (arr, name) =>
             (arr || []).find(o => o.name.toLowerCase() === String(name || '').toLowerCase())?.id || null;
-        const namesToIds = (arr, names) => {
+        const namesToIds = (arr, names) =>
+        {
             const set = new Set((names || []).map(n => String(n || '').toLowerCase()));
             return (arr || [])
                 .filter(o => set.has(String(o.name).toLowerCase()))
@@ -5385,7 +4046,8 @@ ENV: ${env}
 
 
 
-function extractToolArgs(aiResponse, preferredFnName) {
+function extractToolArgs (aiResponse, preferredFnName)
+{
     try {
         console.log(`[extractToolArgs] 🔍 Начинаем извлечение args для функции: ${preferredFnName}`);
 
@@ -5604,7 +4266,8 @@ function extractToolArgs(aiResponse, preferredFnName) {
     }
 }
 
-function tryParseInlineToolCall(rawContent, toolName) {
+function tryParseInlineToolCall (rawContent, toolName)
+{
     if (!rawContent) return null;
 
     const toolBlockMatch = rawContent.match(/<tool_call>\s*([\s\S]+?)\s*<\/tool_call>/i);
@@ -5652,13 +4315,12 @@ function tryParseInlineToolCall(rawContent, toolName) {
     return null;
 }
 
-
-
 //
 // Универсальная функция для повторных попыток при 5xx,
 // принимающая либо строку prompt, либо массив сообщений {role, content}
 //
-export async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) {
+export async function callWithBackoff (url, promptOrMessages, apiKey, opts = {})
+{
     const {
         // Основная free‑модель и массив fallback‑моделей
         model = 'deepseek/deepseek-chat-v3.1:free',
@@ -5694,7 +4356,8 @@ export async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) 
     }
 
     // экспоненциальный бэкофф с небольшим джиттером
-    const backoff = (attemptIdx) => {
+    const backoff = (attemptIdx) =>
+    {
         const base = Math.min(minWaitMs * Math.pow(2, attemptIdx - 1), maxWaitMs);
         const jitter = 1 + Math.random() * 0.2; // +0..20%
         return Math.floor(base * jitter);
@@ -5728,14 +4391,25 @@ export async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) 
             console.log(`[callWithBackoff] Запрос к модели: ${payload.model}`);
         }
 
-        const resp = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-        });
+        let resp;
+        try {
+            resp = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+        } catch (networkErr) {
+            const waitMs = backoff(attempt);
+            if (logRateLimit) {
+                console.warn(`[callWithBackoff] Network error (попытка ${attempt} из ${maxAttempts}): ${networkErr.message}. Ретрай через ${waitMs}ms`);
+            }
+            if (attempt >= maxAttempts) throw networkErr;
+            await new Promise(r => setTimeout(r, waitMs));
+            continue;
+        }
 
         // Успешно — парсим и проверяем
         if (resp.ok) {
@@ -5871,7 +4545,8 @@ export async function callWithBackoff(url, promptOrMessages, apiKey, opts = {}) 
     throw new Error('OpenRouter: превышено число попыток (после 429/5xx)');
 }
 
-function buildSubmitModelTool() {
+function buildSubmitModelTool ()
+{
     return {
         type: "function",
         function: {
@@ -5955,7 +4630,8 @@ const httpsAgent = new https.Agent({ keepAlive: true });
  *   - maxResults: сколько возвращать записей (необязательно, дефолт 50)
  *   - startAt:    с какой записи начинать (необязательно, дефолт 0)
  */
-app.get('/api/jira/search', async (req, res) => {
+app.get('/api/jira/search', async (req, res) =>
+{
     const { pat, jql, maxResults = 50, fields = 'summary,timetracking' } = req.query;
     if (!pat || !jql) return res.status(400).json({ error: 'pat и jql обязательны' });
 
@@ -5992,7 +4668,8 @@ app.get('/api/jira/search', async (req, res) => {
  * @param {string} requirementsText - Текст requirements из Confluence
  * @returns {Promise<RequirementsStructure>}
  */
-async function extractRequirementsStructure(requirementsText) {
+async function extractRequirementsStructure (requirementsText)
+{
     console.log('[extractRequirementsStructure] Начинаю извлечение структуры Feature → Story...');
 
     const prompt = `
@@ -6151,7 +4828,8 @@ ${requirementsText}
  * @param {RequirementsStructure} reqStructure - Извлечённая структура requirements
  * @returns {ValidationReport}
  */
-function validateTestModel(model, reqStructure) {
+function validateTestModel (model, reqStructure)
+{
     const report = {
         valid: true,
         errors: [],
@@ -6163,7 +4841,8 @@ function validateTestModel(model, reqStructure) {
         }
     };
 
-    function normalizeText(text) {
+    function normalizeText (text)
+    {
         return String(text || '').toLowerCase()
             .replace(/\s+/g, ' ')
             .replace(/[^\w\s]/g, '')
@@ -6315,36 +4994,12 @@ function validateTestModel(model, reqStructure) {
             }
         }
 
-        // ✅ Проверка 6: Дубликаты Story по названию
+        // ✅ Проверка 6: Дубликаты Story
         const storyTexts = (generatedFeature.stories || []).map(s => normalizeText(s.text));
         const storyDuplicates = storyTexts.filter((text, index) => storyTexts.indexOf(text) !== index);
 
         if (storyDuplicates.length > 0) {
             report.errors.push(`Обнаружены дубликаты Story в Feature "${generatedFeature.text}": ${[...new Set(storyDuplicates)].join(', ')}`);
-            report.valid = false;
-        }
-
-        // ✅ Проверка 7: Дубликаты Story по содержимому Scenario + Code
-        const storyContentDuplicates = new Map();
-        for (const story of (generatedFeature.stories || [])) {
-            const signature = buildStoryContentSignature(story);
-            if (!signature) continue;
-
-            if (!storyContentDuplicates.has(signature)) {
-                storyContentDuplicates.set(signature, []);
-            }
-
-            storyContentDuplicates.get(signature).push(story.text || '(без названия)');
-        }
-
-        const duplicatedStoryGroups = Array.from(storyContentDuplicates.values())
-            .filter(group => group.length > 1)
-            .map(group => [...new Set(group)].join('", "'));
-
-        if (duplicatedStoryGroups.length > 0) {
-            report.errors.push(
-                `Обнаружены Story-дубликаты по содержимому в Feature "${generatedFeature.text}": "${duplicatedStoryGroups.join('"; "')}"`
-            );
             report.valid = false;
         }
     }
@@ -6370,7 +5025,8 @@ const STOP_WORDS = new Set([
     'реализация', 'реализовать', 'модуль', 'система'
 ]);
 
-function normalizeDomainTokens(text = '') {
+function normalizeDomainTokens (text = '')
+{
     return String(text)
         .toLowerCase()
         .replace(/[^a-zа-я0-9\s]/gi, ' ')
@@ -6378,250 +5034,8 @@ function normalizeDomainTokens(text = '') {
         .filter(token => token.length >= 4 && !STOP_WORDS.has(token));
 }
 
-function canonicalizeIntentText(text = '') {
-    return String(text || '')
-        .toLowerCase()
-        .replace(/["'`«»„”“]/g, ' ')
-        .replace(/\bотображ\w*\b/g, ' отображение ')
-        .replace(/\bпоказ\w*\b/g, ' отображение ')
-        .replace(/\bоткры\w*\b/g, ' открыть ')
-        .replace(/\bсмен\w*\b/g, ' смена ')
-        .replace(/\bизмен\w*\b/g, ' смена ')
-        .replace(/\bрекомендац\w*\b/g, ' рекомендац ')
-        .replace(/\bпарол\w*\b/g, ' пароль ')
-        .replace(/\bнадежн\w*\b/g, ' надежность ')
-        .replace(/\bмодальн\w*\b/g, ' модальное ')
-        .replace(/\bокн\w*\b/g, ' окно ')
-        .replace(/\bнастро\w*\b/g, ' настройки ')
-        .replace(/\bошибк\w*\b/g, ' ошибка ')
-        .replace(/\balert\b/g, ' алерт ')
-        .replace(/\bsimplepasslist\b/g, ' simplepasslist ')
-        .replace(/\bpasswd\/change\b/g, ' passwd change ')
-        .replace(/\bпароли\s+не\s+совпад\w*\b/g, ' пароли не совпадают ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function normalizeContentSignatureText(text = '') {
-    const rawText = String(text || '').trim();
-    if (!rawText) return '';
-    const normalizedTokens = normalizeDomainTokens(canonicalizeIntentText(rawText));
-    return normalizedTokens.join(' ') || rawText.toLowerCase();
-}
-
-function buildCodeIntentSignature(code) {
-    const normalizedText = normalizeCodeText(code?.text || '');
-    const endpointKey = normalizeEndpointCanonicalKey(normalizedText);
-    if (endpointKey) {
-        return `endpoint:${endpointKey}`;
-    }
-    return normalizeContentSignatureText(normalizedText);
-}
-
-function buildCodeContentSignature(code) {
-    return buildCodeIntentSignature(code);
-}
-
-function buildScenarioIntentSignature(scenario) {
-    const scenarioAnalysis = analyzeScenarioActionability(scenario?.text);
-    const scenarioText = scenarioAnalysis.normalizedText || String(scenario?.text || '').trim();
-    return normalizeContentSignatureText(canonicalizeIntentText(scenarioText));
-}
-
-function buildScenarioContentSignature(scenario) {
-    if (!scenario) return '';
-
-    const scenarioKey = buildScenarioIntentSignature(scenario);
-    const codeKeys = (scenario.codes || [])
-        .map(buildCodeIntentSignature)
-        .filter(Boolean)
-        .sort();
-
-    return `${scenarioKey}::${codeKeys.join('||')}`;
-}
-
-function buildStoryIntentSignature(story) {
-    const storyKey = normalizeContentSignatureText(canonicalizeIntentText(story?.text || ''));
-    const scenarioIntentKeys = (story?.scenarios || [])
-        .map(buildScenarioIntentSignature)
-        .filter(Boolean)
-        .sort();
-
-    return [storyKey, ...scenarioIntentKeys.slice(0, 4)].join('::');
-}
-
-function buildStoryContentSignature(story) {
-    if (!story) return '';
-
-    const scenarioKeys = (story.scenarios || [])
-        .map(buildScenarioContentSignature)
-        .filter(Boolean)
-        .sort();
-
-    return scenarioKeys.join('###');
-}
-
-function scoreStoryTitleSpecificity(storyText = '') {
-    const text = String(storyText || '').trim();
-    if (!text) return Number.NEGATIVE_INFINITY;
-
-    let score = normalizeDomainTokens(text).length * 10 + Math.min(text.length, 120);
-
-    if (TECHNICAL_PREFIXES.test(text)) {
-        score -= 25;
-    }
-
-    if (CONTROL_PATTERNS.test(text)) {
-        score -= 25;
-    }
-
-    if (/^(story|история|сценарий|проверка|тест|действие)\b/i.test(text.toLowerCase())) {
-        score -= 10;
-    }
-
-    return score;
-}
-
-function mergeNearDuplicateStoriesInFeature(feature) {
-    if (!feature || !Array.isArray(feature.stories)) return 0;
-
-    const storiesByIntent = new Map();
-    const mergedStories = [];
-    let removedCount = 0;
-
-    for (const story of feature.stories) {
-        if (!story || !story.text) continue;
-
-        const storyIntent = buildStoryIntentSignature(story);
-        if (!storyIntent) {
-            mergedStories.push(story);
-            continue;
-        }
-
-        if (!storiesByIntent.has(storyIntent)) {
-            storiesByIntent.set(storyIntent, story);
-            mergedStories.push(story);
-            continue;
-        }
-
-        const existingStory = storiesByIntent.get(storyIntent);
-        const mergedStory = mergeEquivalentStories(existingStory, story);
-        const existingIndex = mergedStories.indexOf(existingStory);
-
-        if (existingIndex !== -1) {
-            mergedStories[existingIndex] = mergedStory;
-        }
-
-        storiesByIntent.set(storyIntent, mergedStory);
-        removedCount++;
-    }
-
-    feature.stories = mergedStories;
-    return removedCount;
-}
-
-function trimScenarioCodesByIntentFamily(scenario, maxCodes = 10) {
-    if (!scenario || !Array.isArray(scenario.codes) || scenario.codes.length <= maxCodes) return 0;
-
-    const dedupedCodes = [];
-    const seenFamilies = new Set();
-    let removedCount = 0;
-
-    for (const code of scenario.codes) {
-        const family = buildCodeIntentSignature(code);
-        if (!family || seenFamilies.has(family)) {
-            removedCount++;
-            continue;
-        }
-
-        seenFamilies.add(family);
-        dedupedCodes.push(code);
-        if (dedupedCodes.length >= maxCodes) {
-            break;
-        }
-    }
-
-    removedCount += Math.max(0, scenario.codes.length - dedupedCodes.length - removedCount);
-    scenario.codes = dedupedCodes;
-    return removedCount;
-}
-
-function consolidateDenseFeatureStories(feature, { maxStories = 8 } = {}) {
-    if (!feature || !Array.isArray(feature.stories) || feature.stories.length <= maxStories) return 0;
-
-    const beforeCount = feature.stories.length;
-    mergeNearDuplicateStoriesInFeature(feature);
-    deduplicateStoriesByContent(feature);
-    return Math.max(0, beforeCount - (feature.stories?.length || 0));
-}
-
-function mergeEquivalentStories(primaryStory, duplicateStory) {
-    const primaryTitleScore = scoreStoryTitleSpecificity(primaryStory?.text);
-    const duplicateTitleScore = scoreStoryTitleSpecificity(duplicateStory?.text);
-    const preferredText = duplicateTitleScore > primaryTitleScore
-        ? duplicateStory?.text
-        : primaryStory?.text;
-
-    const mergedStory = {
-        ...primaryStory,
-        text: preferredText || primaryStory?.text || duplicateStory?.text || 'Story',
-        id: primaryStory?.id || duplicateStory?.id || uuidv4(),
-        scenarios: [
-            ...(Array.isArray(primaryStory?.scenarios) ? primaryStory.scenarios : []),
-            ...(Array.isArray(duplicateStory?.scenarios) ? duplicateStory.scenarios : [])
-        ]
-    };
-
-    deduplicateScenariosInStory(mergedStory);
-    return mergedStory;
-}
-
-function deduplicateStoriesByContent(feature) {
-    if (!feature || !Array.isArray(feature.stories)) return 0;
-
-    const dedupedStories = [];
-    const storySignatures = new Map();
-    let removedCount = 0;
-
-    for (const story of feature.stories) {
-        if (!story || !story.text) continue;
-
-        deduplicateScenariosInStory(story);
-        const signature = buildStoryContentSignature(story);
-
-        if (!signature) {
-            dedupedStories.push(story);
-            continue;
-        }
-
-        if (!storySignatures.has(signature)) {
-            storySignatures.set(signature, story);
-            dedupedStories.push(story);
-            continue;
-        }
-
-        const existingStory = storySignatures.get(signature);
-        const mergedStory = mergeEquivalentStories(existingStory, story);
-        const existingIndex = dedupedStories.indexOf(existingStory);
-
-        if (existingIndex !== -1) {
-            dedupedStories[existingIndex] = mergedStory;
-        }
-
-        storySignatures.set(signature, mergedStory);
-        removedCount++;
-
-        console.log(
-            `[deduplicateStoriesByContent] Удален Story-дубликат "${story.text}" в Feature "${feature.text}" ` +
-            `(оставлена Story "${mergedStory.text}")`
-        );
-    }
-
-    feature.stories = dedupedStories;
-    return removedCount;
-}
-
-function detectDominantDomainToken(features) {
+function detectDominantDomainToken (features)
+{
     if (!Array.isArray(features) || features.length === 0) return null;
     const frequency = new Map();
 
@@ -6644,7 +5058,8 @@ function detectDominantDomainToken(features) {
     return bestToken;
 }
 
-function deduplicateStoriesInFeature(feature) {
+function deduplicateStoriesInFeature (feature)
+{
     if (!feature || !Array.isArray(feature.stories)) return;
     const normalizedMap = new Map();
     const dedupedStories = [];
@@ -6652,7 +5067,7 @@ function deduplicateStoriesInFeature(feature) {
 
     for (const story of feature.stories) {
         if (!story || !story.text) continue;
-        const key = buildStoryIntentSignature(story) || normalizeDomainTokens(story.text).join(' ') || story.text.trim().toLowerCase();
+        const key = normalizeDomainTokens(story.text).join(' ') || story.text.trim().toLowerCase();
 
         // ✅ ИСПРАВЛЯЕМ ДУБЛИРУЮЩИЕСЯ ID: Если ID уже использован, генерируем новый
         let storyId = story.id;
@@ -6685,12 +5100,11 @@ function deduplicateStoriesInFeature(feature) {
     }
 
     feature.stories = dedupedStories;
-    mergeNearDuplicateStoriesInFeature(feature);
-    deduplicateStoriesByContent(feature);
 }
 
 // ✅ НОВАЯ ФУНКЦИЯ: Дедупликация scenarios внутри Story
-function deduplicateScenariosInStory(story) {
+function deduplicateScenariosInStory (story)
+{
     if (!story || !Array.isArray(story.scenarios)) return;
     const normalizedMap = new Map();
     const dedupedScenarios = [];
@@ -6698,7 +5112,7 @@ function deduplicateScenariosInStory(story) {
 
     for (const scenario of story.scenarios) {
         if (!scenario || !scenario.text) continue;
-        const key = buildScenarioContentSignature(scenario) || buildScenarioIntentSignature(scenario) || normalizeDomainTokens(scenario.text).join(' ') || scenario.text.trim().toLowerCase();
+        const key = normalizeDomainTokens(scenario.text).join(' ') || scenario.text.trim().toLowerCase();
 
         // ✅ ИСПРАВЛЯЕМ ДУБЛИРУЮЩИЕСЯ ID: Если ID уже использован, генерируем новый
         let scenarioId = scenario.id;
@@ -6734,7 +5148,8 @@ function deduplicateScenariosInStory(story) {
 }
 
 // ✅ НОВАЯ ФУНКЦИЯ: Дедупликация codes внутри Scenario
-function deduplicateCodesInScenario(scenario) {
+function deduplicateCodesInScenario (scenario)
+{
     if (!scenario || !Array.isArray(scenario.codes)) return;
     const normalizedMap = new Map();
     const dedupedCodes = [];
@@ -6742,7 +5157,7 @@ function deduplicateCodesInScenario(scenario) {
 
     for (const code of scenario.codes) {
         if (!code || !code.text) continue;
-        const key = buildCodeIntentSignature(code) || normalizeDomainTokens(code.text).join(' ') || code.text.trim().toLowerCase();
+        const key = normalizeDomainTokens(code.text).join(' ') || code.text.trim().toLowerCase();
 
         // ✅ ИСПРАВЛЯЕМ ДУБЛИРУЮЩИЕСЯ ID: Если ID уже использован, генерируем новый
         let codeId = code.id;
@@ -6759,10 +5174,10 @@ function deduplicateCodesInScenario(scenario) {
     }
 
     scenario.codes = dedupedCodes;
-    trimScenarioCodesByIntentFamily(scenario);
 }
 
-function mergeFeaturesByDomain(model) {
+function mergeFeaturesByDomain (model)
+{
     if (!Array.isArray(model) || model.length <= 1) return model;
     const featuresWithStories = model.filter(f => Array.isArray(f?.stories) && f.stories.length > 0);
     if (featuresWithStories.length <= 1) return featuresWithStories;
@@ -6834,18 +5249,19 @@ function mergeFeaturesByDomain(model) {
     return [mergedFeature];
 }
 
-function postProcessModel(model) {
+function postProcessModel (model)
+{
     console.log('[postProcessModel] Начинаю постобработку модели...');
     let cleanedCount = 0;
 
     for (const feature of model) {
         // Удаляем технические Story
-        feature.stories = (feature.stories || []).filter(story => {
+        feature.stories = (feature.stories || []).filter(story =>
+        {
             const storyText = (story.text || '').toLowerCase();
             const technicalKeywords = ['загрузка страницы', 'переключение между'];
             const isTechnical = technicalKeywords.some(keyword => storyText.includes(keyword));
-            const isClauseFragment = looksLikeClauseFragment(story.text);
-            if (isTechnical || isClauseFragment) {
+            if (isTechnical) {
                 console.warn(`[postProcessModel] ⚠️ Удаляю техническую Story: "${story.text}"`);
                 cleanedCount++;
                 return false;
@@ -6855,20 +5271,18 @@ function postProcessModel(model) {
 
         for (const story of feature.stories || []) {
             // Удаляем технические Scenario
-            story.scenarios = (story.scenarios || []).filter(scenario => {
+            story.scenarios = (story.scenarios || []).filter(scenario =>
+            {
                 const scenarioText = (scenario.text || '').toLowerCase();
-                const scenarioAnalysis = analyzeScenarioActionability(scenario.text);
                 const isTechnicalScenario = scenarioText.includes('загрузить страницу') ||
                     scenarioText.includes('загрузить') && scenarioText.includes('страниц');
-                const isInvalidScenario = !scenarioAnalysis.valid;
-                if (isTechnicalScenario || isInvalidScenario) {
-                    console.warn(
-                        `[postProcessModel] ⚠️ Удаляю Scenario: "${scenario.text}" (${isTechnicalScenario ? 'технический сценарий' : scenarioAnalysis.reason})`
-                    );
+                const isPlaceholder = scenarioText.includes('выполнить пользовательское действие') ||
+                    scenarioText.includes('выполнить действие');
+                if (isTechnicalScenario || isPlaceholder) {
+                    console.warn(`[postProcessModel] ⚠️ Удаляю технический/placeholder Scenario: "${scenario.text}"`);
                     cleanedCount++;
                     return false;
                 }
-                scenario.text = scenarioAnalysis.normalizedText;
                 return true;
             });
 
@@ -6986,7 +5400,6 @@ function postProcessModel(model) {
     // Дедуплицируем Story внутри каждой Feature
     for (const feature of model) {
         deduplicateStoriesInFeature(feature);
-        consolidateDenseFeatureStories(feature);
     }
 
     // Если все Feature описывают один домен, объединяем их
@@ -7006,11 +5419,13 @@ function postProcessModel(model) {
  * @param {Array} model - Тестовая модель
  * @returns {Array} - Модель без дубликатов Scenarios между Stories
  */
-function deduplicateScenariosAcrossStories(model) {
+function deduplicateScenariosAcrossStories (model)
+{
     console.log('[deduplicateScenariosAcrossStories] Начинаю дедупликацию Scenarios между Stories...');
     let removedCount = 0;
 
-    const normalizeScenarioText = (text) => {
+    const normalizeScenarioText = (text) =>
+    {
         // Убираем номер в начале ("1. " -> "")
         return String(text || '').trim().replace(/^\d+\.\s*/, '').toLowerCase();
     };
@@ -7022,10 +5437,7 @@ function deduplicateScenariosAcrossStories(model) {
         for (let storyIdx = 0; storyIdx < (feature.stories || []).length; storyIdx++) {
             const story = feature.stories[storyIdx];
             for (const scenario of (story.scenarios || [])) {
-                const normalized =
-                    buildScenarioContentSignature(scenario) ||
-                    buildScenarioIntentSignature(scenario) ||
-                    normalizeScenarioText(scenario.text);
+                const normalized = normalizeScenarioText(scenario.text);
                 if (!allScenarios.has(normalized)) {
                     allScenarios.set(normalized, []);
                 }
@@ -7055,11 +5467,7 @@ function deduplicateScenariosAcrossStories(model) {
             for (const { storyIdx, scenario } of duplicatesToRemove) {
                 const story = feature.stories[storyIdx];
                 const scenarioIndex = story.scenarios.findIndex(s =>
-                    (
-                        buildScenarioContentSignature(s) ||
-                        buildScenarioIntentSignature(s) ||
-                        normalizeScenarioText(s.text)
-                    ) === normalizedText
+                    normalizeScenarioText(s.text) === normalizedText
                 );
                 if (scenarioIndex !== -1) {
                     story.scenarios.splice(scenarioIndex, 1);
@@ -7081,7 +5489,8 @@ function deduplicateScenariosAcrossStories(model) {
  * @param {string} requirements - Требования
  * @returns {Promise<Array>} - Перегенерированные Scenarios
  */
-async function regenerateOverDetailedScenarios(story, scenarios, requirements) {
+async function regenerateOverDetailedScenarios (story, scenarios, requirements)
+{
     if (scenarios.length <= 5) return scenarios; // Нормальная детализация
 
     console.warn(`[regenerateOverDetailedScenarios] Story "${story.text}" содержит ${scenarios.length} Scenarios (рекомендуется 3-5), перегенерируем...`);
@@ -7239,11 +5648,13 @@ ${requirements.substring(0, 3000)}
  * @param {Array} model - Тестовая модель
  * @returns {Array} - Модель с объединенными Scenarios
  */
-function mergeDetailedScenarios(model) {
+function mergeDetailedScenarios (model)
+{
     console.log('[mergeDetailedScenarios] Начинаю объединение детализированных Scenarios...');
     let mergedCount = 0;
 
-    const normalizeAction = (text) => {
+    const normalizeAction = (text) =>
+    {
         // Извлекаем основное действие из Scenario
         const normalized = String(text || '').trim().replace(/^\d+\.\s*/, '').toLowerCase();
         // Определяем тип действия
@@ -7395,7 +5806,8 @@ function mergeDetailedScenarios(model) {
  * @param {Array} model - Тестовая модель
  * @returns {Array} - Модель с обогащенными backend Code
  */
-function enrichBackendCodesWithExpectedResult(model) {
+function enrichBackendCodesWithExpectedResult (model)
+{
     console.log('[enrichBackendCodesWithExpectedResult] Начинаю обогащение backend Code Expected Result...');
     let enrichedCount = 0;
 
@@ -7443,22 +5855,24 @@ function enrichBackendCodesWithExpectedResult(model) {
  * @param {RequirementsStructure} reqStructure - Структура requirements
  * @returns {CoverageReport}
  */
-function generateCoverageReport(model, reqStructure) {
+function generateCoverageReport (model, reqStructure)
+{
     console.log('[generateCoverageReport] Генерирую отчёт о покрытии...');
+
+    function normalizeText (text)
+    {
+        return String(text || '').toLowerCase()
+            .replace(/\s+/g, ' ')
+            .replace(/[^\w\s]/g, '')
+            .trim();
+    }
 
     const report = {
         total: 0,
         covered: 0,
         missing: [],
         details: [],
-        coveragePercent: 0,
-        structureCoverage: {
-            totalStories: 0,
-            completeStories: 0,
-            coveragePercent: 0
-        },
-        emptyStories: [],
-        emptyScenarios: []
+        coveragePercent: 0
     };
 
     // Собираем все Stories из всех Features
@@ -7475,43 +5889,38 @@ function generateCoverageReport(model, reqStructure) {
     }
 
     // Проверяем покрытие для каждой Feature
-    for (let fIdx = 0; fIdx < reqStructure.features.length; fIdx++) {
+    for (let fIdx = 0; fIdx < reqStructure.features.length && fIdx < model.length; fIdx++) {
         const expectedFeature = reqStructure.features[fIdx];
-        const generatedFeature = findBestFeatureMatch(model, expectedFeature.name) || model[fIdx];
-        const generatedStories = (generatedFeature?.stories || []).map(s => ({
+        const generatedFeature = model[fIdx];
+        const generatedStories = (generatedFeature.stories || []).map(s => ({
             text: s.text,
-            scenariosCount: (s.scenarios || []).length,
-            hasEmptyScenarios: (s.scenarios || []).some(sc => !Array.isArray(sc.codes) || sc.codes.length === 0)
+            scenariosCount: (s.scenarios || []).length
         }));
 
         for (const expectedStory of expectedFeature.stories) {
-            const found = findBestStoryMatch(generatedStories, expectedStory.name);
+            const normalized = normalizeText(expectedStory.name);
+            let found = null;
+
+            for (const genStory of generatedStories) {
+                const keywords = normalized.split(/\s+/).filter(w => w.length > 3);
+                const matches = keywords.filter(kw => normalizeText(genStory.text).includes(kw));
+
+                if (matches.length >= Math.ceil(keywords.length * 0.6)) {
+                    found = genStory;
+                    report.covered++;
+                    break;
+                }
+            }
 
             if (found) {
-                const storyComplete = found.scenariosCount > 0 && !found.hasEmptyScenarios;
-                report.covered++;
-                report.structureCoverage.totalStories++;
-                if (storyComplete) {
-                    report.structureCoverage.completeStories++;
-                }
-
                 report.details.push({
                     requirement: expectedStory.requirements.join(', '),
                     feature: expectedFeature.name,
                     story: expectedStory.name,
                     status: 'covered',
-                    scenariosCount: found.scenariosCount,
-                    structureStatus: storyComplete ? 'complete' : 'incomplete'
+                    scenariosCount: found.scenariosCount
                 });
-
-                if (found.scenariosCount === 0) {
-                    report.emptyStories.push({
-                        feature: expectedFeature.name,
-                        story: expectedStory.name
-                    });
-                }
             } else {
-                report.structureCoverage.totalStories++;
                 report.missing.push(expectedStory.name);
                 report.details.push({
                     requirement: expectedStory.requirements.join(', '),
@@ -7523,591 +5932,15 @@ function generateCoverageReport(model, reqStructure) {
         }
     }
 
-    for (const feature of model || []) {
-        for (const story of (feature.stories || [])) {
-            if (!Array.isArray(story.scenarios) || story.scenarios.length === 0) {
-                report.emptyStories.push({
-                    feature: feature.text,
-                    story: story.text
-                });
-                continue;
-            }
-
-            for (const scenario of (story.scenarios || [])) {
-                const nonEmptyCodes = (scenario.codes || []).filter(code => String(code?.text || '').trim());
-                if (nonEmptyCodes.length === 0) {
-                    report.emptyScenarios.push({
-                        feature: feature.text,
-                        story: story.text,
-                        scenario: scenario.text
-                    });
-                }
-            }
-        }
-    }
-
-    report.emptyStories = Array.from(new Map(
-        report.emptyStories.map(item => [
-            `${normalizeStructureText(item.feature)}|${normalizeStructureText(item.story)}`,
-            item
-        ])
-    ).values());
-
-    report.emptyScenarios = Array.from(new Map(
-        report.emptyScenarios.map(item => [
-            `${normalizeStructureText(item.feature)}|${normalizeStructureText(item.story)}|${normalizeStructureText(item.scenario)}`,
-            item
-        ])
-    ).values());
-
     report.coveragePercent = report.total > 0 ? Math.round((report.covered / report.total) * 100) : 0;
-    report.structureCoverage.coveragePercent = report.structureCoverage.totalStories > 0
-        ? Math.round((report.structureCoverage.completeStories / report.structureCoverage.totalStories) * 100)
-        : 0;
-
     console.log(`[generateCoverageReport] Coverage: ${report.covered}/${report.total} (${report.coveragePercent}%)`);
-    console.log(`[generateCoverageReport] Structure coverage: ${report.structureCoverage.completeStories}/${report.structureCoverage.totalStories} (${report.structureCoverage.coveragePercent}%)`);
 
     if (report.missing.length > 0) {
         console.warn(`[generateCoverageReport] Не покрыто ${report.missing.length} Stories:`);
         report.missing.forEach(story => console.warn(`  ❌ ${story}`));
     }
 
-    if (report.emptyStories.length > 0) {
-        console.warn(`[generateCoverageReport] Story без Scenarios: ${report.emptyStories.length}`);
-    }
-
-    if (report.emptyScenarios.length > 0) {
-        console.warn(`[generateCoverageReport] Scenario без Codes: ${report.emptyScenarios.length}`);
-    }
-
     return report;
-}
-
-function normalizeStructureText(text) {
-    return String(text || '').toLowerCase()
-        .replace(/\s+/g, ' ')
-        .replace(/[^\w\s]/g, '')
-        .trim();
-}
-
-function extractStructureKeywords(text) {
-    return normalizeStructureText(text)
-        .split(/\s+/)
-        .filter(word => word.length > 3);
-}
-
-function isGenericStoryPlaceholder(text) {
-    const normalized = normalizeStructureText(text);
-    return [
-        'базовый сценарий',
-        'основной сценарий',
-        'базовый поток',
-        'основной поток',
-        'позитивный сценарий',
-        'основной пользовательский сценарий'
-    ].includes(normalized);
-}
-
-function getStoryScenarioCount(story) {
-    if (typeof story?.scenariosCount === 'number') {
-        return story.scenariosCount;
-    }
-
-    return Array.isArray(story?.scenarios) ? story.scenarios.length : 0;
-}
-
-function computeStructureSimilarityScore(expectedText, actualText) {
-    const expected = normalizeStructureText(expectedText);
-    const actual = normalizeStructureText(actualText);
-
-    if (!expected || !actual) return 0;
-    if (expected === actual) return 1;
-    if (actual.includes(expected) || expected.includes(actual)) return 0.9;
-
-    const keywords = extractStructureKeywords(expected);
-    if (keywords.length === 0) return 0;
-
-    const matches = keywords.filter(keyword => actual.includes(keyword)).length;
-    return matches / keywords.length;
-}
-
-function findBestFeatureMatch(features, expectedFeatureName, minScore = 0.4) {
-    const list = Array.isArray(features) ? features : [];
-    if (list.length === 0) return null;
-    if (list.length === 1) return list[0];
-
-    let bestMatch = null;
-    let bestScore = 0;
-
-    for (const feature of list) {
-        const score = computeStructureSimilarityScore(expectedFeatureName, feature?.text || feature?.name || '');
-        if (score > bestScore) {
-            bestScore = score;
-            bestMatch = feature;
-        }
-    }
-
-    return bestScore >= minScore ? bestMatch : null;
-}
-
-function findBestStoryMatch(stories, expectedStoryName, minScore = 0.45) {
-    const list = Array.isArray(stories) ? stories : [];
-    if (list.length === 0) return null;
-
-    let bestMatch = null;
-    let bestScore = 0;
-
-    for (const story of list) {
-        const score = computeStructureSimilarityScore(expectedStoryName, story?.text || story?.name || '');
-        if (score > bestScore) {
-            bestScore = score;
-            bestMatch = story;
-        }
-    }
-
-    if (bestScore >= minScore) {
-        return bestMatch;
-    }
-
-    if (isGenericStoryPlaceholder(expectedStoryName)) {
-        return [...list].sort((left, right) => {
-            const scenariosDiff = getStoryScenarioCount(right) - getStoryScenarioCount(left);
-            if (scenariosDiff !== 0) return scenariosDiff;
-
-            const leftTextLength = String(left?.text || left?.name || '').length;
-            const rightTextLength = String(right?.text || right?.name || '').length;
-            return rightTextLength - leftTextLength;
-        })[0] || null;
-    }
-
-    return null;
-}
-
-function clonePlainObject(value) {
-    return value ? JSON.parse(JSON.stringify(value)) : value;
-}
-
-function coerceModelArrayFromToolArgs(args) {
-    if (!args) return null;
-
-    let modelSource = args.model || args.features;
-
-    if (!modelSource && args.id && args.text && Array.isArray(args.stories)) {
-        modelSource = [args];
-    }
-
-    if (Array.isArray(modelSource)) {
-        return modelSource;
-    }
-
-    if (typeof modelSource === 'object' && modelSource !== null && Array.isArray(modelSource.items)) {
-        return modelSource.items;
-    }
-
-    if (typeof modelSource === 'string') {
-        try {
-            const parsed = JSON5.parse(modelSource);
-            if (Array.isArray(parsed)) return parsed;
-            if (parsed && Array.isArray(parsed.items)) return parsed.items;
-        } catch (error) {
-            console.warn('[coerceModelArrayFromToolArgs] Не удалось распарсить modelSource:', error.message);
-        }
-    }
-
-    return null;
-}
-
-function collectHierarchyRepairTargets(model, reqStructure) {
-    const targets = [];
-    const targetByKey = new Map();
-
-    const pushTarget = (target) => {
-        const key = `${normalizeStructureText(target.featureName)}|${normalizeStructureText(target.storyName)}`;
-        const existingTarget = targetByKey.get(key);
-        if (existingTarget) {
-            if (target.currentStory && !existingTarget.currentStory) {
-                existingTarget.currentStory = target.currentStory;
-            }
-            if (Array.isArray(target.expectedRequirements) && target.expectedRequirements.length > 0) {
-                const mergedRequirements = new Set([
-                    ...(existingTarget.expectedRequirements || []),
-                    ...target.expectedRequirements
-                ]);
-                existingTarget.expectedRequirements = Array.from(mergedRequirements);
-            }
-            if (target.issueSummary && !String(existingTarget.issueSummary || '').includes(target.issueSummary)) {
-                existingTarget.issueSummary = [existingTarget.issueSummary, target.issueSummary]
-                    .filter(Boolean)
-                    .join(' ');
-            }
-            return;
-        }
-
-        targetByKey.set(key, target);
-        targets.push(target);
-    };
-
-    for (const feature of model || []) {
-        for (const story of (feature.stories || [])) {
-            const scenarios = Array.isArray(story.scenarios) ? story.scenarios : [];
-            if (scenarios.length === 0) {
-                pushTarget({
-                    featureName: feature.text,
-                    storyName: story.text,
-                    currentStory: clonePlainObject(story),
-                    expectedRequirements: [],
-                    issueSummary: 'Story присутствует в модели, но после merge/cleanup осталась без Scenarios.'
-                });
-                continue;
-            }
-
-            const invalidScenarios = scenarios
-                .map(scenario => ({
-                    text: scenario.text,
-                    analysis: analyzeScenarioActionability(scenario.text)
-                }))
-                .filter(item => !item.analysis.valid);
-
-            if (invalidScenarios.length > 0) {
-                pushTarget({
-                    featureName: feature.text,
-                    storyName: story.text,
-                    currentStory: clonePlainObject(story),
-                    expectedRequirements: [],
-                    issueSummary: `Story содержит Scenario, которые не являются конкретными действиями пользователя: ${invalidScenarios.map(item => `"${item.text}" (${item.analysis.reason})`).join('; ')}`
-                });
-            }
-
-            const emptyScenarios = scenarios
-                .filter(scenario => {
-                    const nonEmptyCodes = (scenario.codes || []).filter(code => String(code?.text || '').trim());
-                    return nonEmptyCodes.length === 0;
-                })
-                .map(scenario => scenario.text)
-                .filter(Boolean);
-
-            if (emptyScenarios.length > 0) {
-                pushTarget({
-                    featureName: feature.text,
-                    storyName: story.text,
-                    currentStory: clonePlainObject(story),
-                    expectedRequirements: [],
-                    issueSummary: `Story содержит Scenario без Codes: ${emptyScenarios.join('; ')}`
-                });
-            }
-        }
-    }
-
-    if (!reqStructure?.features?.length) {
-        return targets;
-    }
-
-    for (const expectedFeature of reqStructure.features) {
-        const featureMatch = findBestFeatureMatch(model, expectedFeature.name);
-        for (const expectedStory of (expectedFeature.stories || [])) {
-            const storyMatch = featureMatch
-                ? findBestStoryMatch(featureMatch.stories || [], expectedStory.name)
-                : null;
-
-            if (!storyMatch) {
-                pushTarget({
-                    featureName: expectedFeature.name,
-                    storyName: expectedStory.name,
-                    currentStory: null,
-                    expectedRequirements: expectedStory.requirements || [],
-                    issueSummary: 'Story ожидается по структуре требований, но отсутствует в итоговой модели.'
-                });
-            }
-        }
-    }
-
-    return targets;
-}
-
-function upsertStoryIntoModel(model, featureName, story) {
-    if (!story) return model;
-
-    const nextModel = Array.isArray(model) ? model : [];
-    let feature = findBestFeatureMatch(nextModel, featureName);
-
-    if (!feature) {
-        feature = {
-            id: uuidv4(),
-            text: featureName,
-            stories: []
-        };
-        nextModel.push(feature);
-    }
-
-    if (!Array.isArray(feature.stories)) {
-        feature.stories = [];
-    }
-
-    const existingStory = findBestStoryMatch(feature.stories, story.text);
-    if (existingStory) {
-        existingStory.id = story.id || existingStory.id || uuidv4();
-        existingStory.text = story.text || existingStory.text;
-        existingStory.scenarios = Array.isArray(story.scenarios) ? story.scenarios : [];
-    } else {
-        feature.stories.push({
-            ...story,
-            id: story.id || uuidv4(),
-            scenarios: Array.isArray(story.scenarios) ? story.scenarios : []
-        });
-    }
-
-    deduplicateStoriesInFeature(feature);
-    return nextModel;
-}
-
-function pruneEmptyModelBranches(model) {
-    const report = {
-        removedFeatures: [],
-        removedStories: [],
-        removedScenarios: []
-    };
-
-    const nextModel = [];
-
-    for (const feature of model || []) {
-        const nextStories = [];
-
-        for (const story of (feature.stories || [])) {
-            const nextScenarios = [];
-
-            for (const scenario of (story.scenarios || [])) {
-                const scenarioAnalysis = analyzeScenarioActionability(scenario.text);
-                if (!scenarioAnalysis.valid) {
-                    report.removedScenarios.push({
-                        feature: feature.text,
-                        story: story.text,
-                        scenario: scenario.text,
-                        reason: scenarioAnalysis.reason
-                    });
-                    continue;
-                }
-
-                const nextCodes = (scenario.codes || []).filter(code => String(code?.text || '').trim());
-                if (nextCodes.length === 0) {
-                    report.removedScenarios.push({
-                        feature: feature.text,
-                        story: story.text,
-                        scenario: scenario.text
-                    });
-                    continue;
-                }
-
-                nextScenarios.push({
-                    ...scenario,
-                    text: scenarioAnalysis.normalizedText,
-                    codes: nextCodes
-                });
-            }
-
-            if (nextScenarios.length === 0) {
-                report.removedStories.push({
-                    feature: feature.text,
-                    story: story.text
-                });
-                continue;
-            }
-
-            nextStories.push({
-                ...story,
-                scenarios: nextScenarios
-            });
-        }
-
-        if (nextStories.length === 0) {
-            report.removedFeatures.push(feature.text);
-            continue;
-        }
-
-        nextModel.push({
-            ...feature,
-            stories: nextStories
-        });
-    }
-
-    return {
-        model: nextModel,
-        report
-    };
-}
-
-async function regenerateSingleStoryBranch({
-    featureName,
-    storyName,
-    currentStory,
-    expectedRequirements,
-    issueSummary,
-    requirementsText,
-    systemPrompt,
-    modelsToTry,
-    logicSection,
-    ragContext,
-    graphContext
-}) {
-    const contextQuery = [featureName, storyName, issueSummary, ...(expectedRequirements || [])]
-        .filter(Boolean)
-        .join(' ');
-    const requirementsContext = extractRelevantSections(requirementsText, contextQuery, {
-        maxSections: 12,
-        maxChars: 70000
-    });
-    const graphSection = formatGraphContextForPrompt(graphContext);
-
-    const currentStoryBlock = currentStory
-        ? `ТЕКУЩАЯ ВЕТКА STORY:\n\`\`\`json\n${JSON.stringify(currentStory, null, 2)}\n\`\`\`\n`
-        : 'ТЕКУЩАЯ ВЕТКА STORY: отсутствует, её нужно восстановить заново.\n';
-
-    const prompt = `
-ЗАДАЧА: восстановить только одну ветку Story в test model.
-
-ОГРАНИЧЕНИЕ:
-- Верни через submit_test_model JSON c ровно 1 Feature и ровно 1 Story.
-- Нельзя возвращать пустые массивы:
-  - Story.scenarios.length >= 1
-  - каждый Scenario.codes.length >= 1
-
-ЦЕЛЕВАЯ FEATURE: "${featureName}"
-ЦЕЛЕВАЯ STORY: "${storyName}"
-ПРОБЛЕМА: ${issueSummary}
-СВЯЗАННЫЕ REQUIREMENTS: ${(expectedRequirements || []).join(', ') || 'не указаны'}
-
-${currentStoryBlock}
-
-РЕЛЕВАНТНЫЙ КОНТЕКСТ ТРЕБОВАНИЙ:
----
-${requirementsContext}
----
-
-${logicSection ? `ДОПОЛНИТЕЛЬНЫЕ ЛОГИЧЕСКИЕ ОГРАНИЧЕНИЯ:\n${logicSection}\n` : ''}
-${ragContext ? `RAG КОНТЕКСТ:\n${ragContext}\n` : ''}
-
-ПРАВИЛА ВОССТАНОВЛЕНИЯ:
-- Сохрани корректные Scenario и Code из текущей Story, если они валидны.
-- Дополни только недостающие Scenario и Code.
-- Scenario должен описывать только конкретное выполнимое действие пользователя: куда перейти, что открыть, на что нажать, что ввести, что выбрать.
-- Запрещены Scenario вида "Выполнить пользовательское действие", "Проверить состояние ...", "Просмотреть данные", "Удалить старый текст рекомендаций".
-- Если требование описывает состояние интерфейса, отсутствие текста, доступность или другую реакцию системы, это должен быть Code. Scenario в таком случае должен описывать путь пользователя к месту проверки.
-- Code должен описывать реакцию системы и иметь type "frontend" или "backend".
-- Внутри одного Scenario один и тот же Code не должен дублироваться: оставляй только один экземпляр каждой системной реакции.
-- Если Story отсутствует, создай её заново на основе контекста требований.
-- Ответ недопустим, если хотя бы один Scenario остался без Code.
-${graphSection ? `\nGRAPH CONTEXT (NEO4J):\n${graphSection}\n` : ''}
-`.trim();
-
-    try {
-        const ai = await callWithCloudRuFallback(
-            OPENROUTER_URL,
-            [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: prompt }
-            ],
-            config.openRouterAiKey,
-            {
-                tools: [buildSubmitModelTool()],
-                temperature: 0,
-                top_p: 0.9,
-                max_tokens: 14000,
-                models: modelsToTry,
-                extra: { transforms: 'middle-out' }
-            }
-        );
-
-        const args = extractToolArgs(ai, 'submit_test_model');
-        const partialModel = coerceModelArrayFromToolArgs(args);
-        if (!Array.isArray(partialModel) || partialModel.length === 0) {
-            return null;
-        }
-
-        let repairedModel = normalizeModelStructure(partialModel);
-        repairedModel = repairModelStructure(repairedModel);
-        repairedModel = validateAndCleanModel(repairedModel);
-
-        const repairedFeature = findBestFeatureMatch(repairedModel, featureName) || repairedModel[0];
-        const repairedStory = repairedFeature
-            ? (findBestStoryMatch(repairedFeature.stories || [], storyName) || repairedFeature.stories?.[0])
-            : null;
-
-        if (!repairedStory || !Array.isArray(repairedStory.scenarios) || repairedStory.scenarios.length === 0) {
-            return null;
-        }
-
-        const hasEmptyScenario = repairedStory.scenarios.some(scenario => {
-            const nonEmptyCodes = (scenario.codes || []).filter(code => String(code?.text || '').trim());
-            return nonEmptyCodes.length === 0;
-        });
-
-        const hasInvalidScenario = repairedStory.scenarios.some(scenario => !analyzeScenarioActionability(scenario.text).valid);
-
-        if (hasEmptyScenario || hasInvalidScenario) {
-            return null;
-        }
-
-        return {
-            featureName: repairedFeature?.text || featureName,
-            story: repairedStory
-        };
-    } catch (error) {
-        console.warn(`[regenerateSingleStoryBranch] Не удалось восстановить Story "${storyName}":`, error.message);
-        return null;
-    }
-}
-
-async function repairModelHierarchyGaps({
-    model,
-    reqStructure,
-    requirementsText,
-    systemPrompt,
-    modelsToTry,
-    logicSection,
-    ragContext,
-    graphContext
-}) {
-    const targets = collectHierarchyRepairTargets(model, reqStructure);
-    if (targets.length === 0) {
-        return {
-            model,
-            repairedCount: 0,
-            targets: []
-        };
-    }
-
-    const MAX_TARGETED_STORY_REPAIRS = 6;
-    const selectedTargets = targets.slice(0, MAX_TARGETED_STORY_REPAIRS);
-    let repairedCount = 0;
-    let workingModel = Array.isArray(model) ? model : [];
-
-    console.log(`[repairModelHierarchyGaps] Найдено ${targets.length} target(s), обрабатываю ${selectedTargets.length}`);
-
-    for (const target of selectedTargets) {
-        const repaired = await regenerateSingleStoryBranch({
-            ...target,
-            requirementsText,
-            systemPrompt,
-            modelsToTry,
-            logicSection,
-            ragContext,
-            graphContext
-        });
-
-        if (!repaired?.story) {
-            continue;
-        }
-
-        workingModel = upsertStoryIntoModel(workingModel, repaired.featureName || target.featureName, repaired.story);
-        repairedCount++;
-        console.log(`[repairModelHierarchyGaps] ✅ Восстановлена Story "${target.storyName}"`);
-    }
-
-    return {
-        model: workingModel,
-        repairedCount,
-        targets: selectedTargets
-    };
 }
 
 
@@ -8117,7 +5950,8 @@ async function repairModelHierarchyGaps({
  * @param {Array} model - Тестовая модель (массив Feature)
  * @returns {Object} - Отчёт о покрытии scenarios
  */
-function calculateTestCasesCoverage(testCases, model) {
+function calculateTestCasesCoverage (testCases, model)
+{
     const normalizeText = (text) => String(text || '').toLowerCase().trim();
 
     const allScenarios = [];
@@ -8164,7 +5998,8 @@ function calculateTestCasesCoverage(testCases, model) {
  * @param {string} layer - Тип теста (E2E, Integration frontend, Integration backend)
  * @returns {string} - Форматированный Expected
  */
-function formatExpectedResult(expected, layer) {
+function formatExpectedResult (expected, layer)
+{
     if (!expected || typeof expected !== 'string') return expected;
     let formatted = expected;
 
@@ -8218,10 +6053,12 @@ function formatExpectedResult(expected, layer) {
  * @param {Array} issues - Список структурных проблем
  * @returns {Array} - Массив { feature, story, scenario, problematicCodes, issue }
  */
-function extractProblematicScenarios(model, issues) {
+function extractProblematicScenarios (model, issues)
+{
     const problematic = [];
 
-    function normalizeText(text) {
+    function normalizeText (text)
+    {
         return String(text || '').toLowerCase()
             .replace(/\s+/g, ' ')
             .replace(/[^\w\s]/g, '')
@@ -8274,7 +6111,8 @@ function extractProblematicScenarios(model, issues) {
  * @param {string} requirements - Требования
  * @returns {Promise<Array>} - Исправленные Scenarios [{ scenario, fixedCodes }]
  */
-async function regenerateProblematicScenarios(problematicScenarios, requirements) {
+async function regenerateProblematicScenarios (problematicScenarios, requirements)
+{
     console.log(`[regenerateProblematicScenarios] Перегенерирую ${problematicScenarios.length} проблемных Scenarios...`);
 
     const fixed = [];
@@ -8466,7 +6304,8 @@ Code должны описывать ПОВЕДЕНИЕ СИСТЕМЫ (что �
  * Извлекает детальный контекст из уже сгенерированных частей модели.
  * Возвращает структуру для промпта с указанием, что уже покрыто.
  */
-function extractContext(accumulatedModel) {
+function extractContext (accumulatedModel)
+{
     if (!Array.isArray(accumulatedModel) || accumulatedModel.length === 0) {
         return null;
     }
@@ -8512,7 +6351,8 @@ function extractContext(accumulatedModel) {
 }
 
 // Вспомогательная функция извлечения ключевых слов
-function extractKeywords(text) {
+function extractKeywords (text)
+{
     if (!text) return [];
     // Извлекаем существительные и глаголы (примитивный NLP)
     const stopWords = new Set(['на', 'и', 'в', 'с', 'из', 'по', 'для', 'к', 'о']);
@@ -8523,1455 +6363,17 @@ function extractKeywords(text) {
         .slice(0, 5); // Берём топ-5 ключевых слов
 }
 
-function deriveCanonicalTitle(content, fallbackTitle = 'Requirements', fallbackId = '') {
-    const text = String(content || '').trim();
-    if (!text) {
-        return fallbackId ? `${fallbackTitle} ${fallbackId}`.trim() : fallbackTitle;
-    }
-
-    const firstMeaningfulLine = text
-        .split(/\r?\n/)
-        .map(line => line.trim())
-        .find(line => line.length > 3 && !/^[-#*|>]+$/.test(line));
-
-    return (firstMeaningfulLine || fallbackTitle).slice(0, 160);
-}
-
-function normalizeSectionPath(sectionPath) {
-    if (Array.isArray(sectionPath)) {
-        return sectionPath
-            .map(item => String(item || '').trim())
-            .filter(Boolean);
-    }
-
-    if (typeof sectionPath === 'string' && sectionPath.trim()) {
-        return sectionPath
-            .split(/>\s*|\/\s*|\|\s*/)
-            .map(item => item.trim())
-            .filter(Boolean);
-    }
-
-    return [];
-}
-
-function getSharedSectionPathPrefixLength(leftPath, rightPath) {
-    const left = normalizeSectionPath(leftPath);
-    const right = normalizeSectionPath(rightPath);
-    const maxLength = Math.min(left.length, right.length);
-    let prefixLength = 0;
-
-    for (let index = 0; index < maxLength; index++) {
-        if (String(left[index]).toLowerCase() !== String(right[index]).toLowerCase()) {
-            break;
-        }
-        prefixLength += 1;
-    }
-
-    return prefixLength;
-}
-
-function getChunkAreaGroup(chunkType = '') {
-    const normalized = String(chunkType || '').toLowerCase();
-    if (!normalized) return 'generic';
-    if (normalized.startsWith('api') || normalized.includes('endpoint')) return 'api';
-    if (normalized.startsWith('ui') || normalized.includes('form') || normalized.includes('screen')) return 'ui';
-    if (normalized.includes('business')) return 'business';
-    if (normalized.includes('validation') || normalized.includes('error')) return 'validation';
-    if (normalized.includes('scenario') || normalized.includes('branch')) return 'scenario';
-    if (normalized.includes('requirement')) return 'requirement';
-    return 'generic';
-}
-
-function createCanonicalChunk(rawChunk = {}, overrides = {}) {
-    const cleanedText = String(
-        overrides.cleaned_text ??
-        rawChunk.cleaned_text ??
-        rawChunk.content ??
-        ''
-    ).trim();
-    const coreText = String(
-        overrides.core_text ??
-        rawChunk.core_text ??
-        rawChunk.metadata?.core_text ??
-        ''
-    ).trim();
-    const embeddingText = String(
-        overrides.embedding_text ??
-        rawChunk.embedding_text ??
-        rawChunk.metadata?.embedding_text ??
-        (coreText || cleanedText)
-    ).trim();
-    const auxMetadata = {
-        ...(rawChunk.aux_metadata || rawChunk.metadata?.aux_metadata || {}),
-        ...(overrides.aux_metadata || overrides.metadata?.aux_metadata || {})
-    };
-    const segmentText = String(
-        overrides.segment_text ??
-        rawChunk.segment_text ??
-        (coreText || cleanedText)
-    ).trim();
-
-    const sourceType = overrides.source_type || overrides.sourceType || rawChunk.source_type || 'linked';
-    const sourceScope = overrides.source_scope || overrides.sourceScope || rawChunk.source_scope || sourceType;
-    const authority = typeof overrides.authority === 'number'
-        ? overrides.authority
-        : (typeof rawChunk.authority === 'number'
-            ? rawChunk.authority
-            : (sourceType === 'main' ? 1.0 : (sourceType === 'context' ? 0.85 : 0.65)));
-
-    return {
-        ...rawChunk,
-        ...overrides,
-        id: overrides.id || rawChunk.id || uuidv4(),
-        doc_id: String(overrides.doc_id || rawChunk.doc_id || overrides.docId || 'inline-requirements'),
-        doc_title: overrides.doc_title || rawChunk.doc_title || overrides.docTitle || 'Requirements',
-        cleaned_text: cleanedText,
-        content: cleanedText,
-        core_text: coreText,
-        embedding_text: embeddingText,
-        aux_metadata: auxMetadata,
-        segment_text: segmentText,
-        heading: overrides.heading || rawChunk.heading || null,
-        section_path: normalizeSectionPath(overrides.section_path || rawChunk.section_path),
-        requirement_id: overrides.requirement_id || rawChunk.requirement_id || null,
-        chunk_type: overrides.chunk_type || rawChunk.chunk_type || 'generic',
-        retrieval_class: overrides.retrieval_class || rawChunk.retrieval_class || rawChunk.metadata?.retrieval_class || null,
-        eligibility_status: overrides.eligibility_status || rawChunk.eligibility_status || rawChunk.metadata?.eligibility_status || null,
-        retrieval_penalty: Number.isFinite(overrides.retrieval_penalty)
-            ? Number(overrides.retrieval_penalty)
-            : (Number.isFinite(rawChunk.retrieval_penalty) ? Number(rawChunk.retrieval_penalty) : (Number(rawChunk.metadata?.retrieval_penalty) || 0)),
-        content_ratio: overrides.content_ratio || rawChunk.content_ratio || rawChunk.metadata?.content_ratio || null,
-        explicit_refs: Array.isArray(overrides.explicit_refs || rawChunk.explicit_refs)
-            ? (overrides.explicit_refs || rawChunk.explicit_refs)
-            : [],
-        token_count: overrides.token_count || rawChunk.token_count || Math.ceil(cleanedText.length / 4),
-        source_type: sourceType,
-        source_scope: sourceScope,
-        authority,
-        exclude_from_retrieval: Boolean(
-            overrides.exclude_from_retrieval ??
-            rawChunk.exclude_from_retrieval ??
-            rawChunk.metadata?.exclude_from_retrieval
-        ),
-        metadata: {
-            ...(rawChunk.metadata || {}),
-            ...(overrides.metadata || {}),
-            aux_metadata: auxMetadata,
-            core_text: coreText,
-            embedding_text: embeddingText,
-            retrieval_class: overrides.retrieval_class || rawChunk.retrieval_class || rawChunk.metadata?.retrieval_class || null,
-            eligibility_status: overrides.eligibility_status || rawChunk.eligibility_status || rawChunk.metadata?.eligibility_status || null,
-            retrieval_penalty: Number.isFinite(overrides.retrieval_penalty)
-                ? Number(overrides.retrieval_penalty)
-                : (Number.isFinite(rawChunk.retrieval_penalty) ? Number(rawChunk.retrieval_penalty) : (Number(rawChunk.metadata?.retrieval_penalty) || 0)),
-            content_ratio: overrides.content_ratio || rawChunk.content_ratio || rawChunk.metadata?.content_ratio || null,
-            source_scope: sourceScope
-        }
-    };
-}
-
-async function buildAuxiliaryCanonicalDocument({
-    docId,
-    title,
-    content,
-    sourceType,
-    sourceScope
-}) {
-    const normalizedContent = String(content || '').trim();
-    if (!normalizedContent) return null;
-
-    const rawChunks = await chunkify(normalizedContent, {
-        pageId: docId,
-        title: title || deriveCanonicalTitle(normalizedContent, 'Context', docId)
-    });
-
-    const canonicalChunks = rawChunks.map(chunk => createCanonicalChunk(chunk, {
-        doc_id: String(docId),
-        doc_title: title || deriveCanonicalTitle(normalizedContent, 'Context', docId),
-        source_type: sourceType,
-        source_scope: sourceScope
-    }));
-
-    return {
-        docId: String(docId),
-        title: title || deriveCanonicalTitle(normalizedContent, 'Context', docId),
-        content: normalizedContent,
-        rawChunks,
-        canonicalChunks,
-        sourceType,
-        sourceScope
-    };
-}
-
-async function buildCanonicalChunkBundle({
-    graphDocumentId,
-    mainTitle,
-    mainRawChunks,
-    reqStringForModel,
-    autoPageDocs = [],
-    explicitContextPageDocs = [],
-    requestContextText = '',
-    glossary = '',
-    glossaryPageId,
-    bearerToken
-}) {
-    const mainDocId = String(graphDocumentId || 'inline-requirements');
-    const mainDocument = {
-        docId: mainDocId,
-        title: mainTitle || deriveCanonicalTitle(reqStringForModel, 'Requirements', mainDocId),
-        content: String(reqStringForModel || ''),
-        rawChunks: Array.isArray(mainRawChunks) ? mainRawChunks : [],
-        canonicalChunks: (Array.isArray(mainRawChunks) ? mainRawChunks : []).map(chunk => createCanonicalChunk(chunk, {
-            doc_id: mainDocId,
-            doc_title: mainTitle || deriveCanonicalTitle(reqStringForModel, 'Requirements', mainDocId),
-            source_type: 'main',
-            source_scope: 'main',
-            authority: 1.0
-        })),
-        sourceType: 'main',
-        sourceScope: 'main'
-    };
-
-    const contextDocs = [];
-    const linkedDocs = [];
-
-    if (requestContextText && String(requestContextText).trim()) {
-        const requestContextDoc = await buildAuxiliaryCanonicalDocument({
-            docId: `context:${mainDocId}:user`,
-            title: 'User context',
-            content: requestContextText,
-            sourceType: 'context',
-            sourceScope: 'request_context'
-        });
-        if (requestContextDoc) contextDocs.push(requestContextDoc);
-    }
-
-    if (glossary && String(glossary).trim()) {
-        const glossaryDoc = await buildAuxiliaryCanonicalDocument({
-            docId: `context:${mainDocId}:glossary`,
-            title: 'Glossary',
-            content: glossary,
-            sourceType: 'context',
-            sourceScope: 'glossary'
-        });
-        if (glossaryDoc) contextDocs.push(glossaryDoc);
-    }
-
-    if (glossaryPageId && bearerToken) {
-        try {
-            const { markdown: glossaryMarkdown, title: glossaryTitle } = await fetchConfluencePage(bearerToken.trim(), glossaryPageId, { inlineTextAttachments: true });
-            const glossaryPageDoc = await buildAuxiliaryCanonicalDocument({
-                docId: String(glossaryPageId),
-                title: glossaryTitle || `Glossary ${glossaryPageId}`,
-                content: glossaryMarkdown,
-                sourceType: 'context',
-                sourceScope: 'glossary_page'
-            });
-            if (glossaryPageDoc) contextDocs.push(glossaryPageDoc);
-        } catch (error) {
-            console.warn(`[buildCanonicalChunkBundle] Failed to fetch glossaryPageId=${glossaryPageId}:`, error.message);
-        }
-    }
-
-    for (const page of explicitContextPageDocs || []) {
-        const contextDoc = await buildAuxiliaryCanonicalDocument({
-            docId: String(page.pageId || `context:${mainDocId}:${contextDocs.length + 1}`),
-            title: page.title || `Context page ${page.pageId || contextDocs.length + 1}`,
-            content: page.content || page.graphText || '',
-            sourceType: 'context',
-            sourceScope: 'context_page'
-        });
-        if (contextDoc) contextDocs.push(contextDoc);
-    }
-
-    for (const page of autoPageDocs || []) {
-        const linkedDoc = await buildAuxiliaryCanonicalDocument({
-            docId: String(page.pageId || `linked:${mainDocId}:${linkedDocs.length + 1}`),
-            title: page.title || `Linked page ${page.pageId || linkedDocs.length + 1}`,
-            content: page.content || page.graphText || page.promptText || '',
-            sourceType: 'linked',
-            sourceScope: 'linked'
-        });
-        if (linkedDoc) linkedDocs.push(linkedDoc);
-    }
-
-    const allDocs = [mainDocument, ...contextDocs, ...linkedDocs];
-    const canonicalChunksById = new Map();
-    for (const doc of allDocs) {
-        for (const chunk of (doc.canonicalChunks || [])) {
-            canonicalChunksById.set(chunk.id, chunk);
-        }
-    }
-
-    return {
-        main: mainDocument,
-        contextDocs,
-        linkedDocs,
-        allDocs,
-        canonicalChunksById
-    };
-}
-
-function canMergeIntoSegment(currentChunks, nextChunk, options = {}) {
-    if (!Array.isArray(currentChunks) || currentChunks.length === 0) return true;
-
-    const {
-        targetTokens = DEFAULT_SEGMENT_TARGET_TOKENS,
-        hardMaxTokens = DEFAULT_SEGMENT_HARD_MAX_TOKENS,
-        maxChunks = DEFAULT_SEGMENT_MAX_CHUNKS
-    } = options;
-
-    const currentTokens = currentChunks.reduce((sum, chunk) => sum + (chunk.token_count || 0), 0);
-    const nextTokens = nextChunk?.token_count || 0;
-    const lastChunk = currentChunks[currentChunks.length - 1];
-
-    if (!nextChunk || lastChunk.doc_id !== nextChunk.doc_id) return false;
-    if (currentChunks.length >= maxChunks) return false;
-    if (currentTokens + nextTokens > hardMaxTokens) return false;
-
-    const sameRequirement = Boolean(
-        lastChunk.requirement_id &&
-        nextChunk.requirement_id &&
-        String(lastChunk.requirement_id) === String(nextChunk.requirement_id)
-    );
-    const sharedPrefixLength = getSharedSectionPathPrefixLength(lastChunk.section_path, nextChunk.section_path);
-    const sameAreaGroup = getChunkAreaGroup(lastChunk.chunk_type) === getChunkAreaGroup(nextChunk.chunk_type);
-    const similarHeading = Boolean(
-        lastChunk.heading &&
-        nextChunk.heading &&
-        String(lastChunk.heading).trim().toLowerCase() === String(nextChunk.heading).trim().toLowerCase()
-    );
-
-    if (sameRequirement || sharedPrefixLength >= 2 || sameAreaGroup || similarHeading) {
-        return true;
-    }
-
-    return currentTokens < Math.ceil(targetTokens * 0.45) && sharedPrefixLength >= 1;
-}
-
-function finalizeGenerationSegment(chunks, segmentIndex) {
-    const list = Array.isArray(chunks) ? chunks.filter(Boolean) : [];
-    if (list.length === 0) return null;
-
-    const firstChunk = list[0];
-    const commonSectionPath = normalizeSectionPath(firstChunk.section_path).filter((part, index) =>
-        list.every(chunk => String(normalizeSectionPath(chunk.section_path)[index] || '').toLowerCase() === String(part || '').toLowerCase())
-    );
-    const requirementIds = Array.from(new Set(list.map(chunk => chunk.requirement_id).filter(Boolean)));
-    const chunkTypes = Array.from(new Set(list.map(chunk => chunk.chunk_type).filter(Boolean)));
-    const explicitRefs = [];
-    const seenExplicitRefs = new Set();
-
-    for (const chunk of list) {
-        for (const ref of (chunk.explicit_refs || [])) {
-            const refKey = `${ref?.type || ''}:${ref?.target || ''}`;
-            if (seenExplicitRefs.has(refKey)) continue;
-            seenExplicitRefs.add(refKey);
-            explicitRefs.push(ref);
-        }
-    }
-
-    const retrievalProfile = {
-        screen_scopes: Array.from(new Set(list.map(chunk => chunk?.metadata?.screen_scope || chunk?.aux_metadata?.screen_scope).filter(Boolean))),
-        entity_scopes: Array.from(new Set(list.map(chunk => chunk?.metadata?.entity_scope || chunk?.aux_metadata?.entity_scope).filter(Boolean))),
-        section_numbers: Array.from(new Set(list.map(chunk => chunk?.metadata?.section_number || chunk?.section_number).filter(Boolean))),
-        endpoints: Array.from(new Set(list.map(chunk => chunk?.metadata?.endpoint || chunk?.aux_metadata?.endpoint).filter(Boolean))),
-        methods: Array.from(new Set(list.map(chunk => chunk?.metadata?.method || chunk?.aux_metadata?.method).filter(Boolean))),
-        row_numbers: Array.from(new Set(list.map(chunk => chunk?.metadata?.row_number || chunk?.aux_metadata?.row_number).filter(Boolean)))
-    };
-
-    return {
-        id: `segment-${segmentIndex + 1}`,
-        index: segmentIndex,
-        docId: firstChunk.doc_id,
-        docTitle: firstChunk.doc_title,
-        chunkIds: list.map(chunk => chunk.id),
-        chunks: list,
-        text: list.map(chunk => chunk.segment_text || chunk.core_text || chunk.cleaned_text || chunk.content || '').filter(Boolean).join('\n\n'),
-        tokenCount: list.reduce((sum, chunk) => sum + (chunk.token_count || 0), 0),
-        heading: firstChunk.heading || null,
-        sectionPath: commonSectionPath,
-        requirementIds,
-        chunkTypes,
-        explicitRefs,
-        retrievalProfile
-    };
-}
-
-function buildGenerationSegmentsPass(chunks, options = {}) {
-    const segments = [];
-    let currentSegmentChunks = [];
-
-    for (const chunk of (chunks || [])) {
-        const normalizedChunk = createCanonicalChunk(chunk, {
-            source_type: chunk.source_type || 'main',
-            source_scope: chunk.source_scope || 'main'
-        });
-
-        if (currentSegmentChunks.length === 0) {
-            currentSegmentChunks.push(normalizedChunk);
-            continue;
-        }
-
-        if (canMergeIntoSegment(currentSegmentChunks, normalizedChunk, options)) {
-            currentSegmentChunks.push(normalizedChunk);
-            continue;
-        }
-
-        const finalized = finalizeGenerationSegment(currentSegmentChunks, segments.length);
-        if (finalized) segments.push(finalized);
-        currentSegmentChunks = [normalizedChunk];
-    }
-
-    const finalized = finalizeGenerationSegment(currentSegmentChunks, segments.length);
-    if (finalized) segments.push(finalized);
-
-    return segments;
-}
-
-function buildGenerationSegments(chunks = []) {
-    const firstPass = buildGenerationSegmentsPass(chunks, {
-        targetTokens: DEFAULT_SEGMENT_TARGET_TOKENS,
-        hardMaxTokens: DEFAULT_SEGMENT_HARD_MAX_TOKENS,
-        maxChunks: DEFAULT_SEGMENT_MAX_CHUNKS
-    });
-
-    if (firstPass.length <= MAX_SEGMENTS_BEFORE_AGGRESSIVE_REBUILD) {
-        return firstPass;
-    }
-
-    return buildGenerationSegmentsPass(chunks, {
-        targetTokens: AGGRESSIVE_SEGMENT_TARGET_TOKENS,
-        hardMaxTokens: AGGRESSIVE_SEGMENT_HARD_MAX_TOKENS,
-        maxChunks: DEFAULT_SEGMENT_MAX_CHUNKS
-    });
-}
-
-function buildSegmentRetrievalQuery(segment) {
-    const sectionPath = normalizeSectionPath(segment?.sectionPath).join(' > ');
-    const requirementIdPart = Array.isArray(segment?.requirementIds) && segment.requirementIds.length > 0
-        ? `Requirement IDs: ${segment.requirementIds.join(', ')}`
-        : '';
-    const chunkTypePart = Array.isArray(segment?.chunkTypes) && segment.chunkTypes.length > 0
-        ? `Chunk types: ${segment.chunkTypes.join(', ')}`
-        : '';
-
-    return [
-        sectionPath,
-        segment?.heading ? `Heading: ${segment.heading}` : '',
-        requirementIdPart,
-        chunkTypePart,
-        String(segment?.text || '').slice(0, 1800)
-    ]
-        .filter(Boolean)
-        .join('\n');
-}
-
-function formatRetrievedContext(retrievedChunks = [], options = {}) {
-    const {
-        preferCoreText = false,
-        includeAuxMetadata = false
-    } = options;
-    const items = (retrievedChunks || []).slice(0, 9).map((chunk, index) => {
-        const label = `${String(chunk.source_type || 'linked').toUpperCase()} ${index + 1}`;
-        const heading = chunk.heading || chunk.doc_title || chunk.doc_id;
-        const content = String(
-            (preferCoreText
-                ? (chunk.core_text || chunk.metadata?.core_text || chunk.content || chunk.cleaned_text)
-                : (chunk.content || chunk.cleaned_text || chunk.core_text || chunk.metadata?.core_text)
-            ) || ''
-        ).trim().slice(0, 1200);
-        const auxSummary = includeAuxMetadata ? formatChunkAuxMetadata(chunk) : '';
-        return `[${label}] ${heading}\n${content}${auxSummary ? `\n${auxSummary}` : ''}`;
-    });
-
-    return items.join('\n\n');
-}
-
-function formatChunkAuxMetadata(chunk = {}) {
-    const aux = getBehavioralAuxMetadata(chunk);
-    const lines = [];
-
-    if (aux.screen_scope) lines.push(`Screen scope: ${aux.screen_scope}`);
-    if (aux.entity_scope) lines.push(`Entity scope: ${aux.entity_scope}`);
-    if (aux.channel_scope) lines.push(`Channel scope: ${aux.channel_scope}`);
-    if (aux.method || aux.endpoint) {
-        lines.push(`API: ${[aux.method, aux.endpoint].filter(Boolean).join(' ')}`.trim());
-    }
-    if (Array.isArray(aux.related_params) && aux.related_params.length > 0) {
-        lines.push(`Relevant params: ${aux.related_params.slice(0, 6).join(', ')}`);
-    }
-    if (Array.isArray(aux.references) && aux.references.length > 0) {
-        lines.push(`References: ${aux.references.slice(0, 3).join('; ')}`);
-    }
-    if (Array.isArray(aux.fallbacks) && aux.fallbacks.length > 0) {
-        lines.push(`Fallbacks: ${aux.fallbacks.slice(0, 2).join(' | ')}`);
-    }
-    if (Array.isArray(aux.display_rules) && aux.display_rules.length > 0) {
-        lines.push(`Display rules: ${aux.display_rules.slice(0, 2).join(' | ')}`);
-    }
-    if (Array.isArray(aux.validation_rules) && aux.validation_rules.length > 0) {
-        lines.push(`Validation rules: ${aux.validation_rules.slice(0, 2).join(' | ')}`);
-    }
-
-    return lines.length > 0
-        ? lines.map(line => `Metadata: ${line}`).join('\n')
-        : '';
-}
-
-async function retrieveContextForSegmentLegacy(segment, bundle, apiKey) {
-    const sourceWeights = {
-        main: 1.0,
-        context: 0.85,
-        linked: 0.65
-    };
-    const currentSegmentChunkIds = new Set(Array.isArray(segment?.chunkIds) ? segment.chunkIds : []);
-    const merged = new Map();
-    let retrievalCallCount = 0;
-
-    const pushChunks = (chunks = [], channel = 'semantic', extraBoost = 0) => {
-        for (const chunk of chunks) {
-            if (!chunk?.id || currentSegmentChunkIds.has(chunk.id)) continue;
-
-            const sourceType = chunk.source_type || 'linked';
-            const baseWeight = sourceWeights[sourceType] ?? 0.65;
-            const score = typeof chunk.score === 'number' ? chunk.score : 1.0;
-            const finalScore = score * baseWeight + extraBoost;
-            const existing = merged.get(chunk.id);
-
-            if (!existing || finalScore > existing.finalScore) {
-                merged.set(chunk.id, {
-                    ...chunk,
-                    retrieval_channel: channel,
-                    finalScore
-                });
-            }
-        }
-    };
-
-    const query = buildSegmentRetrievalQuery(segment);
-
-    const mainResults = await semanticSearch(query, apiKey, {
-        topK: 5,
-        sourceType: 'main',
-        docId: bundle?.main?.docId || null
-    });
-    retrievalCallCount += 1;
-    pushChunks(mainResults, 'main');
-
-    if (Array.isArray(segment?.explicitRefs) && segment.explicitRefs.length > 0) {
-        const explicitResults = await findChunksByReferences(segment.explicitRefs, null, { limit: 2 });
-        pushChunks(explicitResults, 'explicit_refs', 0.05);
-    }
-
-    if (merged.size < 4 && Array.isArray(bundle?.contextDocs) && bundle.contextDocs.length > 0) {
-        const contextResults = await semanticSearch(query, apiKey, {
-            topK: 2,
-            sourceType: 'context'
-        });
-        retrievalCallCount += 1;
-        pushChunks(contextResults, 'context');
-    }
-
-    if (merged.size < 4 && Array.isArray(bundle?.linkedDocs) && bundle.linkedDocs.length > 0) {
-        const linkedResults = await semanticSearch(query, apiKey, {
-            topK: 2,
-            sourceType: 'linked'
-        });
-        retrievalCallCount += 1;
-        pushChunks(linkedResults, 'linked');
-    }
-
-    const items = Array.from(merged.values())
-        .sort((left, right) => right.finalScore - left.finalScore)
-        .slice(0, 9);
-
-    return {
-        query,
-        items,
-        formattedContext: formatRetrievedContext(items),
-        retrievalCallCount
-    };
-}
-
-async function retrieveContextForSegmentV2(segment, bundle, apiKey) {
-    const sourceWeights = {
-        main: 1.0,
-        context: 0.85,
-        linked: 0.65
-    };
-    const currentSegmentChunkIds = new Set(Array.isArray(segment?.chunkIds) ? segment.chunkIds : []);
-    const mergedBehavioral = new Map();
-    let retrievalCallCount = 0;
-
-    const pushBehavioralChunks = (chunks = [], channel = 'behavioral', extraBoost = 0) => {
-        for (const chunk of chunks) {
-            if (!chunk?.id || currentSegmentChunkIds.has(chunk.id) || !isBehavioralRetrievalCandidate(chunk)) {
-                continue;
-            }
-
-            const sourceType = chunk.source_type || 'linked';
-            const baseWeight = sourceWeights[sourceType] ?? 0.65;
-            const score = typeof chunk.score === 'number' ? chunk.score : 1.0;
-            const finalScore = score * baseWeight + extraBoost;
-            const existing = mergedBehavioral.get(chunk.id);
-
-            if (!existing || finalScore > existing.finalScore) {
-                mergedBehavioral.set(chunk.id, {
-                    ...chunk,
-                    retrieval_channel: channel,
-                    finalScore
-                });
-            }
-        }
-    };
-
-    const query = buildSegmentRetrievalQuery(segment);
-    const behavioralSearchOptions = {
-        retrievalClass: RETRIEVAL_CLASSES.BEHAVIORAL,
-        eligibilityStatuses: [
-            ELIGIBILITY_STATUSES.ELIGIBLE,
-            ELIGIBILITY_STATUSES.PENALIZED
-        ]
-    };
-
-    const mainResults = await semanticSearch(query, apiKey, {
-        topK: 8,
-        sourceType: 'main',
-        docId: bundle?.main?.docId || null,
-        ...behavioralSearchOptions
-    });
-    retrievalCallCount += 1;
-    pushBehavioralChunks(mainResults, 'behavioral_main');
-
-    if (Array.isArray(segment?.explicitRefs) && segment.explicitRefs.length > 0) {
-        const explicitResults = await findChunksByReferences(segment.explicitRefs, null, { limit: 4 });
-        pushBehavioralChunks(explicitResults, 'behavioral_explicit', 0.05);
-    }
-
-    if (mergedBehavioral.size < 5 && Array.isArray(bundle?.contextDocs) && bundle.contextDocs.length > 0) {
-        const contextResults = await semanticSearch(query, apiKey, {
-            topK: 4,
-            sourceType: 'context',
-            ...behavioralSearchOptions
-        });
-        retrievalCallCount += 1;
-        pushBehavioralChunks(contextResults, 'behavioral_context');
-    }
-
-    if (mergedBehavioral.size < 5 && Array.isArray(bundle?.linkedDocs) && bundle.linkedDocs.length > 0) {
-        const linkedResults = await semanticSearch(query, apiKey, {
-            topK: 4,
-            sourceType: 'linked',
-            ...behavioralSearchOptions
-        });
-        retrievalCallCount += 1;
-        pushBehavioralChunks(linkedResults, 'behavioral_linked');
-    }
-
-    const behavioralItems = rerankRetrievedChunksByMetadata(
-        Array.from(mergedBehavioral.values()),
-        segment,
-        { limit: 6 }
-    );
-
-    if (behavioralItems.length === 0) {
-        const fallback = await retrieveContextForSegmentLegacy(segment, bundle, apiKey);
-        return {
-            ...fallback,
-            retrievalMode: 'legacy_fallback'
-        };
-    }
-
-    const enrichmentQuery = buildEnrichmentQuery(segment, behavioralItems) || query;
-    const enrichmentStatuses = [
-        ELIGIBILITY_STATUSES.ELIGIBLE,
-        ELIGIBILITY_STATUSES.PENALIZED
-    ];
-
-    let apiItems = [];
-    let referenceItems = [];
-
-    if (enrichmentQuery) {
-        const [apiResults, referenceResults] = await Promise.all([
-            semanticSearch(enrichmentQuery, apiKey, {
-                topK: 3,
-                retrievalClass: RETRIEVAL_CLASSES.API_CONTEXT,
-                eligibilityStatuses: enrichmentStatuses
-            }),
-            semanticSearch(enrichmentQuery, apiKey, {
-                topK: 3,
-                retrievalClass: RETRIEVAL_CLASSES.REFERENCE_CONTEXT,
-                eligibilityStatuses: enrichmentStatuses
-            })
-        ]);
-        retrievalCallCount += 2;
-
-        apiItems = rerankRetrievedChunksByMetadata(apiResults, segment, {
-            selectedBehavioralChunks: behavioralItems,
-            limit: 3
-        });
-        referenceItems = rerankRetrievedChunksByMetadata(referenceResults, segment, {
-            selectedBehavioralChunks: behavioralItems,
-            limit: 3
-        });
-    }
-
-    if (Array.isArray(segment?.explicitRefs) && segment.explicitRefs.length > 0) {
-        const explicitEnrichment = await findChunksByReferences(segment.explicitRefs, null, { limit: 6 });
-        const explicitApiItems = explicitEnrichment.filter(chunk =>
-            chunk?.retrieval_class === RETRIEVAL_CLASSES.API_CONTEXT &&
-            !apiItems.some(item => item.id === chunk.id)
-        );
-        const explicitReferenceItems = explicitEnrichment.filter(chunk =>
-            chunk?.retrieval_class === RETRIEVAL_CLASSES.REFERENCE_CONTEXT &&
-            !referenceItems.some(item => item.id === chunk.id)
-        );
-
-        apiItems = rerankRetrievedChunksByMetadata(
-            [...apiItems, ...explicitApiItems],
-            segment,
-            {
-                selectedBehavioralChunks: behavioralItems,
-                limit: 3
-            }
-        );
-        referenceItems = rerankRetrievedChunksByMetadata(
-            [...referenceItems, ...explicitReferenceItems],
-            segment,
-            {
-                selectedBehavioralChunks: behavioralItems,
-                limit: 3
-            }
-        );
-    }
-
-    const contextSections = [];
-
-    if (behavioralItems.length > 0) {
-        contextSections.push([
-            'BEHAVIORAL CONTEXT:',
-            '---',
-            formatRetrievedContext(behavioralItems, {
-                preferCoreText: true,
-                includeAuxMetadata: true
-            }),
-            '---'
-        ].join('\n'));
-    }
-
-    if (apiItems.length > 0) {
-        contextSections.push([
-            'API ENRICHMENT:',
-            '---',
-            formatRetrievedContext(apiItems, {
-                preferCoreText: false,
-                includeAuxMetadata: true
-            }),
-            '---'
-        ].join('\n'));
-    }
-
-    if (referenceItems.length > 0) {
-        contextSections.push([
-            'REFERENCE ENRICHMENT:',
-            '---',
-            formatRetrievedContext(referenceItems, {
-                preferCoreText: false,
-                includeAuxMetadata: true
-            }),
-            '---'
-        ].join('\n'));
-    }
-
-    return {
-        query,
-        items: behavioralItems,
-        behavioralItems,
-        apiItems,
-        referenceItems,
-        formattedContext: contextSections.join('\n\n'),
-        retrievalCallCount,
-        retrievalMode: 'behavioral_v2'
-    };
-}
-
-async function retrieveContextForSegment(segment, bundle, apiKey, options = {}) {
-    if (options?.useBehavioralRetrievalV2) {
-        return retrieveContextForSegmentV2(segment, bundle, apiKey);
-    }
-    return retrieveContextForSegmentLegacy(segment, bundle, apiKey);
-}
-
-function buildCanonicalModelUserPrompt({
-    segment,
-    retrievedContext
-}) {
-    const sectionPath = normalizeSectionPath(segment?.sectionPath).join(' > ') || 'n/a';
-    const requirementIds = Array.isArray(segment?.requirementIds) && segment.requirementIds.length > 0
-        ? segment.requirementIds.join(', ')
-        : 'n/a';
-    const chunkTypes = Array.isArray(segment?.chunkTypes) && segment.chunkTypes.length > 0
-        ? segment.chunkTypes.join(', ')
-        : 'n/a';
-
-    return `
-Сгенерируй только локальный фрагмент тестовой модели для текущего смыслового сегмента требований.
-Не добавляй graph context, не используй внешние инструменты, не пытайся покрыть весь документ целиком.
-
-META:
-- Segment: ${segment?.index + 1}
-- Document: ${segment?.docTitle || segment?.docId || 'Requirements'}
-- Heading: ${segment?.heading || 'n/a'}
-- Section path: ${sectionPath}
-- Requirement IDs: ${requirementIds}
-- Chunk types: ${chunkTypes}
-
-CURRENT SEGMENT:
----
-${segment?.text || ''}
----
-
-${retrievedContext ? `RETRIEVED CONTEXT:
----
-${retrievedContext}
----
-` : 'RETRIEVED CONTEXT:\n---\nнет дополнительного контекста, работай только с текущим сегментом\n---\n'}
-
-Правила:
-- Формируй только минимально достаточный JSON-фрагмент Feature -> Story -> Scenario -> Code для этого сегмента.
-- Используй retrieved context только если он прямо относится к текущему сегменту.
-- Основной источник истины: CURRENT SEGMENT.
-- Не смешивай независимые ветки логики в один Scenario.
-- Если сегмент покрывает только часть Story, верни только эту часть без дублирования остального документа.
-- Ответ отправь через submit_test_model.
-`.trim();
-}
-
-function buildSubmitFixedCodesTool() {
-    return {
-        type: 'function',
-        function: {
-            name: 'submit_fixed_codes',
-            description: 'Submit corrected codes for one scenario only',
-            parameters: {
-                type: 'object',
-                properties: {
-                    codes: {
-                        type: 'array',
-                        items: {
-                            type: 'object',
-                            properties: {
-                                id: { type: 'string' },
-                                text: { type: 'string' },
-                                type: {
-                                    type: 'string',
-                                    enum: ['backend', 'frontend']
-                                }
-                            },
-                            required: ['id', 'text']
-                        }
-                    }
-                },
-                required: ['codes']
-            }
-        }
-    };
-}
-
-function coerceCodesFromToolArgs(args) {
-    if (!args) return null;
-
-    if (Array.isArray(args.codes)) {
-        return args.codes;
-    }
-
-    if (typeof args.codes === 'string') {
-        try {
-            const parsed = JSON5.parse(args.codes);
-            return Array.isArray(parsed) ? parsed : null;
-        } catch (error) {
-            console.warn('[coerceCodesFromToolArgs] Failed to parse codes:', error.message);
-        }
-    }
-
-    return null;
-}
-
-function isPlaceholderLikeCode(text) {
-    const normalized = String(text || '').trim().toLowerCase();
-    if (!normalized) return true;
-
-    const placeholderPhrases = [
-        'todo',
-        'tbd',
-        'placeholder',
-        'заглуш',
-        'не указано',
-        'не определено',
-        'выполнить действие',
-        'произвести действие',
-        'система выполняет действие',
-        'система обрабатывает запрос',
-        'действие системы'
-    ];
-
-    return placeholderPhrases.some(phrase => normalized.includes(phrase));
-}
-
-function collectSemanticRefinementTargets(model = []) {
-    const targets = [];
-    let totalScenarios = 0;
-
-    for (const feature of model || []) {
-        for (const story of (feature?.stories || [])) {
-            for (const scenario of (story?.scenarios || [])) {
-                totalScenarios += 1;
-
-                const codes = Array.isArray(scenario?.codes) ? scenario.codes : [];
-                const reasons = [];
-
-                if (codes.length === 0) {
-                    reasons.push('missing_codes');
-                }
-
-                if (codes.some(code => !String(code?.text || '').trim())) {
-                    reasons.push('empty_code_text');
-                }
-
-                if (codes.some(code => !code?.type)) {
-                    reasons.push('missing_code_type');
-                }
-
-                if (codes.some(code => isPlaceholderLikeCode(code?.text))) {
-                    reasons.push('placeholder_code');
-                }
-
-                if (reasons.length > 0) {
-                    targets.push({
-                        feature,
-                        story,
-                        scenario,
-                        reasons: Array.from(new Set(reasons))
-                    });
-                }
-            }
-        }
-    }
-
-    const maxTargets = Math.min(20, Math.max(1, Math.ceil(totalScenarios * 0.1)));
-    return targets.slice(0, maxTargets);
-}
-
-async function regenerateSemanticCodesForTarget({
-    target,
-    bundle,
-    apiKey,
-    systemPrompt,
-    modelsToTry,
-    useBehavioralRetrievalV2 = false
-}) {
-    const pseudoSegment = {
-        index: 0,
-        docId: bundle?.main?.docId || 'inline-requirements',
-        docTitle: bundle?.main?.title || 'Requirements',
-        chunkIds: [],
-        text: [
-            `Feature: ${target?.feature?.text || ''}`,
-            `Story: ${target?.story?.text || ''}`,
-            `Scenario: ${target?.scenario?.text || ''}`
-        ].filter(Boolean).join('\n'),
-        heading: target?.story?.text || target?.feature?.text || null,
-        sectionPath: [],
-        requirementIds: [],
-        chunkTypes: ['scenario_refinement'],
-        explicitRefs: []
-    };
-
-    const retrieval = await retrieveContextForSegment(pseudoSegment, bundle, apiKey, {
-        useBehavioralRetrievalV2
-    });
-    const existingCodes = (target?.scenario?.codes || [])
-        .map(code => `- ${code?.text || ''}${code?.type ? ` [${code.type}]` : ''}`)
-        .join('\n');
-
-    const userPrompt = `
-Исправь только список Codes для одного Scenario.
-Не меняй Feature, Story и текст Scenario.
-Верни только массив codes через submit_fixed_codes.
-
-Feature: ${target?.feature?.text || ''}
-Story: ${target?.story?.text || ''}
-Scenario: ${target?.scenario?.text || ''}
-Problems: ${(target?.reasons || []).join(', ')}
-
-Current codes:
-${existingCodes || '- отсутствуют'}
-
-${retrieval.formattedContext ? `Retrieved context:
----
-${retrieval.formattedContext}
----
-` : ''}
-
-Правила:
-- Дай конкретные системные реакции.
-- Не добавляй пользовательские действия.
-- Не выдумывай поля, endpoint или коды ответа, если их нет в текущем сегменте или retrieved context.
-- Ответ отправь через submit_fixed_codes.
-`.trim();
-
-    const response = await callWithCloudRuFallback(
-        OPENROUTER_URL,
-        [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-        ],
-        config.openRouterAiKey,
-        {
-            tools: [buildSubmitFixedCodesTool()],
-            temperature: 0,
-            top_p: 0.9,
-            max_tokens: 4000,
-            models: modelsToTry,
-            extra: { transforms: 'middle-out' }
-        }
-    );
-
-    const args = extractToolArgs(response, 'submit_fixed_codes');
-    const parsedCodes = coerceCodesFromToolArgs(args);
-    const fixedCodes = Array.isArray(parsedCodes)
-        ? parsedCodes
-            .map(code => ({
-                id: code?.id || uuidv4(),
-                text: normalizeCodeText(code?.text),
-                type: code?.type || detectCodeType(code?.text)
-            }))
-            .filter(code => String(code.text || '').trim())
-        : [];
-
-    return {
-        codes: fixedCodes,
-        retrievalCallCount: retrieval.retrievalCallCount,
-        llmCallCount: 1
-    };
-}
-
-async function runTargetedSemanticRefinement({
-    model,
-    bundle,
-    apiKey,
-    systemPrompt,
-    modelsToTry,
-    useBehavioralRetrievalV2 = false
-}) {
-    const targets = collectSemanticRefinementTargets(model);
-    if (targets.length === 0) {
-        return {
-            model,
-            targetedRefinementCount: 0,
-            retrievalCallCount: 0,
-            llmCallCount: 0
-        };
-    }
-
-    const limit = pLimit(Math.min(2, DEFAULT_SEGMENT_CONCURRENCY));
-    let targetedRefinementCount = 0;
-    let retrievalCallCount = 0;
-    let llmCallCount = 0;
-
-    await Promise.all(targets.map(target => limit(async () => {
-        try {
-            const result = await regenerateSemanticCodesForTarget({
-                target,
-                bundle,
-                apiKey,
-                systemPrompt,
-                modelsToTry,
-                useBehavioralRetrievalV2
-            });
-
-            retrievalCallCount += result.retrievalCallCount || 0;
-            llmCallCount += result.llmCallCount || 0;
-
-            if (Array.isArray(result.codes) && result.codes.length > 0) {
-                target.scenario.codes = result.codes;
-                targetedRefinementCount += 1;
-            }
-        } catch (error) {
-            console.warn(`[runTargetedSemanticRefinement] Failed for scenario "${target?.scenario?.text || 'unknown'}":`, error.message);
-        }
-    })));
-
-    return {
-        model,
-        targetedRefinementCount,
-        retrievalCallCount,
-        llmCallCount
-    };
-}
-
-async function persistCompletedTestModelTask({
-    taskId,
-    cleanedModel,
-    startTime,
-    canonicalChunkCount,
-    generationSegmentCount,
-    llmCallCount,
-    retrievalCallCount,
-    targetedRefinementCount,
-    dedupeStats = {},
-    auxiliaryIndexing = {}
-}) {
-    const finalModelStats = summarizeModelCounts(cleanedModel);
-    const scenariosCount = finalModelStats.scenariosCount || 0;
-    const codesCount = finalModelStats.codesCount || 0;
-
-    const metrics = {
-        duration: Date.now() - startTime,
-        requirementsCoverage: 0,
-        storiesCoverage: 0,
-        structureCoverage: 0,
-        scenariosCount,
-        codesCount,
-        regenerations: targetedRefinementCount,
-        escalations: 0,
-        canonicalChunkCount,
-        generationSegmentCount,
-        llmCallCount,
-        retrievalCallCount,
-        targetedRefinementCount
-    };
-
-    const safeTaskId = String(taskId || 'manual').replace(/[^a-zA-Z0-9._-]+/g, '_');
-    const expectedJsonRelativePath = `report/test-models/${safeTaskId}-test-model.json`;
-
-    try {
-        const persistedTestModelJson = persistGeneratedTestModelJson(cleanedModel, { taskId });
-        console.log(`[persistCompletedTestModelTask] ✅ Test model JSON сохранен: ${persistedTestModelJson.absoluteFilePath}`);
-        console.log(`[persistCompletedTestModelTask] ℹ️ Относительный путь JSON-артефакта: ${persistedTestModelJson.relativeFilePath}`);
-    } catch (error) {
-        console.error('[persistCompletedTestModelTask] ❌ Не удалось сохранить JSON-артефакт test model:', error);
-        throw new Error(`Не удалось сохранить test model JSON в ${expectedJsonRelativePath}: ${error.message}`);
-    }
-
-    const updateData = {
-        status: 'completed',
-        progress: 100,
-        result: {
-            testModel: cleanedModel,
-            modelStats: finalModelStats,
-            dedupeStats,
-            graphSessionId: null,
-            chunkSummary: {
-                canonicalChunkCount,
-                generationSegmentCount
-            },
-            pipeline: 'canonical-semantic-rag',
-            auxiliaryIndexing,
-            testModelId: taskId
-        },
-        completed_at: new Date(),
-        updated_at: new Date()
-    };
-
-    try {
-        await db('generation_tasks').where('id', taskId).update({
-            ...updateData,
-            metrics: JSON.stringify(metrics)
-        });
-    } catch (error) {
-        const errorMsg = error.message || '';
-        const isMetricsColumnError =
-            errorMsg.includes('столбец "metrics"') ||
-            errorMsg.includes('column "metrics"') ||
-            (errorMsg.includes('metrics') && (errorMsg.includes('does not exist') || errorMsg.includes('doesn\'t exist')));
-
-        if (!isMetricsColumnError) {
-            throw error;
-        }
-
-        console.warn('[persistCompletedTestModelTask] metrics column is missing, saving result without metrics');
-        await db('generation_tasks').where('id', taskId).update(updateData);
-    }
-}
-
-async function runCanonicalDefaultModelPipeline({
-    taskId,
-    startTime,
-    reqStringForModel,
-    graphDocumentId,
-    mainTitle,
-    mainRawChunks,
-    autoPageDocs,
-    explicitContextPageDocs,
-    requestContextText,
-    glossary,
-    glossaryPageId,
-    bearerToken,
-    modelsToTry,
-    apiKey
-}) {
-    if (!apiKey) {
-        throw new Error('Canonical default pipeline requires CLOUDRU_API_KEY for pgvector embeddings.');
-    }
-
-    if (!isPgVectorInitialized()) {
-        throw new Error('Canonical default pipeline requires initialized pgvector store.');
-    }
-
-    const pipelineFlags = getDefaultPipelineFlags();
-    const useBehavioralRetrievalV2 = Boolean(pipelineFlags.ENABLE_BEHAVIORAL_RETRIEVAL_V2);
-
-    console.log('[generate-test-model-async] Using canonical semantic RAG default pipeline');
-
-    await db('generation_tasks').where('id', taskId).update({
-        progress: 5,
-        updated_at: new Date()
-    });
-
-    const bundle = await buildCanonicalChunkBundle({
-        graphDocumentId,
-        mainTitle,
-        mainRawChunks,
-        reqStringForModel,
-        autoPageDocs,
-        explicitContextPageDocs,
-        requestContextText,
-        glossary,
-        glossaryPageId,
-        bearerToken
-    });
-
-    const indexableMainChunks = (bundle?.main?.canonicalChunks || [])
-        .filter(chunk => !(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval));
-
-    const behavioralMainChunks = indexableMainChunks
-        .filter(chunk => isBehavioralRetrievalCandidate(chunk));
-
-    const canonicalMainChunks = useBehavioralRetrievalV2 && behavioralMainChunks.length > 0
-        ? behavioralMainChunks
-        : indexableMainChunks;
-
-    if (canonicalMainChunks.length === 0) {
-        throw new Error('Canonical semantic chunking produced no retrievable chunks for the main document.');
-    }
-
-    const mainIndexResult = await indexConfluencePageChunksWithCache({
-        docId: bundle.main.docId,
-        content: bundle.main.content,
-        title: bundle.main.title,
-        sourceType: 'main',
-        apiKey,
-        precomputedChunks: indexableMainChunks
-    });
-
-    if (!mainIndexResult.cacheHit && ((mainIndexResult.errors || 0) > 0 || mainIndexResult.processed !== indexableMainChunks.length)) {
-        throw new Error(`Failed to index canonical main chunks into pgvector (${mainIndexResult.processed}/${indexableMainChunks.length}, errors=${mainIndexResult.errors || 0})`);
-    }
-
-    await db('generation_tasks').where('id', taskId).update({
-        progress: 15,
-        updated_at: new Date()
-    });
-
-    const auxiliaryIndexing = {
-        contextDocs: 0,
-        linkedDocs: 0,
-        indexedContextChunks: 0,
-        indexedLinkedChunks: 0
-    };
-    const auxiliaryIndexLimit = pLimit(2);
-    const auxiliaryDocs = [
-        ...(bundle.contextDocs || []).map(doc => ({ ...doc, sourceType: 'context' })),
-        ...(bundle.linkedDocs || []).map(doc => ({ ...doc, sourceType: 'linked' }))
-    ];
-
-    await Promise.all(auxiliaryDocs.map(doc => auxiliaryIndexLimit(async () => {
-        const indexableChunks = (doc.canonicalChunks || [])
-            .filter(chunk => !(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval));
-
-        if (indexableChunks.length === 0) {
-            return;
-        }
-
-        try {
-            const indexResult = await indexConfluencePageChunksWithCache({
-                docId: doc.docId,
-                content: doc.content,
-                title: doc.title,
-                sourceType: doc.sourceType,
-                apiKey,
-                precomputedChunks: indexableChunks
-            });
-
-            if (doc.sourceType === 'context') {
-                auxiliaryIndexing.contextDocs += 1;
-                auxiliaryIndexing.indexedContextChunks += indexResult.chunkCount || 0;
-            } else {
-                auxiliaryIndexing.linkedDocs += 1;
-                auxiliaryIndexing.indexedLinkedChunks += indexResult.chunkCount || 0;
-            }
-        } catch (error) {
-            console.warn(`[runCanonicalDefaultModelPipeline] Failed to index ${doc.sourceType} doc ${doc.docId}:`, error.message);
-        }
-    })));
-
-    const generationSegments = buildGenerationSegments(canonicalMainChunks);
-    if (generationSegments.length === 0) {
-        throw new Error('Generation segments are empty after canonical chunk aggregation.');
-    }
-
-    console.log(
-        `[generate-test-model-async] Canonical chunks=${canonicalMainChunks.length}, generation segments=${generationSegments.length}, ` +
-        `context docs=${bundle.contextDocs.length}, linked docs=${bundle.linkedDocs.length}`
-    );
-
-    await db('generation_tasks').where('id', taskId).update({
-        progress: 25,
-        updated_at: new Date()
-    });
-
-    const systemPrompt = buildModelSystemPrompt(null);
-    const segmentResults = new Array(generationSegments.length).fill(null);
-    const generateSegmentLimit = pLimit(DEFAULT_SEGMENT_CONCURRENCY);
-    let llmCallCount = 0;
-    let retrievalCallCount = 0;
-    let completedSegments = 0;
-
-    await Promise.all(generationSegments.map((segment, segmentIndex) => generateSegmentLimit(async () => {
-        const retrieval = await retrieveContextForSegment(segment, bundle, apiKey, {
-            useBehavioralRetrievalV2
-        });
-        retrievalCallCount += retrieval.retrievalCallCount || 0;
-
-        const basePrompt = buildCanonicalModelUserPrompt({
-            segment,
-            retrievedContext: retrieval.formattedContext
-        });
-
-        let bestSegmentModel = [];
-
-        for (let attempt = 0; attempt < MAX_SEGMENT_LLM_ATTEMPTS; attempt++) {
-            const attemptPrompt = attempt === 0
-                ? basePrompt
-                : `${basePrompt}\n\nПопытка ${attempt + 1}: верни полный корректный JSON-фрагмент через submit_test_model без пояснений.`.trim();
-
-            try {
-                const response = await callWithCloudRuFallback(
-                    OPENROUTER_URL,
-                    [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: attemptPrompt }
-                    ],
-                    config.openRouterAiKey,
-                    {
-                        tools: [buildSubmitModelTool()],
-                        temperature: 0,
-                        top_p: 0.9,
-                        max_tokens: 20000,
-                        models: modelsToTry,
-                        extra: { transforms: 'middle-out' }
-                    }
-                );
-                llmCallCount += 1;
-
-                const args = extractToolArgs(response, 'submit_test_model');
-                const partialModel = coerceModelArrayFromToolArgs(args);
-
-                if (Array.isArray(partialModel) && partialModel.length > 0) {
-                    let normalized = normalizeModelStructure(partialModel);
-                    normalized = repairModelStructure(normalized);
-                    const sanitized = sanitizeModelForValidation(normalized);
-                    bestSegmentModel = sanitized.model;
-                    break;
-                }
-            } catch (error) {
-                console.warn(`[runCanonicalDefaultModelPipeline] Segment ${segmentIndex + 1} attempt ${attempt + 1} failed:`, error.message);
-            }
-        }
-
-        segmentResults[segmentIndex] = Array.isArray(bestSegmentModel) ? bestSegmentModel : [];
-        completedSegments += 1;
-
-        const progress = 25 + Math.round((completedSegments / generationSegments.length) * 55);
-        await db('generation_tasks').where('id', taskId).update({
-            progress: Math.min(80, progress),
-            updated_at: new Date()
-        });
-    })));
-
-    const nonEmptySegmentResults = segmentResults.filter(result => Array.isArray(result) && result.length > 0);
-    if (nonEmptySegmentResults.length === 0) {
-        throw new Error('Canonical default pipeline produced no model fragments.');
-    }
-
-    const initialMergedModel = mergeChunkResults(nonEmptySegmentResults);
-    const initialModelStats = summarizeModelCounts(initialMergedModel);
-
-    let cleanedModel = deduplicateModel(initialMergedModel);
-    cleanedModel = postProcessModel(cleanedModel);
-    cleanedModel = enrichBackendCodesWithExpectedResult(cleanedModel);
-
-    const sanitizedBeforeRefinement = sanitizeModelForValidation(cleanedModel);
-    cleanedModel = sanitizedBeforeRefinement.model;
-
-    await db('generation_tasks').where('id', taskId).update({
-        progress: 85,
-        updated_at: new Date()
-    });
-
-    const refinementResult = await runTargetedSemanticRefinement({
-        model: cleanedModel,
-        bundle,
-        apiKey,
-        systemPrompt,
-        modelsToTry,
-        useBehavioralRetrievalV2
-    });
-    cleanedModel = refinementResult.model;
-    retrievalCallCount += refinementResult.retrievalCallCount || 0;
-    llmCallCount += refinementResult.llmCallCount || 0;
-
-    const sanitizedAfterRefinement = sanitizeModelForValidation(cleanedModel);
-    cleanedModel = sanitizedAfterRefinement.model;
-
-    const finalModelStats = summarizeModelCounts(cleanedModel);
-    const dedupeStats = {
-        storiesRemoved: Math.max(0, (initialModelStats?.storiesCount || 0) - (finalModelStats?.storiesCount || 0)),
-        scenariosRemoved: Math.max(0, (initialModelStats?.scenariosCount || 0) - (finalModelStats?.scenariosCount || 0)),
-        codesRemoved: Math.max(0, (initialModelStats?.codesCount || 0) - (finalModelStats?.codesCount || 0)),
-        initialModelStats,
-        finalModelStats
-    };
-
-    await db('generation_tasks').where('id', taskId).update({
-        progress: 95,
-        updated_at: new Date()
-    });
-
-    await persistCompletedTestModelTask({
-        taskId,
-        cleanedModel,
-        startTime,
-        canonicalChunkCount: canonicalMainChunks.length,
-        generationSegmentCount: generationSegments.length,
-        llmCallCount,
-        retrievalCallCount,
-        targetedRefinementCount: refinementResult.targetedRefinementCount || 0,
-        dedupeStats,
-        auxiliaryIndexing
-    });
-}
-
 
 // 2. Функция финальной склейки (Smart Merge)
-function mergeChunkResults(allChunksJson) {
+function mergeChunkResults (allChunksJson)
+{
     const finalModel = [];
 
     // allChunksJson - это массив массивов (результат каждого чанка)
-    allChunksJson.forEach(chunkArray => {
-        chunkArray.forEach(feature => {
+    allChunksJson.forEach(chunkArray =>
+    {
+        chunkArray.forEach(feature =>
+        {
             // Ищем, есть ли уже такая Feature в финальной модели
             let existingFeature = finalModel.find(f => f.text === feature.text);
 
@@ -9982,7 +6384,8 @@ function mergeChunkResults(allChunksJson) {
             }
 
             // Мержим Stories
-            feature.stories.forEach(story => {
+            feature.stories.forEach(story =>
+            {
                 let existingStory = existingFeature.stories.find(s => s.text === story.text);
 
                 if (!existingStory) {
@@ -10001,12 +6404,11 @@ function mergeChunkResults(allChunksJson) {
     return finalModel;
 }
 
-async function generateTestModelAsync(taskId, inputData) {
+async function generateTestModelAsync (taskId, inputData)
+{
     const startTime = Date.now();
     let regenerationCount = 0;
     let escalationCount = 0;
-    const CLOUDRU_API_KEY = process.env.CLOUDRU_API_KEY || config.cloudru?.apiKey;
-    const pipelineFlags = getDefaultPipelineFlags();
 
     try {
         await db('generation_tasks').where('id', taskId).update({
@@ -10017,22 +6419,8 @@ async function generateTestModelAsync(taskId, inputData) {
 
         const {
             requirements,
-            text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken,
-            models: inputModels
+            text, pageId, glossary, glossaryPageId, context, contextPageIds, contextInstruction, bearerToken
         } = inputData;
-        
-        // Используем переданную модель или первую из списка по умолчанию
-        // Если выбрана конкретная модель - пробуем её первой, затем fallback на остальные
-        let modelsToTry;
-        if (inputModels && inputModels.length > 0) {
-            // Выбранная модель + все остальные из config как fallback
-            const selected = inputModels[0];
-            const fallbackModels = config.cloudruModels.filter(m => m !== selected);
-            modelsToTry = [selected, ...fallbackModels];
-        } else {
-            modelsToTry = config.cloudruModels;
-        }
-        console.log(`[generate-test-model-async] Модели для попыток (выбранная + fallback): ${modelsToTry.join(', ')}`);
 
         if (!requirements && !text && !pageId) {
             throw new Error('Нужно передать requirements (строка/массив), либо text, либо pageId');
@@ -10043,13 +6431,9 @@ async function generateTestModelAsync(taskId, inputData) {
 
         // 0) Если pageId передан — подтягиваем основную страницу и прямые ссылки
         let autoPages = [];
-        const autoPageDocs = [];
-        const autoPageIds = new Set();
-        const explicitContextPageDocs = [];
         let baseRequirement = '';
-        let mainRequirementTitle = null;
-        let usedContextRefinerFallback = false;
-        const formatMention = (mention) => {
+        const formatMention = (mention) =>
+        {
             if (!mention) return '';
             return mention
                 .replace(/\r?\n/g, ' ')
@@ -10073,7 +6457,6 @@ async function generateTestModelAsync(taskId, inputData) {
             try {
                 const { markdown, title: mainTitle } = await fetchConfluencePage(bearerToken.trim(), pageId, { inlineTextAttachments: true });
                 baseRequirement = markdown || '';
-                mainRequirementTitle = mainTitle || null;
                 console.log(`[generate-test-model-async] ✅ Страница загружена, размер: ${baseRequirement.length} символов`);
 
                 if (!baseRequirement || !baseRequirement.trim()) {
@@ -10106,30 +6489,25 @@ async function generateTestModelAsync(taskId, inputData) {
                 for (const lid of ids) {
                     try {
                         const { markdown: md, title: linkedTitle } = await fetchConfluencePage(bearerToken, lid, { inlineTextAttachments: true });
-                        const mention = extractBestLinkedPageMention(markdown, lid, baseRequirement);
+                        const lines = String(markdown || '').split(/\n/);
+                        const refIdx = lines.findIndex(l => l.includes(`pageId=${lid}`));
+                        let mention = '';
+                        if (refIdx !== -1) {
+                            const start = Math.max(0, refIdx - 2);
+                            const end = Math.min(lines.length, refIdx + 3);
+                            mention = lines.slice(start, end).join('\n').trim();
+                        }
                         const relevant = extractRelevantSections(md, mention, { maxSections: 15, maxChars: 100000 }); // Увеличено для полного контекста
-                        const linkedPageTitleForSource = deriveTitleFromContent(md, linkedTitle || `Связанная страница ${lid}`, lid);
-                        const autoPagePrompt = [
+                        autoPages.push([
                             `### Контекст по ссылке из основной статьи (pageId=${lid})`,
                             mention ? `> Упоминание в основной статье:\n> ${mention.replace(/\n/g, '\n> ')}` : `> Упоминание в основной статье: не найдено (pageId=${lid})`,
                             '',
                             relevant
-                        ].join('\n');
-
-                        autoPages.push(autoPagePrompt);
-                        autoPageDocs.push({
-                            pageId: String(lid),
-                            title: linkedPageTitleForSource,
-                            content: md,
-                            graphText: (relevant && relevant.trim()) ? relevant : md,
-                            promptText: autoPagePrompt,
-                            sourceScope: 'linked'
-                        });
-                        autoPageIds.add(String(lid));
+                        ].join('\n'));
 
                         registerSource({
                             id: `page-${lid}`,
-                            title: linkedPageTitleForSource,
+                            title: deriveTitleFromContent(md, linkedTitle || `Связанная страница ${lid}`, lid),
                             description: mention ? `Упоминание: ${formatMention(mention)}` : 'Контекст из связанной страницы',
                             type: 'confluence',
                             pageId: String(lid),
@@ -10138,70 +6516,6 @@ async function generateTestModelAsync(taskId, inputData) {
                     } catch (linkErr) {
                         console.warn(`[generate-test-model-async] Не удалось загрузить связанную страницу pageId=${lid}:`, linkErr.message);
                     }
-                }
-                
-                // === СЕМАНТИЧЕСКАЯ ЧАНКИЗАЦИЯ (pgvector) ===
-                // Индексируем все загруженные страницы в pgvector для RAG
-                const allPageChunks = [];
-                
-                if (!pipelineFlags.ENABLE_CANONICAL_DEFAULT_PIPELINE && CLOUDRU_API_KEY && isPgVectorInitialized()) {
-                    try {
-                        console.log(`[generate-test-model-async] Семантическая чанкизация страниц в pgvector...`);
-                        
-                        // Чанкизируем и индексируем основную страницу только если контент изменился
-                        if (baseRequirement) {
-                            const mainIndexResult = await indexConfluencePageChunksWithCache({
-                                docId: String(pageId),
-                                content: baseRequirement,
-                                title: deriveTitleFromContent(baseRequirement, `Страница ${pageId}`, pageId),
-                                sourceType: 'main',
-                                apiKey: CLOUDRU_API_KEY
-                            });
-
-                            console.log(
-                                `[generate-test-model-async] Основная страница: ${mainIndexResult.chunkCount || 0} чанков, ` +
-                                `${mainIndexResult.cacheHit ? 'использован кэш индексации' : `переиндексировано ${mainIndexResult.processed} чанков`}`
-                            );
-
-                            if (!mainIndexResult.cacheHit) {
-                                allPageChunks.push({ pageId: String(pageId), chunkCount: mainIndexResult.chunkCount || 0 });
-                            }
-                        }
-                        
-                        // Чанкизируем linked pages
-                        for (const autoPage of autoPages) {
-                            // Извлекаем pageId из текста
-                            const pageIdMatch = autoPage.match(/pageId=(\d+)/);
-                            if (pageIdMatch) {
-                                const linkedPageId = pageIdMatch[1];
-                                const linkedIndexResult = await indexConfluencePageChunksWithCache({
-                                    docId: String(linkedPageId),
-                                    content: autoPage,
-                                    title: `Связанная страница ${linkedPageId}`,
-                                    sourceType: 'linked',
-                                    apiKey: CLOUDRU_API_KEY
-                                });
-
-                                console.log(
-                                    `[generate-test-model-async] Linked page ${linkedPageId}: ${linkedIndexResult.chunkCount || 0} чанков, ` +
-                                    `${linkedIndexResult.cacheHit ? 'использован кэш индексации' : `переиндексировано ${linkedIndexResult.processed} чанков`}`
-                                );
-
-                                if (!linkedIndexResult.cacheHit) {
-                                    allPageChunks.push({ pageId: String(linkedPageId), chunkCount: linkedIndexResult.chunkCount || 0 });
-                                }
-                            }
-                        }
-                        
-                        const indexedChunksCount = allPageChunks.reduce((sum, item) => sum + (item.chunkCount || 0), 0);
-                        console.log(`[generate-test-model-async] ✅ Всего переиндексировано ${indexedChunksCount} чанков в pgvector`);
-                        
-                    } catch (chunkingError) {
-                        console.warn(`[generate-test-model-async] ⚠️ Ошибка чанкизации/индексации:`, chunkingError.message);
-                        console.warn(`[generate-test-model-async] ⚠️ Используем fallback на contextRefiner`);
-                    }
-                } else {
-                    console.log(`[generate-test-model-async] pgvector недоступен, используем contextRefiner`);
                 }
             } catch (e) {
                 console.error(`[generate-test-model-async] ❌ КРИТИЧЕСКАЯ ОШИБКА при загрузке страницы Confluence:`, e.message);
@@ -10218,48 +6532,6 @@ async function generateTestModelAsync(taskId, inputData) {
                 type: 'user',
                 content: requestContextText
             });
-        }
-
-        const explicitContextPageIds = normalizePageIds(contextPageIds)
-            .map(String)
-            .filter(Boolean)
-            .filter((cid) => cid !== String(pageId || ''))
-            .filter((cid, index, arr) => arr.indexOf(cid) === index);
-
-        if (explicitContextPageIds.length > 0) {
-            if (!bearerToken) {
-                console.warn('[generate-test-model-async] contextPageIds переданы без bearerToken, пропускаем загрузку контекстных страниц для графа');
-            } else {
-                for (const cid of explicitContextPageIds) {
-                    if (autoPageIds.has(cid)) {
-                        continue;
-                    }
-
-                    try {
-                        const { markdown: contextMarkdown, title: contextTitle } = await fetchConfluencePage(bearerToken.trim(), cid, { inlineTextAttachments: true });
-                        const contextPageTitle = deriveTitleFromContent(contextMarkdown, contextTitle || `Context page ${cid}`, cid);
-
-                        explicitContextPageDocs.push({
-                            pageId: cid,
-                            title: contextPageTitle,
-                            content: contextMarkdown,
-                            graphText: contextMarkdown,
-                            sourceScope: 'explicit_context'
-                        });
-
-                        registerSource({
-                            id: `context-page-${cid}`,
-                            title: contextPageTitle,
-                            description: contextInstruction ? `Контекстная страница из запроса. Инструкция: ${String(contextInstruction).trim()}` : 'Контекстная страница из запроса',
-                            type: 'confluence',
-                            pageId: cid,
-                            content: contextMarkdown
-                        });
-                    } catch (contextPageErr) {
-                        console.warn(`[generate-test-model-async] Не удалось загрузить contextPageId=${cid}:`, contextPageErr.message);
-                    }
-                }
-            }
         }
 
         if (glossary && typeof glossary === 'string' && glossary.trim()) {
@@ -10302,10 +6574,6 @@ async function generateTestModelAsync(taskId, inputData) {
         reqStringForModel = requirementsPool.filter(Boolean).join('\n\n---\n\n');
 
         if (!reqStringForModel) {
-            if (pipelineFlags.ENABLE_CANONICAL_DEFAULT_PIPELINE) {
-                throw new Error('Canonical default pipeline requires a non-empty requirements text. Unable to build reqStringForModel.');
-            }
-
             try {
                 const { refinedText, refinedArray } = await contextRefiner({
                     requirements,
@@ -10313,14 +6581,13 @@ async function generateTestModelAsync(taskId, inputData) {
                     glossary,
                     context,
                     contextInstruction,
-                    contextPageIds,
+                    contextPageIds: undefined,
                     glossaryPageId: undefined,
                     bearerToken,
                     contextPages: autoPages
                 });
                 console.log(`[generate-test-model-async] contextRefiner fallback: refinedText.length=${(refinedText || '').length}, refinedArray.length=${refinedArray?.length || 0}`);
                 reqStringForModel = refinedText || (refinedArray?.join('\n\n') ?? '');
-                usedContextRefinerFallback = true;
             } catch (e) {
                 console.warn('[generate-test-model-async] contextRefiner fallback failed:', e.message);
                 reqStringForModel = baseRequirement || (typeof requirements === 'string'
@@ -10343,303 +6610,62 @@ async function generateTestModelAsync(taskId, inputData) {
             console.warn(`[generate-test-model-async] ⚠️ ВНИМАНИЕ: Требования очень короткие (${reqStringForModel.length} символов). Возможно, контент не загружен.`);
         }
 
-        const graphDocumentId = String(pageId || taskId || 'inline-requirements');
-        const canonicalMainTitle = deriveTitleFromContent(
-            reqStringForModel,
-            mainRequirementTitle || 'Requirements',
-            pageId || graphDocumentId
-        );
-
-        if (pipelineFlags.ENABLE_CANONICAL_DEFAULT_PIPELINE) {
-            const mainRawChunks = await chunkify(reqStringForModel, {
-                pageId: graphDocumentId,
-                title: canonicalMainTitle
-            });
-
-            await runCanonicalDefaultModelPipeline({
-                taskId,
-                startTime,
-                reqStringForModel,
-                graphDocumentId,
-                mainTitle: canonicalMainTitle,
-                mainRawChunks,
-                autoPageDocs,
-                explicitContextPageDocs,
-                requestContextText,
-                glossary,
-                glossaryPageId,
-                bearerToken,
-                modelsToTry,
-                apiKey: CLOUDRU_API_KEY
-            });
-            return;
-        }
-
-        let rawChunks = await chunkify(reqStringForModel, {
-            pageId: graphDocumentId,
-            title: deriveTitleFromContent(reqStringForModel, 'Requirements', pageId || graphDocumentId)
-        });
-
-        let reqChunks = rawChunks
-            .filter(chunk => !(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval))
-            .map((chunk, index) => ({
-            text: chunk.cleaned_text || chunk.content,
-            content: chunk.cleaned_text || chunk.content,
-            chunkId: chunk.id || `chunk-${index}`,
-            position: index,
-            pageId: graphDocumentId,
-            sectionId: Array.isArray(chunk.section_path) && chunk.section_path.length
-                ? chunk.section_path.join(' > ')
-                : (chunk.heading || null),
-            documentId: chunk.doc_id || graphDocumentId,
-            metadata: {
-                chunk_type: chunk.chunk_type,
-                heading: chunk.heading,
-                section_path: chunk.section_path,
-                explicit_refs: chunk.explicit_refs,
-                source_scope: 'main',
-                graph_eligible: true,
-                relevance_score: 100,
-                canonical_key: buildGraphCanonicalKey(chunk.cleaned_text || chunk.content || '', 'main'),
-                drop_reason: null,
-                entity_scope: 'full'
-            }
-        }));
-
-        // RAG
-        let ragContextForChunks = [];
-        if (CLOUDRU_API_KEY && isPgVectorInitialized()) {
-            try {
-                console.log("[generate-test-model-async] Получение RAG контекста из pgvector...");
-                const ragQuery = "Основные требования: " + reqStringForModel.substring(0, 2000);
-                const ragResults = await multiHopStructuredSearch(ragQuery, CLOUDRU_API_KEY, {
-                    primaryTopK: 10,
-                    expansionTopK: 5,
-                    authorityMain: 1.0,
-                    authorityLinked: 0.7,
-                    depth: 2
-                });
-                if (ragResults.length > 0) {
-                    console.log("[generate-test-model-async] Найдено " + ragResults.length + " чанков через multi-hop");
-                    const mainChunks = ragResults.filter(r => r.source_type === 'main' || r.hop_distance === 0);
-                    const ragProfile = buildRelevantSectionProfile(reqStringForModel);
-                    const linkedChunks = ragResults
-                        .filter(r => r.source_type === 'linked' || r.hop_distance > 0)
-                        .filter((chunk) => {
-                            if (chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval) {
-                                return false;
-                            }
-
-                            const evaluation = evaluateGraphContextChunk(chunk, ragProfile, 'linked');
-                            const chunkText = String(chunk?.content || chunk?.metadata?.cleaned_text || chunk?.text || '').trim();
-                            return evaluation.graphEligible && chunkText.length >= 50;
-                        });
-                    let contextText = '';
-                    if (mainChunks.length > 0) {
-                        contextText += '=== КОНТЕКСТ ИЗ ОСНОВНОГО ДОКУМЕНТА ===\n';
-                        contextText += mainChunks.map((r, i) => "[" + (i+1) + "] " + (r.content || r.metadata?.cleaned_text || '')).join('\n\n');
-                    }
-                    if (linkedChunks.length > 0) {
-                        contextText += '\n\n=== ДОПОЛНИТЕЛЬНЫЙ КОНТЕКСТ ИЗ СВЯЗАННЫХ ДОКУМЕНТОВ ===\n';
-                        contextText += linkedChunks.map((r, i) => "[" + (i+1) + "] " + (r.content || r.metadata?.cleaned_text || '')).join('\n\n');
-                    }
-                    ragContextForChunks = [contextText];
-                    console.log("[generate-test-model-async] RAG контекст: " + contextText.length + " символов");
-                }
-            } catch (ragError) {
-                console.warn('[generate-test-model-async] Ошибка RAG:', ragError.message);
-            }
-        }
-
-        // ✅ Neo4j Graph: Извлечение сущностей и связей из требований
-        let graphContextForChunks = null;
-        let graphSessionId = null;
-        let graphChunkSummary = null;
-        let graphFilterStats = null;
-        const neo4jAvailable = await isNeo4jAvailable();
-        if (neo4jAvailable) {
-            try {
-                console.log('[generate-test-model-async] 🌐 Извлечение сущностей в Neo4j граф...');
-                const sessionId = `testmodel-${taskId}-${Date.now()}`;
-                graphSessionId = sessionId;
-                
-                // Формируем тексты для извлечения сущностей: основной документ + контекстные страницы
-                const mainTexts = reqChunks;
-                const graphContextPages = [...autoPageDocs, ...explicitContextPageDocs];
-                let contextTexts = graphContextPages
-                    .flatMap((page, index) => {
-                        const pageText = page.graphText || page.content || page.title || '';
-                        return pageText
-                            ? [{
-                                text: pageText,
-                                content: pageText,
-                                chunkId: `context-page-${page.pageId || index}`,
-                                position: index,
-                                pageId: String(page.pageId || `context-${index}`),
-                                sectionId: page.title || `Context page ${index + 1}`,
-                                documentId: String(page.pageId || `context-${index}`)
-                            }]
-                            : [];
-                    })
-                    .filter((chunk) => (chunk.text || chunk.content || '').length > 50);  // Фильтруем короткие тексты
-                
-                const graphContextSelection = await buildGraphContextChunks({
-                    pages: graphContextPages,
-                    requirementText: reqStringForModel
-                });
-                contextTexts = graphContextSelection.eligibleChunks;
-                graphChunkSummary = graphContextSelection.summary;
-
-                console.log(
-                    `[generate-test-model-async] 📄 Основной документ: ${mainTexts.length} чанков, ` +
-                    `auto-linked context pages: ${autoPageDocs.length}, explicit context pages: ${explicitContextPageDocs.length}, ` +
-                    `graph context texts: ${contextTexts.length}`
-                );
-
-                // Создаём chunk-узлы заранее, чтобы связи EXTRACTED_FROM не были висячими.
-                if (mainTexts.length > 0) {
-                    await createChunks(sessionId, mainTexts);
-                    const nextRelationships = mainTexts
-                        .slice(0, -1)
-                        .map((chunk, index) => ({
-                            fromChunkId: chunk.chunkId,
-                            toChunkId: mainTexts[index + 1]?.chunkId,
-                            toType: 'Chunk',
-                            relType: 'NEXT'
-                        }))
-                        .filter(rel => rel.fromChunkId && rel.toChunkId);
-
-                    if (nextRelationships.length > 0) {
-                        await createChunkRelationships(sessionId, nextRelationships);
-                    }
-                }
-                
-                // Извлекаем сущности из основного документа
-                const { entities, relationships } = await extractEntitiesFromChunks(mainTexts, {
-                    sessionId,
-                    documentId: graphDocumentId
-                });
-                
-                // Если есть контекстные страницы - извлекаем из них дополнительные сущности
-                if (contextTexts.length > 0) {
-                    console.log('[generate-test-model-async] 📄 Извлекаем сущности из контекстных страниц...');
-                    await createChunks(sessionId, contextTexts);
-                    const { entities: contextEntities, relationships: contextRel } = await extractEntitiesFromChunks(contextTexts, {
-                        sessionId,
-                        documentId: graphDocumentId
-                    });
-                    const filteredContextGraph = filterContextGraphExtraction(contextEntities, contextRel, contextTexts);
-                    graphFilterStats = filteredContextGraph.stats;
-                    
-                    console.log(`[generate-test-model-async] 📊 Из контекста: ${contextEntities.length} сущностей, ${contextRel.length} связей`);
-                    // Записываем контекстные сущности в Neo4j
-                    if (filteredContextGraph.entities.length > 0) {
-                        await createEntities(sessionId, filteredContextGraph.entities);
-                        await createEntityRelationships(sessionId, filteredContextGraph.relationships);
-                    }
-                }
-                
-                if (entities.length > 0) {
-                    console.log(`[generate-test-model-async] 📊 Извлечено всего: ${entities.length} сущностей, ${relationships.length} связей`);
-                    
-                    // Записываем в Neo4j
-                    await createEntities(sessionId, entities);
-                    await createEntityRelationships(sessionId, relationships);
-                    
-                    // Также извлекаем UI-компоненты из текста
-                    const uiExtraction = await extractUIFromText(reqStringForModel);
-                    if (uiExtraction.uiElements?.length > 0 || uiExtraction.userPaths?.length > 0) {
-                        const { entities: uiEntities, relationships: uiRel } = convertUIToEntities(uiExtraction, {
-                            documentId: graphDocumentId
-                        });
-                        await createEntities(sessionId, uiEntities);
-                        await createEntityRelationships(sessionId, uiRel);
-                        console.log(`[generate-test-model-async] 📱 UI элементов: ${uiEntities.length}, путей: ${uiExtraction.userPaths?.length || 0}`);
-                    }
-                    
-                    // Формируем графовый контекст для промпта
-                    const graphNodes = await getAllNodes(sessionId, 500);
-                    graphContextForChunks = {
-                        sessionId,
-                        apiEndpoints: graphNodes.filter(node => node.type === 'APIEndpoint'),
-                        uiElements: graphNodes.filter(node => node.type === 'UIElement'),
-                        businessRules: graphNodes.filter(node => node.type === 'BusinessRule'),
-                        externalRefs: graphNodes.filter(node => node.type === 'ExternalRef')
-                    };
-                    console.log(`[generate-test-model-async] 🌐 Графовый контекст сформирован для сессии ${sessionId}`);
-                } else {
-                    console.log('[generate-test-model-async] ⚠️ Не удалось извлечь сущности, пропускаем граф');
-                }
-            } catch (graphError) {
-                console.warn('[generate-test-model-async] Ошибка Neo4j graph:', graphError.message);
-            }
-        } else {
-            console.log('[generate-test-model-async] ⚠️ Neo4j недоступен, пропускаем графовый контекст');
-        }
-
-        // ✅ ЭТАП 1: ПАРАЛЛЕЛЬНЫЙ ПРЕПРОЦЕССИНГ REQUIREMENTS
-        console.log('[generateTestModelAsync] 🗺️ Запускаю параллельный препроцессинг requirements: global context, structure, logic constraints...');
+        // ✅ ЭТАП 1: GLOBAL CONTEXT EXTRACTION (Skeleton & Flesh архитектура)
+        console.log('[generateTestModelAsync] 🗺️ Этап 1: Извлечение глобального контекста (Global Context Extraction)...');
         await db('generation_tasks').where('id', taskId).update({
             progress: 5,
             updated_at: new Date()
         });
 
-        const globalContextPromise = (async () => {
-            try {
-                const extracted = await extractGlobalContext(reqStringForModel);
-                console.log(`[generateTestModelAsync] ✅ Глобальный контекст извлечен: ${extracted.roles.length} ролей, ${extracted.entities.length} сущностей, ${extracted.screens.length} экранов, ${extracted.global_rules.length} правил`);
-                return extracted;
-            } catch (error) {
-                console.warn('[generateTestModelAsync] ⚠️ Ошибка при извлечении глобального контекста, продолжаем без него:', error.message);
-                return getEmptyGlobalContext();
-            }
-        })();
+        let globalContext = null;
+        try {
+            globalContext = await extractGlobalContext(reqStringForModel);
+            console.log(`[generateTestModelAsync] ✅ Глобальный контекст извлечен: ${globalContext.roles.length} ролей, ${globalContext.entities.length} сущностей, ${globalContext.screens.length} экранов, ${globalContext.global_rules.length} правил`);
+        } catch (error) {
+            console.warn('[generateTestModelAsync] ⚠️ Ошибка при извлечении глобального контекста, продолжаем без него:', error.message);
+            globalContext = getEmptyGlobalContext();
+        }
 
-        const reqStructurePromise = (async () => {
-            try {
-                return await extractRequirementsStructure(reqStringForModel);
-            } catch (error) {
-                console.error('[generateTestModelAsync] Ошибка при извлечении структуры:', error.message);
-                return {
-                    features: [{
-                        name: "Основная функциональность",
-                        description: "Автоматически извлеченная функциональность",
-                        stories: [{
-                            name: "Базовый сценарий",
-                            requirements: [],
-                            description: "Базовый сценарий для генерации модели"
-                        }]
-                    }]
-                };
-            }
-        })();
-
-        const logicConstraintsPromise = (async () => {
-            try {
-                const extracted = await extractLogicAndConstraints(reqStringForModel);
-                console.log(`[generateTestModelAsync] ✅ Извлечено: валидаций=${extracted.validations.length}, граничных значений=${extracted.boundary_values.length}, негативных сценариев=${extracted.negative_scenarios.length}, UI логик=${extracted.ui_logic.length}, зависимостей=${extracted.dependencies.length}`);
-                return extracted;
-            } catch (error) {
-                console.warn('[generateTestModelAsync] ⚠️ Ошибка при извлечении логики, продолжаем без неё:', error.message);
-                return null;
-            }
-        })();
-
+        // ✅ ФАЗА 1: ПРЕПРОЦЕССИНГ REQUIREMENTS - Извлечение структуры Feature → Story
+        console.log('[generateTestModelAsync] Фаза 1: Извлечение структуры requirements');
         await db('generation_tasks').where('id', taskId).update({
             progress: 10,
             updated_at: new Date()
         });
 
-        const [globalContext, reqStructure, logicConstraints] = await Promise.all([
-            globalContextPromise,
-            reqStructurePromise,
-            logicConstraintsPromise
-        ]);
+        let reqStructure;
+        try {
+            reqStructure = await extractRequirementsStructure(reqStringForModel);
+            await db('generation_tasks').where('id', taskId).update({
+                progress: 20,
+                updated_at: new Date()
+            });
+        } catch (error) {
+            console.error('[generateTestModelAsync] Ошибка при извлечении структуры:', error.message);
+            // Продолжаем с fallback структурой
+            reqStructure = {
+                features: [{
+                    name: "Основная функциональность",
+                    description: "Автоматически извлеченная функциональность",
+                    stories: [{
+                        name: "Базовый сценарий",
+                        requirements: [],
+                        description: "Базовый сценарий для генерации модели"
+                    }]
+                }]
+            };
+        }
 
-        await db('generation_tasks').where('id', taskId).update({
-            progress: 20,
-            updated_at: new Date()
-        });
+        // ✅ DOMAIN DRIVEN TESTING: Извлечение логических ограничений для модели
+        console.log('[generateTestModelAsync] 🧠 Извлечение логических ограничений (Domain Driven Testing)...');
+        let logicConstraints = null;
+        try {
+            logicConstraints = await extractLogicAndConstraints(reqStringForModel);
+            console.log(`[generateTestModelAsync] ✅ Извлечено: валидаций=${logicConstraints.validations.length}, граничных значений=${logicConstraints.boundary_values.length}, негативных сценариев=${logicConstraints.negative_scenarios.length}, UI логик=${logicConstraints.ui_logic.length}, зависимостей=${logicConstraints.dependencies.length}`);
+        } catch (error) {
+            console.warn('[generateTestModelAsync] ⚠️ Ошибка при извлечении логики, продолжаем без неё:', error.message);
+            logicConstraints = null;
+        }
 
         if (reqStringForModel) {
             registerSource({
@@ -10653,7 +6679,8 @@ async function generateTestModelAsync(taskId, inputData) {
         }
 
         const contextFetcher = bearerToken
-            ? async (requestedPageId) => {
+            ? async (requestedPageId) =>
+            {
                 try {
                     if (requestedPageId == null) return '';
                     const requestedIdStr = String(requestedPageId);
@@ -10690,7 +6717,8 @@ async function generateTestModelAsync(taskId, inputData) {
          * Умное разбиение на чанки по смысловым границам (Features/Stories).
          * Использует структуру из extractRequirementsStructure.
          */
-        function semanticChunkByFeatures(text, reqStructure, maxChars = 80000) {
+        function semanticChunkByFeatures (text, reqStructure, maxChars = 80000)
+        {
             // Если текст маленький — вообще не режем
             if (!text || text.length <= maxChars) return [text];
 
@@ -10749,7 +6777,8 @@ async function generateTestModelAsync(taskId, inputData) {
         }
 
         // Вспомогательная функция поиска начала фичи в тексте
-        function findFeatureStart(text, featureName, fromIndex = 0) {
+        function findFeatureStart (text, featureName, fromIndex = 0)
+        {
             if (!featureName) return fromIndex;
 
             // Ищем заголовок фичи (может быть в Markdown: ## Feature Name или просто текст)
@@ -10769,12 +6798,14 @@ async function generateTestModelAsync(taskId, inputData) {
             return fromIndex;
         }
 
-        function escapeRegex(str) {
+        function escapeRegex (str)
+        {
             return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         }
 
         // Fallback для случаев, когда структура не извлеклась
-        function chunkTextBySize(text, maxChars = 120000) {
+        function chunkTextBySize (text, maxChars = 120000)
+        {
             // Твоя текущая реализация остаётся как fallback
             if (!text || text.length <= maxChars) return [{ text, metadata: {} }];
 
@@ -10803,55 +6834,10 @@ async function generateTestModelAsync(taskId, inputData) {
 
 
 
-        // Семантическая чанкизация по логическим единицам (действия, правила, API, валидации)
-        rawChunks = await chunkify(reqStringForModel, {
-            pageId: graphDocumentId,
-            title: deriveTitleFromContent(reqStringForModel, 'Requirements', pageId || graphDocumentId)
-        });
-        
-        // Преобразуем в формат для генерации
-        reqChunks = rawChunks
-            .filter(chunk => !(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval))
-            .map(chunk => ({
-            text: chunk.cleaned_text || chunk.content,
-            metadata: {
-                chunk_type: chunk.chunk_type,
-                heading: chunk.heading,
-                section_path: chunk.section_path,
-                explicit_refs: chunk.explicit_refs
-            }
-        }));
-
-        try {
-            const chunkDumpPayload = await assembleRequirementChunkDebugPayload({
-                requirements,
-                text,
-                pageId,
-                glossary,
-                context,
-                reqStringForModel,
-                usedContextRefinerFallback,
-                graphDocumentId,
-                deriveTitleFromContent,
-                mainTitle: mainRequirementTitle,
-                baseRequirement,
-                autoPageDocs,
-                explicitContextPageDocs,
-                includeFullText: true,
-                includeSourceTexts: true,
-                precomputedModelInputChunks: rawChunks
-            });
-
-            const chunkDumpMarkdown = buildRequirementChunkDumpMarkdown(chunkDumpPayload, { taskId });
-            const chunkDumpPaths = persistRequirementChunkDumpMarkdown(chunkDumpMarkdown, { taskId });
-            console.log(`[generate-test-model-async] 📝 Дамп чанков сохранен: ${chunkDumpPaths.taskFilePath}`);
-        } catch (chunkDumpError) {
-            console.warn('[generate-test-model-async] Не удалось сохранить markdown-дамп чанков:', chunkDumpError.message);
-        }
-        
+        const reqChunks = semanticChunkByFeatures(reqStringForModel, reqStructure, 80000);
         const totalSize = reqStringForModel.length;
 
-        console.log(`[generate-test-model-async] ✅ Семантическая чанкизация: ${reqChunks.length} retrievable chunks / ${rawChunks.length} total (${rawChunks.filter(c => c.chunk_type).length} с типами)`);
+        console.log(`[generate-test-model-async] Требования разбиты на ${reqChunks.length} чанк(ов), общий размер: ${totalSize} символов`);
 
         // ✅ ОПТИМИЗАЦИЯ: Для маленьких требований (< 5000 символов) отключаем инструменты контекста
         // чтобы избежать лишних итераций, когда весь контекст уже в промпте
@@ -10906,20 +6892,14 @@ ${contextSourcesSummary || '—'}
             // ✅ Извлекаем контекст предыдущих чанков для передачи в промпт
             const previousContext = extractContext(accumulatedModel);
 
-            // Добавляем информацию о типе чанка в промпт
-            const chunkTypeInfo = metadata?.chunk_type ? `\n📋 Тип текущего раздела: ${metadata.chunk_type}\n` : '';
-            const chunkHeading = metadata?.heading ? `\n📑 Заголовок раздела: ${metadata.heading}\n` : '';
-            
             const logicSectionForChunk = logicConstraints ? formatLogicConstraintsForPrompt(logicConstraints) : '';
             const userPrompt = buildModelUserPrompt({
-                reqChunk: chunkTypeInfo + chunkHeading + reqChunkText,
+                reqChunk: reqChunkText,
                 chunkIdx,
                 totalChunks: reqChunks.length,
-                previousContext,
+                previousContext, // ✅ Передаем контекст для предотвращения дублей
                 logicSection: logicSectionForChunk,
-                interactiveInstructionBlock,
-                ragContext: ragContextForChunks[0] || null,
-                graphContext: graphContextForChunks
+                interactiveInstructionBlock
             });
 
             const baseUserPrompt = userPrompt;
@@ -10950,7 +6930,6 @@ ${contextSourcesSummary || '—'}
                             temperature: 0,
                             top_p: 0.9,
                             max_tokens: 20000,  // ✅ Уменьшили запас completion, чтобы не превышать лимит Cloud.ru на больших промптах
-                            models: modelsToTry,  // ✅ Используем выбранную модель + fallback
                             extra: { transforms: 'middle-out' }
                         }
                     });
@@ -10969,7 +6948,6 @@ ${contextSourcesSummary || '—'}
                             temperature: 0,
                             top_p: 0.9,
                             max_tokens: 20000,  // ✅ Синхронизировано с основным вызовом
-                            models: modelsToTry,  // ✅ Используем выбранную модель + fallback
                             extra: { transforms: 'middle-out' }
                         }
                     );
@@ -10989,34 +6967,21 @@ ${contextSourcesSummary || '—'}
                     console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: args не получены`);
                 }
 
-                // Поддержка разных форматов ответа модели:
-                // 1. args.model - массив Features
-                // 2. args.features - массив Features  
-                // 3. args (прямой объект Feature с id, text, stories) - GigaChat
-                let modelSource = args?.model || args?.features;
-                
-                // Если modelSource пустой - возможно модель вернула объект Feature напрямую
-                // (GigaChat может вернуть {id, text, stories} вместо {model: [{id, text, stories}]})
-                if (!modelSource && args?.id && args?.text && args?.stories && Array.isArray(args?.stories)) {
-                    console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: модель вернула объект Feature напрямую, оборачиваем в массив`);
-                    modelSource = [args];
-                }
-                
-                if (modelSource) {
+                if (args && args.model) {
                     // Если model - это массив, используем его напрямую
-                    if (Array.isArray(modelSource)) {
-                        partialModel = modelSource;
+                    if (Array.isArray(args.model)) {
+                        partialModel = args.model;
                     }
                     // Если model - это объект с полем items (массив), используем items
-                    else if (typeof modelSource === 'object' && modelSource !== null && Array.isArray(modelSource.items)) {
-                        console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: modelSource содержит items, используем items`);
-                        partialModel = modelSource.items;
+                    else if (typeof args.model === 'object' && args.model !== null && Array.isArray(args.model.items)) {
+                        console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: args.model содержит items, используем args.model.items`);
+                        partialModel = args.model.items;
                     }
                     // Если model - это строка (JSON), парсим её
-                    else if (typeof modelSource === 'string') {
-                        console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: args.model - строка длиной ${modelSource.length} символов`);
-                        console.log(`[generate-test-model-async] Первые 200 символов: ${modelSource.substring(0, 200)}`);
-                        console.log(`[generate-test-model-async] Последние 200 символов: ${modelSource.substring(Math.max(0, modelSource.length - 200))}`);
+                    else if (typeof args.model === 'string') {
+                        console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: args.model - строка длиной ${args.model.length} символов`);
+                        console.log(`[generate-test-model-async] Первые 200 символов: ${args.model.substring(0, 200)}`);
+                        console.log(`[generate-test-model-async] Последние 200 символов: ${args.model.substring(Math.max(0, args.model.length - 200))}`);
 
                         try {
                             const parsed = JSON5.parse(args.model);
@@ -11026,16 +6991,16 @@ ${contextSourcesSummary || '—'}
                                 console.log(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: распарсенный JSON содержит items, используем parsed.items`);
                                 partialModel = parsed.items;
                             } else {
-                                console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: modelSource не является массивом после парсинга, тип:`, typeof parsed);
+                                console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: args.model не является массивом после парсинга, тип:`, typeof parsed);
                                 partialModel = null;
                             }
                         } catch (parseErr) {
-                            console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: Ошибка парсинга modelSource как JSON:`, parseErr.message);
+                            console.warn(`[generate-test-model-async] Чанк ${chunkIdx + 1}, попытка ${attempt + 1}: Ошибка парсинга args.model как JSON:`, parseErr.message);
 
                             // ✅ Улучшенная попытка восстановить обрезанный JSON
                             if (parseErr.message.includes('invalid end of input') || parseErr.message.includes('Unexpected end')) {
-                                console.warn(`[generate-test-model-async] ⚠️ JSON обрезан на ${modelSource.length} символах. Попытка восстановления...`);
-                                let fixedJson = modelSource.trim();
+                                console.warn(`[generate-test-model-async] ⚠️ JSON обрезан на ${args.model.length} символах. Попытка восстановления...`);
+                                let fixedJson = args.model.trim();
 
                                 // Стратегия 1: Подсчитываем открывающие и закрывающие скобки
                                 const openBrackets = (fixedJson.match(/\[/g) || []).length;
@@ -11112,7 +7077,7 @@ ${contextSourcesSummary || '—'}
 2. Если модель слишком большая - разбей на несколько Feature и отправь их по очереди
 3. НЕ отправляй обрезанный JSON - он будет отклонен
 
-Текущий размер JSON: ${modelSource.length} символов. Убедись, что JSON завершен (закрыты все скобки и кавычки).`.trim();
+Текущий размер JSON: ${args.model.length} символов. Убедись, что JSON завершен (закрыты все скобки и кавычки).`.trim();
                                     }
                                 }
                             } else {
@@ -11343,10 +7308,12 @@ ${contextSourcesSummary || '—'}
 
         // ✅ Добавляем уникальные ID к каждому элементу модели (БЕЗ requirement!)
         // ✅ ГАРАНТИРУЕМ УНИКАЛЬНОСТЬ ВСЕХ ID
-        const addUniqueIds = (model) => {
+        const addUniqueIds = (model) =>
+        {
             const usedIds = new Set();
 
-            const generateUniqueId = () => {
+            const generateUniqueId = () =>
+            {
                 let newId = uuidv4();
                 while (usedIds.has(newId)) {
                     newId = uuidv4();
@@ -11355,28 +7322,32 @@ ${contextSourcesSummary || '—'}
                 return newId;
             };
 
-            return (model || []).map(feature => {
+            return (model || []).map(feature =>
+            {
                 const featureId = feature.id && !usedIds.has(feature.id) ? feature.id : generateUniqueId();
 
                 return {
                     id: featureId,
                     text: feature.text,
                     // ❌ УДАЛЕНО: requirement - это поле не используется в тестовой модели
-                    stories: (feature.stories || []).map(story => {
+                    stories: (feature.stories || []).map(story =>
+                    {
                         const storyId = story.id && !usedIds.has(story.id) ? story.id : generateUniqueId();
 
                         return {
                             id: storyId,
                             text: story.text,
                             // ❌ УДАЛЕНО: requirement - это поле не используется в тестовой модели
-                            scenarios: (story.scenarios || []).map(scenario => {
+                            scenarios: (story.scenarios || []).map(scenario =>
+                            {
                                 const scenarioId = scenario.id && !usedIds.has(scenario.id) ? scenario.id : generateUniqueId();
 
                                 return {
                                     id: scenarioId,
                                     text: scenario.text,
                                     // ❌ УДАЛЕНО: requirement - это поле не используется в тестовой модели
-                                    codes: (scenario.codes || []).map(code => {
+                                    codes: (scenario.codes || []).map(code =>
+                                    {
                                         const codeId = code.id && !usedIds.has(code.id) ? code.id : generateUniqueId();
 
                                         return {
@@ -11395,7 +7366,8 @@ ${contextSourcesSummary || '—'}
         };
 
         // Функция извлечения requirement из текста элемента
-        function extractRequirementFromText(text) {
+        function extractRequirementFromText (text)
+        {
             if (!text) return null;
 
             // Ищем паттерны типа "2.2.7", "4.3", "1.2.3.4" в тексте
@@ -11411,8 +7383,7 @@ ${contextSourcesSummary || '—'}
         }
 
         const finalModel = addUniqueIds(mergedModel);
-        const { model: repairedFinalModel } = sanitizeModelForValidation(finalModel);
-        const initialModelStats = summarizeModelCounts(repairedFinalModel);
+        const repairedFinalModel = repairModelStructure(finalModel);
 
         // ✅ ФАЗА 3: ВАЛИДАЦИЯ МОДЕЛИ
         console.log('[generateTestModelAsync] Фаза 3: Валидация модели');
@@ -11469,76 +7440,9 @@ ${contextSourcesSummary || '—'}
         // ✅ НОВОЕ: Обогащение backend Code Expected Result
         cleanedModel = enrichBackendCodesWithExpectedResult(cleanedModel);
 
-        // Диагностика структуры модели ДО очистки
-        console.log(`[generateTestModelAsync] Диагностика ДО validateAndCleanModel:`);
-        console.log(`[generateTestModelAsync]   Всего features: ${cleanedModel?.length || 0}`);
-        for (const f of (cleanedModel || [])) {
-            const storyCount = (f.stories || []).length;
-            const scenarioCount = (f.stories || []).reduce((acc, s) => acc + (s.scenarios || []).length, 0);
-            const codeCount = (f.stories || []).reduce((acc, s) => acc + (s.scenarios || []).reduce((acc2, sc) => acc2 + (sc.codes || []).length, 0), 0);
-            console.log(`[generateTestModelAsync]   Feature "${f.text?.substring(0, 50)}...": ${storyCount} stories, ${scenarioCount} scenarios, ${codeCount} codes`);
-            for (const s of (f.stories || []).slice(0, 3)) {
-                console.log(`[generateTestModelAsync]     Story "${s.text?.substring(0, 40)}...": ${(s.scenarios || []).length} scenarios`);
-                for (const sc of (s.scenarios || []).slice(0, 2)) {
-                    console.log(`[generateTestModelAsync]       Scenario "${sc.text?.substring(0, 40)}...": ${(sc.codes || []).length} codes`);
-                }
-            }
-        }
-
         // === ВАЛИДАЦИЯ И ОЧИСТКА МОДЕЛИ ===
         console.log(`[generate-test-model-async] Валидация и очистка сгенерированной модели...`);
         cleanedModel = validateAndCleanModel(cleanedModel);
-
-        // === TARGETED REPAIR ДЛЯ ПУСТЫХ Story/Scenario ===
-        const hierarchyRepairTargets = collectHierarchyRepairTargets(cleanedModel, reqStructure);
-        if (hierarchyRepairTargets.length > 0) {
-            console.warn(`[generate-test-model-async] ⚠️ Найдено ${hierarchyRepairTargets.length} структурных gap(s) в Story/Scenario/Code, запускаем targeted repair...`);
-
-            const repairResult = await repairModelHierarchyGaps({
-                model: cleanedModel,
-                reqStructure,
-                requirementsText: reqStringForModel,
-                systemPrompt: SYSTEM_PROMPT,
-                modelsToTry,
-                logicSection: logicConstraints ? formatLogicConstraintsForPrompt(logicConstraints) : '',
-                ragContext: ragContextForChunks[0] || null,
-                graphContext: graphContextForChunks
-            });
-
-            cleanedModel = repairResult.model;
-
-            if (repairResult.repairedCount > 0) {
-                regenerationCount += repairResult.repairedCount;
-                console.log(`[generate-test-model-async] ✅ Targeted repair восстановил ${repairResult.repairedCount} Story branch(es)`);
-            } else {
-                console.warn('[generate-test-model-async] ⚠️ Targeted repair не смог восстановить gap(s), продолжаем с диагностикой и pruning');
-            }
-        }
-
-        // === ФИНАЛЬНАЯ ОБРЕЗКА ПУСТЫХ ВЕТОК ПОСЛЕ РЕМОНТА ===
-        const pruneResult = pruneEmptyModelBranches(cleanedModel);
-        cleanedModel = pruneResult.model;
-
-        if (pruneResult.report.removedStories.length > 0 || pruneResult.report.removedScenarios.length > 0 || pruneResult.report.removedFeatures.length > 0) {
-            console.warn(
-                `[generate-test-model-async] ⚠️ pruneEmptyModelBranches: удалено Features=${pruneResult.report.removedFeatures.length}, Stories=${pruneResult.report.removedStories.length}, Scenarios=${pruneResult.report.removedScenarios.length}`
-            );
-        }
-
-        cleanedModel = validateAndCleanModel(cleanedModel);
-
-        // === СЕМАНТИЧЕСКОЕ УТОЧНЕНИЕ CODES (RAG) ===
-        if (CLOUDRU_API_KEY && isPgVectorInitialized()) {
-            console.log(`[generate-test-model-async] Уточнение Code через семантический поиск...`);
-            try {
-                cleanedModel = await refineCodesWithSemanticSearch(cleanedModel, CLOUDRU_API_KEY, {
-                    usePgVector: true,
-                    topK: 5
-                });
-            } catch (e) {
-                console.warn('[generate-test-model-async] Ошибка семантического уточнения:', e.message);
-            }
-        }
 
         // ✅ ФАЗА 5: COVERAGE REPORT
         console.log('[generateTestModelAsync] Фаза 5: Генерация Coverage Report');
@@ -11562,14 +7466,6 @@ ${contextSourcesSummary || '—'}
             } else {
                 console.log(`[generateTestModelAsync] ✅ Coverage: ${coverageReportData.coveragePercent}%`);
             }
-
-            if ((coverageReportData.structureCoverage?.coveragePercent || 0) < 100) {
-                console.warn(
-                    `[generateTestModelAsync] ⚠️ Structure coverage ниже 100%: ${coverageReportData.structureCoverage?.coveragePercent || 0}%`
-                );
-            } else {
-                console.log(`[generateTestModelAsync] ✅ Structure coverage: ${coverageReportData.structureCoverage?.coveragePercent || 0}%`);
-            }
         }
 
         const finalStructureIssues = detectModelStructureIssues(cleanedModel, 'final');
@@ -11577,14 +7473,16 @@ ${contextSourcesSummary || '—'}
             console.warn(`[generate-test-model-async] ⚠️ Обнаружены структурные проблемы в финальной модели:`, finalStructureIssues);
 
             // ✅ ПОВТОРНАЯ ГЕНЕРАЦИЯ с уточняющим промптом для проблемных Story
-            const storyIssues = finalStructureIssues.filter(isRepairableStoryStructureIssue);
+            const storyIssues = finalStructureIssues.filter(issue =>
+                issue.includes('Story') && (issue.includes('техническую формулировку') || issue.includes('описание контрола'))
+            );
 
             if (storyIssues.length > 0 && reqStringForModel && SYSTEM_PROMPT) {
                 console.log(`[generate-test-model-async] 🔄 Попытка повторной генерации с исправлением ${storyIssues.length} проблемных Story...`);
 
                 // Формируем уточняющий промпт для исправления Story
                 const escalationPrompt = `
-🚨 КРИТИЧЕСКАЯ ОШИБКА: Обнаружены проблемные Story со структурными нарушениями!
+🚨 КРИТИЧЕСКАЯ ОШИБКА: Обнаружены Story с техническими формулировками вместо пользовательских историй!
 
 ПРОБЛЕМНЫЕ Story:
 ${storyIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}
@@ -11594,7 +7492,6 @@ ${storyIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}
 - ❌ "Реализация кнопки создания QR-кода" → ✅ "QR-коды для физических лиц"
 - ❌ "API метод получения данных" → ✅ "Получение данных о счетах"
 - ❌ "Чек-бокс УНК в другом банке" → ✅ "Работа с УНК в другом банке"
-- Внутри одного Scenario один и тот же Code не должен дублироваться: оставляй только один экземпляр каждой системной реакции
 
 ПЕРЕГЕНЕРИРУЙ модель, исправив все проблемные Story на пользовательские истории!
 `.trim();
@@ -11619,9 +7516,7 @@ ${storyIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')}
                             totalChunks: reqChunks.length,
                             previousContext,
                             logicSection: logicSectionForChunk,
-                            interactiveInstructionBlock,
-                            ragContext: ragContextForChunks[0] || null,
-                graphContext: graphContextForChunks
+                            interactiveInstructionBlock
                         });
 
                         // ✅ Добавляем escalation prompt к базовому промпту
@@ -11673,10 +7568,10 @@ ${escalationPrompt}`;
                     }
 
                     if (fixedModel.length > 0) {
-                        const { model: fixedCleanedModel } = sanitizeModelForValidation(fixedModel);
+                        const fixedCleanedModel = validateAndCleanModel(fixedModel);
                         const fixedIssues = detectModelStructureIssues(fixedCleanedModel, 'fixed');
 
-                        if (isIssueProfileBetter(fixedIssues, finalStructureIssues)) {
+                        if (fixedIssues.length < finalStructureIssues.length) {
                             console.log(`[generate-test-model-async] ✅ Повторная генерация помогла: ${finalStructureIssues.length} → ${fixedIssues.length} ошибок`);
                             cleanedModel = fixedCleanedModel;
 
@@ -11686,11 +7581,7 @@ ${escalationPrompt}`;
                                 console.warn(`[generate-test-model-async] ⚠️ Остались проблемы:`, fixedIssues);
                             }
                         } else {
-                            const baselineProfile = buildStructureIssueProfile(finalStructureIssues);
-                            const fixedProfile = buildStructureIssueProfile(fixedIssues);
-                            console.warn(`[generate-test-model-async] ⚠️ Повторная генерация не улучшила профиль проблем, используем исходную модель с предупреждениями`);
-                            console.warn(`[generate-test-model-async] baseline profile:`, baselineProfile);
-                            console.warn(`[generate-test-model-async] fixed profile:`, fixedProfile);
+                            console.warn(`[generate-test-model-async] ⚠️ Повторная генерация не помогла, используем исходную модель с предупреждениями`);
                         }
                     } else {
                         console.warn(`[generate-test-model-async] ⚠️ Не удалось получить исправленную модель, используем исходную с предупреждениями`);
@@ -11703,7 +7594,9 @@ ${escalationPrompt}`;
 
             // Если после повторной генерации проблемы остались, пытаемся перегенерировать проблемные Code
             const remainingIssues = detectModelStructureIssues(cleanedModel, 'final-after-retry');
-            const criticalIssues = remainingIssues.filter(issue => !isRepairableStoryStructureIssue(issue));
+            const criticalIssues = remainingIssues.filter(issue =>
+                !issue.includes('Story') || (!issue.includes('техническую формулировку') && !issue.includes('описание контрола'))
+            );
 
             // ✅ НОВОЕ: Перегенерация проблемных Code с пользовательскими действиями
             const codeIssues = criticalIssues.filter(issue =>
@@ -11745,7 +7638,9 @@ ${escalationPrompt}`;
 
                 // Повторная валидация
                 const remainingIssuesAfterFix = detectModelStructureIssues(cleanedModel, 'final-after-code-regeneration');
-                const stillCriticalIssues = remainingIssuesAfterFix.filter(issue => !isRepairableStoryStructureIssue(issue));
+                const stillCriticalIssues = remainingIssuesAfterFix.filter(issue =>
+                    !issue.includes('Story') || (!issue.includes('техническую формулировку') && !issue.includes('описание контрола'))
+                );
 
                 if (stillCriticalIssues.length > 0) {
                     console.warn(`[generate-test-model-async] ⚠️ После перегенерации и автоматического исправления остались проблемы:`);
@@ -11769,7 +7664,9 @@ ${escalationPrompt}`;
 
                     // Финальная проверка
                     const finalIssues = detectModelStructureIssues(cleanedModel, 'final-after-all-fixes');
-                    const finalCriticalIssues = finalIssues.filter(issue => !isRepairableStoryStructureIssue(issue));
+                    const finalCriticalIssues = finalIssues.filter(issue =>
+                        !issue.includes('Story') || (!issue.includes('техническую формулировку') && !issue.includes('описание контрола'))
+                    );
 
                     if (finalCriticalIssues.length > 0) {
                         console.warn(`[generate-test-model-async] ⚠️ После всех исправлений остались проблемы:`);
@@ -11792,19 +7689,6 @@ ${escalationPrompt}`;
         }
 
         // ✅ НОВОЕ: Собираем метрики
-        // Диагностика структуры модели
-        console.log(`[generateTestModelAsync] Диагностика cleanedModel:`);
-        console.log(`[generateTestModelAsync]   Всего features: ${cleanedModel?.length || 0}`);
-        for (const f of (cleanedModel || [])) {
-            const storyCount = (f.stories || []).length;
-            const scenarioCount = (f.stories || []).reduce((acc, s) => acc + (s.scenarios || []).length, 0);
-            const codeCount = (f.stories || []).reduce((acc, s) => acc + (s.scenarios || []).reduce((acc2, sc) => acc2 + (sc.codes || []).length, 0), 0);
-            console.log(`[generateTestModelAsync]   Feature "${f.text?.substring(0, 50)}...": ${storyCount} stories, ${scenarioCount} scenarios, ${codeCount} codes`);
-            for (const s of (f.stories || [])) {
-                console.log(`[generateTestModelAsync]     Story "${s.text?.substring(0, 40)}...": ${(s.scenarios || []).length} scenarios`);
-            }
-        }
-        
         const scenariosCount = cleanedModel.reduce((acc, f) =>
             acc + (f.stories || []).reduce((acc2, s) => acc2 + (s.scenarios || []).length, 0), 0
         );
@@ -11815,15 +7699,6 @@ ${escalationPrompt}`;
         );
 
         // Получаем coverage report если он был рассчитан (используем уже рассчитанные данные)
-        const finalModelStats = summarizeModelCounts(cleanedModel);
-        const dedupeStats = {
-            storiesRemoved: Math.max(0, (initialModelStats?.storiesCount || 0) - (finalModelStats?.storiesCount || 0)),
-            scenariosRemoved: Math.max(0, (initialModelStats?.scenariosCount || 0) - (finalModelStats?.scenariosCount || 0)),
-            codesRemoved: Math.max(0, (initialModelStats?.codesCount || 0) - (finalModelStats?.codesCount || 0)),
-            graphFilter: graphFilterStats,
-            initialModelStats,
-            finalModelStats
-        };
         const reqCoverage = coverageReportData?.requirementsCoverage || { coveragePercent: 0 };
         const finalCoverageReport = coverageReportData || { coveragePercent: 0 };
 
@@ -11831,7 +7706,6 @@ ${escalationPrompt}`;
             duration: Date.now() - startTime,
             requirementsCoverage: reqCoverage.coveragePercent || 0,
             storiesCoverage: finalCoverageReport.coveragePercent || 0,
-            structureCoverage: finalCoverageReport.structureCoverage?.coveragePercent || 0,
             scenariosCount,
             codesCount,
             regenerations: regenerationCount,
@@ -11841,27 +7715,11 @@ ${escalationPrompt}`;
         console.log(`[generateTestModelAsync] 📊 Метрики:`, metrics);
 
         // Сохраняем результат (метрики сохраняем только если столбец существует)
-        const safeTaskId = String(taskId || 'manual').replace(/[^a-zA-Z0-9._-]+/g, '_');
-        const expectedJsonRelativePath = `report/test-models/${safeTaskId}-test-model.json`;
-
-        try {
-            const persistedTestModelJson = persistGeneratedTestModelJson(cleanedModel, { taskId });
-            console.log(`[generateTestModelAsync] ✅ Test model JSON сохранен: ${persistedTestModelJson.absoluteFilePath}`);
-            console.log(`[generateTestModelAsync] ℹ️ Относительный путь JSON-артефакта: ${persistedTestModelJson.relativeFilePath}`);
-        } catch (error) {
-            console.error('[generateTestModelAsync] ❌ Не удалось сохранить JSON-артефакт test model:', error);
-            throw new Error(`Не удалось сохранить test model JSON в ${expectedJsonRelativePath}: ${error.message}`);
-        }
-
         const updateData = {
             status: 'completed',
             progress: 100,
             result: {
                 testModel: cleanedModel,
-                modelStats: finalModelStats,
-                dedupeStats,
-                graphSessionId,
-                chunkSummary: graphChunkSummary,
                 testModelId: taskId  // ✅ Сохраняем ID задачи для последующей загрузки модели
             },
             completed_at: new Date(),
@@ -11904,7 +7762,8 @@ ${escalationPrompt}`;
     }
 }
 
-app.post('/api/generate-test-model-async', async (req, res) => {
+app.post('/api/generate-test-model-async', async (req, res) =>
+{
     try {
         const taskId = uuidv4();
 
@@ -11934,21 +7793,10 @@ app.post('/api/generate-test-model-async', async (req, res) => {
     }
 });
 
-app.post('/api/refine-test-model', async (req, res) => {
+app.post('/api/refine-test-model', async (req, res) =>
+{
     try {
-        const {
-            oldModel,
-            reviewNotes,
-            issues,
-            baselineMetrics,
-            requirements,
-            models: inputModels
-        } = req.body;
-        const configuredModels = Array.isArray(config.cloudruModels) ? config.cloudruModels : [];
-        const selectedModel = Array.isArray(inputModels) ? inputModels.find(Boolean) : null;
-        const modelsToTry = selectedModel
-            ? [selectedModel, ...configuredModels.filter((model) => model !== selectedModel)]
-            : configuredModels;
+        const { oldModel, reviewNotes, issues, baselineMetrics, requirements } = req.body;
 
         if (!oldModel || !Array.isArray(oldModel) || oldModel.length === 0) {
             return res.status(400).json({ error: 'oldModel is required and must be a non-empty array' });
@@ -11958,7 +7806,6 @@ app.post('/api/refine-test-model', async (req, res) => {
         console.log('[refine-test-model] Старая модель:', oldModel.length, 'features');
         console.log('[refine-test-model] Замечания:', reviewNotes?.substring(0, 200) || 'нет');
         console.log('[refine-test-model] Issues:', issues?.length || 0);
-        console.log('[refine-test-model] Модели для попыток:', modelsToTry.length ? modelsToTry.join(', ') : 'не заданы');
 
         // Подготовка промптов
         const systemPrompt = buildRefineModelSystemPrompt();
@@ -11981,7 +7828,6 @@ app.post('/api/refine-test-model', async (req, res) => {
             messages,
             config.openRouterAiKey, // API ключ для fallback
             {
-                models: modelsToTry,
                 temperature: 0.3, // Низкая температура для более детерминированных правок
                 max_tokens: 16000,
                 response_format: null // Cloud.ru не поддерживает response_format для избежания зависаний
@@ -12015,12 +7861,14 @@ app.post('/api/refine-test-model', async (req, res) => {
         }
 
         // Валидация структуры (базовая)
-        const validateModelStructure = (model) => {
+        const validateModelStructure = (model) =>
+        {
             const errors = [];
             if (!Array.isArray(model) || model.length === 0) {
                 errors.push('Модель должна быть непустым массивом');
             }
-            model.forEach((feature, idx) => {
+            model.forEach((feature, idx) =>
+            {
                 if (!feature.id) errors.push(`Feature ${idx} не имеет id`);
                 if (!feature.text) errors.push(`Feature ${idx} не имеет text`);
                 if (!Array.isArray(feature.stories)) {
@@ -12058,18 +7906,8 @@ app.post('/api/refine-test-model', async (req, res) => {
     }
 });
 
-// Endpoint to get available Cloud.ru models
-app.get('/api/cloudru-models', async (req, res) => {
-    try {
-        const models = config.cloudruModels || [];
-        res.json({ models });
-    } catch (error) {
-        console.error('Error getting cloudru models:', error);
-        res.status(500).json({ error: 'Failed to get models' });
-    }
-});
-
-app.get('/api/generate-test-model-status/:taskId', async (req, res) => {
+app.get('/api/generate-test-model-status/:taskId', async (req, res) =>
+{
     try {
         const taskId = req.params.taskId;
         const cacheKey = `model_status_${taskId}`;
@@ -12121,7 +7959,8 @@ app.get('/api/generate-test-model-status/:taskId', async (req, res) => {
  *   - archived  (опционально, default=false)
  *   - search    (опционально) — подстрока для фильтрации по имени шага
  */
-app.get('/api/shared-steps', async (req, res) => {
+app.get('/api/shared-steps', async (req, res) =>
+{
     try {
         const {
             projectId,
@@ -12151,7 +7990,8 @@ app.get('/api/shared-steps', async (req, res) => {
 });
 
 
-app.post('/api/create-test-cases', async (req, res) => {
+app.post('/api/create-test-cases', async (req, res) =>
+{
     const { projectId, cases } = req.body;
     if (!projectId || !Array.isArray(cases)) {
         return res.status(400).json({ error: 'projectId и массив cases обязательны' });
@@ -12212,8 +8052,8 @@ app.post('/api/create-test-cases', async (req, res) => {
             if (c.scenario) expectedCustomFields['Scenario'] = c.scenario;
             if (c.code || c.codeNode) expectedCustomFields['Code'] = c.code || c.codeNode;
 
-            // Для nocode проекта (307) добавляем Block и SubBlock
-            if (projectId === '307') {
+            // Для nocode-проектов (1, 307, 377) добавляем Block и SubBlock
+            if (['1', '307', '377'].includes(String(projectId))) {
                 // Ищем Block и SubBlock в кастомных полях
                 if (Array.isArray(c.customFields)) {
                     for (const { name, value } of c.customFields) {
@@ -12374,7 +8214,8 @@ app.post('/api/create-test-cases', async (req, res) => {
             // 11) Кастомные поля
             const cfvById = new Map();
 
-            const putCF = (fieldNameOrKey, raw) => {
+            const putCF = (fieldNameOrKey, raw) =>
+            {
                 if (raw == null) return;
                 let val = String(raw).trim();
                 if (!val) return;                      // не шлём пустые значения
@@ -12499,7 +8340,8 @@ app.post('/api/create-test-cases', async (req, res) => {
  * Очистка дублей тест-кейсов в TestOps
  * Удаляет тест-кейсы с одинаковыми названиями и тегами, оставляя самый полный по содержанию
  */
-app.post('/api/cleanup-duplicates', async (req, res) => {
+app.post('/api/cleanup-duplicates', async (req, res) =>
+{
     const { projectId } = req.body;
 
 
@@ -12527,7 +8369,8 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
             });
 
             // Запускаем в фоне
-            cleanupDuplicatesAsync(taskId, projectId).catch(async (err) => {
+            cleanupDuplicatesAsync(taskId, projectId).catch(async (err) =>
+            {
                 console.error(`[cleanup-duplicates-async] ❌ Необработанная ошибка taskId=${taskId}:`, err);
                 try {
                     await db('generation_tasks').where('id', taskId).update({
@@ -12559,7 +8402,8 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
 
         // Получаем теги для каждого тест-кейса
         const casesWithTags = await Promise.all(
-            allCases.map(async (tc) => {
+            allCases.map(async (tc) =>
+            {
                 try {
                     const tags = await getCaseTags(tc.id);
                     const tagNames = Array.isArray(tags)
@@ -12583,7 +8427,8 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
 
 
         // Функция для вычисления ключа группировки (название + теги)
-        const getGroupKey = (tc) => {
+        const getGroupKey = (tc) =>
+        {
             const normalizedTitle = (tc.name || '').trim().toLowerCase();
             const tagsKey = tc.tagNames.join(',');
             return `${normalizedTitle}||${tagsKey}`;
@@ -12592,7 +8437,8 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
 
         // Группируем тест-кейсы по ключу
         const groups = {};
-        casesWithTags.forEach(tc => {
+        casesWithTags.forEach(tc =>
+        {
             const key = getGroupKey(tc);
             if (!groups[key]) {
                 groups[key] = [];
@@ -12602,7 +8448,8 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
 
 
         // Функция для вычисления "полноты" тест-кейса
-        const computeContentScore = async (tc) => {
+        const computeContentScore = async (tc) =>
+        {
             let score = 0;
             let hasPrecondition = false;
             let hasExpectedResult = false;
@@ -12653,7 +8500,8 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                     if (Array.isArray(steps)) {
                         stepsCount = steps.length;
                         score += stepsCount * 20; // Бонус за количество шагов (увеличен с 10 до 20)
-                        steps.forEach(step => {
+                        steps.forEach(step =>
+                        {
                             if (step.body) {
                                 const bodyText = typeof step.body === 'string' ? step.body : JSON.stringify(step.body);
                                 const bodyLength = bodyText.trim().length;
@@ -12695,10 +8543,12 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
 
 
         // Удаляем ТОЛЬКО черновики (Draft). Активные и другие статусы не удаляем.
-        const isDraftStatus = (tc) => {
+        const isDraftStatus = (tc) =>
+        {
             const statusId = tc?.status?.id;
             const statusName = (tc?.status?.name || '').toString().trim().toLowerCase();
-            return statusId === -1 || statusName === 'draft';
+            // Поддержка английского "draft" и русского "черновик"
+            return statusId === -1 || statusName === 'draft' || statusName === 'черновик';
         };
 
         // Находим дубли и определяем, какие удалять
@@ -12721,7 +8571,8 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
 
             // Вычисляем score для каждого тест-кейса в группе
             const casesWithScores = await Promise.all(
-                group.map(async (tc) => {
+                group.map(async (tc) =>
+                {
                     const scoreData = await computeContentScore(tc);
                     return {
                         case: tc,
@@ -12734,7 +8585,8 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
 
             // Сортируем по убыванию score с дополнительными критериями для разрешения ничьих.
             // ВАЖНО: это сортировка "лучшего" — но удаляем мы ТОЛЬКО Draft.
-            const compareByBest = (a, b) => {
+            const compareByBest = (a, b) =>
+            {
                 // 0. КРИТИЧЕСКИЙ ПРИОРИТЕТ: Тест-кейс с шагами ВСЕГДА лучше тест-кейса без шагов
                 if (a.scoreData.stepsCount === 0 && b.scoreData.stepsCount > 0) {
                     return 1; // a без шагов, b с шагами - b лучше
@@ -12793,9 +8645,8 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
             // "Best" для отображения в превью/логах: если есть non-draft — берём лучший non-draft, иначе лучший draft
             const best = (nonDraft.length > 0 ? [...nonDraft].sort(compareByBest)[0] : drafts[0]);
 
-            // В kept всегда сохраняем ВСЕ non-draft (их нельзя удалять) + best draft (если группа полностью из draft)
-            nonDraft.forEach(x => toKeep.push(x.case));
-            if (nonDraft.length === 0 && best?.case) {
+            // В kept сохраняем только ЛУЧШИЙ из всей группы
+            if (best?.case) {
                 toKeep.push(best.case);
             }
 
@@ -12803,14 +8654,12 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                 ? `score: ${best.score}, шагов: ${best.scoreData.stepsCount}, precondition: ${best.scoreData.hasPrecondition ? 'да' : 'нет'}, expected: ${best.scoreData.hasExpectedResult ? 'да' : 'нет'}, status: ${(best.case?.status?.name || best.case?.status?.id || 'unknown')}`
                 : 'best not found';
 
-            // Если есть non-draft, то удаляем ВСЕ draft (они считаются дублями). Non-draft дубли — не трогаем.
-            const draftsToDelete = (nonDraft.length > 0)
-                ? drafts
-                : drafts.slice(1); // если все draft — оставляем лучший, удаляем остальные
+            // Удаляем ВСЕ дубликаты, кроме лучшего (теперь включая не-Draft, если они дублируют лучше заполненого)
+            const allDuplicates = casesWithScores.filter(x => x.case.id !== best?.case?.id);
+            const draftsToDelete = allDuplicates.filter(x => isDraftStatus(x.case));
+            const nonDraftDuplicates = allDuplicates.filter(x => !isDraftStatus(x.case));
 
-            const nonDraftDuplicates = (nonDraft.length > 1) ? nonDraft.slice(1) : [];
-
-            console.log(`[cleanup-duplicates] Группа: "${group[0].name}". Best=${best?.case?.id}. Draft к удалению=${draftsToDelete.length}. Non-draft дублей (не удаляем)=${nonDraftDuplicates.length}`);
+            console.log(`[cleanup-duplicates] Группа: "${group[0].name}". Best=${best?.case?.id}. К удалению: Draft=${draftsToDelete.length}, Non-draft=${nonDraftDuplicates.length}`);
 
             // Сохраняем информацию о группе дублей для превью
             duplicateGroups.push({
@@ -12837,8 +8686,9 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
                 }))
             });
 
-            // В общий список удаления добавляем только draft
-            draftsToDelete.forEach(({ case: tc, score, scoreData }) => {
+            // В общий список удаления добавляем ВСЕ дубликаты (и Draft, и Non-draft)
+            allDuplicates.forEach(({ case: tc, score, scoreData }) =>
+            {
                 toDelete.push({
                     id: tc.id,
                     name: tc.name,
@@ -12849,7 +8699,8 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
             });
 
             // Non-draft дубли учитываем отдельно, чтобы было видно, что они остались
-            nonDraftDuplicates.forEach(({ case: tc, score, scoreData }) => {
+            nonDraftDuplicates.forEach(({ case: tc, score, scoreData }) =>
+            {
                 skippedNonDraft.push({
                     id: tc.id,
                     name: tc.name,
@@ -12867,7 +8718,8 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
 
         await Promise.all(
             toDelete.map(tc =>
-                deleteLimit(async () => {
+                deleteLimit(async () =>
+                {
                     try {
                         await deleteTestCase(tc.id);
                         deleted.push(tc);
@@ -12900,8 +8752,10 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
 });
 
 // Асинхронная версия очистки дублей (для больших проектов)
-async function cleanupDuplicatesAsync(taskId, projectId) {
-    const updateTask = async (patch) => {
+async function cleanupDuplicatesAsync (taskId, projectId)
+{
+    const updateTask = async (patch) =>
+    {
         await db('generation_tasks').where('id', taskId).update({
             ...patch,
             updated_at: new Date()
@@ -12920,7 +8774,8 @@ async function cleanupDuplicatesAsync(taskId, projectId) {
     const tagLimit = pLimit(10);
     let tagsDone = 0;
     const casesWithTags = await Promise.all(
-        allCases.map(tc => tagLimit(async () => {
+        allCases.map(tc => tagLimit(async () =>
+        {
             try {
                 const tags = await getCaseTags(tc.id);
                 const tagNames = Array.isArray(tags)
@@ -12942,14 +8797,16 @@ async function cleanupDuplicatesAsync(taskId, projectId) {
     );
 
     // Группируем тест-кейсы по ключу (название + теги)
-    const getGroupKey = (tc) => {
+    const getGroupKey = (tc) =>
+    {
         const normalizedTitle = (tc.name || '').trim().toLowerCase();
         const tagsKey = (tc.tagNames || []).join(',');
         return `${normalizedTitle}||${tagsKey}`;
     };
 
     const groups = {};
-    casesWithTags.forEach(tc => {
+    casesWithTags.forEach(tc =>
+    {
         const key = getGroupKey(tc);
         if (!groups[key]) groups[key] = [];
         groups[key].push(tc);
@@ -12960,13 +8817,16 @@ async function cleanupDuplicatesAsync(taskId, projectId) {
     console.log(`[cleanup-duplicates-async] taskId=${taskId} групп дублей: ${groupEntries.length}`);
 
     // Draft only
-    const isDraftStatus = (tc) => {
+    const isDraftStatus = (tc) =>
+    {
         const statusId = tc?.status?.id;
         const statusName = (tc?.status?.name || '').toString().trim().toLowerCase();
-        return statusId === -1 || statusName === 'draft';
+        // Поддержка английского "draft" и русского "черновик"
+        return statusId === -1 || statusName === 'draft' || statusName === 'черновик';
     };
 
-    const computeContentScore = async (tc) => {
+    const computeContentScore = async (tc) =>
+    {
         // максимально близко к синхронной версии (упрощать не будем здесь)
         let score = 0;
         let hasPrecondition = false;
@@ -13003,7 +8863,8 @@ async function cleanupDuplicatesAsync(taskId, projectId) {
                 if (Array.isArray(steps)) {
                     stepsCount = steps.length;
                     score += stepsCount * 20;
-                    steps.forEach(step => {
+                    steps.forEach(step =>
+                    {
                         if (step.body) {
                             const bodyText = typeof step.body === 'string' ? step.body : JSON.stringify(step.body);
                             const bodyLength = bodyText.trim().length;
@@ -13028,7 +8889,8 @@ async function cleanupDuplicatesAsync(taskId, projectId) {
         return { score, stepsCount, hasPrecondition, hasExpectedResult, stepsTotalLength };
     };
 
-    const compareByBest = (a, b) => {
+    const compareByBest = (a, b) =>
+    {
         if (a.scoreData.stepsCount === 0 && b.scoreData.stepsCount > 0) return 1;
         if (a.scoreData.stepsCount > 0 && b.scoreData.stepsCount === 0) return -1;
 
@@ -13059,7 +8921,8 @@ async function cleanupDuplicatesAsync(taskId, projectId) {
 
     for (const [, group] of groupEntries) {
         const casesWithScores = await Promise.all(
-            group.map(tc => detailLimit(async () => {
+            group.map(tc => detailLimit(async () =>
+            {
                 const scoreData = await computeContentScore(tc);
                 return { case: tc, score: scoreData.score, scoreData };
             }))
@@ -13073,18 +8936,18 @@ async function cleanupDuplicatesAsync(taskId, projectId) {
         nonDraft.forEach(x => toKeep.push(x.case));
         if (nonDraft.length === 0 && best?.case) toKeep.push(best.case);
 
-        const draftsToDelete = (nonDraft.length > 0) ? drafts : drafts.slice(1);
-        const nonDraftDuplicates = (nonDraft.length > 1) ? nonDraft.slice(1) : [];
+        const allDuplicates = casesWithScores.filter(x => x.case.id !== best?.case?.id);
+        const draftsToDelete = allDuplicates.filter(x => isDraftStatus(x.case));
+        const nonDraftDuplicates = allDuplicates.filter(x => !isDraftStatus(x.case));
 
         duplicateGroups.push({
             name: best?.case?.name || group[0].name,
             kept: best?.case ? { id: best.case.id, name: best.case.name, score: best.score } : null,
-            deleted: draftsToDelete.map(x => ({ id: x.case.id, name: x.case.name, score: x.score, status: x.case?.status?.name || x.case?.status?.id })),
-            skippedNonDraft: nonDraftDuplicates.map(x => ({ id: x.case.id, name: x.case.name, score: x.score, status: x.case?.status?.name || x.case?.status?.id }))
+            deleted: allDuplicates.map(x => ({ id: x.case.id, name: x.case.name, score: x.score, status: x.case?.status?.name || x.case?.status?.id })),
+            skippedNonDraft: [] // Теперь мы не скипаем non-draft дубли
         });
 
-        draftsToDelete.forEach(x => toDelete.push({ id: x.case.id, name: x.case.name, score: x.score, status: x.case?.status?.name || x.case?.status?.id }));
-        nonDraftDuplicates.forEach(x => skippedNonDraft.push({ id: x.case.id, name: x.case.name, score: x.score, status: x.case?.status?.name || x.case?.status?.id }));
+        allDuplicates.forEach(x => toDelete.push({ id: x.case.id, name: x.case.name, score: x.score, status: x.case?.status?.name || x.case?.status?.id }));
 
         groupsDone++;
         if (groupsDone % 50 === 0) {
@@ -13103,7 +8966,8 @@ async function cleanupDuplicatesAsync(taskId, projectId) {
     let deleteDone = 0;
 
     await Promise.all(
-        toDelete.map(tc => deleteLimit(async () => {
+        toDelete.map(tc => deleteLimit(async () =>
+        {
             try {
                 await deleteTestCase(tc.id);
                 deleted.push(tc);
@@ -13143,7 +9007,8 @@ async function cleanupDuplicatesAsync(taskId, projectId) {
 }
 
 // Статус асинхронной очистки дублей
-app.get('/api/cleanup-duplicates-status/:taskId', async (req, res) => {
+app.get('/api/cleanup-duplicates-status/:taskId', async (req, res) =>
+{
     try {
         const taskId = req.params.taskId;
         const cacheKey = `cleanup_status_${taskId}`;
@@ -13179,7 +9044,8 @@ app.get('/api/cleanup-duplicates-status/:taskId', async (req, res) => {
  * POST /api/perfect-examples
  * Сохраняет тест-кейсы как идеальные примеры для улучшения генерации
  */
-app.post('/api/perfect-examples', async (req, res) => {
+app.post('/api/perfect-examples', async (req, res) =>
+{
     const { testCases, projectId } = req.body;
 
     if (!Array.isArray(testCases) || testCases.length === 0) {
@@ -13208,7 +9074,8 @@ app.post('/api/perfect-examples', async (req, res) => {
  * GET /api/perfect-examples/stats
  * Получает статистику по идеальным примерам
  */
-app.get('/api/perfect-examples/stats', async (req, res) => {
+app.get('/api/perfect-examples/stats', async (req, res) =>
+{
     const { projectId } = req.query;
 
     try {
@@ -13224,7 +9091,8 @@ app.get('/api/perfect-examples/stats', async (req, res) => {
  * DELETE /api/perfect-examples/:id
  * Удаляет идеальный пример по ID
  */
-app.delete('/api/perfect-examples/:id', async (req, res) => {
+app.delete('/api/perfect-examples/:id', async (req, res) =>
+{
     const { id } = req.params;
 
     try {
@@ -13245,7 +9113,8 @@ app.delete('/api/perfect-examples/:id', async (req, res) => {
  * Исправляет тест-кейсы по промпту с использованием LLM и инструментов для запроса требований
  * ✅ НОВАЯ АРХИТЕКТУРА: Использует персистентный контекст диалога для сохранения истории между вызовами
  */
-app.post('/api/fix-test-cases', async (req, res) => {
+app.post('/api/fix-test-cases', async (req, res) =>
+{
     const { testCases, fixPrompt, projectId, bearerToken, requirements, taskId: providedTaskId } = req.body;
 
     if (!Array.isArray(testCases) || !fixPrompt || typeof fixPrompt !== 'string' || !fixPrompt.trim()) {
@@ -13307,7 +9176,8 @@ app.post('/api/fix-test-cases', async (req, res) => {
  * POST /api/fix-test-cases/rollback
  * Откатить к предыдущему снимку состояния
  */
-app.post('/api/fix-test-cases/rollback', async (req, res) => {
+app.post('/api/fix-test-cases/rollback', async (req, res) =>
+{
     const { taskId, snapshotIndex = -1 } = req.body;
 
     if (!taskId) {
@@ -13333,7 +9203,8 @@ app.post('/api/fix-test-cases/rollback', async (req, res) => {
  * GET /api/fix-test-cases/context/:taskId
  * Получить информацию о контексте задачи
  */
-app.get('/api/fix-test-cases/context/:taskId', async (req, res) => {
+app.get('/api/fix-test-cases/context/:taskId', async (req, res) =>
+{
     const { taskId } = req.params;
 
     try {
@@ -13370,7 +9241,8 @@ app.get('/api/fix-test-cases/context/:taskId', async (req, res) => {
  * DELETE /api/fix-test-cases/context/:taskId
  * Удалить контекст задачи
  */
-app.delete('/api/fix-test-cases/context/:taskId', async (req, res) => {
+app.delete('/api/fix-test-cases/context/:taskId', async (req, res) =>
+{
     const { taskId } = req.params;
 
     try {
@@ -13382,7 +9254,8 @@ app.delete('/api/fix-test-cases/context/:taskId', async (req, res) => {
     }
 });
 
-function mergePreservingOriginals(originalCase, modifiedCase, fixPrompt = '') {
+function mergePreservingOriginals (originalCase, modifiedCase, fixPrompt = '')
+{
     if (!originalCase) {
         return modifiedCase;
     }
@@ -13442,7 +9315,8 @@ function mergePreservingOriginals(originalCase, modifiedCase, fixPrompt = '') {
  * @param {string} [options.requirements] - Требования (если нужно)
  * @returns {Promise<Array>} - Массив исправленных тест-кейсов
  */
-async function fixTestCasesAsync({ taskId, testCases, fixPrompt, projectId, bearerToken, requirements }) {
+async function fixTestCasesAsync ({ taskId, testCases, fixPrompt, projectId, bearerToken, requirements })
+{
     if (!taskId) {
         throw new Error('[fixTestCasesAsync] taskId обязателен для сохранения контекста диалога');
     }
@@ -13487,7 +9361,8 @@ async function fixTestCasesAsync({ taskId, testCases, fixPrompt, projectId, bear
 
     // Шаг 3: Создаем contextFetcher для запроса требований из Confluence при необходимости
     const contextFetcher = bearerToken
-        ? async (requestedPageId) => {
+        ? async (requestedPageId) =>
+        {
             try {
                 if (requestedPageId == null) return '';
                 const requestedIdStr = String(requestedPageId);
@@ -13823,7 +9698,8 @@ ${JSON.stringify(chunk, null, 2)}
             const tools = [buildSubmitFixedCasesTool(), ...interactiveTools];
 
             // Создаем handler для submit_fixed_cases
-            const fixedCasesHandler = async (args) => {
+            const fixedCasesHandler = async (args) =>
+            {
                 console.log(`[fixTestCasesAsync] Получены исправленные ТК через tool: ${args.cases?.length || 0} кейсов`);
                 return { success: true, message: `Принято ${args.cases?.length || 0} исправленных тест-кейсов` };
             };
@@ -13904,7 +9780,8 @@ ${userPrompt}`;
             // ✅ ВОССТАНОВЛЕНИЕ ID ПЕРЕД валидацией: если модель не вернула id, восстанавливаем по индексу или другим полям
             if (fixedCases.length > 0) {
                 // Функция восстановления id
-                const casesWithIds = fixedCases.map((fixed, index) => {
+                const casesWithIds = fixedCases.map((fixed, index) =>
+                {
                     // Если id уже есть и валиден - возвращаем как есть
                     if (fixed.id && fixed.id !== 'undefined' && fixed.id !== undefined && fixed.id !== null) {
                         return fixed;
@@ -13934,7 +9811,8 @@ ${userPrompt}`;
                     // ✅ FALLBACK 3: Пытаемся найти по частичному совпадению title
                     if (fixed.title) {
                         const titleWords = fixed.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-                        const original = chunk.find(oc => {
+                        const original = chunk.find(oc =>
+                        {
                             if (!oc.title) return false;
                             const ocTitleWords = oc.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
                             const matches = titleWords.filter(w => ocTitleWords.includes(w));
@@ -13976,7 +9854,8 @@ ${userPrompt}`;
             if (fixedCases.length > 0) {
                 console.log(`[fixTestCasesAsync] ✅ Чанк ${chunkIdx + 1}: исправлено ${fixedCases.length} ТК`);
                 // Обновляем исправленные ТК в результирующем списке
-                fixedCases.forEach(fixedCase => {
+                fixedCases.forEach(fixedCase =>
+                {
                     // ✅ КРИТИЧНО: Ищем старый тест-кейс по ID
                     let index = allFixedCases.findIndex(tc => tc.id === fixedCase.id);
 
@@ -14033,12 +9912,14 @@ ${userPrompt}`;
  * @param {string} fixPrompt - Промпт с описанием доработок
  * @returns {Array} - Массив тест-кейсов для правки
  */
-function identifyTargetCases(testCases, fixPrompt) {
+function identifyTargetCases (testCases, fixPrompt)
+{
     const promptLower = (fixPrompt || '').toLowerCase();
     const targetCases = [];
     const seenCaseIds = new Set();
 
-    const addCase = (tc) => {
+    const addCase = (tc) =>
+    {
         const key = tc.id != null ? `id:${tc.id}` : `${tc.feature || ''}:${tc.story || ''}:${tc.title || ''}`;
         if (seenCaseIds.has(key)) {
             return;
@@ -14061,7 +9942,8 @@ function identifyTargetCases(testCases, fixPrompt) {
         console.log(`[identifyTargetCases] Применяем фильтр по регулярным выражениям: ${regexFilters.map(r => r.toString()).join(', ')}`);
     }
 
-    const matchesRegexFilters = (tc) => {
+    const matchesRegexFilters = (tc) =>
+    {
         if (!regexFilters.length) return false;
         const valuesToCheck = [
             tc.id != null ? String(tc.id) : '',
@@ -14082,7 +9964,8 @@ function identifyTargetCases(testCases, fixPrompt) {
     const isFrontend = /frontend|фронтенд|front-end/i.test(fixPrompt);
     const isBackend = /backend|бэкенд|back-end/i.test(fixPrompt);
 
-    testCases.forEach(tc => {
+    testCases.forEach(tc =>
+    {
         const titleLower = (tc.title || '').toLowerCase();
         const layer = (tc.layer || '').toLowerCase();
         const tcIdLower = tc.id != null ? String(tc.id).toLowerCase() : '';
@@ -14145,14 +10028,16 @@ function identifyTargetCases(testCases, fixPrompt) {
     return targetCases;
 }
 
-function extractIdFiltersFromPrompt(fixPrompt = '') {
+function extractIdFiltersFromPrompt (fixPrompt = '')
+{
     const ids = new Set();
     if (!fixPrompt) {
         return ids;
     }
 
     const normalized = fixPrompt.replace(/\r/g, ' ');
-    const addId = (rawId) => {
+    const addId = (rawId) =>
+    {
         if (rawId == null) return;
         const cleaned = String(rawId).trim().replace(/^["']|["']$/g, '');
         if (!cleaned) return;
@@ -14178,7 +10063,8 @@ function extractIdFiltersFromPrompt(fixPrompt = '') {
     return ids;
 }
 
-function extractRegexFiltersFromPrompt(fixPrompt = '') {
+function extractRegexFiltersFromPrompt (fixPrompt = '')
+{
     const filters = [];
     if (!fixPrompt) {
         return filters;
@@ -14189,7 +10075,8 @@ function extractRegexFiltersFromPrompt(fixPrompt = '') {
     let match;
     while ((match = keywordPattern.exec(normalized)) !== null) {
         const chunk = match[2] || '';
-        chunk.split(/\s*,\s*/).forEach(part => {
+        chunk.split(/\s*,\s*/).forEach(part =>
+        {
             const regex = buildRegexFromRaw(part.trim());
             if (regex) {
                 filters.push(regex);
@@ -14200,7 +10087,8 @@ function extractRegexFiltersFromPrompt(fixPrompt = '') {
     return filters;
 }
 
-function buildRegexFromRaw(rawPattern) {
+function buildRegexFromRaw (rawPattern)
+{
     if (!rawPattern) {
         return null;
     }
@@ -14240,13 +10128,15 @@ function buildRegexFromRaw(rawPattern) {
     }
 }
 
-function extractStepCleanupRules(fixPrompt = '') {
+function extractStepCleanupRules (fixPrompt = '')
+{
     const tokens = new Set();
     if (!fixPrompt) {
         return [];
     }
 
-    const addToken = (token) => {
+    const addToken = (token) =>
+    {
         const normalized = (token || '').trim().toLowerCase();
         if (normalized) {
             tokens.add(normalized);
@@ -14273,7 +10163,8 @@ function extractStepCleanupRules(fixPrompt = '') {
     return Array.from(tokens).map(token => ({ type: 'contains', token }));
 }
 
-function evaluateStepCleanup(originalCase, modifiedCase, cleanupRules) {
+function evaluateStepCleanup (originalCase, modifiedCase, cleanupRules)
+{
     if (!cleanupRules.length) {
         return { allowed: false, removedCount: 0 };
     }
@@ -14297,17 +10188,20 @@ function evaluateStepCleanup(originalCase, modifiedCase, cleanupRules) {
     };
 }
 
-function diffSteps(originalSteps = [], modifiedSteps = []) {
+function diffSteps (originalSteps = [], modifiedSteps = [])
+{
     const original = Array.isArray(originalSteps) ? originalSteps.map(canonicalStepValue) : [];
     const modified = Array.isArray(modifiedSteps) ? modifiedSteps.map(canonicalStepValue) : [];
 
     const modifiedCounters = new Map();
-    modified.forEach(value => {
+    modified.forEach(value =>
+    {
         modifiedCounters.set(value, (modifiedCounters.get(value) || 0) + 1);
     });
 
     const removed = [];
-    original.forEach(value => {
+    original.forEach(value =>
+    {
         const counter = modifiedCounters.get(value) || 0;
         if (counter > 0) {
             modifiedCounters.set(value, counter - 1);
@@ -14317,7 +10211,8 @@ function diffSteps(originalSteps = [], modifiedSteps = []) {
     });
 
     const added = [];
-    modifiedCounters.forEach((count, value) => {
+    modifiedCounters.forEach((count, value) =>
+    {
         if (count > 0) {
             for (let i = 0; i < count; i++) {
                 added.push(value);
@@ -14328,7 +10223,8 @@ function diffSteps(originalSteps = [], modifiedSteps = []) {
     return { removed, added };
 }
 
-function canonicalStepValue(step) {
+function canonicalStepValue (step)
+{
     if (step == null) {
         return '';
     }
@@ -14359,7 +10255,8 @@ function canonicalStepValue(step) {
  * @param {Array} originalCases - Исходные ТК для этого чанка (для маппинга)
  * @returns {Array} - Массив исправленных тест-кейсов
  */
-function extractFixedCasesFromResponse(aiResponse, originalCases) {
+function extractFixedCasesFromResponse (aiResponse, originalCases)
+{
     const fixedCases = [];
 
     // ✅ Проверка на пустой response
@@ -14399,7 +10296,8 @@ function extractFixedCasesFromResponse(aiResponse, originalCases) {
 
                 if (args.cases && Array.isArray(args.cases)) {
                     // Маппим исправленные ТК к исходным по ID
-                    args.cases.forEach(fixedCase => {
+                    args.cases.forEach(fixedCase =>
+                    {
                         // ✅ СНАЧАЛА: Ищем по id (если есть)
                         let original = fixedCase.id
                             ? originalCases.find(oc => oc.id === fixedCase.id)
@@ -14547,7 +10445,8 @@ function extractFixedCasesFromResponse(aiResponse, originalCases) {
                         }
 
                         if (parsed.cases && Array.isArray(parsed.cases)) {
-                            parsed.cases.forEach(fixedCase => {
+                            parsed.cases.forEach(fixedCase =>
+                            {
                                 // ✅ СНАЧАЛА: Ищем по id (если есть)
                                 let original = fixedCase.id
                                     ? originalCases.find(oc => oc.id === fixedCase.id)
@@ -14692,7 +10591,8 @@ function extractFixedCasesFromResponse(aiResponse, originalCases) {
 
                             if (extractedObjects.length > 0) {
                                 console.log(`[extractFixedCasesFromResponse] ✅ Fallback: извлечено ${extractedObjects.length} объектов напрямую из массива`);
-                                extractedObjects.forEach(fixedCase => {
+                                extractedObjects.forEach(fixedCase =>
+                                {
                                     // ✅ СНАЧАЛА: Ищем по id (если есть)
                                     let original = fixedCase.id
                                         ? originalCases.find(oc => oc.id === fixedCase.id)
@@ -14754,7 +10654,8 @@ function extractFixedCasesFromResponse(aiResponse, originalCases) {
                         }
 
                         if (Array.isArray(parsed)) {
-                            parsed.forEach(fixedCase => {
+                            parsed.forEach(fixedCase =>
+                            {
                                 // ✅ СНАЧАЛА: Ищем по id (если есть)
                                 let original = fixedCase.id
                                     ? originalCases.find(oc => oc.id === fixedCase.id)
@@ -14802,7 +10703,8 @@ function extractFixedCasesFromResponse(aiResponse, originalCases) {
  * @param {Array} testCases - массив тест-кейсов
  * @returns {Array} - массив тест-кейсов с параметризацией
  */
-function autoParameterizeSimilarTests(testCases) {
+function autoParameterizeSimilarTests (testCases)
+{
     if (!Array.isArray(testCases) || testCases.length === 0) return testCases;
 
     const processed = new Set();
@@ -14851,7 +10753,8 @@ function autoParameterizeSimilarTests(testCases) {
  * Находит тест-кейс по логической сигнатуре (title + feature + story + scenario)
  * Используется для поиска дубликатов при перегенерации
  */
-function findTestCaseBySignature(testCases, targetCase) {
+function findTestCaseBySignature (testCases, targetCase)
+{
     if (!targetCase || !Array.isArray(testCases)) return null;
 
     const normalize = (text) => String(text || '')
@@ -14893,8 +10796,10 @@ function findTestCaseBySignature(testCases, targetCase) {
  * Глобальный реестр сигнатур для предотвращения дублей на этапе генерации
  * Архитектурное решение для устранения дублей при chunking и перегенерации
  */
-class GlobalSignatureRegistry {
-    constructor() {
+class GlobalSignatureRegistry
+{
+    constructor ()
+    {
         // signature -> { testCaseId, testCase, expectedHash, stepsHash }
         this.registry = new Map();
         // expectedHash -> [testCaseIds] для кластеризации по expected
@@ -14906,7 +10811,8 @@ class GlobalSignatureRegistry {
     /**
      * Нормализует текст для сравнения
      */
-    normalize(text) {
+    normalize (text)
+    {
         return String(text || '')
             .toLowerCase()
             .replace(/[^a-zа-я0-9]+/gi, ' ')
@@ -14917,7 +10823,8 @@ class GlobalSignatureRegistry {
     /**
      * Извлекает текст из шага
      */
-    stepToText(step) {
+    stepToText (step)
+    {
         // Поддерживаем форматы: строка, объект с action, объект с text (для обратной совместимости)
         if (typeof step === 'string') return step;
         if (typeof step === 'object' && step !== null) {
@@ -14930,7 +10837,8 @@ class GlobalSignatureRegistry {
      * Строит базовую сигнатуру (без steps и expected)
      * Используется для обнаружения дублей даже при улучшении шагов
      */
-    buildSignature(testCase) {
+    buildSignature (testCase)
+    {
         const layer = this.normalize(testCase.layer);
         const isE2E = layer === 'e2e tests';
 
@@ -14952,7 +10860,8 @@ class GlobalSignatureRegistry {
     /**
      * Строит строгую сигнатуру (с учетом steps и expected)
      */
-    buildStrictSignature(testCase) {
+    buildStrictSignature (testCase)
+    {
         const layer = this.normalize(testCase.layer);
         const isE2E = layer === 'e2e tests';
 
@@ -14983,7 +10892,8 @@ class GlobalSignatureRegistry {
      * Проверяет, существует ли кейс с такой сигнатурой
      * @returns {Object|null} { existingId, existingCase, isDuplicate } или null
      */
-    checkDuplicate(testCase) {
+    checkDuplicate (testCase)
+    {
         const signature = this.buildSignature(testCase);
         const strictSignature = this.buildStrictSignature(testCase);
 
@@ -15016,7 +10926,8 @@ class GlobalSignatureRegistry {
      * Регистрирует тест-кейс в реестре
      * @returns {boolean} true если зарегистрирован, false если был дубликат
      */
-    register(testCase) {
+    register (testCase)
+    {
         const signature = this.buildSignature(testCase);
         const strictSignature = this.buildStrictSignature(testCase);
         const duplicate = this.checkDuplicate(testCase);
@@ -15057,7 +10968,8 @@ class GlobalSignatureRegistry {
     /**
      * Заменяет существующий кейс новым (при перегенерации)
      */
-    replace(existingId, newTestCase) {
+    replace (existingId, newTestCase)
+    {
         // Находим старую запись
         let oldEntry = null;
         for (const [sig, entry] of this.registry.entries()) {
@@ -15090,7 +11002,8 @@ class GlobalSignatureRegistry {
     /**
      * Получает список уже занятых expected для Feature/Story (для промпта)
      */
-    getOccupiedExpecteds(feature, story) {
+    getOccupiedExpecteds (feature, story)
+    {
         const normalizedFeature = this.normalize(feature);
         const normalizedStory = this.normalize(story);
         const occupied = [];
@@ -15115,7 +11028,8 @@ class GlobalSignatureRegistry {
      * Проверяет и обновляет бюджет E2E для feature+story
      * @returns {boolean} true если можно добавить E2E, false если бюджет исчерпан
      */
-    checkE2EBudget(feature, story, maxE2E = 2) {
+    checkE2EBudget (feature, story, maxE2E = 2)
+    {
         const key = `${this.normalize(feature)}::${this.normalize(story)}`;
         const budget = this.pyramidBudget.get(key) || { e2eCount: 0, maxE2E };
 
@@ -15131,7 +11045,8 @@ class GlobalSignatureRegistry {
     /**
      * Получает статистику реестра
      */
-    getStats() {
+    getStats ()
+    {
         return {
             totalRegistered: this.registry.size / 2, // Каждый кейс регистрируется дважды (base + strict)
             expectedClusters: this.expectedClusters.size,
@@ -15142,7 +11057,8 @@ class GlobalSignatureRegistry {
     /**
      * Очищает реестр
      */
-    clear() {
+    clear ()
+    {
         this.registry.clear();
         this.expectedClusters.clear();
         this.pyramidBudget.clear();
@@ -15153,7 +11069,8 @@ class GlobalSignatureRegistry {
  * Нормализует шаги Integration frontend тестов
  * Переносит технические шаги (API вызовы) в precondition
  */
-function normalizeIntegrationFrontendSteps(testCase) {
+function normalizeIntegrationFrontendSteps (testCase)
+{
     if (!testCase || testCase.layer !== 'Integration frontend Tests') {
         return testCase;
     }
@@ -15219,7 +11136,8 @@ function normalizeIntegrationFrontendSteps(testCase) {
             : 0;
 
         // Добавляем технические шаги с правильной нумерацией
-        const newLines = technicalSteps.map((step, i) => {
+        const newLines = technicalSteps.map((step, i) =>
+        {
             maxNumber++;
             return `${maxNumber}. ${step}`;
         });
@@ -15257,11 +11175,13 @@ function normalizeIntegrationFrontendSteps(testCase) {
  * Проверяет, являются ли два E2E теста дубликатами по шагам
  * Если шаги одинаковые, но тайтлы разные - это косвенный дубликат
  */
-function areE2EStepsDuplicate(test1, test2) {
+function areE2EStepsDuplicate (test1, test2)
+{
     if (test1.layer !== 'E2E Tests' || test2.layer !== 'E2E Tests') return false;
     if (test1.feature !== test2.feature || test1.story !== test2.story) return false;
 
-    const normalizeStep = (step) => {
+    const normalizeStep = (step) =>
+    {
         // Поддерживаем форматы: строка, объект с action, объект с text (для обратной совместимости)
         const text = typeof step === 'string'
             ? step
@@ -15287,7 +11207,8 @@ function areE2EStepsDuplicate(test1, test2) {
  * Заменяет существующие кейсы вместо добавления новых
  * Улучшено: более агрессивная дедупликация по шагам для E2E
  */
-function smartMergeTestCases(originalCases, newCases, registry) {
+function smartMergeTestCases (originalCases, newCases, registry)
+{
     if (!Array.isArray(originalCases) || !Array.isArray(newCases)) {
         return originalCases || [];
     }
@@ -15386,7 +11307,8 @@ function smartMergeTestCases(originalCases, newCases, registry) {
     return result;
 }
 
-function deduplicateTestCases(testCases, stage = 'final') {
+function deduplicateTestCases (testCases, stage = 'final')
+{
     if (!Array.isArray(testCases) || testCases.length === 0) {
         return Array.isArray(testCases) ? testCases : [];
     }
@@ -15397,7 +11319,8 @@ function deduplicateTestCases(testCases, stage = 'final') {
         .replace(/\s+/g, ' ')
         .trim();
 
-    const stepToText = (step) => {
+    const stepToText = (step) =>
+    {
         // Поддерживаем форматы: строка, объект с action, объект с text (для обратной совместимости)
         if (typeof step === 'string') return step;
         if (typeof step === 'object' && step !== null) {
@@ -15414,7 +11337,8 @@ function deduplicateTestCases(testCases, stage = 'final') {
 
     // ✅ БАЗОВАЯ сигнатура для дедупликации (БЕЗ steps и expected)
     // Позволяет находить дубликаты даже если шаги были улучшены при перегенерации
-    const buildSignature = (testCase) => {
+    const buildSignature = (testCase) =>
+    {
         const layer = normalize(testCase.layer);
         const isE2E = layer === 'e2e tests';
 
@@ -15435,7 +11359,8 @@ function deduplicateTestCases(testCases, stage = 'final') {
 
     // ✅ СТРОГАЯ сигнатура для точной дедупликации (С учетом steps и expected, БЕЗ title)
     // Используется как ОСНОВНАЯ для финальной дедупликации, чтобы схлопывать тесты с одинаковыми шагами, но разными заголовками
-    const buildStrictSignature = (testCase) => {
+    const buildStrictSignature = (testCase) =>
+    {
         const layer = normalize(testCase.layer);
         const isE2E = layer === 'e2e tests';
 
@@ -15587,7 +11512,8 @@ function deduplicateTestCases(testCases, stage = 'final') {
 /**
  * Проверяет, похожи ли два теста (одинаковая логика, разные значения)
  */
-function areTestsSimilar(test1, test2) {
+function areTestsSimilar (test1, test2)
+{
     // Должны быть одинаковые: layer, feature, story, scenario, steps (структура)
     if (test1.layer !== test2.layer) return false;
     if (test1.feature !== test2.feature) return false;
@@ -15634,7 +11560,8 @@ function areTestsSimilar(test1, test2) {
 /**
  * Нормализует steps для сравнения (убирает конкретные значения)
  */
-function normalizeStepsForComparison(steps) {
+function normalizeStepsForComparison (steps)
+{
     return steps
         .replace(/\d+-значный/g, 'N-значный')
         .replace(/\d+/g, 'N')
@@ -15645,7 +11572,8 @@ function normalizeStepsForComparison(steps) {
 /**
  * Находит различия в значениях между тестами
  */
-function findValueDifferences(test1, test2) {
+function findValueDifferences (test1, test2)
+{
     const diffs = [];
 
     // Ищем различия в title
@@ -15723,7 +11651,8 @@ function findValueDifferences(test1, test2) {
 /**
  * Извлекает значение из строки
  */
-function extractValue(str) {
+function extractValue (str)
+{
     const match = str.match(/(\d+)/);
     return match ? match[1] : str.trim();
 }
@@ -15731,7 +11660,8 @@ function extractValue(str) {
 /**
  * Объединяет похожие тесты в один параметризованный
  */
-function mergeSimilarTests(similarTests) {
+function mergeSimilarTests (similarTests)
+{
     if (similarTests.length < 2) return null;
 
     const base = similarTests[0];
@@ -15791,7 +11721,8 @@ function mergeSimilarTests(similarTests) {
     }
 
     // Формируем examples на основе исходных тестов
-    const examples = similarTests.map((test, idx) => {
+    const examples = similarTests.map((test, idx) =>
+    {
         const exampleParams = [];
         for (const param of parameters) {
             if (variantResultConfig && param.name === 'Вариант результата') {
@@ -15815,7 +11746,8 @@ function mergeSimilarTests(similarTests) {
     let newTitle = base.title || '';
     for (const param of parameters) {
         // Убираем конкретные значения из title
-        param.values.forEach(val => {
+        param.values.forEach(val =>
+        {
             newTitle = newTitle.replace(new RegExp(val, 'gi'), `{${param.name}}`);
         });
     }
@@ -15827,7 +11759,8 @@ function mergeSimilarTests(similarTests) {
     // Обновляем expected, делая его более общим
     let newExpected = base.expected || '';
     for (const param of parameters) {
-        param.values.forEach(val => {
+        param.values.forEach(val =>
+        {
             newExpected = newExpected.replace(new RegExp(val, 'gi'), `{${param.name}}`);
         });
     }
@@ -15848,11 +11781,13 @@ function mergeSimilarTests(similarTests) {
 /**
  * Извлекает значение параметра из теста
  */
-function extractParameterValue(test, paramName) {
+function extractParameterValue (test, paramName)
+{
     const title = String(test.title || '').toLowerCase();
     const expected = String(test.expected || '').toLowerCase();
     // ✅ Исправляем обработку steps: извлекаем текст из объектов
-    const steps = (test.steps || []).map(s => {
+    const steps = (test.steps || []).map(s =>
+    {
         if (typeof s === 'string') return s;
         if (typeof s === 'object' && s !== null) {
             return s.action || s.text || s.body || '';
@@ -15889,16 +11824,10 @@ function extractParameterValue(test, paramName) {
     return null;
 }
 
-async function generateTestCasesAsync(taskId, inputData) {
+async function generateTestCasesAsync (taskId, inputData)
+{
     // Объявляем переменные в начале функции
     let finalTestCases = [];
-    const inputModels = Array.isArray(inputData?.models) ? inputData.models.filter(Boolean) : [];
-    const selectedModel = inputModels[0] || null;
-    const configuredModels = Array.isArray(config.cloudruModels) ? config.cloudruModels : [];
-    const modelsToTry = selectedModel
-        ? [selectedModel, ...configuredModels.filter((model) => model !== selectedModel)]
-        : configuredModels;
-    const preferredModel = modelsToTry[0] || null;
     const projectId = inputData?.projectId || inputData?.project_id; // ✅ ProjectId для Allure API
     const skipAllureAPICalls = inputData?.skipAllureAPICalls || false; // ✅ Флаг для debug режима
     const includeBackendTests = inputData?.includeBackendTests !== false; // ✅ По умолчанию true, если не указано
@@ -15910,7 +11839,6 @@ async function generateTestCasesAsync(taskId, inputData) {
         console.log(`[generateTestCasesAsync] 🔑 ProjectId: ${projectId}`);
     }
     console.log(`[generateTestCasesAsync] 🔧 includeBackendTests: ${includeBackendTests} (${includeBackendTests ? 'генерируем E2E + Integration frontend + Integration backend' : 'генерируем только E2E + Integration frontend'})`);
-    console.log(`[generateTestCasesAsync] 🤖 modelsToTry: ${modelsToTry.length ? modelsToTry.join(', ') : 'не заданы'}`);
 
     try {
         await db('generation_tasks').where('id', taskId).update({
@@ -15920,7 +11848,8 @@ async function generateTestCasesAsync(taskId, inputData) {
         });
 
         // === Вспомогательные функции ===
-        function buildModelIndex(model) {
+        function buildModelIndex (model)
+        {
             const scenarioSet = new Set();
             const codeTo = new Map();              // "код шага" → { scenario, story, feature }
             const scenarioToParent = new Map();    // "сценарий" → { story, feature }
@@ -15941,7 +11870,8 @@ async function generateTestCasesAsync(taskId, inputData) {
             return { scenarioSet, codeTo, scenarioToParent, storyToFeature };
         }
 
-        function findSimilarRequirements(requiredIds, missingIds) {
+        function findSimilarRequirements (requiredIds, missingIds)
+        {
             const similar = [];
 
             for (const missing of missingIds) {
@@ -15965,7 +11895,8 @@ async function generateTestCasesAsync(taskId, inputData) {
             return similar;
         }
 
-        function checkRequirementsCoverage(testCases, requirements) {
+        function checkRequirementsCoverage (testCases, requirements)
+        {
             console.log(`[checkRequirementsCoverage] Проверка покрытия требований по requirementId...`);
 
             // Собираем все requirementId из требований (извлекаем разделы)
@@ -16055,11 +11986,13 @@ async function generateTestCasesAsync(taskId, inputData) {
         }
 
         // ✅ ФУНКЦИЯ ВАЛИДАЦИИ ТЕСТ-КЕЙСОВ ПО СТАЙЛ-ГАЙДУ
-        function validateTestCasesByStyleGuide(testCases, styleGuidePrompt) {
+        function validateTestCasesByStyleGuide (testCases, styleGuidePrompt)
+        {
             const issues = [];
 
             // ✅ Вспомогательная функция для извлечения текста шага
-            const getStepText = (step) => {
+            const getStepText = (step) =>
+            {
                 // Поддерживаем форматы: строка, объект с action, объект с text (для обратной совместимости)
                 if (typeof step === 'string') {
                     return step;
@@ -16073,7 +12006,8 @@ async function generateTestCasesAsync(taskId, inputData) {
             const normalizeText = (text) => String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
             const scenarioStepMap = new Map();
 
-            testCases.forEach((tc, idx) => {
+            testCases.forEach((tc, idx) =>
+            {
                 const tcNum = idx + 1;
                 const title = tc.title || '';
                 const steps = Array.isArray(tc.steps) ? tc.steps : [];
@@ -16112,14 +12046,16 @@ async function generateTestCasesAsync(taskId, inputData) {
                 const normalizedScenario = normalizeText(scenarioText);
                 const normalizedTitle = normalizeText(title);
                 if (normalizedScenario) {
-                    normalizedStepTexts.forEach((stepText, stepIdx) => {
+                    normalizedStepTexts.forEach((stepText, stepIdx) =>
+                    {
                         if (stepText && stepText === normalizedScenario) {
                             issues.push(`Тест-кейс ${tcNum} "${title}": шаг ${stepIdx + 1} дословно повторяет scenario "${scenarioText}". Шаг должен детализировать действие, а не копировать сценарий.`);
                         }
                     });
                 }
                 if (normalizedTitle) {
-                    normalizedStepTexts.forEach((stepText, stepIdx) => {
+                    normalizedStepTexts.forEach((stepText, stepIdx) =>
+                    {
                         if (stepText && stepText === normalizedTitle) {
                             issues.push(`Тест-кейс ${tcNum} "${title}": шаг ${stepIdx + 1} дословно повторяет title. Шаг должен описывать конкретное действие пользователя.`);
                         }
@@ -16127,7 +12063,8 @@ async function generateTestCasesAsync(taskId, inputData) {
                 }
 
                 // ✅ КРИТИЧНО: Проверка неконкретных шагов
-                const vagueSteps = steps.filter(step => {
+                const vagueSteps = steps.filter(step =>
+                {
                     const stepText = getStepText(step);
                     const stepTextLower = stepText.toLowerCase();
                     // Проверяем слишком короткие или абстрактные шаги
@@ -16161,7 +12098,8 @@ async function generateTestCasesAsync(taskId, inputData) {
                 if (layer === 'E2E Tests') {
                     const hasApiDetails = /(GET|POST|PUT|DELETE|PATCH)\s+\/[^"'\s]+|http:\/\/|https:\/\/|эндпоинт|endpoint|api|статус\s*[-_]?код|status\s*code|deal\.|previousBankRegNumber|operationCode|status\s*\d{3}|\b200\b|\b400\b|\b404\b|\b500\b/gi;
                     // ✅ Исправляем обработку steps: извлекаем текст из объектов
-                    const stepsText = steps.map(step => {
+                    const stepsText = steps.map(step =>
+                    {
                         if (typeof step === 'string') return step;
                         if (typeof step === 'object' && step !== null) {
                             return step.action || step.text || step.body || '';
@@ -16176,7 +12114,8 @@ async function generateTestCasesAsync(taskId, inputData) {
 
                 // ✅ НОВАЯ ПРОВЕРКА 1.7: E2E тесты не должны содержать параметризацию с множеством технических вариантов (коды операций, статусы, параметры API)
                 if (layer === 'E2E Tests') {
-                    const hasTechnicalParametrization = tc.parameters && Array.isArray(tc.parameters) && tc.parameters.some(p => {
+                    const hasTechnicalParametrization = tc.parameters && Array.isArray(tc.parameters) && tc.parameters.some(p =>
+                    {
                         const paramName = String(p.name || '').toLowerCase();
                         const paramValues = Array.isArray(p.values) ? p.values : [];
                         // Проверяем, не являются ли параметры техническими (коды операций, статусы, параметры API)
@@ -16256,7 +12195,8 @@ async function generateTestCasesAsync(taskId, inputData) {
 
                     if (isAuthorizedInPrecondition && steps.length > 0) {
                         // Проверяем, есть ли в шагах шаг авторизации
-                        const hasAuthStep = steps.some(step => {
+                        const hasAuthStep = steps.some(step =>
+                        {
                             const stepText = getStepText(step).toLowerCase();
                             return /авторизоваться|войти\s+в\s+систему|войти|залогиниться/i.test(stepText);
                         });
@@ -16268,7 +12208,8 @@ async function generateTestCasesAsync(taskId, inputData) {
                 }
 
                 // Проверка шагов
-                steps.forEach((step, stepIdx) => {
+                steps.forEach((step, stepIdx) =>
+                {
                     const stepText = getStepText(step);
                     const stepLower = stepText.toLowerCase();
 
@@ -16327,7 +12268,8 @@ async function generateTestCasesAsync(taskId, inputData) {
                 // Проверка типа теста
                 if (layer === 'Integration backend Tests') {
                     // Backend тесты не должны содержать UI-действия
-                    const uiActions = steps.some(step => {
+                    const uiActions = steps.some(step =>
+                    {
                         const stepText = getStepText(step);
                         return /нажать|кликнуть|выбрать|заполнить|ввести/i.test(stepText) && !stepText.includes('Выполнить');
                     });
@@ -16346,7 +12288,8 @@ async function generateTestCasesAsync(taskId, inputData) {
                     }
 
                     // Frontend тесты не должны содержать технические действия
-                    const technicalActions = steps.filter(step => {
+                    const technicalActions = steps.filter(step =>
+                    {
                         const stepText = getStepText(step);
                         return /выполнить\s+(post|get|put|delete|patch)/i.test(stepText) ||
                             /^дождаться/i.test(stepText) ||
@@ -16363,7 +12306,8 @@ async function generateTestCasesAsync(taskId, inputData) {
                 // Проверка параметризации
                 if (tc.parameters && Array.isArray(tc.parameters) && tc.parameters.length > 0) {
                     // Проверяем использование параметров в steps и expected
-                    const hasParamsInSteps = steps.some(step => {
+                    const hasParamsInSteps = steps.some(step =>
+                    {
                         const stepText = getStepText(step);
                         return stepText.includes('{{');
                     });
@@ -16380,7 +12324,8 @@ async function generateTestCasesAsync(taskId, inputData) {
                 }
             });
 
-            scenarioStepMap.forEach((entries) => {
+            scenarioStepMap.forEach((entries) =>
+            {
                 if (entries.length <= 1) return;
                 const layer = entries[0].layer || '';
                 if (!layer.toLowerCase().includes('integration frontend')) return;
@@ -16394,7 +12339,8 @@ async function generateTestCasesAsync(taskId, inputData) {
         }
 
         // ✅ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Поиск соответствующего чанка модели для тест-кейса
-        function findMatchingModelChunk(testCase, modelStructure) {
+        function findMatchingModelChunk (testCase, modelStructure)
+        {
             if (!testCase || !modelStructure) return null;
 
             const feature = testCase.feature;
@@ -16421,14 +12367,16 @@ async function generateTestCasesAsync(taskId, inputData) {
             return null;
         }
 
-        function validateTestPyramid(testCases, modelStructure) {
+        function validateTestPyramid (testCases, modelStructure)
+        {
             console.log(`[validateTestPyramid] Проверка соблюдения пирамиды тестирования...`);
 
             const S = modelStructure.reduce((sum, f) => sum + (f.stories || []).length, 0);
             const Sc = modelStructure.reduce((sum, f) =>
                 sum + (f.stories || []).reduce((s, st) => s + (st.scenarios || []).length, 0), 0);
 
-            const layerCounts = testCases.reduce((acc, tc) => {
+            const layerCounts = testCases.reduce((acc, tc) =>
+            {
                 acc[tc.layer] = (acc[tc.layer] || 0) + 1;
                 return acc;
             }, {});
@@ -16472,7 +12420,8 @@ async function generateTestCasesAsync(taskId, inputData) {
 
 
         // ✅ НОВАЯ ФУНКЦИЯ: Проверка дублей тест-кейсов
-        function detectDuplicates(testCases) {
+        function detectDuplicates (testCases)
+        {
             console.log(`[detectDuplicates] Проверка дублей среди ${testCases.length} тест-кейсов...`);
             const duplicates = [];
             const processed = new Set();
@@ -16543,7 +12492,8 @@ async function generateTestCasesAsync(taskId, inputData) {
         }
 
         // Вспомогательная функция для расчета схожести строк
-        function calculateSimilarity(str1, str2) {
+        function calculateSimilarity (str1, str2)
+        {
             const longer = str1.length > str2.length ? str1 : str2;
             const shorter = str1.length > str2.length ? str2 : str1;
             if (longer.length === 0) return 1.0;
@@ -16552,7 +12502,8 @@ async function generateTestCasesAsync(taskId, inputData) {
             return (longer.length - distance) / longer.length;
         }
 
-        function levenshteinDistance(str1, str2) {
+        function levenshteinDistance (str1, str2)
+        {
             const matrix = [];
             for (let i = 0; i <= str2.length; i++) {
                 matrix[i] = [i];
@@ -16577,7 +12528,8 @@ async function generateTestCasesAsync(taskId, inputData) {
         }
 
         // ✅ НОВАЯ ФУНКЦИЯ: Проверка pairwise в параметрах и примерах
-        function validatePairwise(testCase) {
+        function validatePairwise (testCase)
+        {
             if (!testCase.parameters || !Array.isArray(testCase.parameters) || testCase.parameters.length === 0) {
                 return { valid: true, issues: [] };
             }
@@ -16616,7 +12568,8 @@ async function generateTestCasesAsync(taskId, inputData) {
             let coveredPairsCount = undefined;
             if (params.length >= 2 && examples.length > 0) {
                 const paramValues = {};
-                params.forEach(p => {
+                params.forEach(p =>
+                {
                     paramValues[p.name] = new Set(p.values || []);
                 });
 
@@ -16629,16 +12582,19 @@ async function generateTestCasesAsync(taskId, inputData) {
                 }
 
                 const coveredPairs = new Set();
-                examples.forEach(example => {
+                examples.forEach(example =>
+                {
                     if (!example.parameters) return;
                     const exampleParams = {};
-                    example.parameters.forEach(p => {
+                    example.parameters.forEach(p =>
+                    {
                         const name = p.name || p.parameter;
                         const value = p.value;
                         exampleParams[name] = value;
                     });
 
-                    pairs.forEach(([param1, param2]) => {
+                    pairs.forEach(([param1, param2]) =>
+                    {
                         if (exampleParams[param1] !== undefined && exampleParams[param2] !== undefined) {
                             coveredPairs.add(`${param1}=${exampleParams[param1]}|${param2}=${exampleParams[param2]}`);
                         }
@@ -16678,7 +12634,8 @@ async function generateTestCasesAsync(taskId, inputData) {
 
         // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Проверка покрытия требований через модель (БЕЗ регулярных выражений!)
         // Покрытие определяется через тестовую модель (Feature/Story/Scenario), а не через парсинг текста
-        function checkRequirementsCoverageFixed(testCases, requirements, modelStructure) {
+        function checkRequirementsCoverageFixed (testCases, requirements, modelStructure)
+        {
             console.log(`[checkRequirementsCoverageFixed] Проверка покрытия требований через модель (БЕЗ регулярных выражений)...`);
 
             if (!modelStructure || !Array.isArray(modelStructure) || modelStructure.length === 0) {
@@ -16726,7 +12683,8 @@ async function generateTestCasesAsync(taskId, inputData) {
             const coveredStories = new Set();
             const storyToTestCases = new Map(); // story -> количество тест-кейсов
 
-            testCases.forEach(tc => {
+            testCases.forEach(tc =>
+            {
                 if (tc.feature && tc.story) {
                     const storyKey = `${tc.feature}|||${tc.story}`;
                     coveredStories.add(storyKey);
@@ -16740,7 +12698,8 @@ async function generateTestCasesAsync(taskId, inputData) {
             });
 
             // Находим непокрытые Stories
-            const missingStories = allStories.filter(s => {
+            const missingStories = allStories.filter(s =>
+            {
                 const storyKey = `${s.feature}|||${s.story}`;
                 return !coveredStories.has(storyKey);
             });
@@ -16749,7 +12708,8 @@ async function generateTestCasesAsync(taskId, inputData) {
             const coveredRequirementIds = new Set();
             const allRequirementIds = new Set();
 
-            allStories.forEach(s => {
+            allStories.forEach(s =>
+            {
                 if (s.requirement) {
                     allRequirementIds.add(s.requirement);
                     if (coveredStories.has(`${s.feature}|||${s.story}`)) {
@@ -16793,7 +12753,8 @@ async function generateTestCasesAsync(taskId, inputData) {
         // Покрытие теперь определяется через модель, без регулярных выражений
 
         // ✅ НОВАЯ ФУНКЦИЯ: Комплексная динамическая валидация качества
-        async function validateQualityDynamically(testCases, modelStructure, requirements, sharedStepsMap, systemPrompt, baseCaseModelOptions) {
+        async function validateQualityDynamically (testCases, modelStructure, requirements, sharedStepsMap, systemPrompt, baseCaseModelOptions)
+        {
             console.log(`[validateQualityDynamically] Запуск комплексной валидации качества ${testCases.length} тест-кейсов...`);
 
             const allIssues = [];
@@ -16804,7 +12765,8 @@ async function generateTestCasesAsync(taskId, inputData) {
             const styleGuideIssues = validateTestCasesByStyleGuide(testCases, systemPrompt);
             if (styleGuideIssues.length > 0) {
                 // Фильтруем только критичные ошибки для перегенерации
-                const criticalStyleIssues = styleGuideIssues.filter(issue => {
+                const criticalStyleIssues = styleGuideIssues.filter(issue =>
+                {
                     return issue.includes('"Полный цикл"') ||
                         issue.includes('слово "E2E"') ||
                         issue.includes('глагола действия') ||
@@ -16818,7 +12780,8 @@ async function generateTestCasesAsync(taskId, inputData) {
                     console.log(`[validateQualityDynamically] ⚠️ Найдено ${criticalStyleIssues.length} критичных семантических ошибок:`);
                     criticalStyleIssues.forEach(issue => console.log(`  - ${issue}`));
 
-                    criticalStyleIssues.forEach((issue, idx) => {
+                    criticalStyleIssues.forEach((issue, idx) =>
+                    {
                         // Определяем тип ошибки по содержимому
                         let issueType = 'semantic_error';
                         if (issue.includes('"Полный цикл"') || issue.includes('слово "E2E"')) {
@@ -16858,7 +12821,8 @@ async function generateTestCasesAsync(taskId, inputData) {
             console.log(`[validateQualityDynamically] Проверка 1: Дубли...`);
             const duplicates = detectDuplicates(testCases);
             if (duplicates.length > 0) {
-                duplicates.forEach(dup => {
+                duplicates.forEach(dup =>
+                {
                     allIssues.push({
                         type: 'duplicate',
                         severity: 'high',
@@ -16875,7 +12839,8 @@ async function generateTestCasesAsync(taskId, inputData) {
 
             // Проверка 2: Pairwise в параметрах
             console.log(`[validateQualityDynamically] Проверка 2: Pairwise в параметрах...`);
-            testCases.forEach((tc, idx) => {
+            testCases.forEach((tc, idx) =>
+            {
                 if (tc.parameters && tc.parameters.length > 0) {
                     const pairwiseValidation = validatePairwise(tc);
                     if (!pairwiseValidation.valid) {
@@ -16962,7 +12927,8 @@ async function generateTestCasesAsync(taskId, inputData) {
 
 
         // НОВАЯ ФУНКЦИЯ: Догенерация тест-кейсов для недостающих требований (асинхронная версия)
-        async function gapFillRequirements(requirements, missingRequirements, systemPrompt, modelStructure) {
+        async function gapFillRequirements (requirements, missingRequirements, systemPrompt, modelStructure)
+        {
             console.log(`[gapFillRequirements-ASYNC] Догенерируем тест-кейсы для ${missingRequirements.length} недостающих функциональностей`);
 
             // ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Генерируем allowedForChunk и allowedScenarios
@@ -17135,10 +13101,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 // Функция buildSubmitCasesToolStrict работает и без reqStructure
                 let reqStructureForTool = null;
 
-                const submissionTool = buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios, reqStructureForTool, {
-                    allowedFeatures: correctFeature ? [correctFeature] : [],
-                    allowedStories: correctStories || []
-                });
+                const submissionTool = buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios, reqStructureForTool);
                 const ai = await runTestCaseLLM({
                     userPrompt,
                     submissionTool,
@@ -17250,8 +13213,10 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return allGapCases;
         }
 
-        function fixAgainstModel(testCases, idx) {
-            return testCases.map(tc => {
+        function fixAgainstModel (testCases, idx)
+        {
+            return testCases.map(tc =>
+            {
                 const title = (tc.title || '').toLowerCase();
                 const steps = (tc.steps || []).map(s => s.toLowerCase()).join(' ');
                 const expected = (tc.expected || '').toLowerCase();
@@ -17327,10 +13292,12 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         /**
          * Заменяет упоминания параметров в шагах на формат {{Название параметра}} для Allure TestOps
          */
-        function injectParameterPlaceholders(testCases) {
+        function injectParameterPlaceholders (testCases)
+        {
             let totalReplacements = 0;
 
-            const result = testCases.map(tc => {
+            const result = testCases.map(tc =>
+            {
                 // Если нет параметров, возвращаем как есть
                 if (!Array.isArray(tc.parameters) || tc.parameters.length === 0) {
                     return tc;
@@ -17346,7 +13313,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 }
 
                 // Обрабатываем шаги
-                const processedSteps = (tc.steps || []).map(step => {
+                const processedSteps = (tc.steps || []).map(step =>
+                {
                     // Поддерживаем форматы: строка, объект с sharedStepId, объект с action/expectedResult
                     if (typeof step === 'object' && step !== null) {
                         // Если это shared step, сохраняем как есть
@@ -17359,7 +13327,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                             let stepModified = false;
 
                             // Для каждого параметра ищем его упоминания в action
-                            parameterNames.forEach(paramName => {
+                            parameterNames.forEach(paramName =>
+                            {
                                 // Проверяем, не использован ли уже формат {{Название параметра}}
                                 if (processedAction.includes(`{{${paramName}}}`)) {
                                     return; // Уже в правильном формате
@@ -17388,7 +13357,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                                     // 3. Прямое упоминание в контексте "поля X", "значение X", "X из" (только если название достаточно уникальное)
                                     {
                                         pattern: new RegExp(`(?:поля|значение|значения|параметр)\\s+["']?${escapeRegex(paramName)}["']?`, 'gi'),
-                                        replacement: (match) => {
+                                        replacement: (match) =>
+                                        {
                                             // Сохраняем контекст, заменяя только название параметра
                                             return match.replace(new RegExp(escapeRegex(paramName), 'gi'), `{{${paramName}}}`);
                                         }
@@ -17432,7 +13402,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                     let stepModified = false;
 
                     // Для каждого параметра ищем его упоминания в шаге
-                    parameterNames.forEach(paramName => {
+                    parameterNames.forEach(paramName =>
+                    {
                         // Проверяем, не использован ли уже формат {{Название параметра}}
                         if (processedStep.includes(`{{${paramName}}}`)) {
                             return; // Уже в правильном формате
@@ -17461,7 +13432,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                             // 3. Прямое упоминание в контексте "поля X", "значение X", "X из" (только если название достаточно уникальное)
                             {
                                 pattern: new RegExp(`(?:поля|значение|значения|параметр)\\s+["']?${escapeRegex(paramName)}["']?`, 'gi'),
-                                replacement: (match) => {
+                                replacement: (match) =>
+                                {
                                     // Сохраняем контекст, заменяя только название параметра
                                     return match.replace(new RegExp(escapeRegex(paramName), 'gi'), `{{${paramName}}}`);
                                 }
@@ -17516,7 +13488,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             /^убедиться/i
         ];
 
-        function stepToText(step) {
+        function stepToText (step)
+        {
             // Поддерживаем форматы: строка, объект с action, объект с text (для обратной совместимости)
             if (typeof step === 'string') return step;
             if (typeof step === 'object' && step !== null) {
@@ -17525,11 +13498,13 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return String(step || '');
         }
 
-        function escapeRegex(str) {
+        function escapeRegex (str)
+        {
             return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         }
 
-        const sanitize = (arr) => {
+        const sanitize = (arr) =>
+        {
             console.log(`[sanitize] Обрабатываем ${arr?.length || 0} кейсов`);
             const ALLOWED_LAYERS = new Set([
                 "E2E Tests",
@@ -17538,7 +13513,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             ]);
             const trimText = (s, n = 1200) => String(s ?? '').trim().slice(0, n);
             const allowedCodeSet = new Set(allowedCodes);
-            const take = (s, n) => {
+            const take = (s, n) =>
+            {
                 const t = trimText(s, n);
                 return t ? t : undefined;
             };
@@ -17547,7 +13523,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             const seenLogic = new Map();
 
             // ✅ Общая функция нормализации
-            function normalizeText(text) {
+            function normalizeText (text)
+            {
                 return String(text || '')
                     .toLowerCase()
                     .replace(/\b(успешн\w+|сбор и передача|передача и сбор|отправка|передача)\b/gi, '<ACTION>')
@@ -17559,7 +13536,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                     .replace(/\s+/g, ' ').trim();
             }
 
-            function normalizeStepForSignature(step) {
+            function normalizeStepForSignature (step)
+            {
                 const raw = stepToText(step);
                 if (!raw) return '';
                 const trimmed = raw.trim();
@@ -17570,7 +13548,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 return trimmed.toLowerCase().replace(/\s+/g, ' ');
             }
 
-            function getLogicSignature(testCase) {
+            function getLogicSignature (testCase)
+            {
                 // ✅ ИСПРАВЛЕНО: учитываем parameters в сигнатуре
                 const paramsSignature = (testCase.parameters || [])
                     .map(p => `${p.name}:${(p.values || []).sort().join(',')}`)
@@ -17592,7 +13571,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
              * @param {Array} modelStructure - Структура тестовой модели
              * @returns {Object} - { valid, errors, correctedFeature, correctedStory, correctedScenario }
              */
-            function computeStoryMatchScore(textPayload, storyText) {
+            function computeStoryMatchScore (textPayload, storyText)
+            {
                 const payloadWords = normalizeText(textPayload).split(/\s+/).filter(w => w.length > 3);
                 const storyWords = normalizeText(storyText).split(/\s+/).filter(w => w.length > 3);
                 if (!payloadWords.length || !storyWords.length) return 0;
@@ -17601,7 +13581,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 return overlap.length / storyWords.length;
             }
 
-            function findBestMatchingStory(testCase, feature) {
+            function findBestMatchingStory (testCase, feature)
+            {
                 if (!feature || !Array.isArray(feature.stories)) return null;
                 const payload = [
                     testCase.title,
@@ -17627,7 +13608,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 return null;
             }
 
-            function validateModelBinding(testCase, modelStructure) {
+            function validateModelBinding (testCase, modelStructure)
+            {
                 const errors = [];
                 let correctedFeature = testCase.feature;
                 let correctedStory = testCase.story;
@@ -17652,7 +13634,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                     errors.push(`Feature "${testCase.feature}" не найдена в модели`);
 
                     // Пытаемся найти похожую
-                    const similarFeature = modelStructure.find(f => {
+                    const similarFeature = modelStructure.find(f =>
+                    {
                         const keywords = normalizeText(testCase.feature).split(/\s+/).filter(w => w.length > 3);
                         return keywords.some(kw => normalizeText(f.text).includes(kw));
                     });
@@ -17689,7 +13672,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
                     // Пытаемся найти похожую в найденной Feature
                     if (foundFeature) {
-                        const similarStory = (foundFeature.stories || []).find(s => {
+                        const similarStory = (foundFeature.stories || []).find(s =>
+                        {
                             const keywords = normalizeText(testCase.story).split(/\s+/).filter(w => w.length > 3);
                             return keywords.some(kw => normalizeText(s.text).includes(kw));
                         });
@@ -17758,7 +13742,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
             return (arr || [])
                 .filter(x => x && typeof x === 'object')
-                .map(x => {
+                .map(x =>
+                {
                     // ✅ ДОРАБОТКА 1: Валидация привязки к модели
                     const validationResult = validateModelBinding(x, modelStructure);
 
@@ -17778,7 +13763,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
                     // ✅ ИСПРАВЛЕНО: очищаем Steps от слова "Проверить"
                     // ✅ Исправляем обработку steps: извлекаем текст из объектов перед trimText
-                    let steps = Array.isArray(x.steps) ? x.steps.map(s => {
+                    let steps = Array.isArray(x.steps) ? x.steps.map(s =>
+                    {
                         // Сначала извлекаем текст из объекта, затем применяем trimText
                         let stepText;
                         if (typeof s === 'string') {
@@ -17790,7 +13776,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                         }
                         return trimText(stepText, 600);
                     }).slice(0, 40) : [];
-                    steps = steps.map(step => {
+                    steps = steps.map(step =>
+                    {
                         if (typeof step === 'string' && step.toLowerCase().startsWith('проверить')) {
                             console.warn(`[sanitize] ⚠️ Шаг начинается с "Проверить": "${step}"`);
                             // Переносим в Expected
@@ -17861,7 +13848,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                         _validationErrors: validationResult.errors
                     };
                 })
-                .filter(x => {
+                .filter(x =>
+                {
                     if (!x.title || !x.steps?.length || !x.expected || !x.layer) return false;
 
                     // ✅ ДОРАБОТКА 1: Фильтруем тесты с критичными ошибками валидации
@@ -17888,7 +13876,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                     seenLogic.set(signature, x.title);
                     return true;
                 })
-                .map(x => {
+                .map(x =>
+                {
                     // Удаляем служебное поле _validationErrors перед возвратом
                     if (x._validationErrors) {
                         delete x._validationErrors;
@@ -17917,7 +13906,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             }
             : null;
 
-        const appendRequirementLink = (linksInput) => {
+        const appendRequirementLink = (linksInput) =>
+        {
             const normalizedLinks = Array.isArray(linksInput) ? [...linksInput] : [];
             if (requirementLinkEntry) {
                 const alreadyHas = normalizedLinks.some(link => link && link.url === requirementLinkEntry.url);
@@ -18057,14 +14047,16 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         }
 
         // ✅ ФУНКЦИЯ ДЛЯ ГЛУБОКОГО СРАВНЕНИЯ МОДЕЛЕЙ (объявлена один раз в начале функции)
-        const normalizeModelForComparison = (obj) => {
+        const normalizeModelForComparison = (obj) =>
+        {
             if (obj === null || obj === undefined) return obj;
             if (typeof obj !== 'object') return obj;
             if (Array.isArray(obj)) {
                 return obj.map(normalizeModelForComparison);
             }
             const sorted = {};
-            Object.keys(obj).sort().forEach(key => {
+            Object.keys(obj).sort().forEach(key =>
+            {
                 sorted[key] = normalizeModelForComparison(obj[key]);
             });
             return sorted;
@@ -18113,7 +14105,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                             const stepIds = sharedStep?.children || [];
 
                             // Извлекаем шаги из sharedStepScenarioSteps
-                            const steps = stepIds.map(stepId => {
+                            const steps = stepIds.map(stepId =>
+                            {
                                 const step = scenario?.sharedStepScenarioSteps?.[stepId];
                                 return step;
                             }).filter(Boolean);
@@ -18121,7 +14114,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                             // Если нет шагов в sharedStepScenarioSteps, пробуем scenarioSteps
                             if (steps.length === 0) {
                                 const rootChildren = scenario?.root?.children || [];
-                                steps.push(...rootChildren.map(stepId => {
+                                steps.push(...rootChildren.map(stepId =>
+                                {
                                     const step = scenario?.scenarioSteps?.[stepId];
                                     return step;
                                 }).filter(Boolean));
@@ -18132,10 +14126,12 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                             ) || false;
 
                             // Извлекаем тексты шагов из TipTap формата
-                            const stepTexts = steps.map(step => {
+                            const stepTexts = steps.map(step =>
+                            {
                                 if (step.bodyJson?.content) {
                                     // Извлекаем текст из TipTap структуры
-                                    const extractText = (node) => {
+                                    const extractText = (node) =>
+                                    {
                                         if (node.type === 'text') return node.text || '';
                                         if (node.content && Array.isArray(node.content)) {
                                             return node.content.map(extractText).join('');
@@ -18148,9 +14144,11 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                             }).filter(Boolean);
 
                             // Извлекаем Expected Result (если есть)
-                            const expectedResults = steps.map(step => {
+                            const expectedResults = steps.map(step =>
+                            {
                                 if (step.expectedResultJson?.content) {
-                                    const extractText = (node) => {
+                                    const extractText = (node) =>
+                                    {
                                         if (node.type === 'text') return node.text || '';
                                         if (node.content && Array.isArray(node.content)) {
                                             return node.content.map(extractText).join('');
@@ -18178,7 +14176,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                             // ✅ ДЕТАЛЬНЫЙ ЛОГ для debug режима
                             if (skipAllureAPICalls) {
                                 console.log(`[DEBUG MODE] 📋 Shared Step "${ss.name}" (ID: ${ss.id}):`);
-                                stepTexts.forEach((step, idx) => {
+                                stepTexts.forEach((step, idx) =>
+                                {
                                     console.log(`[DEBUG MODE]    ${idx + 1}. ${step}`);
                                 });
                                 if (expectedResults.length > 0) {
@@ -18205,10 +14204,12 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                         console.log(`\n[DEBUG MODE] ═══════════════════════════════════════════════════════════`);
                         console.log(`[DEBUG MODE] 📊 ИТОГО ЗАГРУЖЕНО ${sharedStepsDetailsForPrompt.length} SHARED STEPS ИЗ ПРОЕКТА ${projectId}:`);
                         console.log(`[DEBUG MODE] ═══════════════════════════════════════════════════════════\n`);
-                        sharedStepsDetailsForPrompt.forEach((ss, idx) => {
+                        sharedStepsDetailsForPrompt.forEach((ss, idx) =>
+                        {
                             console.log(`[DEBUG MODE] ${idx + 1}. "${ss.name}" (ID: ${ss.id}):`);
                             if (ss.steps.length > 0) {
-                                ss.steps.forEach((step, stepIdx) => {
+                                ss.steps.forEach((step, stepIdx) =>
+                                {
                                     console.log(`[DEBUG MODE]    ${stepIdx + 1}. ${step}`);
                                 });
                             } else {
@@ -18274,7 +14275,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             });
         }
 
-        function buildRequirementToStoryMapping(modelStructure) {
+        function buildRequirementToStoryMapping (modelStructure)
+        {
             const mapping = {};
 
             for (const feature of (modelStructure || [])) {
@@ -18293,7 +14295,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         }
 
         // ✅ НОВАЯ ФУНКЦИЯ: Извлечение текстовых названий из модели по ID/BEM
-        function extractTextFromModel(modelStructure, fieldType, identifier) {
+        function extractTextFromModel (modelStructure, fieldType, identifier)
+        {
             if (!modelStructure || !identifier) return identifier;
 
             // Если уже текстовое название (не UUID и не BEM-класс) - возвращаем как есть
@@ -18337,7 +14340,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         const requirementToStoryMapping = buildRequirementToStoryMapping(modelStructure);
 
         // === ФУНКЦИЯ ПОИСКА STORY ПО ТРЕБОВАНИЮ ===
-        function findStoryByRequirement(modelStructure, requirementId) {
+        function findStoryByRequirement (modelStructure, requirementId)
+        {
             for (const feature of (modelStructure || [])) {
                 for (const story of (feature.stories || [])) {
                     if (story.requirement === requirementId) {
@@ -18375,7 +14379,14 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 for (const lid of ids) {
                     try {
                         const { markdown: md, title: linkedTitle } = await fetchConfluencePage(bearerToken, lid, { inlineTextAttachments: true });
-                        const mention = extractBestLinkedPageMention(markdown, lid, baseRequirement);
+                        const lines = String(markdown || '').split(/\n/);
+                        const refIdx = lines.findIndex(l => l.includes(`pageId=${lid}`));
+                        let mention = '';
+                        if (refIdx !== -1) {
+                            const start = Math.max(0, refIdx - 2);
+                            const end = Math.min(lines.length, refIdx + 3);
+                            mention = lines.slice(start, end).join('\n').trim();
+                        }
                         const relevant = extractRelevantSections(md, mention, { maxSections: 15, maxChars: 100000 }); // Увеличено для полного контекста
                         autoPages.push([
                             `### Контекст по ссылке из основной статьи (pageId=${lid})`,
@@ -18419,8 +14430,7 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 contextPageIds: undefined,
                 glossaryPageId: undefined,
                 bearerToken: undefined,
-                contextPages: autoPages,
-                models: modelsToTry
+                contextPages: autoPages
             });
             refinedReqs = refinedArray;
             console.log(`[generate-test-cases-async] OK: contextRefiner успешно обработал требования. Объем: ${refinedArray.join('\n').length} символов.`);
@@ -18453,7 +14463,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         ));
 
         const contextFetcher = bearerToken
-            ? async (requestedPageId) => {
+            ? async (requestedPageId) =>
+            {
                 try {
                     if (requestedPageId == null) return '';
                     const requestedIdStr = String(requestedPageId);
@@ -18492,9 +14503,12 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             : '**Как работать с дополнительным контекстом:**\nДополнительные источники не предоставлены. Генерируй тест-кейсы, опираясь на текст требований.\n';
 
         // ====== УЛУЧШЕНИЕ: Функция-обертка для контроля таймаутов ======
-        async function withTimeout(promise, ms, operationName = 'AI call') {
-            const timeout = new Promise((_, reject) => {
-                const id = setTimeout(() => {
+        async function withTimeout (promise, ms, operationName = 'AI call')
+        {
+            const timeout = new Promise((_, reject) =>
+            {
+                const id = setTimeout(() =>
+                {
                     clearTimeout(id);
                     reject(new Error(`Операция "${operationName}" превысила таймаут в ${ms / 1000}с`));
                 }, ms);
@@ -18503,7 +14517,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         }
 
         // ✅ ОПТИМИЗИРОВАННАЯ ВЕРСИЯ: ONE-PASS вместо TWO-PASS
-        function splitByStoriesOptimized(modelStructure) {
+        function splitByStoriesOptimized (modelStructure)
+        {
             const chunks = [];
             const MAX_SCENARIOS = 5; // увеличено для меньшего числа вызовов
 
@@ -18544,7 +14559,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
 
         // ✅ ФИЛЬТРАЦИЯ ТРЕБОВАНИЙ ПО РЕЛЕВАНТНОСТИ
-        function filterRelevantRequirements(requirements, chunk) {
+        function filterRelevantRequirements (requirements, chunk)
+        {
             // Защита от undefined
             if (!chunk || !Array.isArray(chunk) || chunk.length === 0 || !chunk[0] || !chunk[0].stories || !Array.isArray(chunk[0].stories) || chunk[0].stories.length === 0) {
                 console.warn('[filterRelevantRequirements] Некорректная структура chunk, возвращаем все требования');
@@ -18560,13 +14576,15 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
                 ...scenarios.flatMap(s => s.split(/\s+/))
             ].filter(w => w.length > 3)); // только слова > 3 символов
 
-            return requirements.filter(req => {
+            return requirements.filter(req =>
+            {
                 const reqLower = req.toLowerCase();
                 return Array.from(keywords).some(kw => reqLower.includes(kw));
             }).slice(0, 20); // максимум 20 релевантных требований
         }
 
-        function normalizeEndpoint(raw) {
+        function normalizeEndpoint (raw)
+        {
             if (!raw) return null;
             let endpoint = raw.trim();
             endpoint = endpoint.replace(/^\*\*/g, '').replace(/\*\*$/g, '');
@@ -18580,7 +14598,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return endpoint;
         }
 
-        function extractInlineJsonSnippet(context, maxLength = 1200) {
+        function extractInlineJsonSnippet (context, maxLength = 1200)
+        {
             if (!context) return null;
             const fencedMatch = context.match(/```(?:json)?([\s\S]{10,2000}?)```/i);
             if (fencedMatch && safeTrim(fencedMatch[1])) {
@@ -18602,13 +14621,15 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return null;
         }
 
-        function isJsonReference(label, href) {
+        function isJsonReference (label, href)
+        {
             const labelLower = (label || '').toLowerCase();
             const hrefLower = (href || '').toLowerCase();
             return labelLower.includes('.json') || hrefLower.includes('.json');
         }
 
-        function extractMockReferenceFromContext(endpoint, contextSegment) {
+        function extractMockReferenceFromContext (endpoint, contextSegment)
+        {
             if (!contextSegment) return null;
 
             const inlineJson = extractInlineJsonSnippet(contextSegment);
@@ -18623,7 +14644,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return null;
         }
 
-        function extractApiMocksFromText(text) {
+        function extractApiMocksFromText (text)
+        {
             const source = safeTrim(text) ? text : '';
             if (!source) return [];
 
@@ -18661,7 +14683,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return [...mocks.values()].slice(0, 10);
         }
 
-        function buildEntryPointPreconditionStep(existingPrecondition = '') {
+        function buildEntryPointPreconditionStep (existingPrecondition = '')
+        {
             const normalized = (existingPrecondition || '')
                 .replace(/^предварительное условие[:\s]*/i, '')
                 .trim();
@@ -18681,7 +14704,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return `Осуществлен переход: ${withoutIndex}`;
         }
 
-        function formatMockStep(mock) {
+        function formatMockStep (mock)
+        {
             if (!mock) return null;
             if (mock.type === 'inline' && mock.inlineJson) {
                 const trimmed = mock.inlineJson.trim();
@@ -18691,7 +14715,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             return null;
         }
 
-        function formatPreconditionBlock(steps) {
+        function formatPreconditionBlock (steps)
+        {
             const cleaned = steps.filter(step => safeTrim(step));
             if (!cleaned.length) return '';
             const seen = new Set();
@@ -18708,7 +14733,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
 
         // ✅ Функция-заглушка для некорректной структуры chunk
-        function buildContextPromptFallback(existingE2E = []) {
+        function buildContextPromptFallback (existingE2E = [])
+        {
             return `
 🎯 ЗАДАЧА: Генерация тестов (структура chunk некорректна, используем базовые значения)
 
@@ -18723,7 +14749,8 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
         }
 
         // ✅ УНИФИЦИРОВАННЫЙ КОНТЕКСТНЫЙ ПРОМПТ (не противоречит system prompt)
-        function buildContextPrompt(chunk, existingE2E = []) {
+        function buildContextPrompt (chunk, existingE2E = [])
+        {
             // Защита от undefined
             if (!chunk || !Array.isArray(chunk) || chunk.length === 0 || !chunk[0] || !chunk[0].stories || !Array.isArray(chunk[0].stories) || chunk[0].stories.length === 0) {
                 console.warn('[buildContextPrompt] Некорректная структура chunk, используем значения по умолчанию');
@@ -18788,7 +14815,8 @@ ${existingE2E.length > 0 ? existingE2E.map(t => `  - ${t.title}`).join('\n') : '
 `.trim();
         }
 
-        function collectAllowedCodes(modelChunk) {
+        function collectAllowedCodes (modelChunk)
+        {
             const set = new Set();
             for (const f of modelChunk) for (const st of (f.stories || []))
                 for (const sc of (st.scenarios || [])) for (const cd of (sc.codes || []))
@@ -18796,7 +14824,8 @@ ${existingE2E.length > 0 ? existingE2E.map(t => `  - ${t.title}`).join('\n') : '
             return [...set];
         }
 
-        function collectAllowedScenarios(modelChunk) {
+        function collectAllowedScenarios (modelChunk)
+        {
             const set = new Set();
             for (const f of modelChunk) for (const st of (f.stories || []))
                 for (const sc of (st.scenarios || []))
@@ -18804,32 +14833,16 @@ ${existingE2E.length > 0 ? existingE2E.map(t => `  - ${t.title}`).join('\n') : '
             return [...set];
         }
 
-        function collectAllowedFeaturesAndStories(modelChunk) {
-            const featureSet = new Set();
-            const storySet = new Set();
 
-            for (const feature of (Array.isArray(modelChunk) ? modelChunk : [])) {
-                if (feature?.text?.trim()) featureSet.add(feature.text.trim());
-                for (const story of (feature.stories || [])) {
-                    if (story?.text?.trim()) storySet.add(story.text.trim());
-                }
-            }
-
-            return {
-                allowedFeatures: [...featureSet],
-                allowedStories: [...storySet]
-            };
-        }
-
-
-        function buildTestCaseSystemPrompt({
+        function buildTestCaseSystemPrompt ({
             mode = 'FULL',
             includeBackendTests = true,
             scenariosCount = 0,
             storiesCount = 0,
             featuresCount = 1,
             targetLayer = null
-        }) {
+        })
+        {
             // ═══════════════════════════════════════════════════════════════
             // РАСЧЕТ ЛИМИТОВ (ИСПОЛЬЗУЕМ RULES)
             // ═══════════════════════════════════════════════════════════════
@@ -19185,13 +15198,14 @@ Codes: [{ "text": "Возвращается 200 OK с {transactionId}", "type": 
                 s + (st.scenarios || []).reduce((sc, scn) => sc + (scn.codes?.length || 0), 0), 0), 0);
         const F = modelStructure.length; // Количество Features
 
-        function buildCovenant({
+        function buildCovenant ({
             mode = 'FULL',
             includeBackendTests = true,
             scenariosCount = 0,
             storiesCount = 0,
             featuresCount = 1
-        }) {
+        })
+        {
             const needsE2E = mode === 'FULL' || mode === 'BATCH';
             const effectiveFeaturesCount = Math.max(1, featuresCount);
 
@@ -19238,50 +15252,21 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
 
         const baseSystemPrompt = BASE_SYSTEM_PROMPT;
         const baseCaseModelOptions = {
-            models: modelsToTry,
+            models: config.cloudruModels,
             temperature: 0,
             top_p: 1,
             max_tokens: 45000,
             extra: { transforms: 'middle-out' }
         };
 
-        const composeUserPrompt = (corePrompt) => {
+        const composeUserPrompt = (corePrompt) =>
+        {
             if (!toolInstruction) return corePrompt;
             const trimmedInstruction = toolInstruction.endsWith('\n') ? toolInstruction : `${toolInstruction}\n`;
             return `${trimmedInstruction}${corePrompt}`;
         };
 
-        let perfectExamplesCache = null;
-        let perfectExamplesPromise = null;
-
-        async function getCachedPerfectExamples() {
-            if (!projectId) return null;
-            if (perfectExamplesCache) return perfectExamplesCache;
-
-            if (!perfectExamplesPromise) {
-                perfectExamplesPromise = getAllPerfectExamplesByLayer(projectId, db)
-                    .then((examples) => {
-                        perfectExamplesCache = examples;
-                        console.log(
-                            `[generateTestCasesAsync] Загружено идеальных примеров из БД для проекта ${projectId}: ${
-                                Object.keys(examples || {}).map(layer => `${layer}: ${(examples?.[layer] || []).length}`).join(', ')
-                            }`
-                        );
-                        return perfectExamplesCache;
-                    })
-                    .catch((err) => {
-                        console.warn(`[generateTestCasesAsync] Ошибка загрузки идеальных примеров из БД:`, err.message);
-                        return null;
-                    })
-                    .finally(() => {
-                        perfectExamplesPromise = null;
-                    });
-            }
-
-            return await perfectExamplesPromise;
-        }
-
-        async function runTestCaseLLM({
+        async function runTestCaseLLM ({
             taskContextId = taskId,
             systemPrompt = baseSystemPrompt,
             userPrompt,
@@ -19289,7 +15274,8 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
             modelOverrides = {},
             persistContext = true,
             responseFormat = TEST_CASE_RESPONSE_FORMAT
-        }) {
+        })
+        {
             const decoratedUserPrompt = composeUserPrompt(userPrompt);
             const combinedTools = [...interactiveTools];
             const finalToolNames = [];
@@ -19352,37 +15338,21 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
 
         // === tool-schema с жёстким enum для сценариев ===
         // ✅ ДОРАБОТКА 2: Обновлена функция для поддержки reqStructure
-        const buildSubmitCasesToolStrict = (allowedCodes = [], allowedScenarios = [], reqStructure = null, enumOptions = {}) => {
-            // Предпочитаем локальный scope (chunk / retry / targeted feature-story pair),
-            // а к полной модели откатываемся только если локальный scope не передан.
-            const scopedEnums = collectAllowedFeaturesAndStories(enumOptions.modelScope);
-            let allowedFeatures = Array.isArray(enumOptions.allowedFeatures)
-                ? enumOptions.allowedFeatures.filter(Boolean)
-                : [];
-            let allowedStories = Array.isArray(enumOptions.allowedStories)
-                ? enumOptions.allowedStories.filter(Boolean)
-                : [];
+        const buildSubmitCasesToolStrict = (allowedCodes = [], allowedScenarios = [], reqStructure = null) =>
+        {
+            // ✅ ИСПРАВЛЕНО: Извлекаем допустимые feature/story из modelStructure (не из reqStructure)
+            // reqStructure может быть устаревшим, всегда используем актуальную modelStructure
+            let allowedFeatures = [];
+            let allowedStories = [];
 
-            if (!allowedFeatures.length && scopedEnums.allowedFeatures.length) {
-                allowedFeatures = scopedEnums.allowedFeatures;
-            }
-            if (!allowedStories.length && scopedEnums.allowedStories.length) {
-                allowedStories = scopedEnums.allowedStories;
-            }
-
-            if ((!allowedFeatures.length || !allowedStories.length) && reqStructure?.features?.length > 0) {
-                if (!allowedFeatures.length) {
-                    allowedFeatures = reqStructure.features.map(f => f.name).filter(Boolean);
-                }
-                if (!allowedStories.length) {
-                    allowedStories = reqStructure.features.flatMap(f => (f.stories || []).map(s => s.name).filter(Boolean));
-                }
-            }
-
-            if ((!allowedFeatures.length || !allowedStories.length) && Array.isArray(modelStructure) && modelStructure.length > 0) {
-                const fullModelEnums = collectAllowedFeaturesAndStories(modelStructure);
-                if (!allowedFeatures.length) allowedFeatures = fullModelEnums.allowedFeatures;
-                if (!allowedStories.length) allowedStories = fullModelEnums.allowedStories;
+            // ✅ ИСПРАВЛЕНО: Всегда используем modelStructure для enum, чтобы гарантировать точное соответствие
+            if (modelStructure && Array.isArray(modelStructure) && modelStructure.length > 0) {
+                allowedFeatures = modelStructure.map(f => f.text).filter(Boolean);
+                allowedStories = modelStructure.flatMap(f => (f.stories || []).map(s => s.text).filter(Boolean));
+            } else if (reqStructure && reqStructure.features && reqStructure.features.length > 0) {
+                // Fallback: только если modelStructure недоступна
+                allowedFeatures = reqStructure.features.map(f => f.name).filter(Boolean);
+                allowedStories = reqStructure.features.flatMap(f => f.stories.map(s => s.name).filter(Boolean));
             }
 
             return {
@@ -19402,14 +15372,14 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
                                             ? {
                                                 type: "string",
                                                 enum: allowedFeatures,
-                                                description: "Feature из доступного scope модели"
+                                                description: `Feature из модели. Допустимые значения: ${allowedFeatures.join(', ')}`
                                             }
                                             : { type: "string", description: "Название фичи из modelStructure" },
                                         story: allowedStories.length > 0
                                             ? {
                                                 type: "string",
                                                 enum: allowedStories,
-                                                description: "Story из доступного scope модели"
+                                                description: `Story из модели. Допустимые значения: ${allowedStories.join(', ')}`
                                             }
                                             : { type: "string", description: "Название story из modelStructure" },
                                         scenario: allowedScenarios.length
@@ -19539,7 +15509,8 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
         }
 
         // ✅ ФУНКЦИЯ ИЗВЛЕЧЕНИЯ КЕЙСОВ ИЗ ОТВЕТА AI
-        function extractCasesFromResponse(ai, existingCases = []) {
+        function extractCasesFromResponse (ai, existingCases = [])
+        {
             const allTestCases = [];
             // ✅ КРИТИЧНО: Используем существующие тест-кейсы для проверки уникальности ID
             const usedIds = new Set(existingCases.map(tc => tc.id));
@@ -19735,7 +15706,7 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
          * @param {Object} options.signatureRegistry - Реестр сигнатур для дедупликации
          * @returns {Promise<Array>} Массив E2E тест-кейсов
          */
-        async function generateE2ETests({
+        async function generateE2ETests ({
             fullTestModel,
             requirements,
             existingTestCases = [],
@@ -19743,7 +15714,8 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
             taskId,
             sharedStepsDetailsForPrompt = [],
             signatureRegistry = null
-        }) {
+        })
+        {
             if (!fullTestModel || !Array.isArray(fullTestModel) || fullTestModel.length === 0) {
                 console.warn('[generateE2ETests] ⚠️ Полная модель пуста, пропускаем генерацию E2E');
                 return [];
@@ -19757,9 +15729,15 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
                 const scenariosCount = fullTestModel.reduce((sum, f) =>
                     sum + (f.stories || []).reduce((s, st) => s + (st.scenarios || []).length, 0), 0);
 
-                const perfectExamples = await getCachedPerfectExamples();
-                if (perfectExamples?.['E2E Tests']?.length) {
-                    console.log(`[generateE2ETests] Используем кэш идеальных примеров E2E: ${(perfectExamples['E2E Tests'] || []).length}`);
+                // ✅ Загружаем идеальные примеры E2E из БД
+                let perfectExamples = null;
+                if (projectId) {
+                    try {
+                        perfectExamples = await getAllPerfectExamplesByLayer(projectId, db);
+                        console.log(`[generateE2ETests] Загружено идеальных примеров E2E из БД: ${(perfectExamples['E2E Tests'] || []).length}`);
+                    } catch (err) {
+                        console.warn(`[generateE2ETests] Ошибка загрузки идеальных примеров:`, err.message);
+                    }
                 }
 
                 // Формируем примеры для E2E
@@ -19872,13 +15850,13 @@ ${Array.isArray(requirements) ? requirements.join('\n\n') : (requirements || '')
 `.trim();
 
                 // Собираем allowed codes/scenarios из полной модели
-                const allowedCodes = [];
-                const allowedScenarios = [];
+                const allowedCodes = collectAllowedCodes(fullTestModel);
+                const allowedScenarios = collectAllowedScenarios(fullTestModel);
+                const allowedFeatures = fullTestModel.map(f => f.text).filter(Boolean);
+                const allowedStories = fullTestModel.flatMap(f => (f.stories || []).map(s => s.text).filter(Boolean));
 
                 // Создаем tool для submit_cases
-                const submitTool = buildSubmitCasesToolStrict(allowedCodes, allowedScenarios, null, {
-                    modelScope: fullTestModel
-                });
+                const submitTool = buildSubmitCasesToolStrict(allowedCodes, allowedScenarios, null);
 
                 // Вызываем LLM для генерации E2E тестов
                 // ✅ Используем только Cloud.ru API (без fallback на OpenRouter)
@@ -19896,12 +15874,7 @@ ${Array.isArray(requirements) ? requirements.join('\n\n') : (requirements || '')
                     systemPrompt: e2eSystemPrompt,
                     userPrompt,
                     submissionTool: submitTool,
-                    modelOverrides: {
-                        temperature: 0,
-                        top_p: 1,
-                        max_tokens: 12000
-                    },
-                    persistContext: false,
+                    persistContext: true,
                     responseFormat: TEST_CASE_RESPONSE_FORMAT
                 });
 
@@ -19951,13 +15924,14 @@ ${Array.isArray(requirements) ? requirements.join('\n\n') : (requirements || '')
         }
 
         // ✅ ОПТИМИЗИРОВАННАЯ ВЕРСИЯ: ONE-SHOT с fallback + Few-Shot Learning + Logic Extraction
-        async function genForChunkOptimized(chunk, requirements, existingE2E = [], modelStructure, reqStructure = null, contextId = null, existingCases = [], logicConstraints = null, isNegativePass = false, includeBackendTests = true, signatureRegistry = null) {
+        async function genForChunkOptimized (chunk, requirements, existingE2E = [], modelStructure, reqStructure = null, contextId = null, existingCases = [], logicConstraints = null, isNegativePass = false, includeBackendTests = true, signatureRegistry = null)
+        {
             const contextPrompt = buildContextPrompt(chunk, existingE2E);
             const relevantReqs = filterRelevantRequirements(requirements, chunk);
-            const chunkEnumScope = Array.isArray(chunk) ? chunk : [];
-            const allowedForChunk = collectAllowedCodes(chunkEnumScope);
-            const allowedScenarios = collectAllowedScenarios(chunkEnumScope);
-            const { allowedFeatures, allowedStories } = collectAllowedFeaturesAndStories(chunkEnumScope);
+            // ✅ ИСПРАВЛЕНО: Используем ПОЛНУЮ модель для enum, а не только chunk
+            // Это гарантирует, что все feature/story/scenario/code доступны в enum
+            const allowedForChunk = collectAllowedCodes(modelStructure); // Используем полную модель
+            const allowedScenarios = collectAllowedScenarios(modelStructure); // Используем полную модель
 
             // ✅ ЭТАП 3: Skeleton & Flesh - Чанки генерируют ТОЛЬКО Integration тесты (E2E будут сгенерированы отдельно)
             // Защита от undefined
@@ -19975,11 +15949,19 @@ ${Array.isArray(requirements) ? requirements.join('\n\n') : (requirements || '')
             }
 
             console.log(`[genForChunkOptimized] 🏗️ Режим генерации: ${mode} (${mode === 'CHUNK' ? 'только Integration тесты, E2E будут сгенерированы отдельно' : 'FULL/BATCH режим - генерируем все типы тестов'})`);
-            console.log(
-                `[genForChunkOptimized] enum scope: features=${allowedFeatures.length}, stories=${allowedStories.length}, scenarios=${allowedScenarios.length}, codes=${allowedForChunk.length}`
-            );
-
-            const perfectExamples = await getCachedPerfectExamples();
+            // ✅ Загружаем идеальные примеры из БД для улучшения генерации
+            let perfectExamples = null;
+            // projectId и skipAllureAPICalls уже объявлены в начале функции generateTestCasesAsync
+            if (projectId) {
+                try {
+                    perfectExamples = await getAllPerfectExamplesByLayer(projectId, db);
+                    console.log(`[generateTestCasesAsync] Загружено идеальных примеров из БД для проекта ${projectId}:`,
+                        Object.keys(perfectExamples).map(l => `${l}: ${perfectExamples[l].length}`).join(', '));
+                } catch (err) {
+                    console.warn(`[generateTestCasesAsync] Ошибка загрузки идеальных примеров из БД:`, err.message);
+                    perfectExamples = null;
+                }
+            }
 
             // ✅ АРХИТЕКТУРНОЕ РЕШЕНИЕ: ВСЕГДА загружаем примеры (статические + идеальные из БД)
             const examples = await selectExamples(chunk, mode, perfectExamples, db, projectId);
@@ -20177,11 +16159,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                     taskContextId: contextId || taskId, // ✅ Используем переданный contextId или дефолтный taskId
                     systemPrompt: systemPromptWithExamples,
                     userPrompt,
-                    submissionTool: buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios, reqStructure, {
-                        modelScope: chunkEnumScope,
-                        allowedFeatures,
-                        allowedStories
-                    }),
+                    submissionTool: buildSubmitCasesToolStrict(allowedForChunk, allowedScenarios, reqStructure),
                     modelOverrides: {
                         temperature: 0,
                         top_p: 1,
@@ -20227,7 +16205,8 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                         // 1. Позитивные тесты (без слов "негатив", "ошибка", "невалид", "граничн" в title)
                         // 2. Негативные с параметризацией (есть examples)
                         // 3. Остальные негативные
-                        const sortedIntegration = integrationCases.sort((a, b) => {
+                        const sortedIntegration = integrationCases.sort((a, b) =>
+                        {
                             const aTitle = (a.title || '').toLowerCase();
                             const bTitle = (b.title || '').toLowerCase();
                             const aIsPositive = !aTitle.includes('негатив') && !aTitle.includes('ошибка') && !aTitle.includes('невалид') && !aTitle.includes('граничн');
@@ -20329,7 +16308,8 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                         // 1. Позитивные тесты (без слов "негатив", "ошибка", "невалид", "граничн" в title)
                         // 2. Негативные с параметризацией (есть examples)
                         // 3. Остальные негативные
-                        const sortedIntegration = integrationCases.sort((a, b) => {
+                        const sortedIntegration = integrationCases.sort((a, b) =>
+                        {
                             const aTitle = (a.title || '').toLowerCase();
                             const bTitle = (b.title || '').toLowerCase();
                             const aIsPositive = !aTitle.includes('негатив') && !aTitle.includes('ошибка') && !aTitle.includes('невалид') && !aTitle.includes('граничн');
@@ -20430,9 +16410,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                     : (typeof refinedReqs === 'string' ? refinedReqs : '');
 
                 if (requirementsText && requirementsText.trim().length > 100) {
-                    logicConstraints = await extractLogicAndConstraints(requirementsText, {
-                        models: modelsToTry
-                    });
+                    logicConstraints = await extractLogicAndConstraints(requirementsText);
                     console.log(`[generate-test-cases-async] ✅ Извлечено ограничений: ${logicConstraints.validations.length} валидаций, ${logicConstraints.boundary_values.length} граничных значений, ${logicConstraints.negative_scenarios.length} негативных сценариев`);
                 } else {
                     console.log(`[generate-test-cases-async] ⚠️ Требования слишком короткие для извлечения логики, пропускаем`);
@@ -20519,7 +16497,8 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                         );
 
                         // Используем Promise.race для таймаута
-                        const timeoutPromise = new Promise((_, reject) => {
+                        const timeoutPromise = new Promise((_, reject) =>
+                        {
                             setTimeout(() => reject(new Error(`Таймаут генерации chunk ${i + 1}: превышено ${CHUNK_TIMEOUT_MS / 1000 / 60} минут`)), CHUNK_TIMEOUT_MS);
                         });
 
@@ -20787,7 +16766,8 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
             // Дополнительная проверка для Integration тестов с scenario
             // Используем простую нормализацию строк для сравнения
             const normalizeForComparison = (str) => (str || '').toLowerCase().trim().replace(/\s+/g, ' ');
-            allCases = allCases.filter(testCase => {
+            allCases = allCases.filter(testCase =>
+            {
                 if (testCase.layer?.includes('Integration') && testCase.scenario) {
                     // Проверяем, что scenario существует в модели
                     let scenarioExists = false;
@@ -20875,9 +16855,8 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
             const llmValidationResult = await validateUntilClean(
                 finalTestCases,
                 modelStructure,
-                refinedReqs.join(''),
-                2,
-                { model: preferredModel }
+                refinedReqs.join(''), // Объединяем все требования в одну строку
+                2  // Макс. 2 итерации (быстро!)
             );
             finalTestCases = llmValidationResult.testCases;
             console.log(`[generate-test-cases-async] ✅ LLM исправил: ${llmValidationResult.totalFixedErrors} враков`);
@@ -21029,7 +17008,8 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
             console.log(`[Coverage] Scenarios: ${scenarioCoverage.covered}/${scenarioCoverage.total} (${scenarioCoverage.coveragePercent}%)`);
             if (scenarioCoverage.missing.length > 0) {
                 console.warn(`[Coverage] Не покрыто ${scenarioCoverage.missing.length} scenarios:`);
-                scenarioCoverage.missing.slice(0, 5).forEach(sc => {
+                scenarioCoverage.missing.slice(0, 5).forEach(sc =>
+                {
                     console.warn(`  ❌ ${sc.feature} → ${sc.story} → ${sc.scenario}`);
                 });
                 if (scenarioCoverage.missing.length > 5) {
@@ -21038,7 +17018,8 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
             }
         }
         console.log(`[generate-test-cases-async] Layer distribution:`,
-            finalTestCases.reduce((acc, tc) => {
+            finalTestCases.reduce((acc, tc) =>
+            {
                 acc[tc.layer] = (acc[tc.layer] || 0) + 1;
                 return acc;
             }, {}));
@@ -21219,9 +17200,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                             const allowedCodes = collectAllowedCodes(matchingChunk);
                             const allowedScenarios = collectAllowedScenarios(matchingChunk);
 
-                            const submissionTool = buildSubmitCasesToolStrict(allowedCodes, allowedScenarios, null, {
-                                modelScope: matchingChunk
-                            });
+                            const submissionTool = buildSubmitCasesToolStrict(allowedCodes, allowedScenarios);
                             const retryPrompt = `${BASE_SYSTEM_PROMPT}\n\n${escalationPrompt}\n\n═══════════════════════════════════════════════════════════════
         🚨 КРИТИЧЕСКИ ВАЖНО: СОХРАНЕНИЕ ОРИГИНАЛЬНОГО ID
         ═══════════════════════════════════════════════════════════════
@@ -21361,7 +17340,8 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
         // ✅ ПРОВЕРКА: Сравниваем originalModel (сохраненную в начале) с extractedModel (входящей моделью)
         // Используем глубокое сравнение через JSON.stringify (без регулярок и статических проверок)
         // Это гарантирует, что модель не изменилась в процессе генерации
-        function deepEqual(obj1, obj2) {
+        function deepEqual (obj1, obj2)
+        {
             return JSON.stringify(obj1) === JSON.stringify(obj2);
         }
 
@@ -21461,7 +17441,8 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
     }
 }
 
-app.post('/api/generate-test-cases-async', async (req, res) => {
+app.post('/api/generate-test-cases-async', async (req, res) =>
+{
     try {
         const taskId = uuidv4();
 
@@ -21470,7 +17451,6 @@ app.post('/api/generate-test-cases-async', async (req, res) => {
         console.log(`[generate-test-cases-async] 📦 Получен запрос на генерацию тест-кейсов`);
         console.log(`[generate-test-cases-async] 📋 modelStructure в запросе:`, req.body.modelStructure ? `type=${typeof req.body.modelStructure}, isArray=${Array.isArray(req.body.modelStructure)}` : 'ОТСУТСТВУЕТ');
         console.log(`[generate-test-cases-async] 📋 testModelId в запросе:`, req.body.testModelId || 'ОТСУТСТВУЕТ');
-        console.log(`[generate-test-cases-async] 📋 models в запросе:`, Array.isArray(req.body.models) && req.body.models.length > 0 ? req.body.models.join(', ') : 'ОТСУТСТВУЕТ');
 
         // ❌ ОТКЛЮЧЕНО: Загрузка старой модели из БД по testModelId
         // Теперь используем ТОЛЬКО новую модель, переданную с фронтенда в req.body.modelStructure
@@ -21501,7 +17481,8 @@ app.post('/api/generate-test-cases-async', async (req, res) => {
         const startTime = Date.now();
 
         // Функция для проверки таймаута
-        const checkTimeout = async () => {
+        const checkTimeout = async () =>
+        {
             const elapsed = Date.now() - startTime;
             if (elapsed > MAX_TIMEOUT_MS) {
                 console.error(`[generate-test-cases-async] ⏱️ Таймаут генерации для taskId=${taskId}: ${elapsed}ms > ${MAX_TIMEOUT_MS}ms`);
@@ -21516,7 +17497,8 @@ app.post('/api/generate-test-cases-async', async (req, res) => {
         };
 
         // Запускаем генерацию с обработкой ошибок и таймаутом
-        generateTestCasesAsync(taskId, req.body).catch(async (error) => {
+        generateTestCasesAsync(taskId, req.body).catch(async (error) =>
+        {
             console.error(`[generate-test-cases-async] ❌ Необработанная ошибка в generateTestCasesAsync для taskId=${taskId}:`, error);
             await db('generation_tasks').where('id', taskId).update({
                 status: 'failed',
@@ -21526,7 +17508,8 @@ app.post('/api/generate-test-cases-async', async (req, res) => {
         });
 
         // Периодически проверяем таймаут (каждые 5 минут)
-        const timeoutCheckInterval = setInterval(async () => {
+        const timeoutCheckInterval = setInterval(async () =>
+        {
             const task = await db('generation_tasks').where('id', taskId).first();
             if (!task || task.status !== 'processing') {
                 clearInterval(timeoutCheckInterval);
@@ -21593,7 +17576,7 @@ async function updateTaskStatusWithMetrics(taskId, updateData, metrics = null) {
     } catch (error) {
         const errorMsg = error.message || '';
         const isMetricsColumnError =
-            errorMsg.includes('СЃС‚РѕР»Р±РµС† "metrics"') ||
+            errorMsg.includes('столбец "metrics"') ||
             errorMsg.includes('column "metrics"') ||
             (errorMsg.includes('metrics') && (errorMsg.includes('does not exist') || errorMsg.includes("doesn't exist")));
 
@@ -21606,7 +17589,8 @@ async function updateTaskStatusWithMetrics(taskId, updateData, metrics = null) {
     }
 }
 
-app.get('/api/task-status/:taskId', async (req, res) => {
+app.get('/api/task-status/:taskId', async (req, res) =>
+{
     try {
         const taskId = req.params.taskId;
         const cacheKey = `task_status_${taskId}`;
@@ -21639,75 +17623,8 @@ app.get('/api/task-status/:taskId', async (req, res) => {
     }
 });
 
-app.post('/api/compare-test-cases-async', async (req, res) => {
-    try {
-        const taskId = uuidv4();
-        const { projectId, jiraIssue, generatedCases } = req.body || {};
-
-        if (!projectId) {
-            return res.status(400).json({ error: 'projectId is required' });
-        }
-        if (!jiraIssue) {
-            return res.status(400).json({ error: 'jiraIssue is required' });
-        }
-        if (!Array.isArray(generatedCases) || generatedCases.length === 0) {
-            return res.status(400).json({ error: 'generatedCases must be a non-empty array' });
-        }
-
-        taskStatusCache.delete(`task_status_${taskId}`);
-
-        await db('generation_tasks').insert({
-            id: taskId,
-            type: 'test_case_comparison',
-            status: 'processing',
-            progress: 0,
-            input_data: req.body,
-            created_at: new Date(),
-            updated_at: new Date()
-        });
-
-        compareGeneratedCasesAgainstAllure({
-            projectId,
-            jiraIssue,
-            generatedCases,
-            onProgress: async (progress) => {
-                await db('generation_tasks').where('id', taskId).update({
-                    progress: Math.max(0, Math.min(100, Number(progress || 0))),
-                    updated_at: new Date()
-                });
-            }
-        })
-            .then(async (result) => {
-                await updateTaskStatusWithMetrics(
-                    taskId,
-                    {
-                        status: 'completed',
-                        progress: 100,
-                        result,
-                        completed_at: new Date(),
-                        updated_at: new Date()
-                    },
-                    result.summary || null
-                );
-            })
-            .catch(async (error) => {
-                console.error('[compare-test-cases-async] Error:', error);
-                await db('generation_tasks').where('id', taskId).update({
-                    status: 'failed',
-                    error_message: error.message || 'Comparison failed',
-                    updated_at: new Date(),
-                    completed_at: new Date()
-                });
-            });
-
-        return res.json({ taskId, status: 'started' });
-    } catch (error) {
-        console.error('[compare-test-cases-async] Failed to create task:', error);
-        return res.status(500).json({ error: error.message });
-    }
-});
-
-app.get('/api/generate-test-cases-status/:taskId', async (req, res) => {
+app.get('/api/generate-test-cases-status/:taskId', async (req, res) =>
+{
     try {
         const taskId = req.params.taskId;
         const cacheKey = `status_${taskId}`;
@@ -21787,8 +17704,81 @@ app.get('/api/generate-test-cases-status/:taskId', async (req, res) => {
     }
 });
 
+app.post('/api/compare-test-cases-async', async (req, res) =>
+{
+    try {
+        const taskId = uuidv4();
+        const { projectId, jiraIssue, generatedCases } = req.body || {};
+
+        if (!projectId) {
+            return res.status(400).json({ error: 'projectId is required' });
+        }
+        if (!jiraIssue) {
+            return res.status(400).json({ error: 'jiraIssue is required' });
+        }
+        if (!Array.isArray(generatedCases) || generatedCases.length === 0) {
+            return res.status(400).json({ error: 'generatedCases must be a non-empty array' });
+        }
+
+        taskStatusCache.delete(`task_status_${taskId}`);
+
+        await db('generation_tasks').insert({
+            id: taskId,
+            type: 'test_case_comparison',
+            status: 'processing',
+            progress: 0,
+            input_data: req.body,
+            created_at: new Date(),
+            updated_at: new Date()
+        });
+
+        compareGeneratedCasesAgainstAllure({
+            projectId,
+            jiraIssue,
+            generatedCases,
+            onProgress: async (progress) => {
+                await db('generation_tasks').where('id', taskId).update({
+                    progress: Math.max(0, Math.min(100, Number(progress || 0))),
+                    updated_at: new Date()
+                });
+                taskStatusCache.delete(`task_status_${taskId}`);
+            }
+        })
+            .then(async (result) => {
+                await updateTaskStatusWithMetrics(
+                    taskId,
+                    {
+                        status: 'completed',
+                        progress: 100,
+                        result,
+                        completed_at: new Date(),
+                        updated_at: new Date()
+                    },
+                    result.summary || null
+                );
+                taskStatusCache.delete(`task_status_${taskId}`);
+            })
+            .catch(async (error) => {
+                console.error('[compare-test-cases-async] Error:', error);
+                await db('generation_tasks').where('id', taskId).update({
+                    status: 'failed',
+                    error_message: error.message || 'Comparison failed',
+                    updated_at: new Date(),
+                    completed_at: new Date()
+                });
+                taskStatusCache.delete(`task_status_${taskId}`);
+            });
+
+        return res.json({ taskId, status: 'started' });
+    } catch (error) {
+        console.error('[compare-test-cases-async] Failed to create task:', error);
+        return res.status(500).json({ error: error.message });
+    }
+});
+
 // Отмена задачи генерации
-app.post('/api/cancel-generation/:taskId', async (req, res) => {
+app.post('/api/cancel-generation/:taskId', async (req, res) =>
+{
     try {
         const { taskId } = req.params;
 
@@ -21816,7 +17806,8 @@ app.post('/api/cancel-generation/:taskId', async (req, res) => {
  * @param {string} projectName - Название проекта (для root topic)
  * @returns {Buffer} - ZIP архив с XMind файлом
  */
-function generateXMindFile(testModel, projectName = 'Test Model') {
+function generateXMindFile (testModel, projectName = 'Test Model')
+{
     const STYLE_IDS = {
         e2e: 'b-e2e',
         integration: 'b-int',
@@ -21865,20 +17856,24 @@ function generateXMindFile(testModel, projectName = 'Test Model') {
     }
 
     // Строим иерархию из формата test model
-    const featureTopics = testModel.map((feature) => {
+    const featureTopics = testModel.map((feature) =>
+    {
         const featureName = feature.text || feature.id || 'Unnamed Feature';
         const stories = feature.stories || [];
 
-        const storyTopics = stories.map((story) => {
+        const storyTopics = stories.map((story) =>
+        {
             const storyName = story.text || story.id || 'Unnamed Story';
             const scenarios = story.scenarios || [];
 
-            const scenarioTopics = scenarios.map((scenario) => {
+            const scenarioTopics = scenarios.map((scenario) =>
+            {
                 const scenarioName = scenario.text || scenario.id || 'Unnamed Scenario';
                 const codes = scenario.codes || [];
 
                 // Создаем children из codes
-                const codeTopics = codes.map((code) => {
+                const codeTopics = codes.map((code) =>
+                {
                     const codeName = code.text || code.id || 'Unnamed Code';
                     const codeType = code.type || 'frontend';
 
@@ -21976,7 +17971,8 @@ function generateXMindFile(testModel, projectName = 'Test Model') {
 
 // API эндпоинт для генерации XMind файла
 // Принимает test model в формате: [{id, text, stories: [{id, text, scenarios: [{id, text, codes: [{id, text, type}]}]}]}]
-app.post('/api/generate-xmind', async (req, res) => {
+app.post('/api/generate-xmind', async (req, res) =>
+{
     try {
         // Поддерживаем оба формата для обратной совместимости
         let testModel = req.body.testModel || req.body.treeData;
@@ -21985,10 +17981,14 @@ app.post('/api/generate-xmind', async (req, res) => {
         // Если передан treeData (старый формат UI), преобразуем в test model формат
         if (testModel && !Array.isArray(testModel) && typeof testModel === 'object') {
             // Преобразуем treeData в test model формат
-            testModel = Object.entries(testModel).map(([featureName, featureData]) => {
-                const stories = Object.entries(featureData.stories || {}).map(([storyName, storyData]) => {
-                    const scenarios = Object.entries(storyData.scenarios || {}).map(([scenarioName, scenarioData]) => {
-                        const codes = Object.entries(scenarioData.codes || {}).map(([codeName, codeData]) => {
+            testModel = Object.entries(testModel).map(([featureName, featureData]) =>
+            {
+                const stories = Object.entries(featureData.stories || {}).map(([storyName, storyData]) =>
+                {
+                    const scenarios = Object.entries(storyData.scenarios || {}).map(([scenarioName, scenarioData]) =>
+                    {
+                        const codes = Object.entries(scenarioData.codes || {}).map(([codeName, codeData]) =>
+                        {
                             // Определяем type из cases или используем дефолт
                             const hasFE = (codeData.cases || []).some(c => (c.layer || "").toLowerCase().includes("frontend"));
                             const hasBE = (codeData.cases || []).some(c => (c.layer || "").toLowerCase().includes("backend"));
@@ -22047,38 +18047,15 @@ try {
 } catch (e) {
     console.warn('[startup] Не удалось сгенерировать validation-rules.md:', e.message);
 }
-
-// Инициализация pgvector для семантической чанкизации
-const CLOUDRU_API_KEY = process.env.CLOUDRU_API_KEY || config.cloudru?.apiKey;
-if (CLOUDRU_API_KEY) {
-    try {
-        await initPgVectorStore({
-            host: process.env.DB_HOST || 'localhost',
-            port: parseInt(process.env.DB_PORT || '5432'),
-            database: process.env.DB_NAME || 'tia_mapping_db',
-            user: process.env.DB_USER || 'tia_user',
-            password: process.env.DB_PASSWORD || 'password'
-        });
-        console.log('[startup] ✅ pgvector для семантической чанкизации инициализирован');
-    } catch (e) {
-        console.warn('[startup] ⚠️ Не удалось инициализировать pgvector:', e.message);
-        console.warn('[startup] ⚠️ Будет использован fallback на contextRefiner');
-    }
-} else {
-    console.warn('[startup] ⚠️ CLOUDRU_API_KEY не найден, используем contextRefiner');
-}
-
-// Инициализация Neo4j для графа сущностей
 try {
-    initNeo4j();
-    console.log('[startup] ✅ Neo4j driver инициализирован');
+    writeTestModelRulesMarkdown();
 } catch (e) {
-    console.warn('[startup] ⚠️ Не удалось инициализировать Neo4j:', e.message);
+    console.warn('[startup] Не удалось сгенерировать test-model-rules.md:', e.message);
 }
-
-await ensureGenerationTaskTypeConstraint();
 
 // Запуск сервера
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () =>
+{
+    console.log(`🚀 Server is listening ON ALL INTERFACES (0.0.0.0) at port ${PORT}`);
+    console.log(`🔗 Local access: http://localhost:${PORT}`);
 });

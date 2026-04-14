@@ -63,16 +63,15 @@ export function createContextSourceRegistry(opts = {}) {
      */
     const extractAllPageIds = (text) => {
         if (!text || typeof text !== 'string') return [];
-        
+
         const pageIdPattern = /pageId=(\d{4,})/g;
         const matches = [];
         let match;
-        
+
         while ((match = pageIdPattern.exec(text)) !== null) {
             matches.push(match[1]);
         }
-        
-        // Возвращаем уникальные pageId
+
         return [...new Set(matches)];
     };
 
@@ -130,23 +129,19 @@ export function createContextToolset(options = {}) {
     const {
         sources = [],
         fetcher = null,
-        defaultChunk = 8000  
+        defaultChunk = 8000
     } = options;
 
-    const normalizedDefaultChunk = clamp(defaultChunk, 512, 50000); 
-    const HARD_MAX_CHUNK_CHARS = 20000; 
-    const MAX_CHUNKS_PER_SOURCE = 10;  
+    const normalizedDefaultChunk = clamp(defaultChunk, 512, 50000);
+    const HARD_MAX_CHUNK_CHARS = 20000;
+    const MAX_CHUNKS_PER_SOURCE = 10;
 
     const sourceMap = new Map();
     const contentCache = new Map();
-    // ✅ Кэш для чанков (sourceId + offset + limit → chunk)
     const chunkCache = new Map();
-    // ✅ Отслеживание количества запросов к каждому источнику (sourceId → count)
     const sourceRequestCounts = new Map();
-
-    // ✅ Отслеживаем какие чанки уже были отданы (чтобы не дублировать контент)
-    const deliveredChunkKeys = new Set(); // `${sourceId}_${offset}_${limit}`
-    const deliveredChunksBySource = new Map(); // sourceId → [{offset, end}]
+    const deliveredChunkKeys = new Set();
+    const deliveredChunksBySource = new Map();
 
     const normalisedSources = Array.isArray(sources) ? sources : [];
 
@@ -172,11 +167,9 @@ export function createContextToolset(options = {}) {
         });
     });
 
-    // Автоматическое извлечение и регистрация вложенных ссылок из всех источников
     if (fetcher) {
         const allPageIds = new Set();
-        
-        // Собираем все pageId из контента источников
+
         sourceMap.forEach((source) => {
             const content = source.content || '';
             const pageIdPattern = /pageId=(\d{4,})/g;
@@ -185,12 +178,10 @@ export function createContextToolset(options = {}) {
                 allPageIds.add(match[1]);
             }
         });
-        
-        // Регистрируем вложенные страницы как источники с ленивой загрузкой
+
         allPageIds.forEach((nestedPageId) => {
             const sourceId = `nested-page-${nestedPageId}`;
-            
-            // Проверяем, не зарегистрирована ли уже эта страница
+
             if (!sourceMap.has(sourceId)) {
                 sourceMap.set(sourceId, {
                     id: sourceId,
@@ -201,11 +192,11 @@ export function createContextToolset(options = {}) {
                     loader: null,
                     estimatedLength: null,
                     preview: `Страница Confluence ${nestedPageId}`,
-                    content: null // Будет загружено лениво через fetcher
+                    content: null
                 });
             }
         });
-        
+
         if (allPageIds.size > 0) {
             console.log(`[contextToolset] Автоматически обнаружено ${allPageIds.size} вложенных ссылок на Confluence страницы`);
         }
@@ -291,7 +282,7 @@ export function createContextToolset(options = {}) {
                         limit: {
                             type: 'integer',
                             minimum: 256,
-                            maximum: 50000,  // ✅ Увеличено для больших документов
+                            maximum: 50000,
                             description: 'Максимальное количество символов в одном фрагменте (по умолчанию зависит от источника).',
                             default: normalizedDefaultChunk
                         }
@@ -357,10 +348,9 @@ export function createContextToolset(options = {}) {
             }
 
             const offset = clamp(parsedArgs?.offset ?? 0, 0, Number.MAX_SAFE_INTEGER);
-            const rawLimit = clamp(parsedArgs?.limit ?? normalizedDefaultChunk, 256, 50000);  // ✅ Увеличено до 50000
+            const rawLimit = clamp(parsedArgs?.limit ?? normalizedDefaultChunk, 256, 50000);
             const effectiveLimit = Math.min(rawLimit, HARD_MAX_CHUNK_CHARS);
 
-            // ✅ Отслеживаем количество запросов к этому источнику
             const requestCount = (sourceRequestCounts.get(sourceId) || 0) + 1;
             sourceRequestCounts.set(sourceId, requestCount);
 
@@ -370,27 +360,23 @@ export function createContextToolset(options = {}) {
                 deliveredChunksBySource.set(sourceId, deliveredForSource);
             }
 
-            // ✅ КРИТИЧНО: Загружаем content ДО использования totalLength
             const content = await resolveContent(source);
             const totalLength = content.length;
 
-            // ✅ Защита от зацикливания: если тот же chunk запрашивается повторно
             if (deliveredChunkKeys.has(chunkKey)) {
-                console.warn(`[fetch_context_chunk] ⚠️ Повторный запрос того же chunk ${chunkKey}, возвращаю пустой ответ`);
+                console.warn(`[fetch_context_chunk] Повторный запрос того же chunk ${chunkKey}, возвращаю пустой ответ`);
                 return buildAlreadyProvidedResponse(source, offset, totalLength, deliveredForSource);
             }
 
-            // ✅ Ограничиваем количество уникальных чанков на источник
             if (!deliveredForSource.some(entry => entry.key === chunkKey) &&
                 deliveredForSource.length >= MAX_CHUNKS_PER_SOURCE) {
-                console.warn(`[fetch_context_chunk] ⚠️ Достигнут лимит чанков для ${sourceId} (${MAX_CHUNKS_PER_SOURCE}), возвращаю пустой ответ`);
+                console.warn(`[fetch_context_chunk] Достигнут лимит чанков для ${sourceId} (${MAX_CHUNKS_PER_SOURCE}), возвращаю пустой ответ`);
                 return buildLimitReachedResponse(source, offset, totalLength, deliveredForSource);
             }
 
-            // ✅ Проверяем кэш чанков (с учётом урезанного effectiveLimit)
             const cacheKey = `${sourceId}_${offset}_${effectiveLimit}`;
             if (chunkCache.has(cacheKey)) {
-                console.log(`[fetch_context_chunk] ✅ CACHE HIT для ${cacheKey}`);
+                console.log(`[fetch_context_chunk] CACHE HIT для ${cacheKey}`);
                 return chunkCache.get(cacheKey);
             }
 
@@ -402,7 +388,6 @@ export function createContextToolset(options = {}) {
                     nextOffset: 0,
                     totalLength
                 };
-                // ✅ Кэшируем результат
                 chunkCache.set(cacheKey, result);
                 return result;
             }
@@ -415,33 +400,30 @@ export function createContextToolset(options = {}) {
                     nextOffset: totalLength,
                     totalLength
                 };
-                // ✅ Кэшируем результат
                 chunkCache.set(cacheKey, result);
                 return result;
             }
 
-            // ✅ Если уже было 5+ запросов к этому источнику и остался контент - возвращаем большими частями
             if (requestCount >= 5 && offset < totalLength) {
                 const remainingLength = totalLength - offset;
-                // ✅ Ограничиваем размер чанка до 50k символов (~12.5k токенов), чтобы не упереться в лимит модели
                 const maxChunkSize = 50000;
                 const chunkSize = Math.min(remainingLength, maxChunkSize);
                 const remainingContent = content.slice(offset, offset + chunkSize);
                 const hasMoreAfter = (offset + chunkSize) < totalLength;
-                
-                console.log(`[fetch_context_chunk] ⚡ После ${requestCount} запросов к "${sourceId}" возвращаю большой чанк (${remainingContent.length} из ${remainingLength} оставшихся символов)`);
-                
+
+                console.log(`[fetch_context_chunk] После ${requestCount} запросов к "${sourceId}" возвращаю большой чанк (${remainingContent.length} из ${remainingLength} оставшихся символов)`);
+
                 const result = {
                     sourceId,
                     chunk: remainingContent,
                     offset,
                     limit: chunkSize,
                     nextOffset: offset + chunkSize,
-                    hasMore: hasMoreAfter,  // Может быть еще контент
+                    hasMore: hasMoreAfter,
                     totalLength,
                     title: source.title,
                     pageId: source.pageId,
-                    _autoComplete: true  // Флаг, что это автоматическое ускорение
+                    _autoComplete: true
                 };
                 chunkCache.set(cacheKey, result);
                 return result;
@@ -464,11 +446,10 @@ export function createContextToolset(options = {}) {
                 title: source.title,
                 pageId: source.pageId,
                 note: rawLimit > effectiveLimit
-                    ? `⚠️ Запрошено ${rawLimit} символов, но по правилам выдано только ${effectiveLimit}.`
+                    ? `Запрошено ${rawLimit} символов, но по правилам выдано только ${effectiveLimit}.`
                     : undefined
             };
-            
-            // ✅ Кэшируем результат
+
             chunkCache.set(cacheKey, result);
             return result;
         }
@@ -504,7 +485,7 @@ export function createContextToolset(options = {}) {
             totalLength,
             title: source.title,
             pageId: source.pageId,
-            note: '⚠️ Этот чанк уже был предоставлен ранее. Используй его из истории диалога вместо повторного запроса.'
+            note: 'Этот чанк уже был предоставлен ранее. Используй его из истории диалога вместо повторного запроса.'
         };
     }
 
@@ -523,7 +504,7 @@ export function createContextToolset(options = {}) {
             totalLength,
             title: source.title,
             pageId: source.pageId,
-            note: `⚠️ Достигнут лимит ${MAX_CHUNKS_PER_SOURCE} уникальных чанков для "${source.title}". Используй ранее полученные диапазоны: ${summary}`
+            note: `Достигнут лимит ${MAX_CHUNKS_PER_SOURCE} уникальных чанков для "${source.title}". Используй ранее полученные диапазоны: ${summary}`
         };
     }
 }

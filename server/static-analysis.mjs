@@ -135,8 +135,9 @@ function renderTreeHtml (nodes, statusMaps, testCategoriesMap = null, depth = 0)
     return html;
 }
 
-export async function staticAnalysis (testCases, projectId, aiRecommendations = null)
+export async function staticAnalysis (testCases, projectId, aiRecommendations = null, options = {})
 {
+    const persistCleanIds = Boolean(options.persistCleanIds);
     if (!Array.isArray(testCases) || testCases.length === 0) {
         throw new Error('Не найдено тест-кейсов для анализа. Проверьте, что к задаче прикреплены тест-кейсы и выбран корректный проект');
     }
@@ -147,6 +148,7 @@ export async function staticAnalysis (testCases, projectId, aiRecommendations = 
     const warningTests = [];
     const testsByCategory = new Map();
     const testCasesWithIssues = [];
+    const cleanTestCaseIds = [];
 
     // Получение настроек проекта
     const projectSettings = getProjectSettings(projectId);
@@ -199,6 +201,8 @@ export async function staticAnalysis (testCases, projectId, aiRecommendations = 
             }));
         if (realIssues.length > 0) {
             testCasesWithIssues.push({ testCaseId: testCase.id, issues: realIssues });
+        } else if (persistCleanIds) {
+            cleanTestCaseIds.push(String(testCase.id));
         }
     }
 
@@ -312,7 +316,7 @@ export async function staticAnalysis (testCases, projectId, aiRecommendations = 
             </div>
             <div class="header-right">
                 ${resolution}
-                <button type="button" class="header-download-btn" onclick="window.dispatchEvent(new CustomEvent('downloadReport'))">Скачать отчёт</button>
+                <button type="button" class="header-download-btn" onclick="window.dispatchEvent(new CustomEvent('downloadReport'))">Скачать отчет</button>
             </div>
         </div>
 
@@ -406,7 +410,13 @@ export async function staticAnalysis (testCases, projectId, aiRecommendations = 
     writeFileSync(fileName, htmlReport, 'utf8');
 
     console.log(`Отчет сохранен в файл: ${fileName}`);
-    return { html: htmlReport, metadata: { testCasesWithIssues } };
+    return {
+        html: htmlReport,
+        metadata: {
+            testCasesWithIssues,
+            ...(persistCleanIds ? { cleanTestCaseIds } : {})
+        }
+    };
 }
 
 async function generateTestCaseReport (testCase, projectId, aiRecommendations = [], issueKey = '')

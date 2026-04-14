@@ -4,7 +4,13 @@ import ReactMarkdown from 'react-markdown';
 import config from '../config';
 import '../style.css';
 
-const RulesModal = ({ isOpen, onClose, projectId, projects }) => {
+const RulesModal = ({
+    isOpen,
+    onClose,
+    projectId,
+    exportUrlSuffix = 'validation/rules/export',
+    emptyTitleFallback = 'Правила ревью'
+}) => {
     const [markdown, setMarkdown] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -23,9 +29,10 @@ const RulesModal = ({ isOpen, onClose, projectId, projects }) => {
         setExpandedSections({});
         setAllExpanded(false);
         const base = String(config.serverUrl || '').replace(/\/+$/, '');
+        const suffix = String(exportUrlSuffix || '').replace(/^\/+/, '');
         const exportUrl = base.endsWith('/api')
-            ? `${base}/validation/rules/export`
-            : `${base}/api/validation/rules/export`;
+            ? `${base}/${suffix}`
+            : `${base}/api/${suffix}`;
 
         axios.get(exportUrl, {
             params: { projectId }
@@ -44,7 +51,7 @@ const RulesModal = ({ isOpen, onClose, projectId, projects }) => {
             .finally(() => {
                 setLoading(false);
             });
-    }, [isOpen, projectId]);
+    }, [isOpen, projectId, exportUrlSuffix]);
 
     // Парсинг markdown в структуру с секциями
     const parsedContent = useMemo(() => {
@@ -383,7 +390,7 @@ const RulesModal = ({ isOpen, onClose, projectId, projects }) => {
                 {/* Header */}
                 <div className="rules-modal-header">
                     <h2 className="rules-modal-title">
-                        {parsedContent?.header || 'Правила статического анализа'}
+                        {parsedContent?.header || emptyTitleFallback}
                     </h2>
                     <div className="rules-modal-header-actions">
                         {!loading && !error && parsedContent && (

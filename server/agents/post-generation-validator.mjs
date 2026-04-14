@@ -206,11 +206,10 @@ function applyFixes(testCases, fixes, removals = []) {
 /**
  * Основная функция валидации и исправления
  */
-export async function validateAndFixTestCases(testCases, testModel, requirements, options = {}) {
+export async function validateAndFixTestCases(testCases, testModel, requirements) {
     console.log(`\n[POST-GEN VALIDATOR] ═══════════════════════════════════════`);
     console.log(`[POST-GEN VALIDATOR] 🔍 Валидация ${testCases.length} тест-кейсов через LLM...`);
     
-    console.log(`[POST-GEN VALIDATOR] 🤖 Модель: ${options.model || 'default Cloud.ru'}`);
     const prompt = buildValidationPrompt(testCases, testModel, requirements);
     
     try {
@@ -231,7 +230,6 @@ export async function validateAndFixTestCases(testCases, testModel, requirements
         
         const response = await callCloudRuAPI(messages, {
             temperature: 0.1,  // Низкая температура для точности
-            model: options.model || undefined,
             max_tokens: 8000,
             response_format: {
                 type: 'json_object'
@@ -310,7 +308,7 @@ export async function validateAndFixTestCases(testCases, testModel, requirements
  * Итеративная валидация с повторными попытками (ТОЛЬКО ВРАКИ)
  * Выборочно исправляет только проблемные части, не меняя структуру
  */
-export async function validateUntilClean(testCases, testModel, requirements, maxIterations = 2, options = {}) {
+export async function validateUntilClean(testCases, testModel, requirements, maxIterations = 2) {
     console.log(`\n[POST-GEN VALIDATOR] 🔄 Итеративная валидация ВРАКОВ (макс. ${maxIterations} итераций)...`);
     console.log(`[POST-GEN VALIDATOR] 🎯 Фокус: ТОЛЬКО враки, структура НЕ меняется!`);
     
@@ -320,7 +318,7 @@ export async function validateUntilClean(testCases, testModel, requirements, max
     for (let i = 1; i <= maxIterations; i++) {
         console.log(`\n[POST-GEN VALIDATOR] 🔄 Итерация ${i}/${maxIterations} (поиск враков)...`);
         
-        const result = await validateAndFixTestCases(currentTestCases, testModel, requirements, options);
+        const result = await validateAndFixTestCases(currentTestCases, testModel, requirements);
         
         currentTestCases = result.testCases;
         totalFixedErrors += result.fixCount;
@@ -341,3 +339,4 @@ export async function validateUntilClean(testCases, testModel, requirements, max
         totalFixedErrors
     };
 }
+

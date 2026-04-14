@@ -4,7 +4,15 @@
 
 import { runAutomatedTest, analyzeResults, compareWithReference } from './debug-agent.mjs';
 import { analyzeProjectRules, debugRuleApplication, getRulesForProject } from './validation-engine.mjs';
-import { getGraphStats, getAllNodes, getAllRelationships, isNeo4jAvailable } from './graphStore.mjs';
+import multer from 'multer';
+import os from 'os';
+import path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import fs from 'fs/promises';
+
+const execPromise = promisify(exec);
+const upload = multer({ dest: os.tmpdir() });
 
 /**
  * Регистрирует debug маршруты на Express app
@@ -217,6 +225,46 @@ export function registerDebugRoutes(app) {
         }
     });
 
+    /**
+     * POST /api/debug/ocr
+     * Отладка OCR воркера
+     * Body: file (multipart), targetText (field)
+     */
+    app.post('/api/debug/ocr', upload.single('image'), async (req, res) => {
+        try {
+            const { targetText = 'все' } = req.body;
+            const file = req.file;
+
+            if (!file) {
+                return res.status(400).json({ error: 'Изображение (image) обязательно' });
+            }
+
+            console.log(`[DEBUG OCR] Тестирование OCR для файла: ${file.originalname}, цель: ${targetText}`);
+
+            const scriptPath = path.join(process.cwd(), 'server', 'scripts', 'ocr_worker.py');
+            const command = `python "${scriptPath}" "${file.path}" "${targetText}"`;
+
+            try {
+                const { stdout, stderr } = await execPromise(command, {
+                    env: { ...process.env }
+                });
+
+                if (stderr) console.warn('[DEBUG OCR] stderr:', stderr);
+
+                const result = JSON.parse(stdout);
+                res.json(result);
+
+            } finally {
+                // Удаляем временный файл
+                await fs.unlink(file.path).catch(() => {});
+            }
+
+        } catch (error) {
+            console.error('[DEBUG OCR] Ошибка:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
     console.log('[DEBUG] Debug API маршруты зарегистрированы:');
     console.log('[DEBUG]   POST /api/debug/test-agent');
     console.log('[DEBUG]   POST /api/debug/validate-model');
@@ -224,105 +272,4 @@ export function registerDebugRoutes(app) {
     console.log('[DEBUG]   POST /api/debug/analyze-rules');
     console.log('[DEBUG]   POST /api/debug/test-rule-application');
     console.log('[DEBUG]   GET  /api/debug/rules/:projectId');
-
-    // === Graph Debug Routes ===
-
-    /**
-     * GET /api/debug/graph-stats
-     * Получить статистику графа для сессии
-     * Query: ?sessionId=xxx
-     */
-    app.get('/api/debug/graph-stats', async (req, res) => {
-        try {
-            const { sessionId } = req.query;
-            
-            if (!sessionId) {
-                return res.status(400).json({ error: 'sessionId обязателен' });
-            }
-
-            const neo4jAvailable = await isNeo4jAvailable();
-            if (!neo4jAvailable) {
-                return res.status(503).json({ error: 'Neo4j недоступен' });
-            }
-
-            const stats = await getGraphStats(sessionId);
-            
-            res.json({
-                success: true,
-                sessionId,
-                stats
-            });
-        } catch (error) {
-            console.error('[DEBUG] Ошибка получения статистики графа:', error);
-            res.status(500).json({ success: false, error: error.message });
-        }
-    });
-
-    /**
-     * GET /api/debug/graph-nodes
-     * Получить все узлы графа
-     * Query: ?sessionId=xxx&limit=100
-     */
-    app.get('/api/debug/graph-nodes', async (req, res) => {
-        try {
-            const { sessionId, limit = 100 } = req.query;
-            
-            if (!sessionId) {
-                return res.status(400).json({ error: 'sessionId обязателен' });
-            }
-
-            const neo4jAvailable = await isNeo4jAvailable();
-            if (!neo4jAvailable) {
-                return res.status(503).json({ error: 'Neo4j недоступен' });
-            }
-
-            const nodes = await getAllNodes(sessionId, parseInt(limit));
-            
-            res.json({
-                success: true,
-                sessionId,
-                count: nodes.length,
-                nodes
-            });
-        } catch (error) {
-            console.error('[DEBUG] Ошибка получения узлов графа:', error);
-            res.status(500).json({ success: false, error: error.message });
-        }
-    });
-
-    /**
-     * GET /api/debug/graph-relationships
-     * Получить все связи графа
-     * Query: ?sessionId=xxx&limit=100
-     */
-    app.get('/api/debug/graph-relationships', async (req, res) => {
-        try {
-            const { sessionId, limit = 100 } = req.query;
-            
-            if (!sessionId) {
-                return res.status(400).json({ error: 'sessionId обязателен' });
-            }
-
-            const neo4jAvailable = await isNeo4jAvailable();
-            if (!neo4jAvailable) {
-                return res.status(503).json({ error: 'Neo4j недоступен' });
-            }
-
-            const relationships = await getAllRelationships(sessionId, parseInt(limit));
-            
-            res.json({
-                success: true,
-                sessionId,
-                count: relationships.length,
-                relationships
-            });
-        } catch (error) {
-            console.error('[DEBUG] Ошибка получения связей графа:', error);
-            res.status(500).json({ success: false, error: error.message });
-        }
-    });
-
-    console.log('[DEBUG]   GET  /api/debug/graph-stats');
-    console.log('[DEBUG]   GET  /api/debug/graph-nodes');
-    console.log('[DEBUG]   GET  /api/debug/graph-relationships');
 }

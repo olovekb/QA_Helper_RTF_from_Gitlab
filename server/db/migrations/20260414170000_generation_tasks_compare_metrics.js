@@ -1,8 +1,25 @@
-import { buildGenerationTaskTypeCheckClause, GENERATION_TASK_TYPES } from '../../../shared/generation-task-types.mjs';
+const LEGACY_TASK_TYPES = Object.freeze([
+  'test_cases',
+  'test_model',
+  'bdd_tests',
+  'cleanup_duplicates',
+  'qa_agent_review',
+  'test_impact_analysis'
+]);
 
-const LEGACY_TASK_TYPES = Object.freeze(
-  GENERATION_TASK_TYPES.filter((type) => type !== 'test_case_comparison')
-);
+const GENERATION_TASK_TYPES = Object.freeze([
+  ...LEGACY_TASK_TYPES,
+  'test_case_comparison'
+]);
+
+function toSqlStringLiteral(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function buildGenerationTaskTypeCheckClause(types) {
+  const values = types.map(toSqlStringLiteral).join(', ');
+  return `CHECK (type IN (${values}))`;
+}
 
 async function syncGenerationTasksConstraint(knex, types) {
   await knex.raw('ALTER TABLE "generation_tasks" DROP CONSTRAINT IF EXISTS "generation_tasks_type_check"');

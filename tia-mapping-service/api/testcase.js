@@ -4,9 +4,6 @@ import config from '../config/index.js';
 import databasePool from '../db/pool.js';
 import { logError, logInfo, logWarn } from '../utils/logger.js';
 
-/**
- * Helper to recursively find all parent functional blocks in our DB
- */
 async function getAllParentBlocks(databasePool, startBlockUuid, projectId) {
     const path = [];
     let currentUuid = startBlockUuid;
@@ -26,7 +23,7 @@ async function getAllParentBlocks(databasePool, startBlockUuid, projectId) {
 }
 
 export const createStubTestCase = async (req, res) => {
-    const { projectId, parentId, name, issueKey } = req.body; // parentId here is allure_id
+    const { projectId, parentId, name, issueKey } = req.body;
 
     if (!projectId || !parentId || !name) {
         return res.status(400).json({ error: 'Missing required fields: projectId, parentId, name' });
@@ -36,7 +33,6 @@ export const createStubTestCase = async (req, res) => {
         logInfo(`Request to create stub test case "${name}" in group ${parentId} (Project ${projectId})`);
         if (issueKey) logInfo(`Will link test case to issue: ${issueKey}`);
 
-        // 1. Find the target group and its parents in our DB
         const group = await databasePool('functional_blocks')
             .where({ allure_id: parentId.toString(), project_id: projectId })
             .first();
@@ -48,13 +44,12 @@ export const createStubTestCase = async (req, res) => {
         const fullPath = await getAllParentBlocks(databasePool, group.id, projectId);
         logInfo(`Found path for group ${parentId}: ${fullPath.map(b => b.name).reverse().join(' > ')}`);
 
-        // 2. Fetch Allure Tree Metadata to map Custom Field Names to IDs
         const treeUrl = `${config.allureBaseUrl}/api/tree?projectId=${projectId}`;
         const treeRes = await fetchWithAuth(treeUrl, { headers: authHeaders });
         if (!treeRes.ok) throw new Error(`Failed to fetch tree list: ${await treeRes.text()}`);
         const treeData = await treeRes.json();
 
-        const nocodeProjectIds = ['1', '307'];
+        const nocodeProjectIds = ['1', '307', '377'];
         let structureTree = treeData.content?.find(item =>
             nocodeProjectIds.includes(String(projectId))
                 ? (item.name === "Global Structure" || item.name === "Structure")
@@ -70,7 +65,6 @@ export const createStubTestCase = async (req, res) => {
         const treeDetailData = await treeDetailRes.json();
         const customFieldsSchema = treeDetailData.fields || [];
 
-        // 3. Create the Test Case (Step 1: Basic info)
         logInfo(`Creating test case base: "${name}" in project ${projectId}`);
         const createUrl = `${config.allureBaseUrl}/api/testcase`;
         const createBody = { name, projectId: parseInt(projectId, 10) };
@@ -87,8 +81,6 @@ export const createStubTestCase = async (req, res) => {
         const testCaseId = newTc.id;
         logInfo(`Test case base created: ID ${testCaseId}`);
 
-        // 4. Set Custom Fields for the entire path (Step 2: Linking to groups)
-        // We collect all custom fields from the path: Feature, Story, Scenario, etc.
         const cfvBody = [];
         const seenCfIds = new Set();
 
@@ -110,14 +102,13 @@ export const createStubTestCase = async (req, res) => {
             logInfo(`Setting ${cfvBody.length} custom fields for TC ${testCaseId} sequentially...`);
             const cfvUrl = `${config.allureBaseUrl}/api/testcase/${testCaseId}/cfv`;
 
-            // ВАЖНО: Делаем запросы ПОСЛЕДОВАТЕЛЬНО, чтобы избежать ошибок 500 от Allure
             for (const fieldUpdate of cfvBody) {
                 try {
                     logInfo(`Updating field ${fieldUpdate.customField.id} (${fieldUpdate.name})...`);
                     const cfvRes = await fetchWithAuth(cfvUrl, {
                         method: 'POST',
                         headers: { ...authHeaders, 'Content-Type': 'application/json' },
-                        body: JSON.stringify([fieldUpdate]) // Шлем по одному полю в массиве
+                        body: JSON.stringify([fieldUpdate])
                     });
 
                     if (!cfvRes.ok) {
@@ -133,11 +124,9 @@ export const createStubTestCase = async (req, res) => {
             logWarn(`No custom fields found to set for TC ${testCaseId}`);
         }
 
-        // 5. Link Test Case to Jira Issue (Step 3: Link to Jira)
         if (issueKey) {
             try {
-                // Get integration ID
-                let integrationId = 67; // Default
+                let integrationId = 67;
                 const integrationUrl = `${config.allureBaseUrl}/api/integration/suggest?operation=issue_suggest&projectId=${projectId}`;
                 const intResp = await fetchWithAuth(integrationUrl, { method: 'GET', headers: authHeaders });
                 if (intResp.ok) {
