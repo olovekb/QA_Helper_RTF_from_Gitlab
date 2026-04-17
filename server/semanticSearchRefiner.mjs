@@ -1,17 +1,21 @@
 // semanticSearchRefiner.mjs
 // Уточнение Code элементов через семантический поиск (pgvector)
 
-import { isPgVectorInitialized, semanticSearch as pgvectorSearch } from './pgvectorStore.mjs';
+import {
+    isPgVectorInitialized,
+    semanticSearch as pgvectorSearch,
+    findChunksByReferences
+} from './pgvectorStore.mjs';
 
 export async function refineCodesWithSemanticSearch(model, apiKey, options = {}) {
-    const { usePinecone = false, usePgVector = false, topK = 5, namespace = 'test-model-chunks' } = options;
+    const { usePinecone = false, usePgVector = false, topK = 5, namespace = 'test-model-chunks', docId = null } = options;
     
     if (usePgVector) {
         if (!isPgVectorInitialized()) {
             console.log('[refineCodesWithSemanticSearch] pgvector недоступен, пропускаем');
             return model;
         }
-        return refineWithPgVector(model, apiKey, { topK });
+        return refineWithPgVector(model, apiKey, { topK, docId });
     }
     
     if (usePinecone) {
@@ -27,7 +31,8 @@ export async function refineCodesWithSemanticSearch(model, apiKey, options = {})
 }
 
 async function refineWithPgVector(model, apiKey, options = {}) {
-    const { topK = 5 } = options;
+    const { topK = 5, docId = null } = options;
+    const mainDocId = String(docId || '').trim() || null;
     
     console.log('[refineCodesWithSemanticSearch] Уточнение Code элементов через pgvector (intra-scenario)...');
     
@@ -66,7 +71,11 @@ async function refineWithPgVector(model, apiKey, options = {}) {
             // Шаг 1: Local retrieval - ищем только по main документу с высоким приоритетом
             const localResults = await pgvectorSearch(query, apiKey, { 
                 topK: Math.ceil(topK * 0.6),  // 60% локальный поиск
-                sourceType: 'main'
+                sourceType: 'main',
+                docId: mainDocId,
+                retrievalClass: 'behavioral',
+                chunkGranularity: 'atomic',
+                enforceScoped: true
             });
             
             // Шаг 2: Explicit link resolution - подтягиваем связанные чанки по явным ссылкам
@@ -78,20 +87,10 @@ async function refineWithPgVector(model, apiKey, options = {}) {
                 }
             }
             
-            // Шаг 3: Limited semantic fallback - только если мало результатов
-            let fallbackResults = [];
-            if (localResults.length + linkedResults.length < topK) {
-                fallbackResults = await pgvectorSearch(query, apiKey, { 
-                    topK: topK - localResults.length - linkedResults.length,
-                    sourceType: 'linked'
-                });
-            }
-            
             // Объединяем результаты с приоритетами
             const allResults = [
                 ...localResults.map(r => ({ ...r, priority: 'local', score: r.score * 1.0 })),
-                ...linkedResults.map(r => ({ ...r, priority: 'linked', score: r.score * 0.8 })),
-                ...fallbackResults.map(r => ({ ...r, priority: 'fallback', score: r.score * 0.5 }))
+                ...linkedResults.map(r => ({ ...r, priority: 'linked', score: r.score * 0.8 }))
             ];
             
             if (allResults.length > 0) {
@@ -132,20 +131,6 @@ async function refineWithPgVector(model, apiKey, options = {}) {
 }
 
 async function resolveLinksFromRefs(refs, currentDocId) {
-    const resolved = [];
-    const seen = new Set();
-    
-    for (const ref of refs) {
-        if (ref.type === 'section_ref' && ref.target) {
-            const results = await pgvectorSearch(ref.target, null, { topK: 2 });
-            for (const r of results) {
-                if (!seen.has(r.id)) {
-                    seen.add(r.id);
-                    resolved.push(r);
-                }
-            }
-        }
-    }
-    
-    return resolved;
+    const resolved = await findChunksByReferences(refs, currentDocId, { limit: 2 });
+    return (resolved || []).filter(chunk => (chunk?.chunk_granularity || chunk?.metadata?.chunk_granularity || 'atomic') === 'atomic');
 }

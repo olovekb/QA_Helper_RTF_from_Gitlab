@@ -1,5 +1,5 @@
-// semanticChunking.mjs
-// Семантическая чанкизация требований из Confluence для RAG-системы
+﻿// semanticChunking.mjs
+// РЎРµРјР°РЅС‚РёС‡РµСЃРєР°СЏ С‡Р°РЅРєРёР·Р°С†РёСЏ С‚СЂРµР±РѕРІР°РЅРёР№ РёР· Confluence РґР»СЏ RAG-СЃРёСЃС‚РµРјС‹
 
 import { v4 as uuidv4 } from 'uuid';
 
@@ -11,7 +11,7 @@ function containsReferenceLinks(text) {
         /figma\.com/i,
         /confluence/i,
         /jira/i,
-        /см\.\s*(пункт|раздел|подраздел|section)/i,
+        /СЃРј\.\s*(РїСѓРЅРєС‚|СЂР°Р·РґРµР»|РїРѕРґСЂР°Р·РґРµР»|section)/i,
         /see\s+(section|page)/i
     ];
 
@@ -19,10 +19,12 @@ function containsReferenceLinks(text) {
 }
 
 // ============================================================
-// ТИПЫ ЧАНКОВ
+// РўРРџР« Р§РђРќРљРћР’
 // ============================================================
 export const CHUNK_TYPES = {
     REQUIREMENT_ROW: 'requirement_row',
+    REQUIREMENT_ROW_SUMMARY: 'requirement_row_summary',
+    ATOMIC_RULE: 'atomic_rule',
     SCENARIO_BRANCH: 'scenario_branch',
     API_ENDPOINT_SUMMARY: 'api_endpoint_summary',
     API_INPUT_PARAMS: 'api_input_params',
@@ -35,16 +37,16 @@ export const CHUNK_TYPES = {
     CHANGE_LOG: 'change_log',
     BUSINESS_CONTEXT: 'business_context',
     SCOPE_CONTEXT: 'scope_context',
-    BUSINESS_RULE: 'business_rule',           // Бизнес-правила
-    UI_RULE: 'ui_rule',                       // UI-правила (кнопки, поля, модальные окна)
-    API_CONTRACT: 'api_contract',             // API-контракты
-    VALIDATION_RULE: 'validation_rule',        // Правила валидации
-    ERROR_HANDLING: 'error_handling',          // Обработка ошибок
-    SCENARIO_STEP: 'scenario_step',           // Шаги сценария
-    REFERENCE_CONTEXT: 'reference_context',     // Справочный контекст
-    NOISE_METADATA: 'noise_metadata',         // Метаданные/шум
-    COMPOSITE: 'composite',                   // Составной чанк
-    TABLE_ROW: 'table_row'                    // Строка таблицы требований
+    BUSINESS_RULE: 'business_rule',           // Р‘РёР·РЅРµСЃ-РїСЂР°РІРёР»Р°
+    UI_RULE: 'ui_rule',                       // UI-РїСЂР°РІРёР»Р° (РєРЅРѕРїРєРё, РїРѕР»СЏ, РјРѕРґР°Р»СЊРЅС‹Рµ РѕРєРЅР°)
+    API_CONTRACT: 'api_contract',             // API-РєРѕРЅС‚СЂР°РєС‚С‹
+    VALIDATION_RULE: 'validation_rule',        // РџСЂР°РІРёР»Р° РІР°Р»РёРґР°С†РёРё
+    ERROR_HANDLING: 'error_handling',          // РћР±СЂР°Р±РѕС‚РєР° РѕС€РёР±РѕРє
+    SCENARIO_STEP: 'scenario_step',           // РЁР°РіРё СЃС†РµРЅР°СЂРёСЏ
+    REFERENCE_CONTEXT: 'reference_context',     // РЎРїСЂР°РІРѕС‡РЅС‹Р№ РєРѕРЅС‚РµРєСЃС‚
+    NOISE_METADATA: 'noise_metadata',         // РњРµС‚Р°РґР°РЅРЅС‹Рµ/С€СѓРј
+    COMPOSITE: 'composite',                   // РЎРѕСЃС‚Р°РІРЅРѕР№ С‡Р°РЅРє
+    TABLE_ROW: 'table_row'                    // РЎС‚СЂРѕРєР° С‚Р°Р±Р»РёС†С‹ С‚СЂРµР±РѕРІР°РЅРёР№
 };
 
 export const RETRIEVAL_CLASSES = {
@@ -64,45 +66,48 @@ const RETRIEVAL_EXCLUDED_CHUNK_TYPES = new Set([
     CHUNK_TYPES.CHANGE_LOG,
     CHUNK_TYPES.NOISE_METADATA,
     CHUNK_TYPES.NOISE_SKIPPED,
-    CHUNK_TYPES.REFERENCE_LINK
+    CHUNK_TYPES.REFERENCE_LINK,
+    CHUNK_TYPES.BUSINESS_CONTEXT,
+    CHUNK_TYPES.SCOPE_CONTEXT,
+    CHUNK_TYPES.REQUIREMENT_ROW_SUMMARY,
+    CHUNK_TYPES.REQUIREMENT_ROW
 ]);
 
 // ============================================================
-// ОСНОВНАЯ ФУНКЦИЯ: CHUNKIFY
+// РћРЎРќРћР’РќРђРЇ Р¤РЈРќРљР¦РРЇ: CHUNKIFY
 // ============================================================
 
 /**
- * Основная функция чанкизации документа
- * @param {string} markdown - Markdown текст из Confluence
- * @param {Object} metadata - Метаданные документа
- * @returns {Promise<Array>} Массив чанков
+ * РћСЃРЅРѕРІРЅР°СЏ С„СѓРЅРєС†РёСЏ С‡Р°РЅРєРёР·Р°С†РёРё РґРѕРєСѓРјРµРЅС‚Р°
+ * @param {string} markdown - Markdown С‚РµРєСЃС‚ РёР· Confluence
+ * @param {Object} metadata - РњРµС‚Р°РґР°РЅРЅС‹Рµ РґРѕРєСѓРјРµРЅС‚Р°
+ * @returns {Promise<Array>} РњР°СЃСЃРёРІ С‡Р°РЅРєРѕРІ
  */
 export async function chunkify(markdown, metadata = {}) {
-    console.log(`[semanticChunking] Начинаю чанкизацию документа: ${metadata.title || 'unknown'}`);
+    console.log(`[semanticChunking] РќР°С‡РёРЅР°СЋ С‡Р°РЅРєРёР·Р°С†РёСЋ РґРѕРєСѓРјРµРЅС‚Р°: ${metadata.title || 'unknown'}`);
     
     const docId = metadata.pageId || metadata.id || uuidv4();
     const docTitle = metadata.title || 'Untitled';
     
-    // Этап 1: Парсинг структуры документа
+    // Р­С‚Р°Рї 1: РџР°СЂСЃРёРЅРі СЃС‚СЂСѓРєС‚СѓСЂС‹ РґРѕРєСѓРјРµРЅС‚Р°
     const sections = expandSectionsForChunking(parseDocumentStructure(markdown));
-    console.log(`[semanticChunking] Найдено секций: ${sections.length}`);
+    console.log(`[semanticChunking] РќР°Р№РґРµРЅРѕ СЃРµРєС†РёР№: ${sections.length}`);
     
-    // Этап 2: Семантическая чанкизация
+    // Р­С‚Р°Рї 2: РЎРµРјР°РЅС‚РёС‡РµСЃРєР°СЏ С‡Р°РЅРєРёР·Р°С†РёСЏ
     let chunks = [];
-    let currentComposite = null;
     
     for (const section of sections) {
-        // Классифицируем секцию
+        // РљР»Р°СЃСЃРёС„РёС†РёСЂСѓРµРј СЃРµРєС†РёСЋ
         const chunkType = classifySection(section);
         
-        // Фильтруем шум
+        // Р¤РёР»СЊС‚СЂСѓРµРј С€СѓРј
         if (chunkType === CHUNK_TYPES.NOISE_METADATA ||
             chunkType === CHUNK_TYPES.NOISE_SKIPPED ||
             chunkType === CHUNK_TYPES.TABLE_ROW) {
             continue;
         }
         
-        // Создаём atomic chunk
+        // РЎРѕР·РґР°С‘Рј atomic chunk
         const retrievalProfile = assignRetrievalProfile(section, chunkType);
         const atomicChunk = createAtomicChunk({
             ...section,
@@ -118,62 +123,24 @@ export async function chunkify(markdown, metadata = {}) {
             continue;
         }
         
-        // Определяем, нужно ли объединять с предыдущим (composite chunk)
-        const shouldMerge = shouldMergeWithPrevious(atomicChunk, currentComposite);
-        
-        if (shouldMerge && currentComposite) {
-            // Добавляем к существующему composite chunk
-            currentComposite.atomic_chunks.push(atomicChunk.id);
-            currentComposite.cleaned_text += '\n\n' + atomicChunk.cleaned_text;
-            currentComposite.content = currentComposite.cleaned_text;
-            currentComposite.core_text = trimSemanticBlock([
-                currentComposite.core_text || '',
-                atomicChunk.core_text || ''
-            ].filter(Boolean).join('\n\n'));
-            currentComposite.embedding_text = currentComposite.core_text || currentComposite.cleaned_text;
-            currentComposite.aux_metadata = {
-                ...(currentComposite.aux_metadata || {}),
-                ...(atomicChunk.aux_metadata || {})
-            };
-            currentComposite.linked_chunk_ids.push(atomicChunk.id);
-        } else {
-            // Завершаем предыдущий composite
-            if (currentComposite) {
-                chunks.push(finalizeCompositeChunk(currentComposite));
-            }
-            
-            // Начинаем новый composite, если это бизнес-правило или UI-правило
-            if (chunkType === CHUNK_TYPES.BUSINESS_RULE || 
-                chunkType === CHUNK_TYPES.UI_RULE ||
-                chunkType === CHUNK_TYPES.UI_CURRENT_BEHAVIOR ||
-                chunkType === CHUNK_TYPES.API_CONTRACT ||
-                chunkType === CHUNK_TYPES.API_ENDPOINT_SUMMARY) {
-                currentComposite = createCompositeChunk(atomicChunk);
-            } else {
-                chunks.push(atomicChunk);
-                currentComposite = null;
-            }
-        }
+        chunks.push(atomicChunk);
     }
+
+    chunks = applyRequirementLineage(chunks);
     
-    // Завершаем последний composite
-    if (currentComposite) {
-        chunks.push(finalizeCompositeChunk(currentComposite));
-    }
-    
-    console.log(`[semanticChunking] Создано чанков: ${chunks.length} (atomic + composite)`);
+    console.log(`[semanticChunking] РЎРѕР·РґР°РЅРѕ С‡Р°РЅРєРѕРІ: ${chunks.length} (atomic)`);
     
     return chunks;
 }
 
 // ============================================================
-// ЭТАП 1: PARSE DOCUMENT STRUCTURE
+// Р­РўРђРџ 1: PARSE DOCUMENT STRUCTURE
 // ============================================================
 
 /**
- * Парсит структуру документа Markdown
+ * РџР°СЂСЃРёС‚ СЃС‚СЂСѓРєС‚СѓСЂСѓ РґРѕРєСѓРјРµРЅС‚Р° Markdown
  * @param {string} markdown 
- * @returns {Array} Массив секций
+ * @returns {Array} РњР°СЃСЃРёРІ СЃРµРєС†РёР№
  */
 function parseDocumentStructure(markdown) {
     const lines = markdown.split('\n');
@@ -187,21 +154,21 @@ function parseDocumentStructure(markdown) {
         const line = lines[i];
         lineNumber = i + 1;
         
-        // Проверяем заголовок с нумерацией (например "3.1.2 Название" или "1. Требование")
+        // РџСЂРѕРІРµСЂСЏРµРј Р·Р°РіРѕР»РѕРІРѕРє СЃ РЅСѓРјРµСЂР°С†РёРµР№ (РЅР°РїСЂРёРјРµСЂ "3.1.2 РќР°Р·РІР°РЅРёРµ" РёР»Рё "1. РўСЂРµР±РѕРІР°РЅРёРµ")
         const headingWithNumberMatch = line.match(/^(#{1,6})\s+(\d+(?:[\.\)]\d+)*)\s+(.+)$/);
         if (headingWithNumberMatch) {
-            // Сохраняем предыдущую секцию
+            // РЎРѕС…СЂР°РЅСЏРµРј РїСЂРµРґС‹РґСѓС‰СѓСЋ СЃРµРєС†РёСЋ
             if (currentSection && sectionContent.length > 0) {
                 currentSection.content = sectionContent.join('\n').trim();
                 sections.push(currentSection);
             }
             
-            // Начинаем новую секцию
+            // РќР°С‡РёРЅР°РµРј РЅРѕРІСѓСЋ СЃРµРєС†РёСЋ
             const level = headingWithNumberMatch[1].length;
             const sectionNumber = headingWithNumberMatch[2].trim();
             const text = headingWithNumberMatch[3].trim();
             
-            // Обновляем путь заголовков
+            // РћР±РЅРѕРІР»СЏРµРј РїСѓС‚СЊ Р·Р°РіРѕР»РѕРІРєРѕРІ
             currentHeading = currentHeading.slice(0, level - 1);
             currentHeading.push(text);
             
@@ -220,20 +187,20 @@ function parseDocumentStructure(markdown) {
             continue;
         }
         
-        // Проверяем заголовок без номера
+        // РџСЂРѕРІРµСЂСЏРµРј Р·Р°РіРѕР»РѕРІРѕРє Р±РµР· РЅРѕРјРµСЂР°
         const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
         if (headingMatch) {
-            // Сохраняем предыдущую секцию
+            // РЎРѕС…СЂР°РЅСЏРµРј РїСЂРµРґС‹РґСѓС‰СѓСЋ СЃРµРєС†РёСЋ
             if (currentSection && sectionContent.length > 0) {
                 currentSection.content = sectionContent.join('\n').trim();
                 sections.push(currentSection);
             }
             
-            // Начинаем новую секцию
+            // РќР°С‡РёРЅР°РµРј РЅРѕРІСѓСЋ СЃРµРєС†РёСЋ
             const level = headingMatch[1].length;
             const text = headingMatch[2].trim();
             
-            // Обновляем путь заголовков
+            // РћР±РЅРѕРІР»СЏРµРј РїСѓС‚СЊ Р·Р°РіРѕР»РѕРІРєРѕРІ
             currentHeading = currentHeading.slice(0, level - 1);
             currentHeading.push(text);
             
@@ -251,7 +218,7 @@ function parseDocumentStructure(markdown) {
             continue;
         }
         
-        // Проверяем нумерованный список
+        // РџСЂРѕРІРµСЂСЏРµРј РЅСѓРјРµСЂРѕРІР°РЅРЅС‹Р№ СЃРїРёСЃРѕРє
         const numberedMatch = line.match(/^(\s*)(\d+[\.\)]\s+)(.+)$/);
         if (numberedMatch) {
             const indent = numberedMatch[1].length;
@@ -272,8 +239,8 @@ function parseDocumentStructure(markdown) {
             continue;
         }
         
-        // Проверяем маркированный список
-        const bulletMatch = line.match(/^(\s*)([-*•]\s+)(.+)$/);
+        // РџСЂРѕРІРµСЂСЏРµРј РјР°СЂРєРёСЂРѕРІР°РЅРЅС‹Р№ СЃРїРёСЃРѕРє
+        const bulletMatch = line.match(/^(\s*)([-*вЂў]\s+)(.+)$/);
         if (bulletMatch) {
             const indent = bulletMatch[1].length;
             const marker = bulletMatch[2];
@@ -293,7 +260,7 @@ function parseDocumentStructure(markdown) {
             continue;
         }
         
-        // Проверяем таблицу
+        // РџСЂРѕРІРµСЂСЏРµРј С‚Р°Р±Р»РёС†Сѓ
         const tableMatch = line.match(/^\|.+\|$/);
         if (tableMatch) {
             if (currentSection) {
@@ -308,7 +275,7 @@ function parseDocumentStructure(markdown) {
             continue;
         }
         
-        // Проверяем блок кода
+        // РџСЂРѕРІРµСЂСЏРµРј Р±Р»РѕРє РєРѕРґР°
         const codeMatch = line.match(/^```/);
         if (codeMatch) {
             if (currentSection) {
@@ -323,14 +290,14 @@ function parseDocumentStructure(markdown) {
             continue;
         }
         
-        // Обычный текст
+        // РћР±С‹С‡РЅС‹Р№ С‚РµРєСЃС‚
         if (line.trim()) {
             sectionContent.push(line);
             if (currentSection) currentSection.line_end = lineNumber;
         }
     }
     
-    // Добавляем последнюю секцию
+    // Р”РѕР±Р°РІР»СЏРµРј РїРѕСЃР»РµРґРЅСЋСЋ СЃРµРєС†РёСЋ
     if (currentSection && sectionContent.length > 0) {
         currentSection.content = sectionContent.join('\n').trim();
         sections.push(currentSection);
@@ -340,13 +307,13 @@ function parseDocumentStructure(markdown) {
 }
 
 // ============================================================
-// ЭТАП 2: CLASSIFY SECTION
+// Р­РўРђРџ 2: CLASSIFY SECTION
 // ============================================================
 
 /**
- * Классифицирует тип секции на основе ключевых слов
+ * РљР»Р°СЃСЃРёС„РёС†РёСЂСѓРµС‚ С‚РёРї СЃРµРєС†РёРё РЅР° РѕСЃРЅРѕРІРµ РєР»СЋС‡РµРІС‹С… СЃР»РѕРІ
  * @param {Object} section 
- * @returns {string} Тип чанка
+ * @returns {string} РўРёРї С‡Р°РЅРєР°
  */
 function classifySection(section) {
     if (section?.chunk_type_hint) {
@@ -361,7 +328,7 @@ function classifySection(section) {
     const chunkableContent = getChunkableSectionText(section);
     const text = `${section.heading || ''} ${chunkableContent}`.toLowerCase();
     
-    // Проверяем на шум (changelog, история, метаданные)
+    // РџСЂРѕРІРµСЂСЏРµРј РЅР° С€СѓРј (changelog, РёСЃС‚РѕСЂРёСЏ, РјРµС‚Р°РґР°РЅРЅС‹Рµ)
     if (isNoise(text)) {
         return CHUNK_TYPES.NOISE_METADATA;
     }
@@ -370,59 +337,59 @@ function classifySection(section) {
         return CHUNK_TYPES.REFERENCE_LINK;
     }
     
-    // Проверяем API-контракты
+    // РџСЂРѕРІРµСЂСЏРµРј API-РєРѕРЅС‚СЂР°РєС‚С‹
     if (containsApiContract(text)) {
         return CHUNK_TYPES.API_ENDPOINT_SUMMARY;
     }
     
-    // Проверяем обработку ошибок
+    // РџСЂРѕРІРµСЂСЏРµРј РѕР±СЂР°Р±РѕС‚РєСѓ РѕС€РёР±РѕРє
     if (containsErrorHandling(text)) {
         return CHUNK_TYPES.ERROR_HANDLING;
     }
     
-    // Проверяем UI-правила
+    // РџСЂРѕРІРµСЂСЏРµРј UI-РїСЂР°РІРёР»Р°
     if (containsUIRule(text)) {
         return CHUNK_TYPES.UI_CURRENT_BEHAVIOR;
     }
     
-    // Проверяем валидацию
+    // РџСЂРѕРІРµСЂСЏРµРј РІР°Р»РёРґР°С†РёСЋ
     if (containsValidationRule(text)) {
         return CHUNK_TYPES.VALIDATION_RULE;
     }
     
-    // Проверяем бизнес-правила
+    // РџСЂРѕРІРµСЂСЏРµРј Р±РёР·РЅРµСЃ-РїСЂР°РІРёР»Р°
     if (containsBusinessRule(text)) {
         return CHUNK_TYPES.BUSINESS_RULE;
     }
     
-    // Проверяем таблицы требований
+    // РџСЂРѕРІРµСЂСЏРµРј С‚Р°Р±Р»РёС†С‹ С‚СЂРµР±РѕРІР°РЅРёР№
     if (section.elements?.some(el => el.type === 'table_row') && !chunkableContent.trim()) {
         return CHUNK_TYPES.TABLE_ROW;
     }
     
-    // Проверяем шаги сценария
+    // РџСЂРѕРІРµСЂСЏРµРј С€Р°РіРё СЃС†РµРЅР°СЂРёСЏ
     if (containsScenarioStep(text)) {
         return CHUNK_TYPES.SCENARIO_STEP;
     }
     
-    // По умолчанию - справочный контекст
+    // РџРѕ СѓРјРѕР»С‡Р°РЅРёСЋ - СЃРїСЂР°РІРѕС‡РЅС‹Р№ РєРѕРЅС‚РµРєСЃС‚
     return CHUNK_TYPES.REFERENCE_CONTEXT;
 }
 
 function isNoise(text) {
     const noisePatterns = [
         /changelog/i,
-        /история изменений/i,
+        /РёСЃС‚РѕСЂРёСЏ РёР·РјРµРЅРµРЅРёР№/i,
         /version history/i,
         /history of changes/i,
-        /автор:\s*/i,
-        /согласовано:\s*/i,
-        /утверждено:\s*/i,
-        /статус:\s*(draft|черновик|новый)/i,
+        /Р°РІС‚РѕСЂ:\s*/i,
+        /СЃРѕРіР»Р°СЃРѕРІР°РЅРѕ:\s*/i,
+        /СѓС‚РІРµСЂР¶РґРµРЅРѕ:\s*/i,
+        /СЃС‚Р°С‚СѓСЃ:\s*(draft|С‡РµСЂРЅРѕРІРёРє|РЅРѕРІС‹Р№)/i,
         /last updated/i,
         /date created/i,
         /created by/i,
-        /авторский комментарий/i,
+        /Р°РІС‚РѕСЂСЃРєРёР№ РєРѕРјРјРµРЅС‚Р°СЂРёР№/i,
         /meta:/i,
         /^={5,}$/m,
         /^-+$/m
@@ -437,8 +404,8 @@ function containsApiContract(text) {
         /endpoint/i,
         /\/rest\//i,
         /post\s+.*\/get\s+.*\/put\s+.*\/delete/i,
-        /метод\s+(get|post|put|delete|patch)/i,
-        /запрос\s+(get|post|put|delete|patch)/i,
+        /РјРµС‚РѕРґ\s+(get|post|put|delete|patch)/i,
+        /Р·Р°РїСЂРѕСЃ\s+(get|post|put|delete|patch)/i,
         /http\s+(method|code|status)/i,
         /request\s+(body|params|headers)/i,
         /response\s+(body|code|status)/i,
@@ -452,10 +419,10 @@ function containsApiContract(text) {
 
 function containsErrorHandling(text) {
     const patterns = [
-        /ошибк[ауи]/i,
+        /РѕС€РёР±Рє[Р°СѓРё]/i,
         /exception/i,
         /error/i,
-        /код ошибки/i,
+        /РєРѕРґ РѕС€РёР±РєРё/i,
         /status\s*4\d\d/i,
         /status\s*5\d\d/i,
         /not found/i,
@@ -466,7 +433,7 @@ function containsErrorHandling(text) {
         /invalid\s+(input|data|request)/i,
         /timeout/i,
         /timeout/i,
-        /исключени[ея]/i
+        /РёСЃРєР»СЋС‡РµРЅРё[РµСЏ]/i
     ];
     
     return patterns.some(pattern => pattern.test(text));
@@ -474,31 +441,31 @@ function containsErrorHandling(text) {
 
 function containsUIRule(text) {
     const patterns = [
-        /кнопк[ауи]/i,
-        /поле[ау]?\s+(ввод|выбор|пароль|текст)/i,
-        /модальн/i,
-        /диалог/i,
-        /окно/i,
-        /экран/i,
-        /интерфейс/i,
+        /РєРЅРѕРїРє[Р°СѓРё]/i,
+        /РїРѕР»Рµ[Р°Сѓ]?\s+(РІРІРѕРґ|РІС‹Р±РѕСЂ|РїР°СЂРѕР»СЊ|С‚РµРєСЃС‚)/i,
+        /РјРѕРґР°Р»СЊРЅ/i,
+        /РґРёР°Р»РѕРі/i,
+        /РѕРєРЅРѕ/i,
+        /СЌРєСЂР°РЅ/i,
+        /РёРЅС‚РµСЂС„РµР№СЃ/i,
         /ui\s*[-/]/i,
-        /отобразить/i,
-        /скрыть/i,
-        /показать/i,
-        /клик/i,
-        /нажать/i,
-        /ввод/i,
-        /выбор/i,
-        /выпадающий\s+список/i,
-        /чекбокс/i,
-        /радио-кнопка/i,
-        /переключатель/i,
-        /таб/i,
-        /вкладка/i,
-        /меню/i,
-        /ссылк[ау]/i,
-        /главн[ау]?\s+страниц/i,
-        /страница/i,
+        /РѕС‚РѕР±СЂР°Р·РёС‚СЊ/i,
+        /СЃРєСЂС‹С‚СЊ/i,
+        /РїРѕРєР°Р·Р°С‚СЊ/i,
+        /РєР»РёРє/i,
+        /РЅР°Р¶Р°С‚СЊ/i,
+        /РІРІРѕРґ/i,
+        /РІС‹Р±РѕСЂ/i,
+        /РІС‹РїР°РґР°СЋС‰РёР№\s+СЃРїРёСЃРѕРє/i,
+        /С‡РµРєР±РѕРєСЃ/i,
+        /СЂР°РґРёРѕ-РєРЅРѕРїРєР°/i,
+        /РїРµСЂРµРєР»СЋС‡Р°С‚РµР»СЊ/i,
+        /С‚Р°Р±/i,
+        /РІРєР»Р°РґРєР°/i,
+        /РјРµРЅСЋ/i,
+        /СЃСЃС‹Р»Рє[Р°Сѓ]/i,
+        /РіР»Р°РІРЅ[Р°Сѓ]?\s+СЃС‚СЂР°РЅРёС†/i,
+        /СЃС‚СЂР°РЅРёС†Р°/i,
         /component/i,
         /element/i
     ];
@@ -508,28 +475,28 @@ function containsUIRule(text) {
 
 function containsValidationRule(text) {
     const patterns = [
-        /валидаци[яюи]/i,
-        /проверк[ауи]/i,
-        /ограничени[ея]/i,
+        /РІР°Р»РёРґР°С†Рё[СЏСЋРё]/i,
+        /РїСЂРѕРІРµСЂРє[Р°СѓРё]/i,
+        /РѕРіСЂР°РЅРёС‡РµРЅРё[РµСЏ]/i,
         /constraint/i,
         /required/i,
-        /обязательн/i,
-        /максимум/i,
-        /минимум/i,
-        /диапазон/i,
-        /длина/i,
-        /формат/i,
-        /шаблон/i,
+        /РѕР±СЏР·Р°С‚РµР»СЊРЅ/i,
+        /РјР°РєСЃРёРјСѓРј/i,
+        /РјРёРЅРёРјСѓРј/i,
+        /РґРёР°РїР°Р·РѕРЅ/i,
+        /РґР»РёРЅР°/i,
+        /С„РѕСЂРјР°С‚/i,
+        /С€Р°Р±Р»РѕРЅ/i,
         /pattern/i,
         /regex/i,
         /regular expression/i,
-        /не может быть пустым/i,
-        /не может быть null/i,
-        /должен содержать/i,
-        /должен быть/i,
-        /должн[ау]\s+быть/i,
-        /не допускается/i,
-        /не разрешено/i
+        /РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ РїСѓСЃС‚С‹Рј/i,
+        /РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ null/i,
+        /РґРѕР»Р¶РµРЅ СЃРѕРґРµСЂР¶Р°С‚СЊ/i,
+        /РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ/i,
+        /РґРѕР»Р¶РЅ[Р°Сѓ]\s+Р±С‹С‚СЊ/i,
+        /РЅРµ РґРѕРїСѓСЃРєР°РµС‚СЃСЏ/i,
+        /РЅРµ СЂР°Р·СЂРµС€РµРЅРѕ/i
     ];
     
     return patterns.some(pattern => pattern.test(text));
@@ -537,21 +504,21 @@ function containsValidationRule(text) {
 
 function containsBusinessRule(text) {
     const patterns = [
-        /бизнес-правило/i,
-        /бизнес\s*правило/i,
-        /бизнес-требование/i,
-        /требование\s+[A-ZА-Я]+/i,
+        /Р±РёР·РЅРµСЃ-РїСЂР°РІРёР»Рѕ/i,
+        /Р±РёР·РЅРµСЃ\s*РїСЂР°РІРёР»Рѕ/i,
+        /Р±РёР·РЅРµСЃ-С‚СЂРµР±РѕРІР°РЅРёРµ/i,
+        /requirement\s+[A-Z]+/i,
         /functional\s+requirement/i,
         /business\s+rule/i,
-        /должен\s+обеспечивать/i,
-        /должен\s+поддерживать/i,
-        /должен\s+позволять/i,
-        /должен\s+выполнять/i,
-        /система\s+должна/i,
-        /пользователь\s+может/i,
-        /при\s+выполнении/i,
-        /в\s+результате/i,
-        /следует\s+выполнить/i
+        /РґРѕР»Р¶РµРЅ\s+РѕР±РµСЃРїРµС‡РёРІР°С‚СЊ/i,
+        /РґРѕР»Р¶РµРЅ\s+РїРѕРґРґРµСЂР¶РёРІР°С‚СЊ/i,
+        /РґРѕР»Р¶РµРЅ\s+РїРѕР·РІРѕР»СЏС‚СЊ/i,
+        /РґРѕР»Р¶РµРЅ\s+РІС‹РїРѕР»РЅСЏС‚СЊ/i,
+        /СЃРёСЃС‚РµРјР°\s+РґРѕР»Р¶РЅР°/i,
+        /РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ\s+РјРѕР¶РµС‚/i,
+        /РїСЂРё\s+РІС‹РїРѕР»РЅРµРЅРёРё/i,
+        /РІ\s+СЂРµР·СѓР»СЊС‚Р°С‚Рµ/i,
+        /СЃР»РµРґСѓРµС‚\s+РІС‹РїРѕР»РЅРёС‚СЊ/i
     ];
     
     return patterns.some(pattern => pattern.test(text));
@@ -559,15 +526,15 @@ function containsBusinessRule(text) {
 
 function containsScenarioStep(text) {
     const patterns = [
-        /шаг/i,
-        /сценарий/i,
+        /С€Р°Рі/i,
+        /СЃС†РµРЅР°СЂРёР№/i,
         /user\s+story/i,
         /use\s+case/i,
         /user\s+action/i,
-        /пользователь\s+(открывает|вводит|нажимает|выбирает|удаляет|редактирует)/i,
-        /действие\s+пользователя/i,
-        /предусловие/i,
-        /постусловие/i,
+        /РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ\s+(РѕС‚РєСЂС‹РІР°РµС‚|РІРІРѕРґРёС‚|РЅР°Р¶РёРјР°РµС‚|РІС‹Р±РёСЂР°РµС‚|СѓРґР°Р»СЏРµС‚|СЂРµРґР°РєС‚РёСЂСѓРµС‚)/i,
+        /РґРµР№СЃС‚РІРёРµ\s+РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ/i,
+        /РїСЂРµРґСѓСЃР»РѕРІРёРµ/i,
+        /РїРѕСЃС‚СѓСЃР»РѕРІРёРµ/i,
         /given\s+when\s+then/i,
         /gherkin/i,
         /behavior/i
@@ -577,7 +544,7 @@ function containsScenarioStep(text) {
 }
 
 // ============================================================
-// ЭТАП 3: CREATE CHUNKS
+// Р­РўРђРџ 3: CREATE CHUNKS
 // ============================================================
 
 function extractExplicitRefs(text) {
@@ -586,18 +553,18 @@ function extractExplicitRefs(text) {
     const refs = [];
     const textLower = text.toLowerCase();
     
-    // Паттерны для явных ссылок
+    // РџР°С‚С‚РµСЂРЅС‹ РґР»СЏ СЏРІРЅС‹С… СЃСЃС‹Р»РѕРє
     const patterns = [
-        // см. пункт 2.3, см. раздел 1.2.3, см. подраздел
-        { type: 'section_ref', regex: /см\.?\s*(?:пункт|раздел|подраздел|секцию)\s*([\d\.]+)/gi },
-        //see section 2.3, see пункт
-        { type: 'section_ref', regex: /see\s+(?:section| пункт| раздел)\s*([\d\.]+)/gi },
-        // ссылка на документ "Название"
-        { type: 'doc_ref', regex: /документ\s*["'"]([^"'"']+)["'"']/gi },
+        // СЃРј. РїСѓРЅРєС‚ 2.3, СЃРј. СЂР°Р·РґРµР» 1.2.3, СЃРј. РїРѕРґСЂР°Р·РґРµР»
+        { type: 'section_ref', regex: /СЃРј\.?\s*(?:РїСѓРЅРєС‚|СЂР°Р·РґРµР»|РїРѕРґСЂР°Р·РґРµР»|СЃРµРєС†РёСЋ)\s*([\d\.]+)/gi },
+        //see section 2.3, see РїСѓРЅРєС‚
+        { type: 'section_ref', regex: /see\s+(?:section| РїСѓРЅРєС‚| СЂР°Р·РґРµР»)\s*([\d\.]+)/gi },
+        // СЃСЃС‹Р»РєР° РЅР° РґРѕРєСѓРјРµРЅС‚ "РќР°Р·РІР°РЅРёРµ"
+        { type: 'doc_ref', regex: /РґРѕРєСѓРјРµРЅС‚\s*["'"]([^"'"']+)["'"']/gi },
         // pageId=123456
         { type: 'pageId', regex: /pageId[=\s]*(\d+)/gi },
-        // (см. выше), (см. ниже)
-        { type: 'context_ref', regex: /\(см\.\s*(выше|ниже|рис\.|табл\.\s*\d+)\)/gi }
+        // (СЃРј. РІС‹С€Рµ), (СЃРј. РЅРёР¶Рµ)
+        { type: 'context_ref', regex: /\(СЃРј\.\s*(РІС‹С€Рµ|РЅРёР¶Рµ|СЂРёСЃ\.|С‚Р°Р±Р»\.\s*\d+)\)/gi }
     ];
     
     for (const pattern of patterns) {
@@ -612,15 +579,15 @@ function extractExplicitRefs(text) {
         }
     }
     
-    // Убираем дубликаты
+    // РЈР±РёСЂР°РµРј РґСѓР±Р»РёРєР°С‚С‹
     const additionalPatterns = [
-        { type: 'section_ref', regex: /(?:см\.?\s*(?:пункт|раздел|подраздел|секц(?:ия|ию))|see\s+(?:section|subsection|paragraph))\s*([\d.]+)/gi },
-        { type: 'doc_ref', regex: /документ\s*["'«]([^"'»]+)["'»]/gi },
+        { type: 'section_ref', regex: /(?:СЃРј\.?\s*(?:РїСѓРЅРєС‚|СЂР°Р·РґРµР»|РїРѕРґСЂР°Р·РґРµР»|СЃРµРєС†(?:РёСЏ|РёСЋ))|see\s+(?:section|subsection|paragraph))\s*([\d.]+)/gi },
+        { type: 'doc_ref', regex: /РґРѕРєСѓРјРµРЅС‚\s*["'В«]([^"'В»]+)["'В»]/gi },
         { type: 'doc_ref', regex: /\[([^\]]+)\]\((?:https?:\/\/[^\s)]*?)?(?:viewpage\.action\?pageId=\d+|\/pages\/\d+)[^)]+\)/gi },
         { type: 'pageId', regex: /pageId[=\s:]*(\d{4,})/gi },
         { type: 'pageId', regex: /viewpage\.action\?pageId=(\d{4,})/gi },
         { type: 'pageId', regex: /\/pages\/(\d{4,})/gi },
-        { type: 'context_ref', regex: /\((?:см\.?\s*)?(выше|ниже|рис\.?\s*\d+|табл\.?\s*\d+)\)/gi }
+        { type: 'context_ref', regex: /\((?:СЃРј\.?\s*)?(РІС‹С€Рµ|РЅРёР¶Рµ|СЂРёСЃ\.?\s*\d+|С‚Р°Р±Р»\.?\s*\d+)\)/gi }
     ];
 
     for (const pattern of additionalPatterns) {
@@ -666,6 +633,9 @@ function createAtomicChunk(section, metadata) {
         ...(section.metadata || {}),
         split_source: metadata.split_source || section.split_source || null
     };
+    const chunkGranularity = mergedMetadata.chunk_granularity ||
+        retrievalProfile.chunk_granularity ||
+        'atomic';
     const explicitRefSource = [rawText, mergedMetadata.source_ref_text]
         .filter(Boolean)
         .join('\n');
@@ -680,7 +650,9 @@ function createAtomicChunk(section, metadata) {
     const auxMetadata = {
         ...(retrievalProfile.aux_metadata || {}),
         section_number: retrievalProfile?.aux_metadata?.section_number || section.section_number || null,
-        row_number: retrievalProfile?.aux_metadata?.row_number || mergedMetadata.row_number || null
+        row_number: retrievalProfile?.aux_metadata?.row_number || mergedMetadata.row_number || null,
+        parent_row_number: retrievalProfile?.aux_metadata?.parent_row_number || mergedMetadata.parent_row_number || null,
+        atomic_rule_kind: retrievalProfile?.aux_metadata?.atomic_rule_kind || mergedMetadata.atomic_rule_kind || null
     };
     
     return {
@@ -689,7 +661,7 @@ function createAtomicChunk(section, metadata) {
         doc_title: metadata.doc_title,
         section_path: metadata.section_path || [],
         
-        // Номер раздела (например "3.1.2")
+        // РќРѕРјРµСЂ СЂР°Р·РґРµР»Р° (РЅР°РїСЂРёРјРµСЂ "3.1.2")
         section_number: section.section_number || null,
         
         heading: section.heading,
@@ -703,6 +675,7 @@ function createAtomicChunk(section, metadata) {
         aux_metadata: auxMetadata,
         
         chunk_type: metadata.chunk_type,
+        chunk_granularity: chunkGranularity,
         retrieval_class: retrievalProfile.retrieval_class,
         eligibility_status: retrievalProfile.eligibility_status,
         retrieval_penalty: retrievalProfile.retrieval_penalty,
@@ -732,10 +705,17 @@ function createAtomicChunk(section, metadata) {
             endpoint: auxMetadata.endpoint || null,
             method: auxMetadata.method || null,
             row_number: auxMetadata.row_number || null,
+            parent_row_number: auxMetadata.parent_row_number || auxMetadata.row_number || null,
+            atomic_rule_kind: auxMetadata.atomic_rule_kind || null,
+            chunk_granularity: chunkGranularity,
             section_number: auxMetadata.section_number || section.section_number || null,
             exclude_from_retrieval: excludeFromRetrieval,
             exclude_from_graph: excludeFromGraph,
             source_scope: mergedMetadata.source_scope || metadata.source_scope || 'main',
+            lineage_group_key: mergedMetadata.lineage_group_key || null,
+            lineage_parent_summary_id: mergedMetadata.lineage_parent_summary_id || null,
+            lineage_child_rule_ids: Array.isArray(mergedMetadata.lineage_child_rule_ids) ? mergedMetadata.lineage_child_rule_ids : [],
+            retrievable: !excludeFromRetrieval,
             graph_eligible: mergedMetadata.graph_eligible,
             relevance_score: mergedMetadata.relevance_score,
             canonical_key: mergedMetadata.canonical_key || null,
@@ -752,6 +732,12 @@ function createAtomicChunk(section, metadata) {
         token_count: estimateTokens(cleanedText),
         
         explicit_refs: explicitRefs,
+        lineage_group_key: mergedMetadata.lineage_group_key || null,
+        lineage_parent_summary_id: mergedMetadata.lineage_parent_summary_id || null,
+        lineage_child_rule_ids: Array.isArray(mergedMetadata.lineage_child_rule_ids) ? mergedMetadata.lineage_child_rule_ids : [],
+        parent_row_number: auxMetadata.parent_row_number || auxMetadata.row_number || null,
+        atomic_rule_kind: auxMetadata.atomic_rule_kind || null,
+        retrievable: !excludeFromRetrieval,
         
         is_atomic: true,
         is_composite: false
@@ -804,61 +790,61 @@ function createCompositeChunk(firstAtomicChunk) {
 }
 
 function finalizeCompositeChunk(composite) {
-    // Извлекаем feature_name из заголовка
+    // РР·РІР»РµРєР°РµРј feature_name РёР· Р·Р°РіРѕР»РѕРІРєР°
     const featureName = extractFeatureName(composite.heading);
     if (featureName) {
         composite.feature_name = featureName;
     }
     
-    // Создаём summary
+    // РЎРѕР·РґР°С‘Рј summary
     composite.summary = createSummary(composite.cleaned_text);
     
     return composite;
 }
 
 // ============================================================
-// ЭТАП 4: MERGE LOGIC - CONDITIONAL BRANCHES
+// Р­РўРђРџ 4: MERGE LOGIC - CONDITIONAL BRANCHES
 // ============================================================
 
 /**
- * Проверяет, является ли текст условной конструкцией (если → то → иначе)
- * Такие конструкции должны объединяться в один чанк
+ * РџСЂРѕРІРµСЂСЏРµС‚, СЏРІР»СЏРµС‚СЃСЏ Р»Рё С‚РµРєСЃС‚ СѓСЃР»РѕРІРЅРѕР№ РєРѕРЅСЃС‚СЂСѓРєС†РёРµР№ (РµСЃР»Рё в†’ С‚Рѕ в†’ РёРЅР°С‡Рµ)
+ * РўР°РєРёРµ РєРѕРЅСЃС‚СЂСѓРєС†РёРё РґРѕР»Р¶РЅС‹ РѕР±СЉРµРґРёРЅСЏС‚СЊСЃСЏ РІ РѕРґРёРЅ С‡Р°РЅРє
  */
 function isConditionalBranch(text) {
     if (!text) return false;
     
     const conditionalPatterns = [
-        /если\s+.+\s+то/i,
-        /если\s+.+\s+иначе/i,
-        /если\s+.+\s+в\s+противном\s+случае/i,
-        /в\s+случае\s+.+\s+выполняется/i,
-        /при\s+.+\s+выполняется/i,
+        /РµСЃР»Рё\s+.+\s+С‚Рѕ/i,
+        /РµСЃР»Рё\s+.+\s+РёРЅР°С‡Рµ/i,
+        /РµСЃР»Рё\s+.+\s+РІ\s+РїСЂРѕС‚РёРІРЅРѕРј\s+СЃР»СѓС‡Р°Рµ/i,
+        /РІ\s+СЃР»СѓС‡Р°Рµ\s+.+\s+РІС‹РїРѕР»РЅСЏРµС‚СЃСЏ/i,
+        /РїСЂРё\s+.+\s+РІС‹РїРѕР»РЅСЏРµС‚СЃСЏ/i,
         /when\s+.+\s+then/i,
         /if\s+.+\s+then/i,
-        /при\s+условии/i,
-        /допустим\s+/i,
-        /предположим\s+/i
+        /РїСЂРё\s+СѓСЃР»РѕРІРёРё/i,
+        /РґРѕРїСѓСЃС‚РёРј\s+/i,
+        /РїСЂРµРґРїРѕР»РѕР¶РёРј\s+/i
     ];
     
     return conditionalPatterns.some(pattern => pattern.test(text));
 }
 
 /**
- * Проверяет, является ли текст продолжением условной конструкции
- * (т.е. содержит "то", "иначе", "в противном случае" без нового "если")
+ * РџСЂРѕРІРµСЂСЏРµС‚, СЏРІР»СЏРµС‚СЃСЏ Р»Рё С‚РµРєСЃС‚ РїСЂРѕРґРѕР»Р¶РµРЅРёРµРј СѓСЃР»РѕРІРЅРѕР№ РєРѕРЅСЃС‚СЂСѓРєС†РёРё
+ * (С‚.Рµ. СЃРѕРґРµСЂР¶РёС‚ "С‚Рѕ", "РёРЅР°С‡Рµ", "РІ РїСЂРѕС‚РёРІРЅРѕРј СЃР»СѓС‡Р°Рµ" Р±РµР· РЅРѕРІРѕРіРѕ "РµСЃР»Рё")
  */
 function isConditionalContinuation(text) {
     if (!text) return false;
     
     const continuationPatterns = [
-        /\bто\b/i,
-        /\bиначе\b/i,
-        /\bв\s+противном\s+случае\b/i,
-        /\bв\s+противном\b/i,
-        /\bиначе\s+если\b/i,
-        /\bто\s+выполняется\b/i,
-        /\bто\s+отображается\b/i,
-        /\bто\s+происходит\b/i,
+        /\bС‚Рѕ\b/i,
+        /\bРёРЅР°С‡Рµ\b/i,
+        /\bРІ\s+РїСЂРѕС‚РёРІРЅРѕРј\s+СЃР»СѓС‡Р°Рµ\b/i,
+        /\bРІ\s+РїСЂРѕС‚РёРІРЅРѕРј\b/i,
+        /\bРёРЅР°С‡Рµ\s+РµСЃР»Рё\b/i,
+        /\bС‚Рѕ\s+РІС‹РїРѕР»РЅСЏРµС‚СЃСЏ\b/i,
+        /\bС‚Рѕ\s+РѕС‚РѕР±СЂР°Р¶Р°РµС‚СЃСЏ\b/i,
+        /\bС‚Рѕ\s+РїСЂРѕРёСЃС…РѕРґРёС‚\b/i,
         /\botherwise\b/i,
         /\belse\b/i,
         /\bthen\b/i
@@ -868,16 +854,16 @@ function isConditionalContinuation(text) {
 }
 
 /**
- * Проверяет, является ли текущий элемент началом нового условия
- * (начинается с "если", "когда" и т.д.)
+ * РџСЂРѕРІРµСЂСЏРµС‚, СЏРІР»СЏРµС‚СЃСЏ Р»Рё С‚РµРєСѓС‰РёР№ СЌР»РµРјРµРЅС‚ РЅР°С‡Р°Р»РѕРј РЅРѕРІРѕРіРѕ СѓСЃР»РѕРІРёСЏ
+ * (РЅР°С‡РёРЅР°РµС‚СЃСЏ СЃ "РµСЃР»Рё", "РєРѕРіРґР°" Рё С‚.Рґ.)
  */
 function isNewCondition(text) {
     if (!text) return false;
     
     const newConditionPatterns = [
-        /^(если|когда|при|в\s+случае)\s+/i,
-        /^если\b/i,
-        /^когда\b/i,
+        /^(РµСЃР»Рё|РєРѕРіРґР°|РїСЂРё|РІ\s+СЃР»СѓС‡Р°Рµ)\s+/i,
+        /^РµСЃР»Рё\b/i,
+        /^РєРѕРіРґР°\b/i,
         /^(if|when)\s+/i
     ];
     
@@ -887,17 +873,17 @@ function isNewCondition(text) {
 function shouldMergeWithPrevious(atomicChunk, currentComposite) {
     if (!currentComposite) return false;
     
-    // 1. Если текущий чанк - начало условной конструкции, а предыдущий - нет условие
-    // объединяем чтобы не разрывать "если → то"
+    // 1. Р•СЃР»Рё С‚РµРєСѓС‰РёР№ С‡Р°РЅРє - РЅР°С‡Р°Р»Рѕ СѓСЃР»РѕРІРЅРѕР№ РєРѕРЅСЃС‚СЂСѓРєС†РёРё, Р° РїСЂРµРґС‹РґСѓС‰РёР№ - РЅРµС‚ СѓСЃР»РѕРІРёРµ
+    // РѕР±СЉРµРґРёРЅСЏРµРј С‡С‚РѕР±С‹ РЅРµ СЂР°Р·СЂС‹РІР°С‚СЊ "РµСЃР»Рё в†’ С‚Рѕ"
     const currentText = atomicChunk.core_text || atomicChunk.cleaned_text || '';
     const prevText = currentComposite.core_text || currentComposite.cleaned_text || '';
     
-    // Если предыдущий содержит условную конструкцию (если/то/иначе), а текущий продолжает её - объединяем
+    // Р•СЃР»Рё РїСЂРµРґС‹РґСѓС‰РёР№ СЃРѕРґРµСЂР¶РёС‚ СѓСЃР»РѕРІРЅСѓСЋ РєРѕРЅСЃС‚СЂСѓРєС†РёСЋ (РµСЃР»Рё/С‚Рѕ/РёРЅР°С‡Рµ), Р° С‚РµРєСѓС‰РёР№ РїСЂРѕРґРѕР»Р¶Р°РµС‚ РµС‘ - РѕР±СЉРµРґРёРЅСЏРµРј
     if (isConditionalBranch(prevText) && isConditionalContinuation(currentText)) {
         return true;
     }
     
-    // Если оба содержат условные конструкции - объединяем
+    // Р•СЃР»Рё РѕР±Р° СЃРѕРґРµСЂР¶Р°С‚ СѓСЃР»РѕРІРЅС‹Рµ РєРѕРЅСЃС‚СЂСѓРєС†РёРё - РѕР±СЉРµРґРёРЅСЏРµРј
     if (isConditionalBranch(prevText) && isConditionalBranch(currentText)) {
         return true;
     }
@@ -920,13 +906,13 @@ function shouldMergeWithPrevious(atomicChunk, currentComposite) {
         return false;
     }
     
-    // 2. Если предыдущий - таблица требований, а текущий - её продолжение (не новый заголовок)
+    // 2. Р•СЃР»Рё РїСЂРµРґС‹РґСѓС‰РёР№ - С‚Р°Р±Р»РёС†Р° С‚СЂРµР±РѕРІР°РЅРёР№, Р° С‚РµРєСѓС‰РёР№ - РµС‘ РїСЂРѕРґРѕР»Р¶РµРЅРёРµ (РЅРµ РЅРѕРІС‹Р№ Р·Р°РіРѕР»РѕРІРѕРє)
     if (currentComposite.chunk_type === CHUNK_TYPES.TABLE_ROW && 
         atomicChunk.chunk_type === CHUNK_TYPES.TABLE_ROW) {
         return true;
     }
     
-    // 3. Объединяем если типы совпадают и предыдущий не слишком большой
+    // 3. РћР±СЉРµРґРёРЅСЏРµРј РµСЃР»Рё С‚РёРїС‹ СЃРѕРІРїР°РґР°СЋС‚ Рё РїСЂРµРґС‹РґСѓС‰РёР№ РЅРµ СЃР»РёС€РєРѕРј Р±РѕР»СЊС€РѕР№
     const mergeableTypes = [
         CHUNK_TYPES.BUSINESS_RULE,
         CHUNK_TYPES.UI_RULE,
@@ -940,7 +926,7 @@ function shouldMergeWithPrevious(atomicChunk, currentComposite) {
         return false;
     }
     
-    // Проверяем, не слишком ли большой уже composite
+    // РџСЂРѕРІРµСЂСЏРµРј, РЅРµ СЃР»РёС€РєРѕРј Р»Рё Р±РѕР»СЊС€РѕР№ СѓР¶Рµ composite
     if (currentComposite.token_count > 800) {
         return false;
     }
@@ -973,7 +959,7 @@ function introducesNewOutcomeOrErrorFlow(previousText, currentText) {
 }
 
 function isErrorFlowText(text) {
-    return /(ошибк|error|exception|timeout|forbidden|unauthorized|not found|bad request)/i.test(String(text || ''));
+    return /(РѕС€РёР±Рє|error|exception|timeout|forbidden|unauthorized|not found|bad request)/i.test(String(text || ''));
 }
 
 function sameOrMissing(left, right) {
@@ -986,19 +972,19 @@ function sameOrMissing(left, right) {
 }
 
 // ============================================================
-// УТИЛИТЫ
+// РЈРўРР›РРўР«
 // ============================================================
 
 function cleanText(text) {
     if (!text) return '';
     
     return text
-        // Удаляем лишние пробелы
+        // РЈРґР°Р»СЏРµРј Р»РёС€РЅРёРµ РїСЂРѕР±РµР»С‹
         .replace(/\n{3,}/g, '\n\n')
         .replace(/[ \t]+/g, ' ')
-        // Удаляем URL из текста (они в metadata)
+        // РЈРґР°Р»СЏРµРј URL РёР· С‚РµРєСЃС‚Р° (РѕРЅРё РІ metadata)
         .replace(/(?<!\]\()https?:\/\/[^\s]+/g, '')
-        // Удаляем спецсимволы markdown которые не несут смысла
+        // РЈРґР°Р»СЏРµРј СЃРїРµС†СЃРёРјРІРѕР»С‹ markdown РєРѕС‚РѕСЂС‹Рµ РЅРµ РЅРµСЃСѓС‚ СЃРјС‹СЃР»Р°
         .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // [text](url) -> text
         .replace(/[*_`#]/g, '')
         .trim();
@@ -1010,11 +996,11 @@ function isMeaningfulChunkText(text) {
         return false;
     }
 
-    if (/^[-–—\\/|.,:;()[\]{}*_`~]+$/.test(cleaned)) {
+    if (/^[-вЂ“вЂ”\\/|.,:;()[\]{}*_`~]+$/.test(cleaned)) {
         return false;
     }
 
-    const alnum = cleaned.replace(/[^a-zA-Zа-яА-Я0-9]+/g, '');
+    const alnum = cleaned.replace(/[^\p{L}\p{N}]+/gu, '');
     if (!alnum) {
         return false;
     }
@@ -1066,7 +1052,7 @@ function explodeTableHeavySection(section) {
 
 function buildRowHeading(baseHeading, rowText, index) {
     const raw = String(rowText || '').trim();
-    const numberMatch = raw.match(/^(?:№\s*:\s*|№\s*)([\d.]+)/i) || raw.match(/^([\d.]{3,})\s*[;:]/);
+    const numberMatch = raw.match(/^(?:в„–\s*:\s*|в„–\s*)([\d.]+)/i) || raw.match(/^([\d.]{3,})\s*[;:]/);
     if (numberMatch?.[1]) {
         return `${baseHeading || 'Table row'} / ${numberMatch[1]}`;
     }
@@ -1130,67 +1116,9 @@ function buildRequirementRowSections(section) {
             if (!isMeaningfulRequirementRow(mappedRow)) {
                 continue;
             }
-
-            const branchSplit = splitRequirementIntoScenarioBranches(mappedRow.requirement || '');
-            const rowHeading = buildRequirementRowHeading(section.heading, mappedRow.row_number, mappedRow.element);
-            const sectionPath = buildSectionPathForRow(section.path, mappedRow.row_number || mappedRow.element);
-            const rowPayload = buildRequirementRowPayload(mappedRow, branchSplit.sharedIntro);
-            const rowMetadata = buildRequirementChunkMetadata(mappedRow, branchSplit.sharedIntro, rowPayload.aux_metadata);
-
-            if (branchSplit.forceBranches || branchSplit.branches.length > 1) {
-                branchSplit.branches.forEach((branch, index) => {
-                    const branchPayload = buildRequirementBranchPayload(mappedRow, branchSplit.sharedIntro, branch);
-                    semanticSections.push(createFinalSemanticSection(section, {
-                        heading: `${rowHeading} / branch ${branch.label || index + 1}`,
-                        path: sectionPath,
-                        section_number: mappedRow.row_number || section.section_number || null,
-                        line_start: row.line_start,
-                        line_end: row.line_end,
-                        split_source: 'scenario_branch',
-                        chunk_type_hint: CHUNK_TYPES.SCENARIO_BRANCH,
-                        metadata: {
-                            ...rowMetadata,
-                            semantic_role: CHUNK_TYPES.SCENARIO_BRANCH,
-                            row_number: mappedRow.row_number || null,
-                            element: mappedRow.element || null,
-                            screen_scope: branchPayload.aux_metadata.screen_scope || rowPayload.aux_metadata.screen_scope || null,
-                            channel_scope: branchPayload.aux_metadata.channel_scope || rowPayload.aux_metadata.channel_scope || null,
-                            entity_scope: branchPayload.aux_metadata.entity_scope || rowPayload.aux_metadata.entity_scope || null,
-                            endpoint: branchPayload.aux_metadata.endpoint || null,
-                            method: branchPayload.aux_metadata.method || null,
-                            branch_index: index + 1,
-                            branch_label: branch.label || null,
-                            branch_source_number: branch.sourceNumber || null,
-                            scenario_seed_text: branch.text || null
-                        },
-                        retrieval_profile: branchPayload,
-                        content: buildRequirementBranchContent(mappedRow, branchSplit.sharedIntro, branch, branchPayload)
-                    }));
-                });
-                continue;
-            }
-
-            semanticSections.push(createFinalSemanticSection(section, {
-                heading: rowHeading,
-                path: sectionPath,
-                section_number: mappedRow.row_number || section.section_number || null,
+            semanticSections.push(...buildRequirementRowSemanticSections(section, mappedRow, {
                 line_start: row.line_start,
-                line_end: row.line_end,
-                split_source: 'requirement_row',
-                chunk_type_hint: CHUNK_TYPES.REQUIREMENT_ROW,
-                metadata: {
-                    ...rowMetadata,
-                    semantic_role: CHUNK_TYPES.REQUIREMENT_ROW,
-                    row_number: mappedRow.row_number || null,
-                    element: mappedRow.element || null,
-                    screen_scope: rowPayload.aux_metadata.screen_scope || null,
-                    channel_scope: rowPayload.aux_metadata.channel_scope || null,
-                    entity_scope: rowPayload.aux_metadata.entity_scope || null,
-                    endpoint: rowPayload.aux_metadata.endpoint || null,
-                    method: rowPayload.aux_metadata.method || null
-                },
-                retrieval_profile: rowPayload,
-                content: buildRequirementRowContent(mappedRow, rowPayload)
+                line_end: row.line_end
             }));
         }
     }
@@ -1219,79 +1147,125 @@ function buildRequirementRowSectionsFromFlattenedTable(section) {
         if (!isMeaningfulRequirementRow(mappedRow)) {
             continue;
         }
-
-        const branchSplit = splitRequirementIntoScenarioBranches(mappedRow.requirement || '');
-        const rowHeading = buildRequirementRowHeading(section.heading, mappedRow.row_number, mappedRow.element);
-        const sectionPath = buildSectionPathForRow(section.path, mappedRow.row_number || mappedRow.element);
-        const rowPayload = buildRequirementRowPayload(mappedRow, branchSplit.sharedIntro);
-        const rowMetadata = buildRequirementChunkMetadata(mappedRow, branchSplit.sharedIntro, rowPayload.aux_metadata);
-
-        if (branchSplit.forceBranches || branchSplit.branches.length > 1) {
-            branchSplit.branches.forEach((branch, index) => {
-                const branchPayload = buildRequirementBranchPayload(mappedRow, branchSplit.sharedIntro, branch);
-                semanticSections.push(createFinalSemanticSection(section, {
-                    heading: `${rowHeading} / branch ${branch.label || index + 1}`,
-                    path: sectionPath,
-                    section_number: mappedRow.row_number || section.section_number || null,
-                    line_start: section.line_start,
-                    line_end: section.line_end,
-                    split_source: 'scenario_branch',
-                    chunk_type_hint: CHUNK_TYPES.SCENARIO_BRANCH,
-                    metadata: {
-                        ...rowMetadata,
-                        semantic_role: CHUNK_TYPES.SCENARIO_BRANCH,
-                        row_number: mappedRow.row_number || null,
-                        element: mappedRow.element || null,
-                        screen_scope: branchPayload.aux_metadata.screen_scope || rowPayload.aux_metadata.screen_scope || null,
-                        channel_scope: branchPayload.aux_metadata.channel_scope || rowPayload.aux_metadata.channel_scope || null,
-                        entity_scope: branchPayload.aux_metadata.entity_scope || rowPayload.aux_metadata.entity_scope || null,
-                        endpoint: branchPayload.aux_metadata.endpoint || null,
-                        method: branchPayload.aux_metadata.method || null,
-                        branch_index: index + 1,
-                        branch_label: branch.label || null,
-                        branch_source_number: branch.sourceNumber || null,
-                        scenario_seed_text: branch.text || null
-                    },
-                    retrieval_profile: branchPayload,
-                    content: buildRequirementBranchContent(mappedRow, branchSplit.sharedIntro, branch, branchPayload)
-                }));
-            });
-            continue;
-        }
-
-        semanticSections.push(createFinalSemanticSection(section, {
-            heading: rowHeading,
-            path: sectionPath,
-            section_number: mappedRow.row_number || section.section_number || null,
+        semanticSections.push(...buildRequirementRowSemanticSections(section, mappedRow, {
             line_start: section.line_start,
-            line_end: section.line_end,
-            split_source: 'requirement_row',
-            chunk_type_hint: CHUNK_TYPES.REQUIREMENT_ROW,
-            metadata: {
-                ...rowMetadata,
-                semantic_role: CHUNK_TYPES.REQUIREMENT_ROW,
-                row_number: mappedRow.row_number || null,
-                element: mappedRow.element || null,
-                screen_scope: rowPayload.aux_metadata.screen_scope || null,
-                channel_scope: rowPayload.aux_metadata.channel_scope || null,
-                entity_scope: rowPayload.aux_metadata.entity_scope || null,
-                endpoint: rowPayload.aux_metadata.endpoint || null,
-                method: rowPayload.aux_metadata.method || null
-            },
-            retrieval_profile: rowPayload,
-            content: buildRequirementRowContent(mappedRow, rowPayload)
+            line_end: section.line_end
         }));
     }
 
     return semanticSections;
 }
 
+function buildRequirementRowSemanticSections(section, mappedRow, lineRange = {}) {
+    const branchSplit = splitRequirementIntoScenarioBranches(mappedRow.requirement || '');
+    const rowHeading = buildRequirementRowHeading(section.heading, mappedRow.row_number, mappedRow.element);
+    const sectionPath = buildSectionPathForRow(section.path, mappedRow.row_number || mappedRow.element);
+    const rowPayload = buildRequirementRowPayload(mappedRow, branchSplit.sharedIntro);
+    const rowMetadata = buildRequirementChunkMetadata(mappedRow, branchSplit.sharedIntro, rowPayload.aux_metadata);
+    const sectionNumber = mappedRow.row_number || section.section_number || null;
+    const lineStart = lineRange?.line_start ?? section.line_start;
+    const lineEnd = lineRange?.line_end ?? section.line_end;
+    const lineageGroupKey = buildRequirementLineageKey(section, mappedRow, lineStart);
+    const summaryPayload = buildRequirementSummaryPayload(mappedRow, branchSplit.sharedIntro, rowPayload);
+    const legacyDebugPayload = buildRequirementLegacyDebugPayload(rowPayload);
+
+    const semanticSections = [
+        createFinalSemanticSection(section, {
+            heading: `${rowHeading} / summary`,
+            path: sectionPath,
+            section_number: sectionNumber,
+            line_start: lineStart,
+            line_end: lineEnd,
+            split_source: 'requirement_row_summary',
+            chunk_type_hint: CHUNK_TYPES.REQUIREMENT_ROW_SUMMARY,
+            metadata: {
+                ...rowMetadata,
+                semantic_role: CHUNK_TYPES.REQUIREMENT_ROW_SUMMARY,
+                row_number: mappedRow.row_number || null,
+                element: mappedRow.element || null,
+                chunk_granularity: 'summary',
+                parent_row_number: mappedRow.row_number || null,
+                atomic_rule_kind: null,
+                lineage_group_key: lineageGroupKey,
+                trace_only: true,
+                source_scope: 'main',
+                exclude_from_retrieval: true,
+                exclude_from_graph: true
+            },
+            retrieval_profile: summaryPayload,
+            content: summaryPayload.legacy_text
+        }),
+        createFinalSemanticSection(section, {
+            heading: `${rowHeading} / legacy debug`,
+            path: sectionPath,
+            section_number: sectionNumber,
+            line_start: lineStart,
+            line_end: lineEnd,
+            split_source: 'requirement_row_legacy_debug',
+            chunk_type_hint: CHUNK_TYPES.REQUIREMENT_ROW,
+            metadata: {
+                ...rowMetadata,
+                semantic_role: CHUNK_TYPES.REQUIREMENT_ROW,
+                row_number: mappedRow.row_number || null,
+                element: mappedRow.element || null,
+                chunk_granularity: 'summary',
+                parent_row_number: mappedRow.row_number || null,
+                atomic_rule_kind: null,
+                lineage_group_key: lineageGroupKey,
+                trace_only: true,
+                source_scope: 'main',
+                exclude_from_retrieval: true,
+                exclude_from_graph: true
+            },
+            retrieval_profile: legacyDebugPayload,
+            content: buildRequirementRowContent(mappedRow, rowPayload)
+        })
+    ];
+
+    const atomicRules = collectRequirementAtomicRules(mappedRow, branchSplit, rowPayload);
+    atomicRules.forEach((rule, index) => {
+        const atomicPayload = buildRequirementAtomicRulePayload(mappedRow, branchSplit.sharedIntro, rule, rowPayload);
+        semanticSections.push(createFinalSemanticSection(section, {
+            heading: `${rowHeading} / atomic ${index + 1}`,
+            path: sectionPath,
+            section_number: sectionNumber,
+            line_start: lineStart,
+            line_end: lineEnd,
+            split_source: 'atomic_rule',
+            chunk_type_hint: CHUNK_TYPES.ATOMIC_RULE,
+            metadata: {
+                ...rowMetadata,
+                semantic_role: CHUNK_TYPES.ATOMIC_RULE,
+                row_number: mappedRow.row_number || null,
+                element: mappedRow.element || null,
+                branch_label: rule.branch_label || null,
+                branch_source_number: rule.branch_source_number || null,
+                atomic_rule_index: index + 1,
+                atomic_rule_kind: rule.kind,
+                chunk_granularity: 'atomic',
+                parent_row_number: mappedRow.row_number || null,
+                lineage_group_key: lineageGroupKey,
+                source_scope: 'main',
+                screen_scope: atomicPayload.aux_metadata.screen_scope || rowPayload.aux_metadata.screen_scope || null,
+                channel_scope: atomicPayload.aux_metadata.channel_scope || rowPayload.aux_metadata.channel_scope || null,
+                entity_scope: atomicPayload.aux_metadata.entity_scope || rowPayload.aux_metadata.entity_scope || null,
+                endpoint: atomicPayload.aux_metadata.endpoint || null,
+                method: atomicPayload.aux_metadata.method || null
+            },
+            retrieval_profile: atomicPayload,
+            content: atomicPayload.legacy_text
+        }));
+    });
+
+    return semanticSections;
+}
+
 function looksLikeFlattenedRequirementRow(line) {
-    return /(^|;\s*)(No|№|Номер|Element|Элемент|Requirement|Требование)\s*:/i.test(line);
+    return /(^|;\s*)(No|в„–|РќРѕРјРµСЂ|Element|Р­Р»РµРјРµРЅС‚|Requirement|РўСЂРµР±РѕРІР°РЅРёРµ)\s*:/i.test(line);
 }
 
 function parseFlattenedRequirementRow(line) {
-    const fieldRegex = /(^|;\s*)(No|№|Номер|Element|Элемент(?:\/блок\/логика)?|Requirement|Требование|Method|Метод|Parameters|Параметры|Layout|Макет)\s*:\s*/gi;
+    const fieldRegex = /(^|;\s*)(No|в„–|РќРѕРјРµСЂ|Element|Р­Р»РµРјРµРЅС‚(?:\/Р±Р»РѕРє\/Р»РѕРіРёРєР°)?|Requirement|РўСЂРµР±РѕРІР°РЅРёРµ|Method|РњРµС‚РѕРґ|Parameters|РџР°СЂР°РјРµС‚СЂС‹|Layout|РњР°РєРµС‚)\s*:\s*/gi;
     const matches = Array.from(line.matchAll(fieldRegex));
     const row = {};
 
@@ -1308,22 +1282,22 @@ function parseFlattenedRequirementRow(line) {
 
 function normalizeFlattenedRequirementField(field) {
     const normalized = normalizeForComparison(field);
-    if (normalized === 'no' || normalized.includes('номер')) {
+    if (normalized === 'no' || normalized.includes('РЅРѕРјРµСЂ')) {
         return 'row_number';
     }
-    if (normalized.includes('element') || normalized.includes('элемент') || normalized.includes('блок') || normalized.includes('логик')) {
+    if (normalized.includes('element') || normalized.includes('СЌР»РµРјРµРЅС‚') || normalized.includes('Р±Р»РѕРє') || normalized.includes('Р»РѕРіРёРє')) {
         return 'element';
     }
-    if (normalized.includes('requirement') || normalized.includes('требован')) {
+    if (normalized.includes('requirement') || normalized.includes('С‚СЂРµР±РѕРІР°РЅ')) {
         return 'requirement';
     }
-    if (normalized.includes('method') || normalized.includes('метод')) {
+    if (normalized.includes('method') || normalized.includes('РјРµС‚РѕРґ')) {
         return 'method';
     }
-    if (normalized.includes('parameter') || normalized.includes('параметр')) {
+    if (normalized.includes('parameter') || normalized.includes('РїР°СЂР°РјРµС‚СЂ')) {
         return 'params';
     }
-    if (normalized.includes('layout') || normalized.includes('макет')) {
+    if (normalized.includes('layout') || normalized.includes('РјР°РєРµС‚')) {
         return 'layout';
     }
 
@@ -1547,27 +1521,27 @@ function detectSpecialContextType(section) {
         return null;
     }
 
-    if (/контекст по ссылке из основной статьи|упоминание в основной статье|linked context/i.test(headingText)) {
+    if (/РєРѕРЅС‚РµРєСЃС‚ РїРѕ СЃСЃС‹Р»РєРµ РёР· РѕСЃРЅРѕРІРЅРѕР№ СЃС‚Р°С‚СЊРё|СѓРїРѕРјРёРЅР°РЅРёРµ РІ РѕСЃРЅРѕРІРЅРѕР№ СЃС‚Р°С‚СЊРµ|linked context/i.test(headingText)) {
         return CHUNK_TYPES.NOISE_SKIPPED;
     }
 
-    if (/вложения|attachments|приложения|test data|тестовые данные/i.test(headingText)) {
+    if (/РІР»РѕР¶РµРЅРёСЏ|attachments|РїСЂРёР»РѕР¶РµРЅРёСЏ|test data|С‚РµСЃС‚РѕРІС‹Рµ РґР°РЅРЅС‹Рµ/i.test(headingText)) {
         return CHUNK_TYPES.NOISE_METADATA;
     }
 
-    if (/данные документа|document meta|document data/i.test(headingText)) {
+    if (/РґР°РЅРЅС‹Рµ РґРѕРєСѓРјРµРЅС‚Р°|document meta|document data/i.test(headingText)) {
         return CHUNK_TYPES.DOCUMENT_META;
     }
 
-    if (/change\s*log|changelog|история изменений/i.test(headingText)) {
+    if (/change\s*log|changelog|РёСЃС‚РѕСЂРёСЏ РёР·РјРµРЅРµРЅРёР№/i.test(headingText)) {
         return CHUNK_TYPES.CHANGE_LOG;
     }
 
-    if (/общая информация|business context|контекст системы/i.test(headingText)) {
+    if (/РѕР±С‰Р°СЏ РёРЅС„РѕСЂРјР°С†РёСЏ|business context|РєРѕРЅС‚РµРєСЃС‚ СЃРёСЃС‚РµРјС‹/i.test(headingText)) {
         return CHUNK_TYPES.BUSINESS_CONTEXT;
     }
 
-    if (/область применения|scope|границы процесса/i.test(headingText)) {
+    if (/РѕР±Р»Р°СЃС‚СЊ РїСЂРёРјРµРЅРµРЅРёСЏ|scope|РіСЂР°РЅРёС†С‹ РїСЂРѕС†РµСЃСЃР°/i.test(headingText)) {
         return CHUNK_TYPES.SCOPE_CONTEXT;
     }
 
@@ -1594,6 +1568,7 @@ function normalizeRetrievalProfile(profile, cleanedText = '') {
         eligibility_status: profile?.eligibility_status || null,
         retrieval_penalty: Number.isFinite(profile?.retrieval_penalty) ? Number(profile.retrieval_penalty) : 0,
         content_ratio: contentRatio,
+        chunk_granularity: profile?.chunk_granularity || profile?.aux_metadata?.chunk_granularity || 'atomic',
         drop_reason: profile?.drop_reason || null,
         exclude_from_retrieval: Boolean(profile?.exclude_from_retrieval),
         has_behavioral_predicate: Boolean(profile?.has_behavioral_predicate),
@@ -1629,7 +1604,8 @@ function assignRetrievalProfile(section, chunkType) {
         core_text: normalized.core_text || (retrievalClass === RETRIEVAL_CLASSES.BEHAVIORAL ? legacyText : ''),
         embedding_text: normalized.embedding_text || (retrievalClass === RETRIEVAL_CLASSES.BEHAVIORAL ? normalized.core_text || legacyText : legacyText),
         aux_metadata: auxMetadata,
-        retrieval_class: retrievalClass
+        retrieval_class: retrievalClass,
+        chunk_granularity: normalized.chunk_granularity || auxMetadata.chunk_granularity || section?.metadata?.chunk_granularity || 'atomic'
     };
     const evaluation = retrievalClass === RETRIEVAL_CLASSES.BEHAVIORAL
         ? evaluateBehavioralEligibility(baseProfile, legacyText, chunkType)
@@ -1639,10 +1615,23 @@ function assignRetrievalProfile(section, chunkType) {
         evaluation.exclude_from_retrieval ||
         shouldExcludeChunkTypeFromRetrieval(chunkType)
     );
+    const forcedExcluded = excludeFromRetrieval || RETRIEVAL_EXCLUDED_CHUNK_TYPES.has(chunkType);
+    const resolvedEligibilityStatus = forcedExcluded
+        ? ELIGIBILITY_STATUSES.EXCLUDED
+        : evaluation.eligibility_status;
+    const resolvedRetrievalPenalty = forcedExcluded
+        ? Math.max(1.0, Number(evaluation.retrieval_penalty || normalized.retrieval_penalty || 0))
+        : evaluation.retrieval_penalty;
+    const resolvedDropReason = forcedExcluded
+        ? (evaluation.drop_reason || normalized.drop_reason || 'excluded_by_policy')
+        : evaluation.drop_reason;
 
     return {
         ...baseProfile,
         ...evaluation,
+        eligibility_status: resolvedEligibilityStatus,
+        retrieval_penalty: resolvedRetrievalPenalty,
+        drop_reason: resolvedDropReason,
         exclude_from_retrieval: excludeFromRetrieval
     };
 }
@@ -1661,6 +1650,8 @@ function determineRetrievalClass(section, chunkType, normalizedProfile, legacyTe
     if ([
         CHUNK_TYPES.REFERENCE_CONTEXT,
         CHUNK_TYPES.REFERENCE_LINK,
+        CHUNK_TYPES.REQUIREMENT_ROW_SUMMARY,
+        CHUNK_TYPES.REQUIREMENT_ROW,
         CHUNK_TYPES.DOCUMENT_META,
         CHUNK_TYPES.CHANGE_LOG,
         CHUNK_TYPES.BUSINESS_CONTEXT,
@@ -1671,7 +1662,7 @@ function determineRetrievalClass(section, chunkType, normalizedProfile, legacyTe
         return RETRIEVAL_CLASSES.REFERENCE_CONTEXT;
     }
 
-    if ([CHUNK_TYPES.REQUIREMENT_ROW, CHUNK_TYPES.SCENARIO_BRANCH].includes(chunkType)) {
+    if ([CHUNK_TYPES.ATOMIC_RULE, CHUNK_TYPES.SCENARIO_BRANCH].includes(chunkType)) {
         return RETRIEVAL_CLASSES.BEHAVIORAL;
     }
 
@@ -1821,17 +1812,17 @@ function calculateServiceRatio(text = '') {
         'reference',
         'layout',
         'figma',
-        'макет',
-        'параметр',
-        'метод',
-        'ссылк',
+        'РјР°РєРµС‚',
+        'РїР°СЂР°РјРµС‚СЂ',
+        'РјРµС‚РѕРґ',
+        'СЃСЃС‹Р»Рє',
         'layout',
         'channel',
         'screen',
         'page',
         'row',
         'section',
-        'табл'
+        'С‚Р°Р±Р»'
     ];
     const serviceTokenCount = normalizedTokens.filter(token =>
         serviceTokenPatterns.some(pattern => token.includes(pattern))
@@ -1852,6 +1843,51 @@ function createFinalSemanticSection(section, overrides = {}) {
         },
         generated_semantic_unit: true
     };
+}
+
+function applyRequirementLineage(chunks = []) {
+    const list = Array.isArray(chunks) ? chunks : [];
+    const groups = new Map();
+
+    for (const chunk of list) {
+        const lineageGroupKey = chunk?.metadata?.lineage_group_key || chunk?.lineage_group_key || null;
+        if (!lineageGroupKey) {
+            continue;
+        }
+        if (!groups.has(lineageGroupKey)) {
+            groups.set(lineageGroupKey, []);
+        }
+        groups.get(lineageGroupKey).push(chunk);
+    }
+
+    for (const groupChunks of groups.values()) {
+        const summaryChunk = groupChunks.find((chunk) =>
+            chunk?.chunk_type === CHUNK_TYPES.REQUIREMENT_ROW_SUMMARY
+        ) || null;
+        const atomicRules = groupChunks.filter((chunk) =>
+            chunk?.chunk_type === CHUNK_TYPES.ATOMIC_RULE &&
+            (chunk?.chunk_granularity || chunk?.metadata?.chunk_granularity || 'atomic') === 'atomic'
+        );
+        const childIds = atomicRules.map((chunk) => chunk.id).filter(Boolean);
+
+        if (summaryChunk) {
+            summaryChunk.lineage_child_rule_ids = childIds;
+            summaryChunk.metadata = {
+                ...(summaryChunk.metadata || {}),
+                lineage_child_rule_ids: childIds
+            };
+        }
+
+        for (const atomicChunk of atomicRules) {
+            atomicChunk.lineage_parent_summary_id = summaryChunk?.id || null;
+            atomicChunk.metadata = {
+                ...(atomicChunk.metadata || {}),
+                lineage_parent_summary_id: summaryChunk?.id || null
+            };
+        }
+    }
+
+    return list;
 }
 
 function extractTableBlocksWithLines(section) {
@@ -1913,13 +1949,13 @@ function isRequirementTable(headers = []) {
     const normalizedHeaders = headers.map(header => normalizeForComparison(header));
     const rawHeaders = headers.map(header => String(header || '').trim());
     const hasRowNumber = normalizedHeaders.some(header =>
-        header === 'no' || header.includes('номер')
-    ) || rawHeaders.includes('№');
+        header === 'no' || header.includes('РЅРѕРјРµСЂ')
+    ) || rawHeaders.includes('в„–');
     const hasRequirement = normalizedHeaders.some(header =>
-        header.includes('требован') || header.includes('requirement')
+        header.includes('С‚СЂРµР±РѕРІР°РЅ') || header.includes('requirement')
     );
     const hasElement = normalizedHeaders.some(header =>
-        header.includes('элемент') || header.includes('блок') || header.includes('логик') || header.includes('element')
+        header.includes('СЌР»РµРјРµРЅС‚') || header.includes('Р±Р»РѕРє') || header.includes('Р»РѕРіРёРє') || header.includes('element')
     );
 
     return hasRowNumber && hasRequirement && hasElement;
@@ -1934,7 +1970,7 @@ function mapTableRowToCanonical(headers, cells) {
 
 function normalizeHeaderKey(header, index = 0) {
     const raw = String(header || '').trim();
-    if (raw === '№') {
+    if (raw === 'в„–') {
         return 'row_number';
     }
 
@@ -1944,22 +1980,22 @@ function normalizeHeaderKey(header, index = 0) {
         return `column_${index + 1}`;
     }
 
-    if (normalized === '№' || normalized === 'no' || normalized.includes('номер')) {
+    if (normalized === 'в„–' || normalized === 'no' || normalized.includes('РЅРѕРјРµСЂ')) {
         return 'row_number';
     }
-    if (normalized.includes('элемент') || normalized.includes('блок') || normalized.includes('логик')) {
+    if (normalized.includes('СЌР»РµРјРµРЅС‚') || normalized.includes('Р±Р»РѕРє') || normalized.includes('Р»РѕРіРёРє')) {
         return 'element';
     }
-    if (normalized.includes('требован')) {
+    if (normalized.includes('С‚СЂРµР±РѕРІР°РЅ')) {
         return 'requirement';
     }
-    if (normalized.includes('метод')) {
+    if (normalized.includes('РјРµС‚РѕРґ')) {
         return 'method';
     }
-    if (normalized.includes('параметр')) {
+    if (normalized.includes('РїР°СЂР°РјРµС‚СЂ')) {
         return 'params';
     }
-    if (normalized.includes('макет') || normalized.includes('figma')) {
+    if (normalized.includes('РјР°РєРµС‚') || normalized.includes('figma')) {
         return 'layout';
     }
 
@@ -2007,6 +2043,7 @@ function buildRequirementRowPayload(row, sharedIntro = '') {
     return {
         core_text: coreText,
         embedding_text: coreText,
+        chunk_granularity: 'atomic',
         aux_metadata: auxMetadata,
         legacy_text: renderRequirementLegacyText({
             rowNumber: row.row_number,
@@ -2048,6 +2085,7 @@ function buildRequirementBranchPayload(row, sharedIntro, branch) {
     return {
         core_text: coreText,
         embedding_text: coreText,
+        chunk_granularity: 'atomic',
         aux_metadata: auxMetadata,
         legacy_text: renderRequirementLegacyText({
             rowNumber: row.row_number,
@@ -2064,6 +2102,197 @@ function buildRequirementBranchPayload(row, sharedIntro, branch) {
 
 function buildRequirementBranchContent(row, sharedIntro, branch, payload = null) {
     return (payload || buildRequirementBranchPayload(row, sharedIntro, branch)).legacy_text;
+}
+
+function buildRequirementSummaryPayload(row, sharedIntro = '', rowPayload = null) {
+    const payload = rowPayload || buildRequirementRowPayload(row, sharedIntro);
+    const sharedContext = summarizeSharedContext(sharedIntro, row.element || '');
+    const summaryText = trimSemanticBlock([
+        cleanInlineText(row.element || ''),
+        sharedContext ? `Scope: ${sharedContext}` : '',
+        row.row_number ? `Row ${row.row_number}` : ''
+    ].filter(Boolean).join('\n'));
+    const auxMetadata = {
+        ...(payload.aux_metadata || {}),
+        atomic_rule_kind: null,
+        parent_row_number: row.row_number || null
+    };
+
+    return {
+        core_text: summaryText,
+        embedding_text: summaryText,
+        chunk_granularity: 'summary',
+        retrieval_class: RETRIEVAL_CLASSES.REFERENCE_CONTEXT,
+        eligibility_status: ELIGIBILITY_STATUSES.EXCLUDED,
+        retrieval_penalty: 1.0,
+        exclude_from_retrieval: true,
+        drop_reason: 'summary_debug_only',
+        aux_metadata: auxMetadata,
+        legacy_text: summaryText
+    };
+}
+
+function buildRequirementLegacyDebugPayload(payload = {}) {
+    return {
+        ...(payload || {}),
+        chunk_granularity: 'summary',
+        retrieval_class: RETRIEVAL_CLASSES.REFERENCE_CONTEXT,
+        eligibility_status: ELIGIBILITY_STATUSES.EXCLUDED,
+        retrieval_penalty: 1.0,
+        exclude_from_retrieval: true,
+        drop_reason: 'legacy_debug_only'
+    };
+}
+
+function buildRequirementLineageKey(section, row, lineStart) {
+    const sectionKey = [
+        ...(Array.isArray(section?.path) ? section.path : []),
+        section?.heading || '',
+        section?.section_number || '',
+        lineStart || ''
+    ].filter(Boolean).join('|');
+    const rowKey = row?.row_number || row?.element || row?.requirement || 'row';
+    return `${sectionKey}::${cleanInlineText(String(rowKey || 'row'))}`;
+}
+
+function collectRequirementAtomicRules(row, branchSplit, rowPayload) {
+    const atomicRules = [];
+    const normalizedBranches = Array.isArray(branchSplit?.branches) && branchSplit.branches.length
+        ? branchSplit.branches
+        : [{ label: null, sourceNumber: null, text: row?.requirement || '' }];
+
+    for (const branch of normalizedBranches) {
+        const payload = buildRequirementBranchPayload(row, branchSplit?.sharedIntro || '', branch);
+        const sourceText = trimSemanticBlock(String(branch?.text || row?.requirement || ''));
+        const entries = collectAtomicRuleEntriesFromSourceText(sourceText, payload);
+        for (const entry of entries) {
+            atomicRules.push({
+                text: entry.text,
+                kind: entry.kind,
+                branch_label: branch?.label || null,
+                branch_source_number: branch?.sourceNumber || null
+            });
+        }
+    }
+
+    if (atomicRules.length === 0) {
+        const fallbackText = trimSemanticBlock(rowPayload?.core_text || row?.requirement || '');
+        if (fallbackText) {
+            atomicRules.push({
+                text: fallbackText,
+                kind: classifyAtomicRuleKind(fallbackText),
+                branch_label: null,
+                branch_source_number: null
+            });
+        }
+    }
+
+    const deduped = [];
+    const seen = new Set();
+    for (const rule of atomicRules) {
+        const text = trimSemanticBlock(rule?.text || '');
+        const normalized = normalizeForComparison(text);
+        if (!normalized || seen.has(normalized)) {
+            continue;
+        }
+        seen.add(normalized);
+        deduped.push({
+            ...rule,
+            text
+        });
+    }
+
+    return deduped;
+}
+
+function collectAtomicRuleEntriesFromSourceText(sourceText, payload = {}) {
+    const entries = [];
+    const parsed = parseStructuredBranchText(sourceText);
+    const aux = payload?.aux_metadata || {};
+    const candidateTexts = [
+        parsed.behavior,
+        ...parsed.clauses,
+        ...(aux.fallbacks || []),
+        ...(aux.validation_rules || []),
+        ...(aux.display_rules || []),
+        ...(aux.constraints || [])
+    ]
+        .map(text => trimSemanticBlock(text))
+        .filter(Boolean);
+
+    for (const text of candidateTexts) {
+        const splitEntries = splitInlineConditionalClauses(text);
+        for (const entryText of splitEntries) {
+            const cleanedEntry = trimSemanticBlock(entryText);
+            const semanticEntry = stripServiceContextFragments(cleanedEntry);
+            if (!semanticEntry || !isMeaningfulChunkText(cleanText(semanticEntry))) {
+                continue;
+            }
+            entries.push({
+                text: semanticEntry,
+                kind: classifyAtomicRuleKind(semanticEntry)
+            });
+        }
+    }
+
+    return entries;
+}
+
+function classifyAtomicRuleKind(text) {
+    const cleaned = trimSemanticBlock(text);
+    const normalized = normalizeForComparison(cleaned);
+    if (!cleaned || !normalized) {
+        return 'behavior_rule';
+    }
+    if (/(^|\s)(status|СЃС‚Р°С‚СѓСЃ)\b|=\s*(decline|end|approved|rejected|success|failed)/i.test(cleaned)) {
+        return 'status_rule';
+    }
+    if (containsErrorHandling(cleaned) || /(error|exception|timeout|forbidden|unauthorized|not found|bad request)/i.test(cleaned)) {
+        return 'error_rule';
+    }
+    if (containsValidationRule(cleaned) || /(РІР°Р»РёРґ|must|should|required|РѕР±СЏР·Р°С‚РµР»СЊ|format|РґРѕРїСѓСЃС‚РёРј)/i.test(cleaned)) {
+        return 'validation_rule';
+    }
+    if (/(sort|sorting|СЃРѕСЂС‚РёСЂРѕРІ|РїРѕСЂСЏРґРѕРє|ascending|descending|РїРѕ РІРѕР·СЂР°СЃС‚Р°РЅРёСЋ|РїРѕ СѓР±С‹РІР°РЅРёСЋ)/i.test(cleaned)) {
+        return 'ordering_rule';
+    }
+    if (/(РЅРµС‚ РґР°РЅРЅС‹С…|РѕС‚СЃСѓС‚СЃС‚РІ|РЅРµ РЅР°Р№РґРµРЅ|empty|null|absent|РЅРµ РѕС‚РѕР±СЂР°Р¶)/i.test(cleaned)) {
+        return 'absence_rule';
+    }
+    if (isFallbackClauseText(cleaned)) {
+        return 'fallback_rule';
+    }
+    return 'behavior_rule';
+}
+
+function buildRequirementAtomicRulePayload(row, sharedIntro, rule, rowPayload = null) {
+    const sharedContext = summarizeSharedContext(sharedIntro, row.element || '');
+    const behaviorText = stripServiceContextFragments(trimSemanticBlock(rule?.text || ''));
+    const coreText = buildBehavioralCoreText({
+        subject: row.element,
+        sharedContext,
+        behavior: behaviorText
+    });
+    const fallbackPayload = rowPayload || buildRequirementRowPayload(row, sharedIntro);
+    const baseAux = {
+        ...(fallbackPayload?.aux_metadata || {})
+    };
+    const auxMetadata = {
+        ...baseAux,
+        branch_label: rule?.branch_label || null,
+        atomic_rule_kind: rule?.kind || 'behavior_rule',
+        parent_row_number: row.row_number || null,
+        row_number: row.row_number || null
+    };
+
+    return {
+        core_text: coreText,
+        embedding_text: coreText,
+        chunk_granularity: 'atomic',
+        retrieval_class: RETRIEVAL_CLASSES.BEHAVIORAL,
+        aux_metadata: auxMetadata,
+        legacy_text: coreText
+    };
 }
 
 function renderRequirementLegacyText({
@@ -2128,10 +2357,13 @@ function buildBehavioralCoreText({ subject, sharedContext, behavior }) {
 function stripServiceContextFragments(text) {
     return trimSemanticBlock(
         String(text || '')
-            .replace(/(?:^|[\s;])API dependency\s*:\s*[^.;\n]+(?:[.;]|$)/gi, ' ')
-            .replace(/(?:^|[\s;])Relevant params?\s*:\s*[^.;\n]+(?:[.;]|$)/gi, ' ')
-            .replace(/(?:^|[\s;])Reference\s*:\s*[^.;\n]+(?:[.;]|$)/gi, ' ')
-            .replace(/(?:^|[\s;])Layout\s*:\s*[^.;\n]+(?:[.;]|$)/gi, ' ')
+            .replace(/(?:^|[\s;,.():\n])(?:Requirement row|Behavior)\s*:\s*[^.;\n]+(?=[.;\n]|$)/gi, ' ')
+            .replace(/(?:^|[\s;,.():\n])(?:API dependency|Method\/API context)\s*:\s*[^.;\n]+(?=[.;\n]|$)/gi, ' ')
+            .replace(/(?:^|[\s;,.():\n])(?:Relevant params?|Service params\/context)\s*:\s*[^.;\n]+(?=[.;\n]|$)/gi, ' ')
+            .replace(/(?:^|[\s;,.():\n])(?:Reference(?:\/mock)?|Layout)\s*:\s*[^.;\n]+(?=[.;\n]|$)/gi, ' ')
+            .replace(/\u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u043c\u044b\u0435 \u043c\u0435\u0442\u043e\u0434\u044b \u043d\u0430 \u043f\u0440\u043e\u0435\u043a\u0442\u0435\s*:?\s*-\s*/gi, ' ')
+            .replace(/\u041d\u043e\u0432\u044b\u0435 \u043c\u0435\u0442\u043e\u0434\u044b \u043d\u0430 \u043f\u0440\u043e\u0435\u043a\u0442\u0435\s*:?\s*-\s*/gi, ' ')
+            .replace(/(?:\s*[.;]){2,}/g, '. ')
             .replace(/\s{2,}/g, ' ')
     );
 }
@@ -2143,7 +2375,7 @@ function shouldIncludeSharedContextInCoreText(text) {
 }
 
 function looksLikePureScopeContext(text) {
-    return /^(?:на|в)\s+(?:странице|экране|вкладке|табе|tab|page|screen|канале|channel)\b/i.test(cleanInlineText(text));
+    return /^(?:РЅР°|РІ)\s+(?:СЃС‚СЂР°РЅРёС†Рµ|СЌРєСЂР°РЅРµ|РІРєР»Р°РґРєРµ|С‚Р°Р±Рµ|tab|page|screen|РєР°РЅР°Р»Рµ|channel)\b/i.test(cleanInlineText(text));
 }
 
 function extractBehaviorDetailBuckets(text) {
@@ -2202,7 +2434,7 @@ function looksLikeDisplayDetailClause(text) {
         return false;
     }
     return !hasScenarioBranchSeed(text) && (
-        /отображ|показ|скрыт|видим|формат|сортиров|layout|макет|placeholder|tooltip|иконк|подсказ/i.test(text) ||
+        /РѕС‚РѕР±СЂР°Р¶|РїРѕРєР°Р·|СЃРєСЂС‹С‚|РІРёРґРёРј|С„РѕСЂРјР°С‚|СЃРѕСЂС‚РёСЂРѕРІ|layout|РјР°РєРµС‚|placeholder|tooltip|РёРєРѕРЅРє|РїРѕРґСЃРєР°Р·/i.test(text) ||
         normalized.includes('display') ||
         normalized.includes('visible') ||
         normalized.includes('hidden') ||
@@ -2220,13 +2452,13 @@ function looksLikeConstraintClause(text) {
         return false;
     }
     return !hasScenarioBranchSeed(text) && (
-        normalized.includes('только') ||
+        normalized.includes('С‚РѕР»СЊРєРѕ') ||
         normalized.includes('only') ||
-        normalized.includes('недоступ') ||
-        normalized.includes('доступ') ||
-        normalized.includes('огранич') ||
-        normalized.includes('обязател') ||
-        normalized.includes('не допуска') ||
+        normalized.includes('РЅРµРґРѕСЃС‚СѓРї') ||
+        normalized.includes('РґРѕСЃС‚СѓРї') ||
+        normalized.includes('РѕРіСЂР°РЅРёС‡') ||
+        normalized.includes('РѕР±СЏР·Р°С‚РµР»') ||
+        normalized.includes('РЅРµ РґРѕРїСѓСЃРєР°') ||
         normalized.includes('not allowed') ||
         normalized.includes('must not')
     );
@@ -2274,14 +2506,14 @@ function deriveEntityScopeFromBehavior(text) {
 
 function extractScreenScope(...sources) {
     return extractScopeByPatterns(sources, [
-        /((?:страниц[аеы]|экран[еау]|вкладк[аеу]|таб[еау]?|screen|page|tab|форм[аеу]|раздел[еау])\s+[^,.;:\n]{1,120})/i,
-        /((?:на|в)\s+(?:страниц[ае]|экране|вкладке|табе|screen|page|tab)\s+[^,.;:\n]{1,120})/i
+        /((?:СЃС‚СЂР°РЅРёС†[Р°РµС‹]|СЌРєСЂР°РЅ[РµР°Сѓ]|РІРєР»Р°РґРє[Р°РµСѓ]|С‚Р°Р±[РµР°Сѓ]?|screen|page|tab|С„РѕСЂРј[Р°РµСѓ]|СЂР°Р·РґРµР»[РµР°Сѓ])\s+[^,.;:\n]{1,120})/i,
+        /((?:РЅР°|РІ)\s+(?:СЃС‚СЂР°РЅРёС†[Р°Рµ]|СЌРєСЂР°РЅРµ|РІРєР»Р°РґРєРµ|С‚Р°Р±Рµ|screen|page|tab)\s+[^,.;:\n]{1,120})/i
     ]);
 }
 
 function extractChannelScope(...sources) {
     return extractScopeByPatterns(sources, [
-        /((?:канал[аеу]?|channel)\s+[^,.;:\n]{1,120})/i
+        /((?:РєР°РЅР°Р»[Р°РµСѓ]?|channel)\s+[^,.;:\n]{1,120})/i
     ]);
 }
 
@@ -2345,7 +2577,7 @@ function splitRequirementIntoScenarioBranches(text) {
 
     const conditionalSplit = splitTextByMarkers(
         normalized,
-        /(^|[\n;])\s*(если|иначе если|иначе|в случае|при условии|когда|пока|if|when|else)\b/gi,
+        /(^|[\n;])\s*(РµСЃР»Рё|РёРЅР°С‡Рµ РµСЃР»Рё|РёРЅР°С‡Рµ|РІ СЃР»СѓС‡Р°Рµ|РїСЂРё СѓСЃР»РѕРІРёРё|РєРѕРіРґР°|РїРѕРєР°|if|when|else)\b/gi,
         match => match[2]
     );
     if (conditionalSplit.branches.length >= 2) {
@@ -2436,7 +2668,7 @@ function buildRelevantParamsSummary(paramsText, branchText = '') {
     }
 
     if (!candidates.size) {
-        for (const regex of [/<значение параметра\s+"([^"]+)">/gi, /"([a-z][A-Za-z0-9_]{2,})"/g]) {
+        for (const regex of [/<Р·РЅР°С‡РµРЅРёРµ РїР°СЂР°РјРµС‚СЂР°\s+"([^"]+)">/gi, /"([a-z][A-Za-z0-9_]{2,})"/g]) {
             let match;
             while ((match = regex.exec(branchSource)) !== null) {
                 if (match[1]) {
@@ -2634,7 +2866,7 @@ function shouldMergeScenarioBranches(left, right) {
 }
 
 function extractOutcomeSignature(text) {
-    const matches = Array.from(String(text || '').matchAll(/(отображ|показыв|скрыва|ошибк|сообщени|возвраща|сохраня|созда|доступ|недоступ|show|hide|error|message|return|save|create|enabled|disabled)/gi))
+    const matches = Array.from(String(text || '').matchAll(/(РѕС‚РѕР±СЂР°Р¶|РїРѕРєР°Р·С‹РІ|СЃРєСЂС‹РІР°|РѕС€РёР±Рє|СЃРѕРѕР±С‰РµРЅРё|РІРѕР·РІСЂР°С‰Р°|СЃРѕС…СЂР°РЅСЏ|СЃРѕР·РґР°|РґРѕСЃС‚СѓРї|РЅРµРґРѕСЃС‚СѓРї|show|hide|error|message|return|save|create|enabled|disabled)/gi))
         .map(match => String(match[1] || '').toLowerCase());
     return matches.slice(0, 4).join('|');
 }
@@ -2708,15 +2940,109 @@ function synthesizeScenarioBranchFromGroup(prefix, branches = []) {
 }
 
 function parseStructuredBranchText(text) {
-    const source = String(text || '');
-    const [behaviorPart, clausesPart = ''] = source.split(/\nClauses:\n/i);
-    const behavior = trimSemanticBlock(behaviorPart);
-    const clauses = clausesPart
-        .split('\n')
-        .map(line => line.replace(/^\-\s+/, '').trim())
+    const source = trimSemanticBlock(String(text || ''));
+    if (!source) {
+        return { behavior: '', clauses: [] };
+    }
+
+    const clausesSeparatorMatch = source.match(/\nClauses:\n/i);
+    if (clausesSeparatorMatch) {
+        const [behaviorPart, clausesPart = ''] = source.split(/\nClauses:\n/i);
+        const behavior = trimSemanticBlock(behaviorPart);
+        const clauses = clausesPart
+            .split('\n')
+            .map(line => line.replace(/^\-\s+/, '').trim())
+            .filter(Boolean);
+        return { behavior, clauses };
+    }
+
+    const numberedParts = splitInlineNumberedClauses(source);
+    if (numberedParts.length >= 2) {
+        return {
+            behavior: numberedParts[0],
+            clauses: numberedParts.slice(1)
+        };
+    }
+
+    const conditionalParts = splitInlineConditionalClauses(source);
+    if (conditionalParts.length >= 2) {
+        return {
+            behavior: conditionalParts[0],
+            clauses: conditionalParts.slice(1)
+        };
+    }
+
+    return { behavior: source, clauses: [] };
+}
+
+function splitInlineNumberedClauses(text) {
+    const source = trimSemanticBlock(text);
+    if (!source) {
+        return [];
+    }
+
+    const markerRegex = /(^|[\s:;\/.(])(\d+(?:\.\d+)*)(?:[.)])?\s+/gm;
+    const rawMatches = Array.from(source.matchAll(markerRegex));
+    const matches = rawMatches.filter((match) => {
+        const label = String(match?.[2] || '');
+        if (!label) return false;
+        const depth = label.split('.').length;
+        if (depth >= 2) return true;
+        const numeric = Number(label);
+        return Number.isFinite(numeric) && numeric > 0 && numeric <= 20;
+    });
+    if (matches.length < 2) {
+        return [];
+    }
+
+    const starts = matches.map((match) => (match.index || 0) + (match[1] ? match[1].length : 0));
+    const intro = trimSemanticBlock(source.slice(0, starts[0]).replace(/^[:;\s]+/, ''));
+    const clauses = starts
+        .map((start, index) => {
+            const nextStart = starts[index + 1] ?? source.length;
+            const rawClause = source
+                .slice(start, nextStart)
+                .replace(/^[:;\s]+/, '')
+                .trim();
+            return trimSemanticBlock(rawClause.replace(/^\d+(?:\.\d+)*(?:[.)])?\s+/, ''));
+        })
         .filter(Boolean);
 
-    return { behavior, clauses };
+    const parts = [
+        intro,
+        ...clauses
+    ].filter(Boolean);
+
+    return parts.length >= 2 ? parts : [];
+}
+
+function splitInlineConditionalClauses(text) {
+    const source = trimSemanticBlock(text);
+    if (!source) {
+        return [];
+    }
+
+    const markerSplit = splitTextByMarkers(
+        source,
+        /(^|[.;]\s*|\s+)(\u0435\u0441\u043b\u0438|\u0438\u043d\u0430\u0447\u0435\s+\u0435\u0441\u043b\u0438|\u0438\u043d\u0430\u0447\u0435|\u043f\u0440\u0438\s+\u0443\u0441\u043b\u043e\u0432\u0438\u0438|\u0432\s+\u0441\u043b\u0443\u0447\u0430\u0435|if|when|else if|else|status\s*=|\u0441\u0442\u0430\u0442\u0443\u0441\s*=|if null|\u0435\u0441\u043b\u0438 null|if absent|\u0435\u0441\u043b\u0438\s+\u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442|sort by|sorting|\u0441\u043e\u0440\u0442\u0438\u0440\u043e\u0432\u0430)/gi,
+        match => match[2]
+    );
+
+    if (markerSplit.branches.length >= 2) {
+        return [
+            markerSplit.sharedIntro,
+            ...markerSplit.branches.map((branch) => branch?.text || '')
+        ]
+            .map((part) => trimSemanticBlock(part))
+            .filter(Boolean);
+    }
+
+    const sentenceParts = source
+        .split(/(?<=[.!?;])\s+/)
+        .map((part) => trimSemanticBlock(part))
+        .filter(Boolean);
+
+    return sentenceParts.length >= 2 ? sentenceParts : [source];
 }
 
 function buildStructuredBranchText(behavior, clauses = []) {
@@ -2790,10 +3116,10 @@ function isFallbackClauseText(text) {
     return (
         normalized.includes('fallback') ||
         normalized.includes('null') ||
-        normalized.includes('если какого то параметра') ||
-        normalized.includes('если всех параметров') ||
-        normalized.includes('не отображается') && normalized.includes('сдвигаются вверх') ||
-        normalized.includes('отображается текст из')
+        normalized.includes('РµСЃР»Рё РєР°РєРѕРіРѕ С‚Рѕ РїР°СЂР°РјРµС‚СЂР°') ||
+        normalized.includes('РµСЃР»Рё РІСЃРµС… РїР°СЂР°РјРµС‚СЂРѕРІ') ||
+        normalized.includes('РЅРµ РѕС‚РѕР±СЂР°Р¶Р°РµС‚СЃСЏ') && normalized.includes('СЃРґРІРёРіР°СЋС‚СЃСЏ РІРІРµСЂС…') ||
+        normalized.includes('РѕС‚РѕР±СЂР°Р¶Р°РµС‚СЃСЏ С‚РµРєСЃС‚ РёР·')
     );
 }
 
@@ -2897,21 +3223,21 @@ function hasScenarioBranchSeed(text) {
 }
 
 function hasConditionSignal(text) {
-    return /^(если|иначе если|иначе|когда|при|в случае|if|when|otherwise|else)\b/i.test(cleanInlineText(text));
+    return /^(РµСЃР»Рё|РёРЅР°С‡Рµ РµСЃР»Рё|РёРЅР°С‡Рµ|РєРѕРіРґР°|РїСЂРё|РІ СЃР»СѓС‡Р°Рµ|if|when|otherwise|else)\b/i.test(cleanInlineText(text));
 }
 
 function hasBehavioralPredicateSignal(text) {
-    return /(нажим|клика|выбира|ввод|открыва|закрыва|отправля|созда|сохраня|удаля|редактиру|отобража|показыва|скрыва|блокир|разреша|запреща|возвраща|получа|активн|неактивн|доступн|недоступн|выбран|enabled|disabled|active|inactive|available|unavailable|selected|select|click|enter|open|close|submit|display|show|hide|save|create|delete|return)/i
+    return /(РЅР°Р¶РёРј|РєР»РёРєР°|РІС‹Р±РёСЂР°|РІРІРѕРґ|РѕС‚РєСЂС‹РІР°|Р·Р°РєСЂС‹РІР°|РѕС‚РїСЂР°РІР»СЏ|СЃРѕР·РґР°|СЃРѕС…СЂР°РЅСЏ|СѓРґР°Р»СЏ|СЂРµРґР°РєС‚РёСЂСѓ|РѕС‚РѕР±СЂР°Р¶Р°|РїРѕРєР°Р·С‹РІР°|СЃРєСЂС‹РІР°|Р±Р»РѕРєРёСЂ|СЂР°Р·СЂРµС€Р°|Р·Р°РїСЂРµС‰Р°|РІРѕР·РІСЂР°С‰Р°|РїРѕР»СѓС‡Р°|Р°РєС‚РёРІРЅ|РЅРµР°РєС‚РёРІРЅ|РґРѕСЃС‚СѓРїРЅ|РЅРµРґРѕСЃС‚СѓРїРЅ|РІС‹Р±СЂР°РЅ|enabled|disabled|active|inactive|available|unavailable|selected|select|click|enter|open|close|submit|display|show|hide|save|create|delete|return)/i
         .test(String(text || ''));
 }
 
 function hasExpectedResultSignal(text) {
-    return /(отобража|показыва|скрыва|станов|доступ|недоступ|ошибк|сообщени|открыва|закрыва|сохраня|созда|возвраща|появля|очища|selected|shown|hidden|visible|enabled|disabled|error|message|opened|saved|created|returned|must|should)/i
+    return /(РѕС‚РѕР±СЂР°Р¶Р°|РїРѕРєР°Р·С‹РІР°|СЃРєСЂС‹РІР°|СЃС‚Р°РЅРѕРІ|РґРѕСЃС‚СѓРї|РЅРµРґРѕСЃС‚СѓРї|РѕС€РёР±Рє|СЃРѕРѕР±С‰РµРЅРё|РѕС‚РєСЂС‹РІР°|Р·Р°РєСЂС‹РІР°|СЃРѕС…СЂР°РЅСЏ|СЃРѕР·РґР°|РІРѕР·РІСЂР°С‰Р°|РїРѕСЏРІР»СЏ|РѕС‡РёС‰Р°|selected|shown|hidden|visible|enabled|disabled|error|message|opened|saved|created|returned|must|should)/i
         .test(String(text || ''));
 }
 
 function looksLikeScenarioSeed(text) {
-    return /^(если|иначе|когда|при|для пользователя|на странице|в модальном окне|в окне|при ответе|if|when|for user)\b/i
+    return /^(РµСЃР»Рё|РёРЅР°С‡Рµ|РєРѕРіРґР°|РїСЂРё|РґР»СЏ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ|РЅР° СЃС‚СЂР°РЅРёС†Рµ|РІ РјРѕРґР°Р»СЊРЅРѕРј РѕРєРЅРµ|РІ РѕРєРЅРµ|РїСЂРё РѕС‚РІРµС‚Рµ|if|when|for user)\b/i
         .test(cleanInlineText(text));
 }
 
@@ -3064,15 +3390,15 @@ function buildApiSummaryText(section, endpoint, lines, apiBlocks = {}) {
 }
 
 function isApiInputSectionMarker(normalizedLine) {
-    return /^(входные параметры|параметры запроса|request body|request params|input params)$/i.test(normalizedLine);
+    return /^(РІС…РѕРґРЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹|РїР°СЂР°РјРµС‚СЂС‹ Р·Р°РїСЂРѕСЃР°|request body|request params|input params)$/i.test(normalizedLine);
 }
 
 function isApiOutputSectionMarker(normalizedLine) {
-    return /^(выходные параметры|параметры ответа|response body|response params|output params|выходные данные)$/i.test(normalizedLine);
+    return /^(РІС‹С…РѕРґРЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹|РїР°СЂР°РјРµС‚СЂС‹ РѕС‚РІРµС‚Р°|response body|response params|output params|РІС‹С…РѕРґРЅС‹Рµ РґР°РЅРЅС‹Рµ)$/i.test(normalizedLine);
 }
 
 function isApiErrorSectionMarker(normalizedLine) {
-    return /^(возможные ошибки|ошибки|error handling|errors)$/i.test(normalizedLine);
+    return /^(РІРѕР·РјРѕР¶РЅС‹Рµ РѕС€РёР±РєРё|РѕС€РёР±РєРё|error handling|errors)$/i.test(normalizedLine);
 }
 
 function partitionApiContent(content, section = {}) {
@@ -3166,7 +3492,7 @@ function partitionApiContentByTableOrder(lines, section = {}) {
     }
 
     const trailingLines = collectTrailingLinesAfterLastTable(lines);
-    if (trailingLines.some(line => /\berror|ошиб/i.test(line))) {
+    if (trailingLines.some(line => /\berror|РѕС€РёР±/i.test(line))) {
         groups.error = trailingLines;
     } else if (containsApiBehaviorNotes(trailingLines.join('\n'))) {
         groups.behavior = [...groups.behavior, ...trailingLines];
@@ -3205,31 +3531,31 @@ function collectTrailingLinesAfterLastTable(lines) {
 }
 
 function isApiInputMarker(normalizedLine) {
-    return /\b(входные параметры|параметры запроса|request body|request params|input params)\b/i.test(normalizedLine);
+    return /\b(РІС…РѕРґРЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹|РїР°СЂР°РјРµС‚СЂС‹ Р·Р°РїСЂРѕСЃР°|request body|request params|input params)\b/i.test(normalizedLine);
 }
 
 function isApiOutputMarker(normalizedLine) {
-    return /\b(выходные параметры|параметры ответа|response body|response params|output params)\b/i.test(normalizedLine);
+    return /\b(РІС‹С…РѕРґРЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹|РїР°СЂР°РјРµС‚СЂС‹ РѕС‚РІРµС‚Р°|response body|response params|output params)\b/i.test(normalizedLine);
 }
 
 function isApiErrorMarker(normalizedLine) {
-    return /\b(возможные ошибки|ошибки|error handling|errors)\b/i.test(normalizedLine);
+    return /\b(РІРѕР·РјРѕР¶РЅС‹Рµ РѕС€РёР±РєРё|РѕС€РёР±РєРё|error handling|errors)\b/i.test(normalizedLine);
 }
 
 function isApiBehaviorMarker(normalizedLine) {
-    return /\b(примечани|особенност|поведени|только в случае|если параметр|если ответ|behavior notes)\b/i.test(normalizedLine);
+    return /\b(РїСЂРёРјРµС‡Р°РЅРё|РѕСЃРѕР±РµРЅРЅРѕСЃС‚|РїРѕРІРµРґРµРЅРё|С‚РѕР»СЊРєРѕ РІ СЃР»СѓС‡Р°Рµ|РµСЃР»Рё РїР°СЂР°РјРµС‚СЂ|РµСЃР»Рё РѕС‚РІРµС‚|behavior notes)\b/i.test(normalizedLine);
 }
 
 function containsApiBehaviorNotes(text) {
-    return /(только в случае|если параметр|если ответ|не отображается|отображается только|behavior)/i.test(text || '');
+    return /(С‚РѕР»СЊРєРѕ РІ СЃР»СѓС‡Р°Рµ|РµСЃР»Рё РїР°СЂР°РјРµС‚СЂ|РµСЃР»Рё РѕС‚РІРµС‚|РЅРµ РѕС‚РѕР±СЂР°Р¶Р°РµС‚СЃСЏ|РѕС‚РѕР±СЂР°Р¶Р°РµС‚СЃСЏ С‚РѕР»СЊРєРѕ|behavior)/i.test(text || '');
 }
 
 function detectApiRequestMode(text) {
-    if (/пустым телом запроса|empty request body|empty body|request body отсутств/i.test(text || '')) {
+    if (/РїСѓСЃС‚С‹Рј С‚РµР»РѕРј Р·Р°РїСЂРѕСЃР°|empty request body|empty body|request body РѕС‚СЃСѓС‚СЃС‚РІ/i.test(text || '')) {
         return 'empty body';
     }
 
-    if (/без параметров запроса|no request params|request params отсутств/i.test(text || '')) {
+    if (/Р±РµР· РїР°СЂР°РјРµС‚СЂРѕРІ Р·Р°РїСЂРѕСЃР°|no request params|request params РѕС‚СЃСѓС‚СЃС‚РІ/i.test(text || '')) {
         return 'no request params';
     }
 
@@ -3243,11 +3569,11 @@ function tableLooksLikeOutputParams(tableLines, section = {}) {
         return true;
     }
 
-    return /выходн|response|параметры ответа/i.test(joined);
+    return /РІС‹С…РѕРґРЅ|response|РїР°СЂР°РјРµС‚СЂС‹ РѕС‚РІРµС‚Р°/i.test(joined);
 }
 
 function isApiHeadingNoise(line) {
-    return /^(запрос|выходные данные|входные параметры|выходные параметры|параметры ответа|описание)\s*:?\s*$/i
+    return /^(Р·Р°РїСЂРѕСЃ|РІС‹С…РѕРґРЅС‹Рµ РґР°РЅРЅС‹Рµ|РІС…РѕРґРЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹|РІС‹С…РѕРґРЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹|РїР°СЂР°РјРµС‚СЂС‹ РѕС‚РІРµС‚Р°|РѕРїРёСЃР°РЅРёРµ)\s*:?\s*$/i
         .test(String(line || '').trim());
 }
 
@@ -3257,7 +3583,7 @@ function isMeaningfulApiBlock(text) {
         return false;
     }
 
-    if (['входные параметры', 'выходные параметры', 'параметры ответа', 'ошибки', 'описание'].includes(normalized)) {
+    if (['РІС…РѕРґРЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹', 'РІС‹С…РѕРґРЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹', 'РїР°СЂР°РјРµС‚СЂС‹ РѕС‚РІРµС‚Р°', 'РѕС€РёР±РєРё', 'РѕРїРёСЃР°РЅРёРµ'].includes(normalized)) {
         return false;
     }
 
@@ -3346,7 +3672,7 @@ function trimSemanticBlock(text) {
                 const next = arr[index + 1] || '';
                 return Boolean(prev.trim()) && Boolean(next.trim());
             }
-            return !/^[-–—=_]{2,}$/.test(line.trim());
+            return !/^[-вЂ“вЂ”=_]{2,}$/.test(line.trim());
         })
         .join('\n')
         .trim();
@@ -3354,9 +3680,12 @@ function trimSemanticBlock(text) {
 
 function isPlaceholderValue(value) {
     const normalized = normalizeForComparison(value);
+    const rawLower = String(value || '').toLowerCase();
     return !normalized ||
-        ['-', '—', '/', 'нет', 'none', 'n a', 'na'].includes(normalized) ||
-        /^[-–—/\\|]+$/.test(String(value || '').trim());
+        ['-', 'пїЅ', '/', 'пїЅпїЅпїЅ', 'none', 'n a', 'na'].includes(normalized) ||
+        /пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ\s*:?\s*-/.test(rawLower) ||
+        /пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ\s*:?\s*-/.test(rawLower) ||
+        /^[-пїЅпїЅ\/\\|]+$/.test(String(value || '').trim());
 }
 
 function normalizeForComparison(text) {
@@ -3486,7 +3815,7 @@ function extractRequirementId(text) {
     
     const patterns = [
         /REQ[-_]?(\d+)/i,
-        /Требование[-_]?(\d+)/i,
+        /РўСЂРµР±РѕРІР°РЅРёРµ[-_]?(\d+)/i,
         /FR[-_]?(\d+)/i,
         /BR[-_]?(\d+)/i,
         /ID[:\s]+(\d{4,})/i
@@ -3505,10 +3834,10 @@ function extractRequirementId(text) {
 function extractFeatureName(heading) {
     if (!heading) return null;
     
-    // Убираем нумерацию в начале
+    // РЈР±РёСЂР°РµРј РЅСѓРјРµСЂР°С†РёСЋ РІ РЅР°С‡Р°Р»Рµ
     const cleaned = heading.replace(/^\d+[\.\)]\s*/, '').trim();
     
-    // Если слишком длинное - обрезаем
+    // Р•СЃР»Рё СЃР»РёС€РєРѕРј РґР»РёРЅРЅРѕРµ - РѕР±СЂРµР·Р°РµРј
     if (cleaned.length > 100) {
         return cleaned.substring(0, 100) + '...';
     }
@@ -3519,7 +3848,7 @@ function extractFeatureName(heading) {
 function createSummary(text) {
     if (!text) return '';
     
-    // Берём первые 200 символов как summary
+    // Р‘РµСЂС‘Рј РїРµСЂРІС‹Рµ 200 СЃРёРјРІРѕР»РѕРІ РєР°Рє summary
     const summary = text.substring(0, 200).trim();
     
     if (text.length > 200) {
@@ -3532,26 +3861,26 @@ function createSummary(text) {
 function estimateTokens(text) {
     if (!text) return 0;
     
-    // Грубая оценка: ~4 символа на токен
+    // Р“СЂСѓР±Р°СЏ РѕС†РµРЅРєР°: ~4 СЃРёРјРІРѕР»Р° РЅР° С‚РѕРєРµРЅ
     return Math.ceil(text.length / 4);
 }
 
 // ============================================================
-// ЭКСПОРТ ДОПОЛНИТЕЛЬНЫХ ФУНКЦИЙ
+// Р­РљРЎРџРћР Рў Р”РћРџРћР›РќРРўР•Р›Р¬РќР«РҐ Р¤РЈРќРљР¦РР™
 // ============================================================
 
 /**
- * Создаёт связи между чанками на основе перекрёстных ссылок
+ * РЎРѕР·РґР°С‘С‚ СЃРІСЏР·Рё РјРµР¶РґСѓ С‡Р°РЅРєР°РјРё РЅР° РѕСЃРЅРѕРІРµ РїРµСЂРµРєСЂС‘СЃС‚РЅС‹С… СЃСЃС‹Р»РѕРє
  * @param {Array} chunks 
- * @returns {Array} Чанки с заполненными linked_chunk_ids
+ * @returns {Array} Р§Р°РЅРєРё СЃ Р·Р°РїРѕР»РЅРµРЅРЅС‹РјРё linked_chunk_ids
  */
 export function linkChunks(chunks) {
-    // Создаём индекс для быстрого поиска
+    // РЎРѕР·РґР°С‘Рј РёРЅРґРµРєСЃ РґР»СЏ Р±С‹СЃС‚СЂРѕРіРѕ РїРѕРёСЃРєР°
     const chunksByHeading = new Map();
     const chunksByRequirement = new Map();
     
     chunks.forEach(chunk => {
-        // Индексируем по заголовку
+        // РРЅРґРµРєСЃРёСЂСѓРµРј РїРѕ Р·Р°РіРѕР»РѕРІРєСѓ
         if (chunk.heading) {
             const normalizedHeading = chunk.heading.toLowerCase().trim();
             if (!chunksByHeading.has(normalizedHeading)) {
@@ -3560,7 +3889,7 @@ export function linkChunks(chunks) {
             chunksByHeading.get(normalizedHeading).push(chunk.id);
         }
         
-        // Индексируем по requirement_id
+        // РРЅРґРµРєСЃРёСЂСѓРµРј РїРѕ requirement_id
         if (chunk.requirement_id) {
             if (!chunksByRequirement.has(chunk.requirement_id)) {
                 chunksByRequirement.set(chunk.requirement_id, []);
@@ -3569,13 +3898,13 @@ export function linkChunks(chunks) {
         }
     });
     
-    // Проходим по всем чанкам и создаём связи
+    // РџСЂРѕС…РѕРґРёРј РїРѕ РІСЃРµРј С‡Р°РЅРєР°Рј Рё СЃРѕР·РґР°С‘Рј СЃРІСЏР·Рё
     chunks.forEach(chunk => {
-        // Ищем ссылки в тексте на другие заголовки
+        // РС‰РµРј СЃСЃС‹Р»РєРё РІ С‚РµРєСЃС‚Рµ РЅР° РґСЂСѓРіРёРµ Р·Р°РіРѕР»РѕРІРєРё
         if (chunk.cleaned_text) {
             chunksByHeading.forEach((ids, heading) => {
                 if (chunk.id !== ids[0] && chunk.cleaned_text.toLowerCase().includes(heading)) {
-                    // Добавляем связь если ещё не добавлена
+                    // Р”РѕР±Р°РІР»СЏРµРј СЃРІСЏР·СЊ РµСЃР»Рё РµС‰С‘ РЅРµ РґРѕР±Р°РІР»РµРЅР°
                     ids.forEach(linkedId => {
                         if (linkedId !== chunk.id && !chunk.linked_chunk_ids.includes(linkedId)) {
                             chunk.linked_chunk_ids.push(linkedId);
@@ -3590,10 +3919,10 @@ export function linkChunks(chunks) {
 }
 
 /**
- * Получает связанные чанки для данного chunk
+ * РџРѕР»СѓС‡Р°РµС‚ СЃРІСЏР·Р°РЅРЅС‹Рµ С‡Р°РЅРєРё РґР»СЏ РґР°РЅРЅРѕРіРѕ chunk
  * @param {string} chunkId 
  * @param {Array} allChunks 
- * @returns {Array} Связанные чанки
+ * @returns {Array} РЎРІСЏР·Р°РЅРЅС‹Рµ С‡Р°РЅРєРё
  */
 export function getRelatedChunks(chunkId, allChunks) {
     const chunk = allChunks.find(c => c.id === chunkId);
@@ -3603,3 +3932,5 @@ export function getRelatedChunks(chunkId, allChunks) {
         .map(id => allChunks.find(c => c.id === id))
         .filter(Boolean);
 }
+
+

@@ -187,3 +187,32 @@
 2026-04-14 06:18:04.511+0000 INFO  name: system
 2026-04-14 06:18:04.512+0000 INFO  creationDate: 2026-04-05T14:19:56.911Z
 2026-04-14 06:18:04.513+0000 INFO  Started.
+2026-04-16 19:18:22.434+0000 INFO  Logging config in use: File '/var/lib/neo4j/conf/user-logs.xml'
+2026-04-16 19:18:22.443+0000 WARN  Use of deprecated setting 'dbms.memory.heap.max_size'. It is replaced by 'server.memory.heap.max_size'.
+2026-04-16 19:18:22.444+0000 WARN  Use of deprecated setting 'dbms.memory.heap.initial_size'. It is replaced by 'server.memory.heap.initial_size'.
+2026-04-16 19:18:22.451+0000 INFO  Starting...
+2026-04-16 19:18:23.320+0000 INFO  This instance is ServerId{82712402} (82712402-1dfa-4eb7-9403-c0cc4f15bb75)
+2026-04-16 19:18:23.892+0000 INFO  ======== Neo4j 5.16.0 ========
+2026-04-16 19:18:28.431+0000 INFO  Bolt enabled on 0.0.0.0:7687.
+2026-04-16 19:18:29.280+0000 INFO  HTTP enabled on 0.0.0.0:7474.
+2026-04-16 19:18:29.286+0000 INFO  Remote interface available at http://localhost:7474/
+2026-04-16 19:18:29.291+0000 INFO  id: 38A63FA4251834BF6FF799813D09ED21AB43477BCDE9AF2682672C18CEA81B43
+2026-04-16 19:18:29.293+0000 INFO  name: system
+2026-04-16 19:18:29.294+0000 INFO  creationDate: 2026-04-05T14:19:56.911Z
+2026-04-16 19:18:29.295+0000 INFO  Started.
+2026-04-17 06:34:06.472+0000 INFO  Neo4j Server shutdown initiated by request
+2026-04-17 06:34:06.503+0000 INFO  Stopping...
+2026-04-17 06:34:11.866+0000 INFO  Stopped.
+2026-04-17 06:34:21.535+0000 INFO  Logging config in use: File '/var/lib/neo4j/conf/user-logs.xml'
+2026-04-17 06:34:21.542+0000 WARN  Use of deprecated setting 'dbms.memory.heap.max_size'. It is replaced by 'server.memory.heap.max_size'.
+2026-04-17 06:34:21.543+0000 WARN  Use of deprecated setting 'dbms.memory.heap.initial_size'. It is replaced by 'server.memory.heap.initial_size'.
+2026-04-17 06:34:21.549+0000 INFO  Starting...
+2026-04-17 06:34:22.499+0000 INFO  This instance is ServerId{82712402} (82712402-1dfa-4eb7-9403-c0cc4f15bb75)
+2026-04-17 06:34:23.055+0000 INFO  ======== Neo4j 5.16.0 ========
+2026-04-17 06:34:28.522+0000 INFO  Bolt enabled on 0.0.0.0:7687.
+2026-04-17 06:34:29.124+0000 INFO  HTTP enabled on 0.0.0.0:7474.
+2026-04-17 06:34:29.127+0000 INFO  Remote interface available at http://localhost:7474/
+2026-04-17 06:34:29.131+0000 INFO  id: 38A63FA4251834BF6FF799813D09ED21AB43477BCDE9AF2682672C18CEA81B43
+2026-04-17 06:34:29.132+0000 INFO  name: system
+2026-04-17 06:34:29.132+0000 INFO  creationDate: 2026-04-05T14:19:56.911Z
+2026-04-17 06:34:29.133+0000 INFO  Started.

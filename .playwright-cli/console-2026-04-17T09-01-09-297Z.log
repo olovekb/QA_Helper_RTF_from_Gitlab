@@ -1,0 +1,12 @@
+[  108330ms] [LOG] TestModelReviewModal: treeData state changed: {} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  108331ms] [LOG] TestModelReviewModal: treeData keys: [] @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  108331ms] [LOG] SolutionPage: generatedCases state changed: [] @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  108331ms] [LOG] SolutionPage: generatedCases length: 0 @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  108331ms] [LOG] SolutionPage: проверка статуса генерации модели: {savedStatus: null, savedTaskId: null} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  108363ms] [LOG] SolutionPage: loading saved test cases: null @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  108438ms] [VERBOSE] [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) %o @ http://localhost:3000/solution:0
+[  454215ms] [LOG] TestModelGeneratorModal: ✅ Очищены все данные перед новой генерацией модели @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  456148ms] [LOG] SolutionPage: Возобновляем проверку статуса генерации модели, taskId: 4a9ab41e-3573-4241-adbc-54f34d92004a @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  471281ms] [LOG] Тестовая модель сохранена в IndexedDB и состояние @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  471284ms] [LOG] Тестовая модель загружена в редактор @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  471341ms] [LOG] Тестовая модель загружена в редактор @ http://localhost:3000/static/js/main.3f1369f3.js:1

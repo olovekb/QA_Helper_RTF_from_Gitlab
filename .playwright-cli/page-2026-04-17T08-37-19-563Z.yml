@@ -1,0 +1,63 @@
+- generic [ref=e3]:
+  - main [ref=e4]:
+    - generic [ref=e46]:
+      - button "← Назад" [ref=e284] [cursor=pointer]
+      - heading "Тестирование требований" [level=1] [ref=e285]
+      - generic [ref=e49]:
+        - generic [ref=e50]:
+          - heading "Настройки подключения" [level=2] [ref=e286]
+          - button "Очистить всё" [ref=e287] [cursor=pointer]
+        - generic [ref=e54]:
+          - generic [ref=e55]:
+            - generic [ref=e56]: Project Key (Jira)
+            - textbox "PROJ" [ref=e288]
+          - generic [ref=e58]:
+            - generic [ref=e59]: Jira PAT (Personal Access Token)
+            - textbox "Ваш токен доступа Jira" [ref=e289]
+          - generic [ref=e61]:
+            - generic [ref=e62]: Проект Allure
+            - generic [ref=e63]:
+              - log [ref=e65]
+              - generic [ref=e66] [cursor=pointer]:
+                - generic [ref=e67]:
+                  - generic [ref=e68]: Выберите проект Allure…
+                  - combobox [ref=e70]
+                - img [ref=e74]
+      - generic [ref=e76]:
+        - generic [ref=e77]:
+          - button "Загрузить из Confluence" [ref=e290] [cursor=pointer]
+          - button "Вставить текст" [ref=e291] [cursor=pointer]
+          - button "Загрузить PDF" [ref=e292] [cursor=pointer]
+        - textbox "Вставьте текст требований для анализа..." [ref=e293]: "# Requirements | No | Element | Requirement | | --- | --- | --- | | 1 | Login button | On Login screen the Login button is enabled when both fields are filled. |"
+        - 'textbox "Глоссарий: Confluence Page ID или URL (необязательно)" [ref=e294]'
+        - generic [ref=e85]:
+          - generic [ref=e87]:
+            - log [ref=e89]
+            - generic [ref=e90] [cursor=pointer]:
+              - generic [ref=e91]:
+                - generic [ref=e92]: "Доп. контекст: добавьте Page ID/URL и нажмите Enter"
+                - combobox [ref=e94]
+              - img [ref=e98]
+          - 'textbox "Инструкция к доп. контексту: что именно брать из ссылок (напр.: ''используй только разделы «Термины» и «Ограничения»'')" [ref=e295]'
+        - button "Запустить AI-анализ" [ref=e296] [cursor=pointer]
+      - generic [ref=e102]:
+        - button "Генерация..." [disabled] [ref=e297]
+        - button "Очистить модель" [ref=e298] [cursor=pointer]
+      - generic [ref=e299]:
+        - generic [ref=e300]:
+          - heading "Генерация тест-кейсов" [level=4] [ref=e303]
+          - generic [ref=e304]:
+            - button "Свернуть" [ref=e305] [cursor=pointer]
+            - generic [ref=e306]: 10%
+        - generic [ref=e307]: Генерация выполняется в фоновом режиме. Вы можете продолжить работу. Результат будет сохранен автоматически.
+      - generic [ref=e106]:
+        - paragraph [ref=e107]: Здесь пока ничего нет
+        - button "Добавить задачу" [ref=e312] [cursor=pointer]
+  - contentinfo [ref=e40]:
+    - generic [ref=e41]:
+      - link "Предложить улучшение" [ref=e313] [cursor=pointer]:
+        - /url: "https://jira.abanking.ru/secure/CreateIssueDetails!init.jspa?pid=10201&issuetype=10103&components=21300&summary=QA-helper:"
+      - generic [ref=e43]: ·
+      - link "Сообщить о проблеме" [ref=e314] [cursor=pointer]:
+        - /url: "https://jira.abanking.ru/secure/CreateIssue.jspa?issuetype=13101&pid=10201&components=21300&summary=QA-helper:"
+    - button "( u_u )" [ref=e315] [cursor=pointer]

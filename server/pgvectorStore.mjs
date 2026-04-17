@@ -276,11 +276,30 @@ export async function semanticSearch(query, apiKey, options = {}) {
         topK = 5,
         sourceType = null,
         docId = null,
+        docIds = null,
         chunkType = null,
+        chunkTypes = null,
+        chunkGranularity = null,
         retrievalClass = null,
         eligibilityStatuses = null,
-        minScore = 0.0
+        minScore = 0.0,
+        enforceScoped = false,
+        allowUnsafeUnscoped = false
     } = options;
+
+    const hasScope = Boolean(
+        sourceType ||
+        docId ||
+        (Array.isArray(docIds) && docIds.length > 0) ||
+        chunkType ||
+        (Array.isArray(chunkTypes) && chunkTypes.length > 0) ||
+        chunkGranularity ||
+        retrievalClass ||
+        (Array.isArray(eligibilityStatuses) && eligibilityStatuses.length > 0)
+    );
+    if (enforceScoped && !hasScope && !allowUnsafeUnscoped) {
+        throw new Error('Unsafe unscoped semanticSearch is not allowed in production retrieval path.');
+    }
 
     console.log(`[pgvectorStore] Семантический поиск: "${query.substring(0, 50)}...", topK=${topK}`);
 
@@ -301,9 +320,21 @@ export async function semanticSearch(query, apiKey, options = {}) {
         conditions.push(`doc_id = $${paramIndex++}`);
         params.push(docId);
     }
+    if (Array.isArray(docIds) && docIds.length > 0) {
+        conditions.push(`doc_id = ANY($${paramIndex++})`);
+        params.push(docIds);
+    }
     if (chunkType) {
         conditions.push(`chunk_type = $${paramIndex++}`);
         params.push(chunkType);
+    }
+    if (Array.isArray(chunkTypes) && chunkTypes.length > 0) {
+        conditions.push(`chunk_type = ANY($${paramIndex++})`);
+        params.push(chunkTypes);
+    }
+    if (chunkGranularity) {
+        conditions.push(`COALESCE(metadata->>'chunk_granularity', 'atomic') = $${paramIndex++}`);
+        params.push(String(chunkGranularity));
     }
     if (retrievalClass) {
         conditions.push(`retrieval_class = $${paramIndex++}`);
@@ -331,7 +362,7 @@ export async function semanticSearch(query, apiKey, options = {}) {
 
     const result = await pool.query(querySql, params);
 
-    return result.rows.map(row => ({
+    const mappedRows = result.rows.map(row => ({
         id: row.id,
         doc_id: row.doc_id,
         doc_title: row.doc_title,
@@ -347,6 +378,10 @@ export async function semanticSearch(query, apiKey, options = {}) {
         explicit_refs: row.explicit_refs,
         score: parseFloat(row.score)
     }));
+    if (!(Number(minScore) > 0)) {
+        return mappedRows;
+    }
+    return mappedRows.filter(row => Number.isFinite(row?.score) && row.score >= Number(minScore));
 }
 
 /**

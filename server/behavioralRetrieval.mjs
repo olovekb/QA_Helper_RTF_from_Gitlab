@@ -1,4 +1,4 @@
-import { ELIGIBILITY_STATUSES, RETRIEVAL_CLASSES } from './semanticChunking.mjs';
+import { CHUNK_TYPES, ELIGIBILITY_STATUSES, RETRIEVAL_CLASSES } from './semanticChunking.mjs';
 
 const DEFAULT_METADATA_WEIGHTS = {
     screen_scope: 0.35,
@@ -14,6 +14,30 @@ const DEFAULT_ELIGIBLE_STATUSES = [
     ELIGIBILITY_STATUSES.ELIGIBLE,
     ELIGIBILITY_STATUSES.PENALIZED
 ];
+
+const BEHAVIORAL_CHUNK_TYPE_WHITELIST = new Set([
+    CHUNK_TYPES.ATOMIC_RULE,
+    CHUNK_TYPES.SCENARIO_BRANCH,
+    CHUNK_TYPES.BUSINESS_RULE,
+    CHUNK_TYPES.UI_RULE,
+    CHUNK_TYPES.UI_CURRENT_BEHAVIOR,
+    CHUNK_TYPES.SCENARIO_STEP,
+    CHUNK_TYPES.ERROR_HANDLING,
+    CHUNK_TYPES.VALIDATION_RULE
+]);
+
+const SUMMARY_CHUNK_TYPES = new Set([
+    CHUNK_TYPES.REQUIREMENT_ROW_SUMMARY,
+    CHUNK_TYPES.REQUIREMENT_ROW,
+    CHUNK_TYPES.BUSINESS_CONTEXT,
+    CHUNK_TYPES.SCOPE_CONTEXT,
+    CHUNK_TYPES.REFERENCE_CONTEXT,
+    CHUNK_TYPES.REFERENCE_LINK,
+    CHUNK_TYPES.DOCUMENT_META,
+    CHUNK_TYPES.CHANGE_LOG,
+    CHUNK_TYPES.NOISE_METADATA,
+    CHUNK_TYPES.NOISE_SKIPPED
+]);
 
 const STOP_WORDS = new Set([
     'если', 'когда', 'при', 'или', 'для', 'как', 'это', 'что', 'будет', 'должен', 'должна',
@@ -144,9 +168,14 @@ export function isBehavioralRetrievalCandidate(chunk = {}, eligibleStatuses = DE
     const retrievalClass = chunk?.retrieval_class || chunk?.metadata?.retrieval_class || null;
     const eligibilityStatus = chunk?.eligibility_status || chunk?.metadata?.eligibility_status || null;
     const excluded = Boolean(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval);
+    const chunkType = String(chunk?.chunk_type || chunk?.metadata?.chunk_type || '').trim();
+    const granularity = String(chunk?.chunk_granularity || chunk?.metadata?.chunk_granularity || 'atomic').trim().toLowerCase();
 
     return !excluded &&
         retrievalClass === RETRIEVAL_CLASSES.BEHAVIORAL &&
+        granularity === 'atomic' &&
+        BEHAVIORAL_CHUNK_TYPE_WHITELIST.has(chunkType) &&
+        !SUMMARY_CHUNK_TYPES.has(chunkType) &&
         eligibleStatuses.includes(eligibilityStatus || ELIGIBILITY_STATUSES.ELIGIBLE);
 }
 
@@ -158,6 +187,9 @@ export function scoreChunkByMetadata(chunk = {}, signals = {}, weights = DEFAULT
     const retrievalPenalty = Number.isFinite(chunk?.retrieval_penalty)
         ? Number(chunk.retrieval_penalty)
         : (Number(chunk?.metadata?.retrieval_penalty) || 0);
+    const chunkGranularity = String(chunk?.chunk_granularity || chunk?.metadata?.chunk_granularity || 'atomic').toLowerCase();
+    const chunkType = String(chunk?.chunk_type || chunk?.metadata?.chunk_type || '').trim();
+    const tokenCount = Number(chunk?.token_count || chunk?.metadata?.token_count || Math.ceil(String(chunk?.content || chunk?.cleaned_text || '').length / 4) || 0);
 
     let metadataBoost = 0;
     metadataBoost += weights.screen_scope * valuesOverlap(getChunkFieldValues(chunk, 'screen_scope'), signals.screen_scope);
@@ -177,11 +209,20 @@ export function scoreChunkByMetadata(chunk = {}, signals = {}, weights = DEFAULT
         signals.page_entities
     );
 
+    const summaryPenalty = chunkGranularity === 'summary' || SUMMARY_CHUNK_TYPES.has(chunkType)
+        ? 0.45
+        : 0;
+    const lengthPenalty = tokenCount > 900
+        ? 0.32
+        : (tokenCount > 700 ? 0.22 : (tokenCount > 500 ? 0.12 : 0));
+    const softPenalty = summaryPenalty + lengthPenalty;
+
     return {
         baseScore,
         metadataBoost,
         retrievalPenalty,
-        combinedScore: baseScore + metadataBoost - retrievalPenalty
+        softPenalty,
+        combinedScore: baseScore + metadataBoost - retrievalPenalty - softPenalty
     };
 }
 

@@ -1,0 +1,53 @@
+﻿[
+    {
+        "index":  0,
+        "id":  "f6b1c89e-53d7-4d37-a78a-aa3031c43a3b",
+        "chunkType":  "requirement_row_summary",
+        "chunkGranularity":  "summary",
+        "retrievable":  false,
+        "parentRowNumber":  "1",
+        "atomicRuleKind":  null,
+        "lineageParentSummaryId":  null,
+        "lineageChildRuleIds":  [
+                                    "b7e75b5c-40f4-4ca9-95f1-1a9c4acc3152"
+                                ],
+        "excludeFromRetrieval":  true,
+        "excludeFromGraph":  true,
+        "retrievalClass":  "reference_context",
+        "eligibilityStatus":  "excluded"
+    },
+    {
+        "index":  1,
+        "id":  "3c9fa5ff-67db-4710-9d17-a14292d21a80",
+        "chunkType":  "requirement_row",
+        "chunkGranularity":  "summary",
+        "retrievable":  false,
+        "parentRowNumber":  "1",
+        "atomicRuleKind":  null,
+        "lineageParentSummaryId":  null,
+        "lineageChildRuleIds":  [
+
+                                ],
+        "excludeFromRetrieval":  true,
+        "excludeFromGraph":  true,
+        "retrievalClass":  "reference_context",
+        "eligibilityStatus":  "excluded"
+    },
+    {
+        "index":  2,
+        "id":  "b7e75b5c-40f4-4ca9-95f1-1a9c4acc3152",
+        "chunkType":  "atomic_rule",
+        "chunkGranularity":  "atomic",
+        "retrievable":  true,
+        "parentRowNumber":  "1",
+        "atomicRuleKind":  "behavior_rule",
+        "lineageParentSummaryId":  "f6b1c89e-53d7-4d37-a78a-aa3031c43a3b",
+        "lineageChildRuleIds":  [
+
+                                ],
+        "excludeFromRetrieval":  false,
+        "excludeFromGraph":  false,
+        "retrievalClass":  "behavioral",
+        "eligibilityStatus":  "eligible"
+    }
+]

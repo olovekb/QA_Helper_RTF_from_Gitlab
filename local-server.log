@@ -1,0 +1,25 @@
+[example-selector] ✅ Загружено 1 E2E примеров
+[example-selector] ✅ Загружено 2 Integration Frontend примеров
+[example-selector] ✅ Загружено 2 Integration Backend примеров
+[example-selector] ✅ Загружено 1 параметризованных примеров
+[example-selector] ✅ Всего загружено 6 статических примеров
+Авторизуемся по токену Allure...|Авторизуемся по токену Allure.../Авторизуемся по токену Allure...-Авторизуемся по токену Allure...|[server] ✅ Загружен эталон test-model-example.json (4060 символов)
+[server] ✅ Загружены идеальные примеры E2E (974 символов)
+[server] ✅ Загружены идеальные примеры Integration Frontend (2634 символов)
+[server] ✅ Загружены идеальные примеры Integration Backend (1717 символов)
+[DEBUG] Debug API маршруты зарегистрированы:
+[DEBUG]   POST /api/debug/test-agent
+[DEBUG]   POST /api/debug/validate-model
+[DEBUG]   POST /api/debug/validate-cases
+[DEBUG]   POST /api/debug/analyze-rules
+[DEBUG]   POST /api/debug/test-rule-application
+[DEBUG]   GET  /api/debug/rules/:projectId
+[DEBUG]   GET  /api/debug/graph-stats
+[DEBUG]   GET  /api/debug/graph-nodes
+[DEBUG]   GET  /api/debug/graph-relationships
+[loadRules] Загружены проектные правила из: nocode.yaml
+[loadRules] Загружены проектные правила из: nopaper.yaml
+[pgvectorStore] Инициализация PostgreSQL...
+[pgvectorStore] Подключение к localhost:5432/tia_mapping_db
+[graphStore] ✅ Драйвер Neo4j инициализирован: bolt://neo4j:7687
+[startup] ✅ Neo4j driver инициализирован

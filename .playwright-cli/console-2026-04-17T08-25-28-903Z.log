@@ -1,0 +1,61 @@
+[   37532ms] [LOG] TestModelReviewModal: treeData state changed: {} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[   37532ms] [LOG] TestModelReviewModal: treeData keys: [] @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[   37533ms] [LOG] SolutionPage: generatedCases state changed: [] @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[   37533ms] [LOG] SolutionPage: generatedCases length: 0 @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[   37533ms] [LOG] SolutionPage: проверка статуса генерации модели: {savedStatus: null, savedTaskId: null} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[   37586ms] [LOG] SolutionPage: loading saved test cases: null @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[   37646ms] [VERBOSE] [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) %o @ http://localhost:3000/solution:0
+[  562576ms] [LOG] TestModelGeneratorModal: ✅ Очищены все данные перед новой генерацией модели @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  563663ms] [LOG] SolutionPage: Возобновляем проверку статуса генерации модели, taskId: 21db3e15-8aca-4535-aedf-cd9a1ccdf979 @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  578775ms] [LOG] Тестовая модель сохранена в IndexedDB и состояние @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  578780ms] [LOG] Тестовая модель загружена в редактор @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  578850ms] [LOG] Тестовая модель загружена в редактор @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  708610ms] [LOG] TestModelGeneratorModal: передаем отредактированную структуру в генерацию тест-кейсов @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  708610ms] [LOG] TestModelGeneratorModal: treeData (с служебными полями): [Object] @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  708610ms] [LOG] TestModelGeneratorModal: modelStructure (без служебных полей): [Object] @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  708611ms] [LOG] TestModelGeneratorModal: количество Features: 1 @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  708611ms] [LOG] TestModelGeneratorModal: includeBackendTests: true @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  708611ms] [LOG] TestModelGeneratorModal: selectedModel for test cases: Qwen/Qwen3-Coder-Next @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  708612ms] [LOG] GlobalGenerationWindow: получена структура тестовой модели для генерации тест-кейсов: [Object] @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  708612ms] [LOG] GlobalGenerationWindow: количество features в структуре: 1 @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  708612ms] [LOG] GlobalGenerationWindow: includeBackendTests: true @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  708612ms] [LOG] GlobalGenerationWindow: selectedModel: Qwen/Qwen3-Coder-Next @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  708612ms] [LOG] GlobalGenerationWindow: отправляем payload с modelStructure: {modelStructure: Array(1), includeBackendTests: true, text: # Requirements
+
+| No | Element | Requirement |
+| -… button is enabled when both fields are filled. |, requirements: Array(1), models: Array(1)} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  708613ms] [LOG] GlobalGenerationWindow: includeBackendTests в payload: true @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  708712ms] [LOG] SolutionPage: generatedCases state changed: [] @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  708712ms] [LOG] SolutionPage: generatedCases length: 0 @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899433ms] [LOG] SolutionPage: received test cases from server: [Object, Object, Object, Object, Object, Object, Object] @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899433ms] [LOG] SolutionPage: test cases length: 7 @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899433ms] [LOG] SolutionPage: first test case: {id: e2e-login-001, tags: Array(5), layer: E2E Tests, links: Array(0), steps: Array(3)} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899435ms] [LOG] GlobalGenerationWindow: passing to TestModelReviewModal: {generatedCases: Array(7), generatedCasesLength: 7, projectId: , allureProject: null, reviewModalOpen: true} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899437ms] [LOG] TestModelReviewModal: initialCases received: [Object, Object, Object, Object, Object, Object, Object] @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899437ms] [LOG] TestModelReviewModal: initialCases length: 7 @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899437ms] [LOG] buildTreeFromCases: input cases: [Object, Object, Object, Object, Object, Object, Object] @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899437ms] [LOG] buildTreeFromCases: cases length: 7 @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899438ms] [LOG] buildTreeFromCases: processing case 0: {id: e2e-login-001, tags: Array(5), layer: E2E Tests, links: Array(0), steps: Array(3)} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899438ms] [LOG] buildTreeFromCases: extracted fields - feature: "Активация кнопки входа", story: "Пользователь видит активную кнопку входа после заполнения обоих полей", scenario: "", code: "" @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899438ms] [LOG] buildTreeFromCases: processing case 1: {id: fe-login-001, tags: Array(4), layer: Integration frontend Tests, links: Array(0), steps: Array(2)} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899438ms] [LOG] buildTreeFromCases: extracted fields - feature: "Активация кнопки входа", story: "Пользователь видит активную кнопку входа после заполнения обоих полей", scenario: "Заполнить оба поля (логин и пароль)", code: "" @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899438ms] [LOG] buildTreeFromCases: processing case 2: {id: fe-login-002, tags: Array(4), layer: Integration frontend Tests, links: Array(0), steps: Array(2)} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899439ms] [LOG] buildTreeFromCases: extracted fields - feature: "Активация кнопки входа", story: "Пользователь видит активную кнопку входа после заполнения обоих полей", scenario: "Заполнить оба поля (логин и пароль)", code: "" @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899439ms] [LOG] buildTreeFromCases: processing case 3: {id: cc5c7597-e49b-4046-8347-11223b55e286, tags: Array(4), layer: Integration frontend Tests, links: Array(0), steps: Array(2)} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899439ms] [LOG] buildTreeFromCases: extracted fields - feature: "Активация кнопки входа", story: "Пользователь видит активную кнопку входа после заполнения обоих полей", scenario: "Заполнить оба поля (логин и пароль)", code: "" @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899439ms] [LOG] buildTreeFromCases: processing case 4: {id: c1d67a0d-f259-4f2d-be0b-8dc14b5734f5, tags: Array(4), layer: Integration frontend Tests, links: Array(0), steps: Array(1)} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899439ms] [LOG] buildTreeFromCases: extracted fields - feature: "Активация кнопки входа", story: "Пользователь видит активную кнопку входа после заполнения обоих полей", scenario: "Заполнить оба поля (логин и пароль)", code: "" @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899439ms] [LOG] buildTreeFromCases: processing case 5: {id: fe-login-004, tags: Array(4), layer: Integration frontend Tests, links: Array(0), steps: Array(1)} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899439ms] [LOG] buildTreeFromCases: extracted fields - feature: "Активация кнопки входа", story: "Пользователь видит активную кнопку входа после заполнения обоих полей", scenario: "Заполнить оба поля (логин и пароль)", code: "" @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899439ms] [LOG] buildTreeFromCases: processing case 6: {id: fe-login-005, tags: Array(4), layer: Integration frontend Tests, links: Array(0), steps: Array(2)} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899440ms] [LOG] buildTreeFromCases: extracted fields - feature: "Активация кнопки входа", story: "Пользователь видит активную кнопку входа после заполнения обоих полей", scenario: "Заполнить оба поля (логин и пароль)", code: "" @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899440ms] [LOG] buildTreeFromCases: final tree: {Активация кнопки входа: Object} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899440ms] [LOG] buildTreeFromCases: tree keys: [Активация кнопки входа] @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899440ms] [LOG] TestModelReviewModal: built tree data: {Активация кнопки входа: Object} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899440ms] [LOG] TestModelReviewModal: setting treeData state... @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899440ms] [LOG] TestModelReviewModal: treeData state set @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899440ms] [LOG] SolutionPage: generatedCases state changed: [Object, Object, Object, Object, Object, Object, Object] @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899440ms] [LOG] SolutionPage: generatedCases length: 7 @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899463ms] [LOG] GlobalGenerationWindow: passing to TestModelReviewModal: {generatedCases: Array(7), generatedCasesLength: 7, projectId: , allureProject: null, reviewModalOpen: true} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899499ms] [LOG] TestModelReviewModal: treeData state changed: {Активация кнопки входа: Object} @ http://localhost:3000/static/js/main.3f1369f3.js:1
+[  899499ms] [LOG] TestModelReviewModal: treeData keys: [Активация кнопки входа] @ http://localhost:3000/static/js/main.3f1369f3.js:1

@@ -1,0 +1,54 @@
+- generic [ref=e3]:
+  - main [ref=e4]:
+    - generic [ref=e46]:
+      - button "← Назад" [ref=e47] [cursor=pointer]
+      - heading "Тестирование требований" [level=1] [ref=e48]
+      - generic [ref=e49]:
+        - generic [ref=e50]:
+          - heading "Настройки подключения" [level=2] [ref=e51]
+          - button "Очистить всё" [ref=e53] [cursor=pointer]
+        - generic [ref=e54]:
+          - generic [ref=e55]:
+            - generic [ref=e56]: Project Key (Jira)
+            - textbox "PROJ" [ref=e57]
+          - generic [ref=e58]:
+            - generic [ref=e59]: Jira PAT (Personal Access Token)
+            - textbox "Ваш токен доступа Jira" [ref=e60]
+          - generic [ref=e61]:
+            - generic [ref=e62]: Проект Allure
+            - generic [ref=e63]:
+              - log [ref=e65]
+              - generic [ref=e66] [cursor=pointer]:
+                - generic [ref=e67]:
+                  - generic [ref=e68]: Выберите проект Allure…
+                  - combobox [ref=e70]
+                - img [ref=e74]
+      - generic [ref=e76]:
+        - generic [ref=e77]:
+          - button "Загрузить из Confluence" [ref=e78] [cursor=pointer]
+          - button "Вставить текст" [ref=e79] [cursor=pointer]
+          - button "Загрузить PDF" [ref=e80] [cursor=pointer]
+        - textbox "Вставьте текст требований для анализа..." [ref=e82]
+        - 'textbox "Глоссарий: Confluence Page ID или URL (необязательно)" [ref=e84]'
+        - generic [ref=e85]:
+          - generic [ref=e87]:
+            - log [ref=e89]
+            - generic [ref=e90] [cursor=pointer]:
+              - generic [ref=e91]:
+                - generic [ref=e92]: "Доп. контекст: добавьте Page ID/URL и нажмите Enter"
+                - combobox [ref=e94]
+              - img [ref=e98]
+          - 'textbox "Инструкция к доп. контексту: что именно брать из ссылок (напр.: ''используй только разделы «Термины» и «Ограничения»'')" [ref=e100]'
+        - button "Запустить AI-анализ" [disabled] [ref=e101]
+      - button "Окно генерации тест кейсов и тестовой модели" [ref=e103] [cursor=pointer]
+      - generic [ref=e106]:
+        - paragraph [ref=e107]: Здесь пока ничего нет
+        - button "Добавить задачу" [ref=e108] [cursor=pointer]
+  - contentinfo [ref=e40]:
+    - generic [ref=e41]:
+      - link "Предложить улучшение" [ref=e42] [cursor=pointer]:
+        - /url: "https://jira.abanking.ru/secure/CreateIssueDetails!init.jspa?pid=10201&issuetype=10103&components=21300&summary=QA-helper:"
+      - generic [ref=e43]: ·
+      - link "Сообщить о проблеме" [ref=e44] [cursor=pointer]:
+        - /url: "https://jira.abanking.ru/secure/CreateIssue.jspa?issuetype=13101&pid=10201&components=21300&summary=QA-helper:"
+    - button "( u_u )" [ref=e45] [cursor=pointer]

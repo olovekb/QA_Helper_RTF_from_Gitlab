@@ -1,0 +1,109 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - main [ref=e4]:
+      - generic [ref=e46]:
+        - button [ref=e109] [cursor=pointer]: ← Назад
+        - heading [level=1] [ref=e110]: Тестирование требований
+        - generic [ref=e49]:
+          - generic [ref=e50]:
+            - heading [level=2] [ref=e111]: Настройки подключения
+            - button [ref=e112] [cursor=pointer]: Очистить всё
+          - generic [ref=e54]:
+            - generic [ref=e55]:
+              - generic [ref=e56]: Project Key (Jira)
+              - textbox [ref=e113]:
+                - /placeholder: PROJ
+            - generic [ref=e58]:
+              - generic [ref=e59]: Jira PAT (Personal Access Token)
+              - textbox [ref=e114]:
+                - /placeholder: Ваш токен доступа Jira
+            - generic [ref=e61]:
+              - generic [ref=e62]: Проект Allure
+              - generic [ref=e63]:
+                - log [ref=e65]
+                - generic [ref=e66] [cursor=pointer]:
+                  - generic [ref=e67]:
+                    - generic [ref=e68]: Выберите проект Allure…
+                    - combobox [ref=e70]
+                  - img [ref=e74]
+        - generic [ref=e76]:
+          - generic [ref=e77]:
+            - button [ref=e115] [cursor=pointer]: Загрузить из Confluence
+            - button [ref=e116] [cursor=pointer]: Вставить текст
+            - button [ref=e117] [cursor=pointer]: Загрузить PDF
+          - textbox [ref=e118]:
+            - /placeholder: Вставьте текст требований для анализа...
+            - text: "# Requirements | No | Element | Requirement | | --- | --- | --- | | 1 | Login button | On Login screen the Login button is enabled when both fields are filled. |"
+          - textbox [ref=e119]:
+            - /placeholder: "Глоссарий: Confluence Page ID или URL (необязательно)"
+          - generic [ref=e85]:
+            - generic [ref=e87]:
+              - log [ref=e89]
+              - generic [ref=e90] [cursor=pointer]:
+                - generic [ref=e91]:
+                  - generic [ref=e92]: "Доп. контекст: добавьте Page ID/URL и нажмите Enter"
+                  - combobox [ref=e94]
+                - img [ref=e98]
+            - textbox [ref=e120]:
+              - /placeholder: "Инструкция к доп. контексту: что именно брать из ссылок (напр.: 'используй только разделы «Термины» и «Ограничения»')"
+          - button [ref=e121] [cursor=pointer]: Запустить AI-анализ
+        - button [disabled] [ref=e122]: Генерация...
+        - generic [ref=e106]:
+          - paragraph [ref=e107]: Здесь пока ничего нет
+          - button [ref=e123] [cursor=pointer]: Добавить задачу
+    - contentinfo [ref=e40]:
+      - generic [ref=e41]:
+        - link [ref=e124] [cursor=pointer]:
+          - /url: "https://jira.abanking.ru/secure/CreateIssueDetails!init.jspa?pid=10201&issuetype=10103&components=21300&summary=QA-helper:"
+          - text: Предложить улучшение
+        - generic [ref=e43]: ·
+        - link [ref=e125] [cursor=pointer]:
+          - /url: "https://jira.abanking.ru/secure/CreateIssue.jspa?issuetype=13101&pid=10201&components=21300&summary=QA-helper:"
+          - text: Сообщить о проблеме
+      - button [ref=e126] [cursor=pointer]: ( u_u )
+  - dialog [ref=e128]:
+    - generic [ref=e158]:
+      - generic [ref=e159]:
+        - heading "Генерация тестовой модели" [level=4] [ref=e162]
+        - generic [ref=e163]: 0%
+      - generic [ref=e164]: Генерация выполняется в фоновом режиме. Вы можете закрыть это окно и продолжить работу. Результат будет сохранен автоматически.
+      - button "Свернуть" [ref=e167] [cursor=pointer]
+    - generic [ref=e129]:
+      - heading "Редактор тестовой модели" [level=2] [ref=e130]
+      - generic [ref=e131]:
+        - generic [ref=e132]:
+          - generic [ref=e133]:
+            - generic [ref=e134]: "Модель:"
+            - combobox [disabled] [ref=e135]:
+              - option "Qwen/Qwen3-Coder-Next" [selected]
+              - option "Qwen/Qwen3-235B-A22B-Instruct-2507"
+              - option "Qwen/Qwen3-Coder-480B-A35B-Instruct"
+              - option "Qwen/Qwen3-Next-80B-A3B-Instruct"
+              - option "zai-org/GLM-4.7-Flash"
+              - option "zai-org/GLM-4.7"
+              - option "GigaChat/GigaChat-2-Max"
+              - option "ai-sage/GigaChat3-10B-A1.8B"
+              - option "openai/gpt-oss-120b"
+              - option "MiniMaxAI/MiniMax-M2"
+              - option "t-tech/T-lite-it-2.1"
+              - option "t-tech/T-pro-it-2.1"
+          - generic [ref=e136]:
+            - generic [ref=e137]: "Режим:"
+            - combobox [disabled] [ref=e138]:
+              - option "Создать с нуля" [selected]
+              - option "Доработать текущую" [disabled]
+        - button "Генерация... 0%" [disabled] [ref=e168]
+        - button "Сгенерировать Xmind" [ref=e140] [cursor=pointer]
+      - generic [ref=e141]:
+        - button "−" [ref=e169] [cursor=pointer]
+        - button "×" [ref=e142] [cursor=pointer]
+    - generic [ref=e143]:
+      - generic [ref=e145]:
+        - button "+ Добавить Feature" [ref=e147] [cursor=pointer]
+        - generic [ref=e148]:
+          - generic [ref=e150]:
+            - checkbox "С интеграционными бекенд тестами" [checked] [disabled] [ref=e151]
+            - text: С интеграционными бекенд тестами
+          - button "Отмена" [ref=e152] [cursor=pointer]
+          - button "Далее к тесткейсам" [disabled] [ref=e153]
+      - generic [ref=e156]: Нет данных для отображения диаграммы

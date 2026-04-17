@@ -9,6 +9,31 @@
 
 import { callCloudRuAPI } from '../cloudruClient.mjs';
 
+function extractValidationJsonCandidate(rawContent) {
+    const text = String(rawContent || '').trim();
+    if (!text) {
+        throw new Error('Пустой content в ответе LLM');
+    }
+
+    const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fencedMatch?.[1]) {
+        return fencedMatch[1].trim();
+    }
+
+    const objectStart = text.indexOf('{');
+    const objectEnd = text.lastIndexOf('}');
+    if (objectStart !== -1 && objectEnd !== -1 && objectEnd > objectStart) {
+        return text.slice(objectStart, objectEnd + 1).trim();
+    }
+
+    return text;
+}
+
+export function parseValidationResultContent(rawContent) {
+    const jsonCandidate = extractValidationJsonCandidate(rawContent);
+    return JSON.parse(jsonCandidate);
+}
+
 /**
  * Нормализует тест-кейсы для сериализации (исправляет shared steps и другие объекты)
  */
@@ -245,7 +270,7 @@ export async function validateAndFixTestCases(testCases, testModel, requirements
             throw new Error('Пустой ответ от LLM');
         }
         
-        const validationResult = JSON.parse(response.choices[0].message.content);
+        const validationResult = parseValidationResultContent(response.choices[0].message.content);
         
         console.log(`[POST-GEN VALIDATOR] 📊 Результат (ТОЛЬКО ВРАКИ):`);
         console.log(`[POST-GEN VALIDATOR]    - Найдено враков: ${validationResult.errors?.length || 0}`);

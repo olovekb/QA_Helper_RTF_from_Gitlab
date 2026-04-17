@@ -1,0 +1,39 @@
+(node:40952) V8: file:///C:/Users/oankudinov/Documents/qa-helper-ankudinov-rtf/server/server.js:212 'assert' is deprecated in import statements and support will be removed in a future version; use 'with' instead
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:40952) V8: file:///C:/Users/oankudinov/Documents/qa-helper-ankudinov-rtf/server/http-service.mjs:5 'assert' is deprecated in import statements and support will be removed in a future version; use 'with' instead
+(node:40952) V8: file:///C:/Users/oankudinov/Documents/qa-helper-ankudinov-rtf/server/static-analysis.mjs:4 'assert' is deprecated in import statements and support will be removed in a future version; use 'with' instead
+(node:40952) V8: file:///C:/Users/oankudinov/Documents/qa-helper-ankudinov-rtf/server/xmind-parce/export-structure-allure.mjs:2 'assert' is deprecated in import statements and support will be removed in a future version; use 'with' instead
+(node:40952) V8: file:///C:/Users/oankudinov/Documents/qa-helper-ankudinov-rtf/server/ai-testcase.mjs:4 'assert' is deprecated in import statements and support will be removed in a future version; use 'with' instead
+(node:40952) V8: file:///C:/Users/oankudinov/Documents/qa-helper-ankudinov-rtf/server/analyzeRequirementWithAI.mjs:7 'assert' is deprecated in import statements and support will be removed in a future version; use 'with' instead
+(node:40952) V8: file:///C:/Users/oankudinov/Documents/qa-helper-ankudinov-rtf/server/contextRefiner.mjs:4 'assert' is deprecated in import statements and support will be removed in a future version; use 'with' instead
+(node:40952) V8: file:///C:/Users/oankudinov/Documents/qa-helper-ankudinov-rtf/server/cloudruClient.mjs:4 'assert' is deprecated in import statements and support will be removed in a future version; use 'with' instead
+(node:40952) V8: file:///C:/Users/oankudinov/Documents/qa-helper-ankudinov-rtf/server/interactiveLLM.mjs:2 'assert' is deprecated in import statements and support will be removed in a future version; use 'with' instead
+(node:40952) V8: file:///C:/Users/oankudinov/Documents/qa-helper-ankudinov-rtf/server/logic-extractor.mjs:9 'assert' is deprecated in import statements and support will be removed in a future version; use 'with' instead
+(node:40952) V8: file:///C:/Users/oankudinov/Documents/qa-helper-ankudinov-rtf/server/llm-with-context.mjs:16 'assert' is deprecated in import statements and support will be removed in a future version; use 'with' instead
+(node:40952) V8: file:///C:/Users/oankudinov/Documents/qa-helper-ankudinov-rtf/server/agents/review-agent.mjs:8 'assert' is deprecated in import statements and support will be removed in a future version; use 'with' instead
+(node:40952) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+[startup] ⚠️ Не удалось инициализировать pgvector: ������������ "tia_user" �� ������ �������� ����������� (�� ������)
+[startup] ⚠️ Будет использован fallback на contextRefiner
+[startup] ⚠️ Failed to sync generation_tasks_type_check: ������������ "tia_user" �� ������ �������� ����������� (�� ������)
+node:events:502
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1908:16)
+    at listenInCluster (node:net:1965:12)
+    at Server.listen (node:net:2067:7)
+    at Function.listen (C:\Users\oankudinov\Documents\qa-helper-ankudinov-rtf\node_modules\express\lib\application.js:635:24)
+    at file:///C:/Users/oankudinov/Documents/qa-helper-ankudinov-rtf/server/server.js:22395:5
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:1944:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -4091,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+
+Node.js v20.19.0

@@ -1,5 +1,6 @@
 import fetch from 'node-fetch';
 import axios from 'axios'
+import https from 'https';
 import { spinningLoader } from './spinning-loader.mjs';
 import { callWithCloudRuFallback } from './cloudruClient.mjs';
 import config from './config.json' assert { type: 'json' };
@@ -12,19 +13,53 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 // Конфигурация
 const BASE_URL = config.baseUrl;
 const ALLURE_TOKEN = config.allureToken;
-const API_TOKEN = await getJwtToken();
-const HEADERS = {
-    'Authorization': `Bearer ${API_TOKEN}`,
+const ALLOW_INSECURE_TLS = ['1', 'true', 'yes', 'on'].includes(
+    String(process.env.ALLURE_ALLOW_INSECURE_TLS || (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0'))
+        .trim()
+        .toLowerCase()
+);
+const HTTPS_AGENT = BASE_URL.startsWith('https://')
+    ? new https.Agent({ rejectUnauthorized: !ALLOW_INSECURE_TLS })
+    : undefined;
+const BASE_HEADERS = {
     'Content-Type': 'application/json',
 };
+let authToken = null;
 // Обновляем токен и возвращаем новый
 let isRefreshing = false;
 let tokenPromise = null;
 
+function getFetchAgent(url) {
+    if (!HTTPS_AGENT) {
+        return undefined;
+    }
+    return String(url || '').startsWith('https://') ? HTTPS_AGENT : undefined;
+}
+
+async function getAuthHeaders(forceRefresh = false) {
+    if (forceRefresh) {
+        const newToken = await refreshJwtToken();
+        return {
+            ...BASE_HEADERS,
+            Authorization: `Bearer ${newToken}`
+        };
+    }
+
+    if (!authToken) {
+        authToken = await getJwtToken();
+    }
+
+    return {
+        ...BASE_HEADERS,
+        Authorization: `Bearer ${authToken}`
+    };
+}
+
 export async function getJwtToken ()
 {
+    let spinnerInterval = null;
     try {
-        let spinnerInterval = spinningLoader('Авторизуемся по токену Allure...');
+        spinnerInterval = spinningLoader('Авторизуемся по токену Allure...');
         const response = await axios.post(
             `${BASE_URL}/uaa/oauth/token`,
             new URLSearchParams({
@@ -35,15 +70,19 @@ export async function getJwtToken ()
             {
                 headers: {
                     "Accept": "application/json",
-                }
+                },
+                ...(HTTPS_AGENT ? { httpsAgent: HTTPS_AGENT } : {})
             }
         );
-        clearInterval(spinnerInterval);
         const jwtToken = response.data.access_token;
         return jwtToken;
     } catch (error) {
         console.error("Ошибка получения JWT токена:", error.message);
         throw error;
+    } finally {
+        if (spinnerInterval) {
+            clearInterval(spinnerInterval);
+        }
     }
 }
 
@@ -51,12 +90,15 @@ async function refreshJwtToken ()
 {
     if (!isRefreshing) {
         isRefreshing = true;
-        tokenPromise = getJwtToken().then((newToken) =>
-        {
-            isRefreshing = false;
-            HEADERS['Authorization'] = `Bearer ${newToken}`;
-            return newToken;
-        });
+        tokenPromise = getJwtToken()
+            .then((newToken) =>
+            {
+                authToken = newToken;
+                return newToken;
+            })
+            .finally(() => {
+                isRefreshing = false;
+            });
     }
     return tokenPromise;
 }
@@ -64,6 +106,12 @@ async function refreshJwtToken ()
 // Обёртка для fetch
 export async function fetchWithAuth (url, options = {})
 {
+    const HEADERS = await getAuthHeaders();
+    const agent = getFetchAgent(url);
+    if (agent) {
+        options.agent = agent;
+    }
+
     options.headers = {
         ...HEADERS, // Текущие заголовки
         ...(options.headers || {}), // Дополнительные заголовки из запроса
