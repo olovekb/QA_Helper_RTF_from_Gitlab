@@ -237,6 +237,16 @@ import {
     rerankRetrievedChunksByMetadata
 } from './behavioralRetrieval.mjs';
 import {
+    getChunkGranularity,
+    getChunkType,
+    isSummaryOrBackgroundChunk,
+    isBehavioralAtomicRuleChunk,
+    isMainDocumentIndexCandidate,
+    isContextAuxiliaryAtomicChunk,
+    isLinkedAtomicChunk,
+    selectCanonicalMainChunks
+} from './canonicalChunkSelection.mjs';
+import {
     buildConfluenceChunkIndexCacheKey,
     resolveChunkingModel,
     selectAdaptiveLinkedDocs
@@ -264,6 +274,11 @@ import { aggregateToParametrized } from './post-processors/aggregate-to-parametr
 import { validateUntilClean } from './agents/post-generation-validator.mjs';
 import { buildRequirementModelInput } from './requirement-text-builder.mjs';
 import {
+    buildRequirementChunkDiagnostics,
+    renderChunkMarkdownSection as renderRequirementChunkMarkdownSection,
+    serializeDebugChunk
+} from './chunkDebug.mjs';
+import {
 savePerfectExamples,
 getPerfectExamples,
 getAllPerfectExamplesByLayer,
@@ -289,6 +304,16 @@ import {
 runTestCaseLLMWithContext,
 validateFixedCases
 } from './llm-with-context.mjs';
+import {
+    buildTestModelRulesPrompt,
+    getCuratedTestModelExemplarJson,
+    getRecommendedJudgeModelSequence
+} from './test-model-rules-runtime.mjs';
+import {
+    assertRuntimeValidationComplete,
+    hasPersistedRuntimeValidation,
+    runTestModelValidationPipeline
+} from './test-model-quality-pipeline.mjs';
 import { readFileSync, mkdirSync, writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -339,59 +364,6 @@ const LINKED_ADAPTIVE_BASE_LIMIT = 3;
 const LINKED_ADAPTIVE_MAX_LIMIT = 8;
 const LINKED_ADAPTIVE_CHUNKS_PER_STEP = 6;
 const ENABLE_ADAPTIVE_LINKED_OPT_IN = readBooleanEnv('ENABLE_ADAPTIVE_LINKED_OPT_IN', true);
-
-const SUMMARY_OR_BACKGROUND_CHUNK_TYPES = new Set([
-    CHUNK_TYPES.REQUIREMENT_ROW_SUMMARY,
-    CHUNK_TYPES.REQUIREMENT_ROW,
-    CHUNK_TYPES.BUSINESS_CONTEXT,
-    CHUNK_TYPES.SCOPE_CONTEXT,
-    CHUNK_TYPES.DOCUMENT_META,
-    CHUNK_TYPES.CHANGE_LOG,
-    CHUNK_TYPES.NOISE_METADATA,
-    CHUNK_TYPES.NOISE_SKIPPED,
-    CHUNK_TYPES.REFERENCE_LINK
-]);
-
-function getChunkGranularity(chunk = {}) {
-    return String(chunk?.chunk_granularity || chunk?.metadata?.chunk_granularity || 'atomic').trim().toLowerCase();
-}
-
-function getChunkType(chunk = {}) {
-    return String(chunk?.chunk_type || chunk?.metadata?.chunk_type || '').trim();
-}
-
-function isSummaryOrBackgroundChunk(chunk = {}) {
-    return SUMMARY_OR_BACKGROUND_CHUNK_TYPES.has(getChunkType(chunk));
-}
-
-function isAtomicRetrievableChunk(chunk = {}) {
-    if (!chunk || chunk.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval) {
-        return false;
-    }
-    if (getChunkGranularity(chunk) !== 'atomic') {
-        return false;
-    }
-    if (isSummaryOrBackgroundChunk(chunk)) {
-        return false;
-    }
-    return true;
-}
-
-function isContextAuxiliaryAtomicChunk(chunk = {}) {
-    if (!isAtomicRetrievableChunk(chunk)) {
-        return false;
-    }
-    const retrievalClass = chunk?.retrieval_class || chunk?.metadata?.retrieval_class || null;
-    return [
-        RETRIEVAL_CLASSES.BEHAVIORAL,
-        RETRIEVAL_CLASSES.API_CONTEXT,
-        RETRIEVAL_CLASSES.REFERENCE_CONTEXT
-    ].includes(retrievalClass);
-}
-
-function isLinkedAtomicChunk(chunk = {}) {
-    return isAtomicRetrievableChunk(chunk);
-}
 
 function dedupeDocsByDocId(docs = []) {
     const unique = [];
@@ -639,6 +611,10 @@ try {
     console.warn(`[server] ⚠️ Не удалось загрузить integration-be-examples.json: ${err.message}`);
 }
 
+const TEST_MODEL_GENERATION_RULES_PROMPT = buildTestModelRulesPrompt({ mode: 'generation' });
+const TEST_MODEL_REPAIR_RULES_PROMPT = buildTestModelRulesPrompt({ mode: 'repair' });
+const CURATED_TEST_MODEL_EXEMPLAR_JSON = getCuratedTestModelExemplarJson();
+
 /**
  * Извлекает глобальный контекст из требований (сущности, роли, правила)
  * Этап 1 архитектуры "Skeleton & Flesh": создание "Карты Местности"
@@ -774,7 +750,11 @@ function getEmptyGlobalContext() {
     };
 }
 
-function buildModelSystemPrompt(globalContext = null) {
+function buildModelSystemPrompt(
+    globalContext = null,
+    runtimeRulesPrompt = TEST_MODEL_GENERATION_RULES_PROMPT,
+    curatedExemplarJson = CURATED_TEST_MODEL_EXEMPLAR_JSON
+) {
     const globalContextSection = globalContext && (
         globalContext.roles.length > 0 ||
         globalContext.entities.length > 0 ||
@@ -811,6 +791,13 @@ ${globalContext.global_rules.map((r, i) => `${i + 1}. ${r}`).join('\n')}
     return `
 Твоя роль: Lead QA Automation Engineer.
 Твоя задача: Преобразовать входные требования в строгую Domain-Driven Test Model (JSON).
+
+${runtimeRulesPrompt}
+
+CURATED EXEMPLAR ИЗ РЕПОЗИТОРИЯ:
+\`\`\`json
+${curatedExemplarJson}
+\`\`\`
 
 ТВОЙ ГЛАВНЫЙ ПРИНЦИП: "NO HALLUCINATIONS".
 Ты НЕ имеешь права придумывать HTTP-коды (400, 404, 500), имена полей JSON, тексты ошибок или API-методы, если их НЕТ в тексте требований буква в букву.
@@ -898,8 +885,8 @@ E2E тесты будут сгенерированы ОТДЕЛЬНО после
             "id": "uuid-scenario-1",
             "text": "Выбрать способ 'Карта банка'",
             "codes": [
-              { "id": "uuid-c1", "text": "Выбран способ 'Карта банка'", "type": "frontend" },
-              { "id": "uuid-c2", "text": "Комиссия пересчитывается в 0%", "type": "frontend" }
+              { "id": "uuid-c1", "text": "Отображается выбранный способ 'Карта банка'", "type": "frontend" },
+              { "id": "uuid-c2", "text": "Отображается пересчитанная комиссия", "type": "frontend" }
             ]
           },
           {
@@ -908,7 +895,7 @@ E2E тесты будут сгенерированы ОТДЕЛЬНО после
             "codes": [
               { "id": "uuid-c3", "text": "Отправляется запрос оплаты", "type": "frontend" },
               { "id": "uuid-c4", "text": "Возвращается ошибка обработки запроса", "type": "backend" },
-              { "id": "uuid-c5", "text": "Показывается сообщение 'Попробуйте позже'", "type": "frontend" }
+              { "id": "uuid-c5", "text": "Отображается сообщение об ошибке", "type": "frontend" }
             ]
           }
         ]
@@ -919,8 +906,8 @@ E2E тесты будут сгенерированы ОТДЕЛЬНО после
 
 ПРИМЕРЫ ПРАВИЛЬНЫХ CODE (БЕЗ ГАЛЛЮЦИНАЦИЙ):
 ✅ ПРАВИЛЬНО (есть в требованиях):
-  { "text": "Отправляется POST /api/v1/payment/pay с полями customerId, amount", "type": "frontend" }
-  { "text": "Возвращается 200 OK с {transactionId}", "type": "backend" }
+  { "text": "Отправляется POST /api/v1/payment/pay", "type": "frontend" }
+  { "text": "Возвращается успешный ответ для POST /api/v1/payment/pay", "type": "backend" }
 
 ❌ НЕПРАВИЛЬНО (придумано):
   { "text": "Возвращается 404 Not Found с errorCode: PAYMENT_NOT_FOUND", "type": "backend" }
@@ -982,10 +969,20 @@ Scenario 2: "Нажать кнопку Отправить (Ошибка вали
 }
 
 
-function buildRefineModelSystemPrompt() {
+function buildRefineModelSystemPrompt(
+    runtimeRulesPrompt = TEST_MODEL_REPAIR_RULES_PROMPT,
+    curatedExemplarJson = CURATED_TEST_MODEL_EXEMPLAR_JSON
+) {
     return `
 Твоя роль: Code Reviewer & JSON Patcher.
 Твоя задача: Внести ТОЧЕЧНЫЕ изменения в существующую тестовую модель (JSON) на основе Code Review замечаний.
+
+${runtimeRulesPrompt}
+
+CURATED EXEMPLAR ИЗ РЕПОЗИТОРИЯ:
+\`\`\`json
+${curatedExemplarJson}
+\`\`\`
 
 ПРИНЦИП РАБОТЫ: "MINIMAL INVASIVE SURGERY" (Минимальное вмешательство).
 Ты НЕ имеешь права переписывать, переупорядочивать или удалять объекты, если это явно не требуется для исправления конкретного замечания.
@@ -1020,7 +1017,17 @@ function buildRefineModelSystemPrompt() {
 
 function buildRefineModelUserPrompt({ oldModel, reviewNotes, issues, requirements }) {
     const issuesList = issues && issues.length > 0
-        ? issues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n')
+        ? issues.map((issue, idx) => {
+            if (typeof issue === 'string') {
+                return `${idx + 1}. ${issue}`;
+            }
+
+            const severity = String(issue?.severity || 'warning').toUpperCase();
+            const nodePath = issue?.nodePath ? ` [${issue.nodePath}]` : '';
+            const ruleId = issue?.ruleId ? ` (${issue.ruleId})` : '';
+            const fix = issue?.suggestedFix ? ` -> fix: ${issue.suggestedFix}` : '';
+            return `${idx + 1}. [${severity}]${ruleId}${nodePath} ${issue?.message || JSON.stringify(issue)}${fix}`;
+        }).join('\n')
         : 'Не указаны';
 
     // Безопасное преобразование requirements в строку
@@ -2097,7 +2104,7 @@ function ensureScenarioStepText(text, index) {
     return analysis.valid ? analysis.normalizedText : '';
 }
 
-// ✅ Функция для определения типа Code (backend/frontend/integration)
+// ✅ Функция для определения canonical типа Code (backend/frontend only)
 function detectCodeType(codeText) {
     const text = String(codeText || '').trim().toLowerCase();
 
@@ -2127,7 +2134,7 @@ function detectCodeType(codeText) {
         /лоадер/i,                              // Лоадер
     ];
 
-    // Integration паттерны
+    // Integration-like паттерны относятся к backend на runtime-слое
     const integrationPatterns = [
         /^отправить\s+push/i,                   // Push уведомление
         /^сохранить\s+в\s+бд/i,                 // Сохранить в БД
@@ -2136,10 +2143,10 @@ function detectCodeType(codeText) {
         /^отправить\s+sms/i,                    // SMS
     ];
 
-    // Проверяем в порядке приоритета: integration -> backend -> frontend
+    // Проверяем в порядке приоритета: integration-like -> backend -> frontend
     for (const pattern of integrationPatterns) {
         if (pattern.test(text)) {
-            return 'integration';
+            return 'backend';
         }
     }
 
@@ -2155,8 +2162,8 @@ function detectCodeType(codeText) {
         }
     }
 
-    // По умолчанию - integration (если не определили)
-    return 'integration';
+    // По умолчанию считаем это frontend-реакцией, чтобы не генерировать недопустимый type
+    return 'frontend';
 }
 
 /**
@@ -2391,6 +2398,66 @@ function sanitizeModelForValidation(model) {
         model: validateAndCleanModel(nextModel),
         pruneReport: pruneResult.report
     };
+}
+
+function prepareModelForRuntimeValidation(model) {
+    const normalizedModel = normalizeModelStructure(Array.isArray(model) ? model : []);
+    const sanitized = sanitizeModelForValidation(normalizedModel);
+    const postProcessed = postProcessModel(sanitized.model);
+    return validateAndCleanModel(postProcessed);
+}
+
+function flattenRuntimeValidationIssues(validation) {
+    if (!validation) return [];
+    return [
+        ...(Array.isArray(validation.staticIssues) ? validation.staticIssues : []),
+        ...(Array.isArray(validation.judgeIssues) ? validation.judgeIssues : [])
+    ];
+}
+
+function buildRuntimeValidationMetrics(validation) {
+    assertRuntimeValidationComplete(validation, 'test model runtime validation');
+    return {
+        validationExecuted: true,
+        validationPassed: validation.passed,
+        validationAttempts: validation.attemptsUsed,
+        validationErrors: validation.summary?.errors || 0,
+        validationRulesFingerprint: validation.rulesFingerprint
+    };
+}
+
+async function updateGenerationTaskWithOptionalMetrics(taskId, updateData, metrics, logContext) {
+    try {
+        await db('generation_tasks').where('id', taskId).update({
+            ...updateData,
+            metrics: JSON.stringify(metrics)
+        });
+    } catch (error) {
+        const errorMsg = error.message || '';
+        const isMetricsColumnError =
+            errorMsg.includes('СЃС‚РѕР»Р±РµС† "metrics"') ||
+            errorMsg.includes('column "metrics"') ||
+            (errorMsg.includes('metrics') && (errorMsg.includes('does not exist') || errorMsg.includes('doesn\'t exist')));
+
+        if (!isMetricsColumnError) {
+            throw error;
+        }
+
+        console.warn(`[${logContext}] РЎС‚РѕР»Р±РµС† metrics РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚, СЃРѕС…СЂР°РЅСЏСЋ Р±РµР· РјРµС‚СЂРёРє`);
+        await db('generation_tasks').where('id', taskId).update(updateData);
+    }
+}
+
+async function persistValidatedTestModelTaskCompletion(taskId, updateData, metrics, logContext) {
+    await updateGenerationTaskWithOptionalMetrics(taskId, updateData, metrics, logContext);
+
+    const persistedTask = await db('generation_tasks')
+        .where('id', taskId)
+        .first();
+
+    if (!hasPersistedRuntimeValidation(persistedTask)) {
+        throw new Error(`[${logContext}] Task completion was persisted without runtime validation payload`);
+    }
 }
 
 // ✅ Функция для автоматического исправления Code с пользовательскими действиями
@@ -3985,87 +4052,6 @@ function normalizeContextInput(v) {
     return String(v);
 }
 
-function formatExplicitRefForDebug(ref) {
-    if (!ref) return '';
-    if (typeof ref === 'string') return ref;
-
-    const type = ref.type ? String(ref.type).trim() : 'ref';
-    const target = ref.target ? String(ref.target).trim() : '';
-    const original = ref.original ? String(ref.original).trim() : '';
-
-    if (target && original && original !== target) {
-        return `${type}:${target} <- ${original}`;
-    }
-    if (target) {
-        return `${type}:${target}`;
-    }
-    if (original) {
-        return `${type}:${original}`;
-    }
-
-    return JSON.stringify(ref);
-}
-
-function serializeDebugChunk(chunk, index, { includeFullText = true, maxPreviewLength = 1500 } = {}) {
-    const text = String(chunk?.cleaned_text || chunk?.content || '').trim();
-    const coreText = String(chunk?.core_text || chunk?.metadata?.core_text || '').trim();
-    const embeddingText = String(chunk?.embedding_text || chunk?.metadata?.embedding_text || '').trim();
-    const auxMetadata = getBehavioralAuxMetadata(chunk);
-    const chunkGranularity = String(chunk?.chunk_granularity || chunk?.metadata?.chunk_granularity || 'atomic').trim().toLowerCase();
-    const parentRowNumber = chunk?.parent_row_number ?? chunk?.metadata?.parent_row_number ?? auxMetadata?.parent_row_number ?? auxMetadata?.row_number ?? null;
-    const atomicRuleKind = chunk?.atomic_rule_kind || chunk?.metadata?.atomic_rule_kind || auxMetadata?.atomic_rule_kind || null;
-    const sourceType = chunk?.source_type || chunk?.metadata?.source_type || null;
-    const retrievable = chunk?.retrievable != null
-        ? Boolean(chunk.retrievable)
-        : !(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval);
-    const preview = text.length > maxPreviewLength
-        ? `${text.slice(0, maxPreviewLength)}...`
-        : text;
-
-    return {
-        index,
-        id: chunk?.id || `chunk-${index}`,
-        chunkType: chunk?.chunk_type || null,
-        heading: chunk?.heading || null,
-        sectionPath: Array.isArray(chunk?.section_path) ? chunk.section_path : [],
-        explicitRefs: Array.isArray(chunk?.explicit_refs) ? chunk.explicit_refs.map(formatExplicitRefForDebug).filter(Boolean) : [],
-        excludeFromRetrieval: Boolean(chunk?.exclude_from_retrieval || chunk?.metadata?.exclude_from_retrieval),
-        excludeFromGraph: Boolean(chunk?.exclude_from_graph || chunk?.metadata?.exclude_from_graph),
-        isAtomic: Boolean(chunk?.is_atomic),
-        isComposite: Boolean(chunk?.is_composite),
-        linkedChunkIds: Array.isArray(chunk?.linked_chunk_ids) ? chunk.linked_chunk_ids : [],
-        lineageParentSummaryId: chunk?.lineage_parent_summary_id || chunk?.metadata?.lineage_parent_summary_id || null,
-        lineageChildRuleIds: Array.isArray(chunk?.lineage_child_rule_ids || chunk?.metadata?.lineage_child_rule_ids)
-            ? (chunk?.lineage_child_rule_ids || chunk?.metadata?.lineage_child_rule_ids)
-            : [],
-        traceOnly: Boolean(chunk?.metadata?.trace_only),
-        sourceScope: chunk?.metadata?.source_scope || chunk?.source_scope || 'main',
-        sourceType,
-        graphEligible: chunk?.metadata?.graph_eligible,
-        relevanceScore: Number.isFinite(chunk?.metadata?.relevance_score) ? Number(chunk.metadata.relevance_score) : null,
-        canonicalKey: chunk?.metadata?.canonical_key || null,
-        retrievalClass: chunk?.retrieval_class || chunk?.metadata?.retrieval_class || null,
-        eligibilityStatus: chunk?.eligibility_status || chunk?.metadata?.eligibility_status || null,
-        contentRatio: chunk?.content_ratio || chunk?.metadata?.content_ratio || null,
-        chunkGranularity,
-        parentRowNumber,
-        atomicRuleKind,
-        retrievable,
-        retrievalPenalty: Number.isFinite(chunk?.retrieval_penalty)
-            ? Number(chunk.retrieval_penalty)
-            : (Number(chunk?.metadata?.retrieval_penalty) || 0),
-        dropReason: chunk?.drop_reason || chunk?.metadata?.drop_reason || null,
-        auxMetadata,
-        length: text.length,
-        preview,
-        ...(includeFullText ? {
-            text,
-            coreText,
-            embeddingText
-        } : {})
-    };
-}
-
 async function chunkDocumentForDebug(text, metadata = {}, options = {}) {
     const normalizedText = String(text || '').trim();
     if (!normalizedText) {
@@ -4187,6 +4173,8 @@ async function assembleRequirementChunkDebugPayload({
         });
     }
 
+    const diagnostics = buildRequirementChunkDiagnostics(modelInput.chunks || []);
+
     return {
         summary: {
             pageId: pageId ? String(pageId) : null,
@@ -4195,6 +4183,8 @@ async function assembleRequirementChunkDebugPayload({
             mainChunkCount: modelInput.chunkCount,
             autoLinkedPageCount: autoLinkedPages.length,
             explicitContextPageCount: explicitContextPages.length,
+            chunkStats: diagnostics.stats,
+            qualityGates: diagnostics.qualityGates,
             note: 'По текущей логике генерации context pages обычно не входят в основной reqStringForModel. Они живут отдельно: как linked/context sources, graph context и fallback contextRefiner.'
         },
         modelInput,
@@ -4488,6 +4478,8 @@ function renderChunkMarkdownSection(title, chunkGroup, { includeSourceText = tru
 }
 
 function buildRequirementChunkDumpMarkdown(payload, { taskId = null } = {}) {
+    const chunkStats = payload?.summary?.chunkStats || null;
+    const qualityGates = Array.isArray(payload?.summary?.qualityGates) ? payload.summary.qualityGates : [];
     const lines = [
         '# Requirement Chunk Dump',
         '',
@@ -4502,11 +4494,35 @@ function buildRequirementChunkDumpMarkdown(payload, { taskId = null } = {}) {
         '',
         payload?.summary?.note || '',
         '',
-        renderChunkMarkdownSection('Model Input', payload?.modelInput),
+        renderRequirementChunkMarkdownSection('Model Input', payload?.modelInput),
         '',
-        renderChunkMarkdownSection('Primary Source', payload?.primarySource),
+        renderRequirementChunkMarkdownSection('Primary Source', payload?.primarySource),
         ''
     ];
+
+    if (chunkStats) {
+        lines.splice(10, 0,
+            `- requirementRowCount: ${chunkStats.requirementRowCount || 0}`,
+            `- atomicRuleCount: ${chunkStats.atomicRuleCount || 0}`,
+            `- averageAtomicRuleLength: ${chunkStats.averageAtomicRuleLength || 0}`,
+            `- excludedBackgroundChunkCount: ${chunkStats.excludedBackgroundChunkCount || 0}`,
+            `- explicitRefCount: ${chunkStats.explicitRefCount || 0}`,
+            `- apiDependencyCount: ${chunkStats.apiDependencyCount || 0}`,
+            `- graphEligibleChunkCount: ${chunkStats.graphEligibleChunkCount || 0}`,
+            `- excludedChunkCount: ${Array.isArray(chunkStats.excludedChunks) ? chunkStats.excludedChunks.length : 0}`,
+            `- qualityGateCount: ${qualityGates.length}`,
+            ''
+        );
+    }
+
+    if (qualityGates.length > 0) {
+        lines.splice(21, 0,
+            '## Summary Quality Gates',
+            '',
+            ...qualityGates.map((gate) => `- ${gate.severity}: ${gate.code}${gate.chunkId ? ` (${gate.chunkId})` : ''} - ${gate.message}`),
+            ''
+        );
+    }
 
     if (payload?.requestContext) {
         lines.push('## Request Context');
@@ -4552,7 +4568,7 @@ function buildRequirementChunkDumpMarkdown(payload, { taskId = null } = {}) {
                 lines.push('```');
                 lines.push('');
             }
-            lines.push(renderChunkMarkdownSection(`Prompt Chunks for ${page.pageId || 'auto-page'}`, page.promptChunks, { includeSourceText: false }));
+            lines.push(renderRequirementChunkMarkdownSection(`Prompt Chunks for ${page.pageId || 'auto-page'}`, page.promptChunks, { includeSourceText: false }));
             lines.push('');
             if (page.graphText) {
                 lines.push('#### Graph Text');
@@ -4562,7 +4578,7 @@ function buildRequirementChunkDumpMarkdown(payload, { taskId = null } = {}) {
                 lines.push('```');
                 lines.push('');
             }
-            lines.push(renderChunkMarkdownSection(`Graph Chunks for ${page.pageId || 'auto-page'}`, page.graphChunks, { includeSourceText: false }));
+            lines.push(renderRequirementChunkMarkdownSection(`Graph Chunks for ${page.pageId || 'auto-page'}`, page.graphChunks, { includeSourceText: false }));
             lines.push('');
         }
     }
@@ -4586,7 +4602,7 @@ function buildRequirementChunkDumpMarkdown(payload, { taskId = null } = {}) {
                 lines.push('```');
                 lines.push('');
             }
-            lines.push(renderChunkMarkdownSection(`Chunks for context page ${page.pageId || 'context-page'}`, page.chunks, { includeSourceText: false }));
+            lines.push(renderRequirementChunkMarkdownSection(`Chunks for context page ${page.pageId || 'context-page'}`, page.chunks, { includeSourceText: false }));
             lines.push('');
         }
     }
@@ -8618,7 +8634,7 @@ Code должны описывать ПОВЕДЕНИЕ СИСТЕМЫ (что �
                                 properties: {
                                     id: { type: "string" },
                                     text: { type: "string" },
-                                    type: { type: "string", enum: ["frontend", "backend", "integration"] }
+                                    type: { type: "string", enum: ["frontend", "backend"] }
                                 },
                                 required: ["id", "text", "type"]
                             }
@@ -9874,6 +9890,7 @@ async function runTargetedSemanticRefinement({
 async function persistCompletedTestModelTask({
     taskId,
     cleanedModel,
+    validation = null,
     startTime,
     canonicalChunkCount,
     generationSegmentCount,
@@ -9886,6 +9903,9 @@ async function persistCompletedTestModelTask({
     const finalModelStats = summarizeModelCounts(cleanedModel);
     const scenariosCount = finalModelStats.scenariosCount || 0;
     const codesCount = finalModelStats.codesCount || 0;
+    const runtimeValidationMetrics = validation
+        ? buildRuntimeValidationMetrics(validation)
+        : null;
 
     const metrics = {
         duration: Date.now() - startTime,
@@ -9900,7 +9920,8 @@ async function persistCompletedTestModelTask({
         generationSegmentCount,
         llmCallCount,
         retrievalCallCount,
-        targetedRefinementCount
+        targetedRefinementCount,
+        ...(runtimeValidationMetrics || {})
     };
 
     const safeTaskId = String(taskId || 'manual').replace(/[^a-zA-Z0-9._-]+/g, '_');
@@ -9920,6 +9941,7 @@ async function persistCompletedTestModelTask({
         progress: 100,
         result: {
             testModel: cleanedModel,
+            ...(validation ? { validation } : {}),
             modelStats: finalModelStats,
             dedupeStats,
             graphSessionId: null,
@@ -9934,6 +9956,11 @@ async function persistCompletedTestModelTask({
         completed_at: new Date(),
         updated_at: new Date()
     };
+
+    if (validation) {
+        await persistValidatedTestModelTaskCompletion(taskId, updateData, metrics, 'persistCompletedTestModelTask');
+        return;
+    }
 
     try {
         await db('generation_tasks').where('id', taskId).update({
@@ -9983,6 +10010,7 @@ async function runCanonicalDefaultModelPipeline({
     const pipelineFlags = getDefaultPipelineFlags();
     const useBehavioralRetrievalV2 = Boolean(pipelineFlags.ENABLE_BEHAVIORAL_RETRIEVAL_V2);
     const chunkingModel = resolveChunkingModel(modelsToTry);
+    const judgeModelsToTry = getRecommendedJudgeModelSequence(modelsToTry);
 
     console.log('[generate-test-model-async] Using canonical semantic RAG default pipeline');
 
@@ -10004,18 +10032,45 @@ async function runCanonicalDefaultModelPipeline({
         bearerToken
     });
 
-    const indexableMainChunks = (bundle?.main?.canonicalChunks || [])
-        .filter(chunk => isAtomicRetrievableChunk(chunk));
-
-    const behavioralMainChunks = indexableMainChunks
-        .filter(chunk => isBehavioralRetrievalCandidate(chunk));
-
-    const canonicalMainChunks = useBehavioralRetrievalV2 && behavioralMainChunks.length > 0
-        ? behavioralMainChunks
-        : indexableMainChunks;
+    const {
+        indexableChunks: indexableMainChunks,
+        supportApiMainChunks,
+        behavioralFallbackChunks,
+        canonicalChunks: canonicalMainChunks,
+        usedFallback: usedSupportApiFallback
+    } = selectCanonicalMainChunks(bundle?.main?.canonicalChunks || []);
 
     if (canonicalMainChunks.length === 0) {
+        const chunkTypeSummary = Object.entries(
+            (bundle?.main?.canonicalChunks || []).reduce((acc, chunk) => {
+                const key = String(chunk?.chunk_type || chunk?.metadata?.chunk_type || 'unknown');
+                acc[key] = (acc[key] || 0) + 1;
+                return acc;
+            }, {})
+        )
+            .sort((left, right) => right[1] - left[1])
+            .map(([type, count]) => `${type}:${count}`)
+            .join(', ');
+
+        console.warn(
+            `[runCanonicalDefaultModelPipeline] No retrievable main chunks. ` +
+            `total=${bundle?.main?.canonicalChunks?.length || 0}, summary=[${chunkTypeSummary}]`
+        );
         throw new Error('Canonical semantic chunking produced no retrievable chunks for the main document.');
+    }
+
+    if (usedSupportApiFallback) {
+        if (supportApiMainChunks.length > 0) {
+            console.warn(
+                `[runCanonicalDefaultModelPipeline] Main document has no behavioral atomic chunks; ` +
+                `falling back to ${supportApiMainChunks.length} support-only API chunk(s) for generation.`
+            );
+        } else if (behavioralFallbackChunks.length > 0) {
+            console.warn(
+                `[runCanonicalDefaultModelPipeline] Main document has no behavioral atomic chunks; ` +
+                `falling back to ${behavioralFallbackChunks.length} non-atomic behavioral chunk(s) for generation.`
+            );
+        }
     }
 
     try {
@@ -10050,7 +10105,7 @@ async function runCanonicalDefaultModelPipeline({
         sourceType: 'main',
         apiKey,
         precomputedChunks: indexableMainChunks,
-        indexFilter: (chunk) => isAtomicRetrievableChunk(chunk),
+        indexFilter: (chunk) => isMainDocumentIndexCandidate(chunk),
         chunkingModel
     });
 
@@ -10230,6 +10285,35 @@ async function runCanonicalDefaultModelPipeline({
     const sanitizedAfterRefinement = sanitizeModelForValidation(cleanedModel);
     cleanedModel = sanitizedAfterRefinement.model;
 
+    console.log('[generate-test-model-async] Запускаю runtime validation pipeline по canonical-semantic-rag...');
+    const runtimeValidationResult = await runTestModelValidationPipeline({
+        model: cleanedModel,
+        llmClient: callCloudRuAPI,
+        modelsToTry: judgeModelsToTry,
+        requirementsText: reqStringForModel,
+        reqStructure: null,
+        analyzeScenarioActionability,
+        validateTestModelLegacy: () => ({ valid: true, errors: [], warnings: [] }),
+        detectModelStructureIssues,
+        prepareModel: prepareModelForRuntimeValidation,
+        maxAttempts: 3
+    });
+    cleanedModel = runtimeValidationResult.model;
+    const runtimeValidation = runtimeValidationResult.validation;
+    assertRuntimeValidationComplete(runtimeValidation, 'canonical test model runtime validation');
+
+    if (!runtimeValidation.passed) {
+        console.warn(
+            `[generate-test-model-async] ⚠️ Canonical runtime validation завершилась с ошибками: ` +
+            `static=${runtimeValidation.staticIssues.length}, judge=${runtimeValidation.judgeIssues.length}, attempts=${runtimeValidation.attemptsUsed}`
+        );
+    } else {
+        console.log(
+            `[generate-test-model-async] ✅ Canonical runtime validation passed ` +
+            `(attempts=${runtimeValidation.attemptsUsed}, judgeModel=${runtimeValidation.judgeModel || 'n/a'})`
+        );
+    }
+
     const finalModelStats = summarizeModelCounts(cleanedModel);
     const dedupeStats = {
         storiesRemoved: Math.max(0, (initialModelStats?.storiesCount || 0) - (finalModelStats?.storiesCount || 0)),
@@ -10247,6 +10331,7 @@ async function runCanonicalDefaultModelPipeline({
     await persistCompletedTestModelTask({
         taskId,
         cleanedModel,
+        validation: runtimeValidation,
         startTime,
         canonicalChunkCount: canonicalMainChunks.length,
         generationSegmentCount: generationSegments.length,
@@ -10326,8 +10411,10 @@ async function generateTestModelAsync(taskId, inputData) {
         } else {
             modelsToTry = config.cloudruModels;
         }
+        const judgeModelsToTry = getRecommendedJudgeModelSequence(config.cloudruModels);
         const chunkingModel = resolveChunkingModel(modelsToTry);
         console.log(`[generate-test-model-async] Модели для попыток (выбранная + fallback): ${modelsToTry.join(', ')}`);
+        console.log(`[generate-test-model-async] Judge models: ${judgeModelsToTry.join(', ')}`);
 
         if (!requirements && !text && !pageId) {
             throw new Error('Нужно передать requirements (строка/массив), либо text, либо pageId');
@@ -10451,7 +10538,7 @@ async function generateTestModelAsync(taskId, inputData) {
                                 title: deriveTitleFromContent(baseRequirement, `Страница ${pageId}`, pageId),
                                 sourceType: 'main',
                                 apiKey: CLOUDRU_API_KEY,
-                                indexFilter: (chunk) => isAtomicRetrievableChunk(chunk),
+                                indexFilter: (chunk) => isMainDocumentIndexCandidate(chunk),
                                 chunkingModel
                             });
 
@@ -12075,6 +12162,43 @@ ${escalationPrompt}`;
             }
         }
 
+        console.log('[generate-test-model-async] Запускаю runtime validation pipeline по test-model-validation-rules.md...');
+        const runtimeValidationResult = await runTestModelValidationPipeline({
+            model: cleanedModel,
+            llmClient: callCloudRuAPI,
+            modelsToTry: judgeModelsToTry,
+            requirementsText: reqStringForModel,
+            reqStructure,
+            analyzeScenarioActionability,
+            validateTestModelLegacy: (candidateModel, candidateReqStructure) => (
+                candidateReqStructure && candidateReqStructure.features && candidateReqStructure.features.length > 0
+                    ? validateTestModel(candidateModel, candidateReqStructure)
+                    : { valid: true, errors: [], warnings: [] }
+            ),
+            detectModelStructureIssues,
+            prepareModel: prepareModelForRuntimeValidation,
+            maxAttempts: 3
+        });
+        cleanedModel = runtimeValidationResult.model;
+        const runtimeValidation = runtimeValidationResult.validation;
+        assertRuntimeValidationComplete(runtimeValidation, 'generate-test-model runtime validation');
+
+        if (!runtimeValidation.passed) {
+            console.warn(
+                `[generate-test-model-async] ⚠️ Runtime validation завершилась с ошибками: ` +
+                `static=${runtimeValidation.staticIssues.length}, judge=${runtimeValidation.judgeIssues.length}, attempts=${runtimeValidation.attemptsUsed}`
+            );
+        } else {
+            console.log(
+                `[generate-test-model-async] ✅ Runtime validation passed ` +
+                `(attempts=${runtimeValidation.attemptsUsed}, judgeModel=${runtimeValidation.judgeModel || 'n/a'})`
+            );
+        }
+
+        if (reqStructure && reqStructure.features && reqStructure.features.length > 0) {
+            coverageReportData = generateCoverageReport(cleanedModel, reqStructure);
+        }
+
         // ✅ НОВОЕ: Собираем метрики
         // Диагностика структуры модели
         console.log(`[generateTestModelAsync] Диагностика cleanedModel:`);
@@ -12110,6 +12234,7 @@ ${escalationPrompt}`;
         };
         const reqCoverage = coverageReportData?.requirementsCoverage || { coveragePercent: 0 };
         const finalCoverageReport = coverageReportData || { coveragePercent: 0 };
+        const runtimeValidationMetrics = buildRuntimeValidationMetrics(runtimeValidation);
 
         const metrics = {
             duration: Date.now() - startTime,
@@ -12119,7 +12244,8 @@ ${escalationPrompt}`;
             scenariosCount,
             codesCount,
             regenerations: regenerationCount,
-            escalations: escalationCount
+            escalations: escalationCount,
+            ...runtimeValidationMetrics
         };
 
         console.log(`[generateTestModelAsync] 📊 Метрики:`, metrics);
@@ -12142,6 +12268,7 @@ ${escalationPrompt}`;
             progress: 100,
             result: {
                 testModel: cleanedModel,
+                validation: runtimeValidation,
                 modelStats: finalModelStats,
                 dedupeStats,
                 graphSessionId,
@@ -12151,6 +12278,8 @@ ${escalationPrompt}`;
             completed_at: new Date(),
             updated_at: new Date()
         };
+
+        await persistValidatedTestModelTaskCompletion(taskId, updateData, metrics, 'generate-test-model-async');
 
         // ✅ Условное сохранение метрик (если столбец существует)
         try {
@@ -12233,6 +12362,7 @@ app.post('/api/refine-test-model', async (req, res) => {
         const modelsToTry = selectedModel
             ? [selectedModel, ...configuredModels.filter((model) => model !== selectedModel)]
             : configuredModels;
+        const judgeModelsToTry = getRecommendedJudgeModelSequence(configuredModels);
 
         if (!oldModel || !Array.isArray(oldModel) || oldModel.length === 0) {
             return res.status(400).json({ error: 'oldModel is required and must be a non-empty array' });
@@ -12243,6 +12373,7 @@ app.post('/api/refine-test-model', async (req, res) => {
         console.log('[refine-test-model] Замечания:', reviewNotes?.substring(0, 200) || 'нет');
         console.log('[refine-test-model] Issues:', issues?.length || 0);
         console.log('[refine-test-model] Модели для попыток:', modelsToTry.length ? modelsToTry.join(', ') : 'не заданы');
+        console.log('[refine-test-model] Judge models:', judgeModelsToTry.length ? judgeModelsToTry.join(', ') : 'не заданы');
 
         // Подготовка промптов
         const systemPrompt = buildRefineModelSystemPrompt();
@@ -12314,6 +12445,8 @@ app.post('/api/refine-test-model', async (req, res) => {
             return errors;
         };
 
+        refinedModel = prepareModelForRuntimeValidation(refinedModel);
+
         const structureErrors = validateModelStructure(refinedModel);
         if (structureErrors.length > 0) {
             console.error('[refine-test-model] Ошибки структуры:', structureErrors);
@@ -12323,14 +12456,40 @@ app.post('/api/refine-test-model', async (req, res) => {
             });
         }
 
+        const runtimeValidationResult = await runTestModelValidationPipeline({
+            model: refinedModel,
+            llmClient: callCloudRuAPI,
+            modelsToTry: judgeModelsToTry,
+            requirementsText: requirements || '',
+            reqStructure: null,
+            analyzeScenarioActionability,
+            validateTestModelLegacy: () => ({ valid: true, errors: [], warnings: [] }),
+            detectModelStructureIssues,
+            prepareModel: prepareModelForRuntimeValidation,
+            maxAttempts: 3
+        });
+        refinedModel = runtimeValidationResult.model;
+        const runtimeValidation = runtimeValidationResult.validation;
+        assertRuntimeValidationComplete(runtimeValidation, 'refine-test-model runtime validation');
+        const runtimeValidationMetrics = buildRuntimeValidationMetrics(runtimeValidation);
+
+        if (!runtimeValidation.passed) {
+            console.warn(
+                `[refine-test-model] ⚠️ Runtime validation завершилась с ошибками: ` +
+                `static=${runtimeValidation.staticIssues.length}, judge=${runtimeValidation.judgeIssues.length}, attempts=${runtimeValidation.attemptsUsed}`
+            );
+        }
+
         res.json({
             refinedModel,
+            validation: runtimeValidation,
             metrics: {
                 featuresCount: refinedModel.length,
                 storiesCount: refinedModel.reduce((sum, f) => sum + (f.stories?.length || 0), 0),
                 scenariosCount: refinedModel.reduce((sum, f) =>
                     sum + (f.stories?.reduce((s, st) => s + (st.scenarios?.length || 0), 0) || 0), 0
-                )
+                ),
+                ...runtimeValidationMetrics
             }
         });
 

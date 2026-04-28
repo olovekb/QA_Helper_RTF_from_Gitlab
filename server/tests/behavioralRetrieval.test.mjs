@@ -7,10 +7,66 @@ import {
     rerankRetrievedChunksByMetadata
 } from '../behavioralRetrieval.mjs';
 import {
+    isMainDocumentIndexCandidate,
+    selectCanonicalMainChunks
+} from '../canonicalChunkSelection.mjs';
+import {
     CHUNK_TYPES,
     ELIGIBILITY_STATUSES,
     RETRIEVAL_CLASSES
 } from '../semanticChunking.mjs';
+
+function createBehavioralChunk(overrides = {}) {
+    return {
+        id: 'behavioral-4-4-1',
+        chunk_type: CHUNK_TYPES.ATOMIC_RULE,
+        chunk_granularity: 'atomic',
+        retrieval_class: RETRIEVAL_CLASSES.BEHAVIORAL,
+        eligibility_status: ELIGIBILITY_STATUSES.ELIGIBLE,
+        exclude_from_retrieval: false,
+        metadata: {
+            section_number: '4.4',
+            source_requirement_section: '4.4',
+            source_row_id: '4.4.1'
+        },
+        ...overrides
+    };
+}
+
+function createSupportApiChunk(overrides = {}) {
+    return {
+        id: 'support-api-6-4',
+        chunk_type: CHUNK_TYPES.API_ENDPOINT_SUMMARY,
+        chunk_granularity: 'atomic',
+        retrieval_class: RETRIEVAL_CLASSES.API_CONTEXT,
+        eligibility_status: ELIGIBILITY_STATUSES.ELIGIBLE,
+        exclude_from_retrieval: false,
+        metadata: {
+            section_number: '6.4',
+            source_section: '6',
+            usage_policy: 'support_only',
+            supporting_api: true,
+            exclude_from_behavioral: true,
+            survived_compaction: true
+        },
+        ...overrides
+    };
+}
+
+function createBehavioralFallbackChunk(overrides = {}) {
+    return {
+        id: 'behavioral-error-3-1',
+        chunk_type: CHUNK_TYPES.ERROR_HANDLING,
+        chunk_granularity: 'atomic',
+        retrieval_class: RETRIEVAL_CLASSES.BEHAVIORAL,
+        eligibility_status: ELIGIBILITY_STATUSES.ELIGIBLE,
+        exclude_from_retrieval: false,
+        metadata: {
+            section_number: '3.1'
+        },
+        ...overrides
+    };
+}
 
 test('isBehavioralRetrievalCandidate accepts only atomic whitelist chunks', () => {
     const atomicBehavioral = {
@@ -131,4 +187,70 @@ test('enrichment query carries metadata signals needed after behavioral selectio
     assert.match(query, /password form/i);
     assert.match(query, /post \/passwd\/change/i);
     assert.match(query, /figma\/password-form/);
+});
+
+test('support-only api chunks from section 6 are excluded from behavioral main selection', () => {
+    const behavioralChunk = createBehavioralChunk();
+    const supportApiChunk = createSupportApiChunk();
+
+    const behavioralCandidates = [behavioralChunk, supportApiChunk].filter((chunk) => isBehavioralRetrievalCandidate(chunk));
+
+    assert.deepEqual(behavioralCandidates.map((chunk) => chunk.id), ['behavioral-4-4-1']);
+});
+
+test('canonical main chunk selection prefers behavioral chunks when available', () => {
+    const selection = selectCanonicalMainChunks([
+        createSupportApiChunk(),
+        createBehavioralChunk()
+    ]);
+
+    assert.equal(selection.usedFallback, false);
+    assert.equal(selection.indexableChunks.length, 2);
+    assert.deepEqual(selection.canonicalChunks.map((chunk) => chunk.id), ['behavioral-4-4-1']);
+});
+
+test('canonical main chunk selection falls back to support-only api chunks for api-only documents', () => {
+    const supportSummary = createSupportApiChunk();
+    const supportErrors = createSupportApiChunk({
+        id: 'support-api-6-4-errors',
+        chunk_type: CHUNK_TYPES.ERROR_HANDLING
+    });
+
+    const selection = selectCanonicalMainChunks([supportSummary, supportErrors]);
+
+    assert.equal(isMainDocumentIndexCandidate(supportSummary), true);
+    assert.equal(isMainDocumentIndexCandidate(supportErrors), true);
+    assert.equal(selection.usedFallback, true);
+    assert.deepEqual(
+        selection.canonicalChunks.map((chunk) => chunk.id),
+        ['support-api-6-4', 'support-api-6-4-errors']
+    );
+});
+
+test('section 6 api chunks remain main candidates even if explicit support metadata is missing', () => {
+    const legacySupportChunk = createSupportApiChunk({
+        metadata: {
+            section_number: '6.4'
+        },
+        section_path: [
+            '6. Взаимодействие с сервером',
+            '6.4. Получение просмотровой формы',
+            'GET /rest/stateful/corp/document/visual/byid'
+        ],
+        usage_policy: null,
+        source_section: null,
+        supporting_api: null,
+        exclude_from_behavioral: null,
+        survived_compaction: null
+    });
+
+    assert.equal(isMainDocumentIndexCandidate(legacySupportChunk), true);
+});
+
+test('canonical main chunk selection falls back to non-atomic behavioral chunks when atomic rules are absent', () => {
+    const behavioralFallback = createBehavioralFallbackChunk();
+    const selection = selectCanonicalMainChunks([behavioralFallback]);
+
+    assert.equal(selection.usedFallback, true);
+    assert.deepEqual(selection.canonicalChunks.map((chunk) => chunk.id), ['behavioral-error-3-1']);
 });

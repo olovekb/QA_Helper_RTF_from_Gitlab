@@ -31,12 +31,17 @@ psql -U "$DB_ADMIN_USER" -h "$DB_HOST" -p "$DB_PORT" -d postgres -c "GRANT ALL P
 export PGPASSWORD="$DB_PASSWORD"
 psql -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";" 2>/dev/null || true
 
-echo "Applying database migrations..."
-npx knex migrate:latest --knexfile db/knexfile.js
+RUN_MIGRATIONS_ON_BOOT="${RUN_MIGRATIONS_ON_BOOT:-false}"
 
-if [ $? -eq 0 ]; then
-    echo "Database bootstrap completed successfully."
+if [ "$RUN_MIGRATIONS_ON_BOOT" = "true" ]; then
+    echo "Applying database migrations..."
+    if npx knex migrate:latest --knexfile db/knexfile.js; then
+        echo "Database bootstrap completed successfully."
+    else
+        echo "Database migration failed. Check DB_HOST, DB_NAME, DB_USER and DB_PASSWORD."
+        exit 1
+    fi
 else
-    echo "Database bootstrap failed. Check DB_HOST, DB_NAME, DB_USER and DB_PASSWORD."
-    exit 1
+    echo "Database bootstrap completed successfully."
+    echo "Automatic migrations on startup are disabled. Set RUN_MIGRATIONS_ON_BOOT=true to apply them during bootstrap."
 fi

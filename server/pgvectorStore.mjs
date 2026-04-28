@@ -495,15 +495,62 @@ async function findChunksByReference(ref, excludeDocId, limit = 5) {
     }
 
     // Ищем по разным типам ссылок
-    if (ref.type === 'section_ref' && ref.target) {
-        query += ` AND (heading ILIKE $${paramIndex++} OR content ILIKE $${paramIndex++})`;
-        params.push(`%${ref.target}%`, `%${ref.target}%`);
-    } else if (ref.type === 'doc_ref' && ref.target) {
+    const refType = String(ref?.type || '');
+    const refTarget = String(ref?.target || '').trim();
+    const refLike = `%${refTarget}%`;
+    const normalizedMethodTarget = refTarget.replace(/\s+/g, ' ').trim().toUpperCase();
+
+    if (!refTarget || refType === 'relative_ref') {
+        return [];
+    }
+
+    if (refType === 'section_ref') {
+        query += ` AND (
+            metadata->>'source_row_id' = $${paramIndex++}
+            OR metadata->>'rowNumber' = $${paramIndex++}
+            OR metadata->>'row_number' = $${paramIndex++}
+            OR metadata->>'section_number' = $${paramIndex++}
+            OR metadata->>'sectionNumber' = $${paramIndex++}
+            OR heading ILIKE $${paramIndex++}
+            OR content ILIKE $${paramIndex++}
+            OR embedding_text ILIKE $${paramIndex++}
+            OR metadata::text ILIKE $${paramIndex++}
+        )`;
+        params.push(refTarget, refTarget, refTarget, refTarget, refTarget, refLike, refLike, refLike, refLike);
+    } else if (refType === 'api_section_ref') {
+        query += ` AND (
+            metadata->>'section_number' = $${paramIndex++}
+            OR metadata->>'sectionNumber' = $${paramIndex++}
+            OR heading ILIKE $${paramIndex++}
+            OR content ILIKE $${paramIndex++}
+            OR embedding_text ILIKE $${paramIndex++}
+            OR metadata::text ILIKE $${paramIndex++}
+        )`;
+        params.push(refTarget, refTarget, refLike, refLike, refLike, refLike);
+    } else if (refType === 'method_ref') {
+        query += ` AND (
+            UPPER(content) LIKE $${paramIndex++}
+            OR UPPER(COALESCE(embedding_text, '')) LIKE $${paramIndex++}
+            OR UPPER(metadata::text) LIKE $${paramIndex++}
+            OR UPPER(explicit_refs::text) LIKE $${paramIndex++}
+        )`;
+        params.push(`%${normalizedMethodTarget}%`, `%${normalizedMethodTarget}%`, `%${normalizedMethodTarget}%`, `%${normalizedMethodTarget}%`);
+    } else if (refType === 'layout_ref') {
+        query += ` AND (
+            heading ILIKE $${paramIndex++}
+            OR content ILIKE $${paramIndex++}
+            OR embedding_text ILIKE $${paramIndex++}
+            OR metadata::text ILIKE $${paramIndex++}
+        )`;
+        params.push(refLike, refLike, refLike, refLike);
+    } else if (refType === 'doc_ref') {
         query += ` AND doc_title ILIKE $${paramIndex++}`;
-        params.push(`%${ref.target}%`);
-    } else if (ref.type === 'pageId' && ref.target) {
+        params.push(refLike);
+    } else if (refType === 'pageId') {
         query += ` AND doc_id = $${paramIndex++}`;
-        params.push(ref.target);
+        params.push(refTarget);
+    } else {
+        return [];
     }
 
     query += ` LIMIT $${paramIndex++}`;
