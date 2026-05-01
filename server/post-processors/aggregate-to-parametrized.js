@@ -86,6 +86,13 @@ function mergeToParametrized(group) {
     }));
     
     // Обновляем steps с плейсхолдерами
+    const evidenceRefs = Array.from(new Set(
+        group.flatMap(tc => Array.isArray(tc.evidenceRefs) ? tc.evidenceRefs : [])
+    ));
+    if (evidenceRefs.length) {
+        base.evidenceRefs = evidenceRefs;
+    }
+
     base.steps = base.steps.map((step, stepIdx) => {
         let text = typeof step === 'string' ? step : step.text;
         for (const diff of differences) {

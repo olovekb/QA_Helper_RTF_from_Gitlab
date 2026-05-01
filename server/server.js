@@ -305,6 +305,17 @@ runTestCaseLLMWithContext,
 validateFixedCases
 } from './llm-with-context.mjs';
 import {
+    buildEvidenceRetrievalQueries,
+    buildKeywordEvidenceItems,
+    collectScenarioBranches,
+    combineEvidencePacks,
+    createEvidencePack,
+    formatEvidencePackForPrompt,
+    formatScenarioEvidenceMapForPrompt,
+    makeEvidenceItem,
+    normalizeEvidenceRefs
+} from './test-case-evidence.mjs';
+import {
     buildTestModelRulesPrompt,
     getCuratedTestModelExemplarJson,
     getRecommendedJudgeModelSequence
@@ -16335,6 +16346,7 @@ function extractParameterValue(test, paramName) {
 async function generateTestCasesAsync(taskId, inputData) {
     // Объявляем переменные в начале функции
     let finalTestCases = [];
+    let cleanupEvidenceIndex = async () => {};
     const inputModels = Array.isArray(inputData?.models) ? inputData.models.filter(Boolean) : [];
     const selectedModel = inputModels[0] || null;
     const configuredModels = Array.isArray(config.cloudruModels) ? config.cloudruModels : [];
@@ -19009,6 +19021,195 @@ ${requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
             }).slice(0, 20); // максимум 20 релевантных требований
         }
 
+        const evidenceRagEnabled = readBooleanEnv('ENABLE_TEST_CASE_EVIDENCE_RAG', true);
+        const evidenceApiKey = process.env.CLOUDRU_API_KEY || config.cloudru?.apiKey || config.cloudruApiKey;
+        const evidenceDocIds = [];
+        const evidencePackCache = new Map();
+
+        function sanitizeEvidenceDocId(value) {
+            return String(value || '')
+                .replace(/[^a-zA-Z0-9:_-]+/g, '-')
+                .replace(/-+/g, '-')
+                .slice(0, 220);
+        }
+
+        function shouldIndexEvidenceSource(source) {
+            const content = safeTrim(source?.content);
+            if (content.length < 80) return false;
+            const type = String(source?.type || '').toLowerCase();
+            return ['requirement', 'context', 'glossary', 'generic'].includes(type);
+        }
+
+        function evidenceSourcePriority(source) {
+            const id = String(source?.id || '');
+            const type = String(source?.type || '').toLowerCase();
+            if (id === 'refined-requirements') return 0;
+            if (type === 'requirement') return 1;
+            if (source?.pageId) return 2;
+            if (type === 'context') return 3;
+            if (type === 'glossary') return 4;
+            return 5;
+        }
+
+        function shouldIndexEvidenceChunk(chunk) {
+            const type = String(chunk?.chunk_type || chunk?.metadata?.chunk_type || '').toLowerCase();
+            return ![
+                CHUNK_TYPES.NOISE_METADATA,
+                CHUNK_TYPES.NOISE_SKIPPED,
+                CHUNK_TYPES.DOCUMENT_META,
+                CHUNK_TYPES.CHANGE_LOG,
+                CHUNK_TYPES.REFERENCE_LINK
+            ].includes(type);
+        }
+
+        async function prepareEvidenceIndex() {
+            if (!evidenceRagEnabled) {
+                console.log('[generate-test-cases-async] Evidence RAG disabled by ENABLE_TEST_CASE_EVIDENCE_RAG=false');
+                return;
+            }
+            if (!evidenceApiKey || !isPgVectorInitialized()) {
+                console.log('[generate-test-cases-async] Evidence RAG unavailable, using keyword evidence fallback');
+                return;
+            }
+
+            const sources = sourceRegistry.getSources()
+                .filter(shouldIndexEvidenceSource)
+                .sort((a, b) => evidenceSourcePriority(a) - evidenceSourcePriority(b))
+                .slice(0, 12);
+
+            if (!sources.length) {
+                console.log('[generate-test-cases-async] Evidence RAG skipped: no textual sources to index');
+                return;
+            }
+
+            console.log(`[generate-test-cases-async] Evidence RAG indexing ${sources.length} source(s) for task ${taskId}`);
+
+            for (const source of sources) {
+                const docId = sanitizeEvidenceDocId(`test-cases:${taskId}:${source.id}`);
+                if (!docId) continue;
+
+                try {
+                    const indexResult = await indexConfluencePageChunksWithCache({
+                        docId,
+                        content: source.content,
+                        title: source.title || source.id,
+                        sourceType: source.type === 'requirement' ? 'main' : 'context',
+                        apiKey: evidenceApiKey,
+                        chunkingModel: 'test-case-evidence',
+                        indexFilter: shouldIndexEvidenceChunk
+                    });
+
+                    if ((indexResult?.chunkCount || indexResult?.processed || 0) > 0) {
+                        evidenceDocIds.push(docId);
+                    }
+                } catch (indexError) {
+                    console.warn(`[generate-test-cases-async] Evidence RAG indexing failed for source "${source.id}": ${indexError.message}`);
+                }
+            }
+
+            cleanupEvidenceIndex = async () => {
+                if (!evidenceDocIds.length || !isPgVectorInitialized()) return;
+                for (const docId of evidenceDocIds) {
+                    await deleteChunksByDocId(docId);
+                }
+            };
+
+            console.log(`[generate-test-cases-async] Evidence RAG ready: ${evidenceDocIds.length} indexed doc(s)`);
+        }
+
+        function buildEvidenceCacheKey(chunk, options = {}) {
+            const storyName = chunk?.[0]?.stories?.[0]?.text || '';
+            const scenarioNames = (chunk?.[0]?.stories?.[0]?.scenarios || [])
+                .map(scenario => scenario?.text || '')
+                .filter(Boolean)
+                .join('|');
+            return `${chunk?.[0]?.text || ''}::${storyName}::${scenarioNames}::${options.isNegativePass ? 'negative' : 'main'}::${options.includeBackendTests !== false}::${options.refPrefix || 'EV'}`;
+        }
+
+        async function retrieveSemanticEvidence(chunk, options = {}) {
+            if (!evidenceRagEnabled || !evidenceApiKey || !isPgVectorInitialized() || !evidenceDocIds.length) {
+                return [];
+            }
+
+            const queries = buildEvidenceRetrievalQueries(chunk, {
+                includeBackendTests: options.includeBackendTests !== false
+            });
+            const semanticItems = [];
+
+            for (const querySpec of queries) {
+                try {
+                    const results = await semanticSearch(querySpec.query, evidenceApiKey, {
+                        docIds: evidenceDocIds,
+                        topK: querySpec.layer === 'common' ? 7 : 5,
+                        minScore: 0.18,
+                        enforceScoped: true
+                    });
+
+                    for (const result of results || []) {
+                        semanticItems.push(makeEvidenceItem(result, {
+                            source: result.doc_id || querySpec.layer,
+                            sourceTitle: result.doc_title || querySpec.layer,
+                            maxText: 1400
+                        }));
+                    }
+                } catch (searchError) {
+                    console.warn(`[generate-test-cases-async] Evidence semantic search failed (${querySpec.layer}): ${searchError.message}`);
+                }
+            }
+
+            return semanticItems;
+        }
+
+        async function getEvidencePackForChunk(chunk, requirements, options = {}) {
+            const cacheKey = buildEvidenceCacheKey(chunk, options);
+            if (evidencePackCache.has(cacheKey)) {
+                return evidencePackCache.get(cacheKey);
+            }
+
+            let relevantReqs = filterRelevantRequirements(requirements, chunk) || [];
+            if (!relevantReqs.length && Array.isArray(requirements)) {
+                relevantReqs = requirements.filter(Boolean).slice(0, 8);
+            }
+
+            const keywordItems = buildKeywordEvidenceItems(relevantReqs, {
+                source: 'keyword-fallback',
+                sourceTitle: 'Keyword matched requirements',
+                maxItems: 8,
+                maxText: 1400
+            });
+            const semanticItems = await retrieveSemanticEvidence(chunk, options);
+            const evidencePack = createEvidencePack({
+                chunk,
+                semanticItems,
+                keywordItems,
+                includeBackendTests: options.includeBackendTests !== false,
+                refPrefix: options.refPrefix || 'EV',
+                maxItems: options.maxItems || 14
+            });
+
+            evidencePackCache.set(cacheKey, evidencePack);
+            return evidencePack;
+        }
+
+        async function getScenarioEvidencePacksForChunk(chunk, requirements, options = {}) {
+            const branches = collectScenarioBranches(chunk);
+            if (!branches.length) {
+                return [];
+            }
+
+            const entries = [];
+            for (const branch of branches) {
+                const pack = await getEvidencePackForChunk(branch.chunk, requirements, {
+                    ...options,
+                    refPrefix: branch.refPrefix,
+                    maxItems: 8
+                });
+                entries.push({ branch, pack });
+            }
+
+            return entries;
+        }
+
         function normalizeEndpoint(raw) {
             if (!raw) return null;
             let endpoint = raw.trim();
@@ -19919,6 +20120,11 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
                                                 }
                                             }
                                         },
+                                        evidenceRefs: {
+                                            type: "array",
+                                            description: "IDs from EVIDENCE PACK that justify this test case. Use only IDs explicitly listed in the current prompt, for example EV-1.",
+                                            items: { type: "string" }
+                                        },
                                         jiraIssueOption: {
                                             type: "object",
                                             properties: {
@@ -19982,7 +20188,18 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
         }
 
         // ✅ ФУНКЦИЯ ИЗВЛЕЧЕНИЯ КЕЙСОВ ИЗ ОТВЕТА AI
-        function extractCasesFromResponse(ai, existingCases = []) {
+        function normalizeEvidenceRefsForCase(testCase, evidencePack, scenarioEvidencePacks = []) {
+            const scenario = safeTrim(testCase?.scenario);
+            if (scenario && Array.isArray(scenarioEvidencePacks) && scenarioEvidencePacks.length) {
+                const scenarioEntry = scenarioEvidencePacks.find(entry => entry?.branch?.scenario === scenario);
+                if (scenarioEntry?.pack) {
+                    return normalizeEvidenceRefs(testCase.evidenceRefs, combineEvidencePacks([scenarioEntry.pack]));
+                }
+            }
+            return normalizeEvidenceRefs(testCase?.evidenceRefs, evidencePack);
+        }
+
+        function extractCasesFromResponse(ai, existingCases = [], evidencePack = null, scenarioEvidencePacks = []) {
             const allTestCases = [];
             // ✅ КРИТИЧНО: Используем существующие тест-кейсы для проверки уникальности ID
             const usedIds = new Set(existingCases.map(tc => tc.id));
@@ -20036,6 +20253,7 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
                             }
                             // Добавляем новый ID в множество использованных
                             usedIds.add(testCaseId);
+                            const evidenceRefs = normalizeEvidenceRefsForCase(testCase, evidencePack, scenarioEvidencePacks);
 
                             allTestCases.push({
                                 id: testCaseId, // ✅ Гарантированно уникальный ID
@@ -20058,7 +20276,8 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
                                 links: appendRequirementLink(testCase.links),
                                 jiraIssue: testCase.jiraIssueOption?.value,
                                 parameters: testCase.parameters || [],
-                                examples: testCase.examples || []
+                                examples: testCase.examples || [],
+                                ...(evidenceRefs.length ? { evidenceRefs } : {})
                             });
                         }
                     }
@@ -20152,6 +20371,12 @@ ${includeBackendTests ? `□ Integration backend: ${RULES.testCases['Integration
                                 // ✅ Убираем code для E2E тестов
                                 if (isE2E || (testCase.layer !== 'Integration backend Tests')) {
                                     testCase.code = undefined;
+                                }
+                                const evidenceRefs = normalizeEvidenceRefsForCase(testCase, evidencePack, scenarioEvidencePacks);
+                                if (evidenceRefs.length) {
+                                    testCase.evidenceRefs = evidenceRefs;
+                                } else {
+                                    delete testCase.evidenceRefs;
                                 }
                                 allTestCases.push(testCase);
                             }
@@ -20396,7 +20621,26 @@ ${Array.isArray(requirements) ? requirements.join('\n\n') : (requirements || '')
         // ✅ ОПТИМИЗИРОВАННАЯ ВЕРСИЯ: ONE-SHOT с fallback + Few-Shot Learning + Logic Extraction
         async function genForChunkOptimized(chunk, requirements, existingE2E = [], modelStructure, reqStructure = null, contextId = null, existingCases = [], logicConstraints = null, isNegativePass = false, includeBackendTests = true, signatureRegistry = null) {
             const contextPrompt = buildContextPrompt(chunk, existingE2E);
-            const relevantReqs = filterRelevantRequirements(requirements, chunk);
+            let relevantReqs = filterRelevantRequirements(requirements, chunk);
+            if ((!Array.isArray(relevantReqs) || relevantReqs.length === 0) && Array.isArray(requirements)) {
+                relevantReqs = requirements.filter(Boolean).slice(0, 8);
+            }
+            const scenarioEvidencePacks = await getScenarioEvidencePacksForChunk(chunk, requirements, {
+                includeBackendTests,
+                isNegativePass
+            });
+            const fallbackEvidencePack = scenarioEvidencePacks.length
+                ? null
+                : await getEvidencePackForChunk(chunk, requirements, {
+                    includeBackendTests,
+                    isNegativePass
+                });
+            const evidencePack = scenarioEvidencePacks.length
+                ? combineEvidencePacks(scenarioEvidencePacks.map(entry => entry.pack))
+                : fallbackEvidencePack;
+            const evidenceSection = scenarioEvidencePacks.length
+                ? formatScenarioEvidenceMapForPrompt(scenarioEvidencePacks)
+                : formatEvidencePackForPrompt(evidencePack);
             const chunkEnumScope = Array.isArray(chunk) ? chunk : [];
             const allowedForChunk = collectAllowedCodes(chunkEnumScope);
             const allowedScenarios = collectAllowedScenarios(chunkEnumScope);
@@ -20523,6 +20767,8 @@ ${logicConstraintsSection}
             const userPrompt = `
 ${contextPrompt}
 
+${evidenceSection}
+
 🚨🚨🚨 ВАЖНО: ПЕРЕД ГЕНЕРАЦИЕЙ ИЗУЧИ ЭТАЛОННЫЕ ПРИМЕРЫ В SYSTEM PROMPT! 🚨🚨🚨
 Примеры показывают ИДЕАЛЬНЫЙ формат тест-кейсов. Строго следуй их структуре и лимитам!
 
@@ -20632,7 +20878,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                     }
                 });
 
-                let cases = extractCasesFromResponse(ai, existingCases);
+                let cases = extractCasesFromResponse(ai, existingCases, evidencePack, scenarioEvidencePacks);
                 if (cases.length > 0) {
                     console.log(`[genForChunkOptimized] ✅ Получено ${cases.length} кейсов через tool_call`);
 
@@ -20736,7 +20982,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
                     { temperature: 0.3, max_tokens: 10000 }  // ⚡ Оптимизировано: ~8-12 тест-кейсов
                 );
 
-                cases = extractCasesFromResponse(retry, existingCases);
+                cases = extractCasesFromResponse(retry, existingCases, evidencePack, scenarioEvidencePacks);
                 if (cases.length > 0) {
                     console.log(`[genForChunkOptimized] ✅ Fallback: получено ${cases.length} кейсов`);
 
@@ -20840,6 +21086,7 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
         // ====== ОСНОВНАЯ ЛОГИКА ГЕНЕРАЦИИ (ONE-PASS ОПТИМИЗАЦИЯ) ======
         try {
             const storyChunks = splitByStoriesOptimized(modelStructure);
+            await prepareEvidenceIndex();
 
             for (const chunk of storyChunks) {
                 const storyName = chunk?.[0]?.stories?.[0]?.text;
@@ -21901,6 +22148,12 @@ ${includeBackendTests ? `🚨 INTEGRATION BACKEND ТЕСТЫ:
             error_message: error.message,
             updated_at: new Date()
         });
+    } finally {
+        try {
+            await cleanupEvidenceIndex();
+        } catch (cleanupError) {
+            console.warn(`[generate-test-cases-async] Failed to clean temporary evidence index: ${cleanupError.message}`);
+        }
     }
 }
 
