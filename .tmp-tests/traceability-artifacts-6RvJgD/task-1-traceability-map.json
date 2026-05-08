@@ -1,0 +1,43 @@
+{
+  "taskId": "task-1",
+  "generatedAt": "2026-05-08T11:49:35.964Z",
+  "qualityStatus": "needs_review",
+  "coverageSource": "manual_atom_registry",
+  "traceabilityMap": [
+    {
+      "coverageSource": "manual_atom_registry",
+      "documentId": "doc-1",
+      "atom_id": "REQ-1",
+      "stableId": "doc-1:REQ-1",
+      "contentHash": "hash-1",
+      "source_section": "2.1 Registry",
+      "type": "UI_BEHAVIOR",
+      "target_level": "C1_E2E",
+      "mode": "list",
+      "action": "open list",
+      "condition": "authorized user",
+      "expected_result": "rows are visible",
+      "coverageStatus": "strong",
+      "bestBranchId": "branch-1",
+      "bestMatchedBranchSignature": "feature > story > scenario > code",
+      "confidence": 0.91,
+      "reason": "verified",
+      "evidence": [
+        "rows are visible"
+      ],
+      "comment": "baseline",
+      "candidateBranches": [
+        {
+          "branch_id": "branch-1",
+          "coverage_status": "strong",
+          "confidence": 0.91
+        },
+        {
+          "branch_id": "branch-2",
+          "coverage_status": "partial",
+          "confidence": 0.62
+        }
+      ]
+    }
+  ]
+}

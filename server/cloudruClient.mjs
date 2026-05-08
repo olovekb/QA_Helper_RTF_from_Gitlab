@@ -9,13 +9,89 @@ import config from './config.json' assert { type: 'json' };
  */
 
 const CLOUDRU_BASE_URL = 'https://foundation-models.api.cloud.ru/v1';
-const API_TOKEN = config.cloudruApiKey;
-const DEFAULT_MODEL = 'Qwen/Qwen3-Coder-480B-A35B-Instruct';
+const REDACTED_CONFIG_VALUES = new Set([
+    '__REDACTED__',
+    'REDACTED',
+    'YOUR_CLOUDRU_API_KEY_HERE'
+]);
 
-// Retry configuration
-const MAX_ATTEMPTS = 5;
+function isUsableSecret(value) {
+    const text = String(value || '').trim();
+    return Boolean(text) && !REDACTED_CONFIG_VALUES.has(text);
+}
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 180000;
+const DEFAULT_MAX_ATTEMPTS = 2;
+const DEFAULT_HYBRID_MAX_ATTEMPTS = 1;
 const BASE_RETRY_MS = 1000;
-const REQUEST_TIMEOUT_MS = 900000; // 15 minutes per request timeout (Cloud.ru бывает медленный на больших запросах)
+
+function coerceBoundedPositiveInteger(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+    const parsed = Number.parseInt(String(value ?? ''), 10);
+    const candidate = Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    return Math.min(max, Math.max(min, candidate));
+}
+
+export function resolveCloudRuApiKey(configLike = config, env = process.env) {
+    const candidates = [
+        env?.CLOUDRU_API_KEY,
+        env?.CLOUDRU_API_TOKEN,
+        configLike?.cloudru?.apiKey,
+        configLike?.cloudruApiKey
+    ];
+
+    return candidates.find(isUsableSecret) || '';
+}
+
+export function resolveCloudRuRequestPolicy(configLike = config, env = process.env) {
+    const cloudruConfig = configLike?.cloudru || {};
+
+    return {
+        requestTimeoutMs: coerceBoundedPositiveInteger(
+            env?.CLOUDRU_REQUEST_TIMEOUT_MS ?? cloudruConfig.requestTimeoutMs ?? configLike?.cloudruRequestTimeoutMs,
+            DEFAULT_REQUEST_TIMEOUT_MS,
+            { min: 1000, max: 1800000 }
+        ),
+        maxAttempts: coerceBoundedPositiveInteger(
+            env?.CLOUDRU_MAX_ATTEMPTS ?? cloudruConfig.maxAttempts ?? configLike?.cloudruMaxAttempts,
+            DEFAULT_MAX_ATTEMPTS,
+            { min: 1, max: 10 }
+        ),
+        hybridMaxAttempts: coerceBoundedPositiveInteger(
+            env?.CLOUDRU_HYBRID_MAX_ATTEMPTS ?? cloudruConfig.hybridMaxAttempts ?? configLike?.cloudruHybridMaxAttempts,
+            DEFAULT_HYBRID_MAX_ATTEMPTS,
+            { min: 1, max: 5 }
+        )
+    };
+}
+
+export function resolveCloudRuHybridAttemptPolicy({
+    basePolicy = resolveCloudRuRequestPolicy(config, process.env),
+    remainingMs = null,
+    requestTimeoutMs = null,
+    maxAttempts = null
+} = {}) {
+    const baseRequestTimeoutMs = coerceBoundedPositiveInteger(
+        requestTimeoutMs,
+        basePolicy.requestTimeoutMs,
+        { min: 1000, max: 1800000 }
+    );
+    const remainingBudgetMs = Number.isFinite(Number(remainingMs)) && Number(remainingMs) > 0
+        ? Number(remainingMs)
+        : baseRequestTimeoutMs;
+
+    return {
+        requestTimeoutMs: Math.round(Math.max(1000, Math.min(baseRequestTimeoutMs, remainingBudgetMs))),
+        maxAttempts: coerceBoundedPositiveInteger(
+            maxAttempts,
+            basePolicy.hybridMaxAttempts || DEFAULT_HYBRID_MAX_ATTEMPTS,
+            { min: 1, max: Math.max(1, basePolicy.maxAttempts || DEFAULT_MAX_ATTEMPTS) }
+        )
+    };
+}
+
+const API_TOKEN = resolveCloudRuApiKey(config, process.env);
+const DEFAULT_MODEL = 'Qwen/Qwen3-Coder-480B-A35B-Instruct';
+const CLOUDRU_REQUEST_POLICY = resolveCloudRuRequestPolicy(config, process.env);
 
 // Keep-alive HTTPS agent to avoid "socket hang up" on reused connections
 const httpsAgent = new https.Agent({
@@ -111,7 +187,7 @@ function escapePlaceholdersInMessages(messages) {
  * @returns {Promise<Object>} - Объединенный результат
  */
 async function processLargeRequest(messages, opts) {
-    const { model, temperature, max_tokens, response_format } = opts;
+    const { model, temperature, max_tokens, response_format, requestTimeoutMs } = opts;
     
     // Находим самое большое сообщение (обычно user content)
     let largestMessage = null;
@@ -167,7 +243,8 @@ async function processLargeRequest(messages, opts) {
                 model,
                 temperature,
                 max_tokens: Math.min(max_tokens, 8000), // Ограничиваем размер ответа
-                response_format
+                response_format,
+                requestTimeoutMs
             });
             
             results.push(chunkResult.choices?.[0]?.message?.content || '');
@@ -204,7 +281,7 @@ const MAX_RATE_LIMIT_RETRIES = 3;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Fetch with timeout helper
-async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = CLOUDRU_REQUEST_POLICY.requestTimeoutMs) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -227,7 +304,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_M
  * @returns {Promise<Object>} - Результат API
  */
 async function makeDirectAPICall(messages, opts) {
-    const { model, temperature, max_tokens, response_format } = opts;
+    const { model, temperature, max_tokens, response_format, requestTimeoutMs = CLOUDRU_REQUEST_POLICY.requestTimeoutMs } = opts;
     
     const headers = {
         'Authorization': `Bearer ${API_TOKEN}`,
@@ -252,7 +329,7 @@ async function makeDirectAPICall(messages, opts) {
         headers,
         body: JSON.stringify(requestBody),
         agent: getAgentForUrl(endpoint)
-    });
+    }, requestTimeoutMs);
 
     if (!response.ok) {
         const errorText = await response.text().catch(() => '');
@@ -277,8 +354,21 @@ export async function callCloudRuAPI(messages, opts = {}) {
         tools = null,
         tool_choice = null,
         fastFailOnNetwork = false,
-        useResponseFormatForCloudRu = false
+        useResponseFormatForCloudRu = false,
+        requestTimeoutMs = CLOUDRU_REQUEST_POLICY.requestTimeoutMs,
+        maxAttempts = CLOUDRU_REQUEST_POLICY.maxAttempts
     } = opts;
+
+    const effectiveRequestTimeoutMs = coerceBoundedPositiveInteger(
+        requestTimeoutMs,
+        CLOUDRU_REQUEST_POLICY.requestTimeoutMs,
+        { min: 1000, max: 1800000 }
+    );
+    const effectiveMaxAttempts = coerceBoundedPositiveInteger(
+        maxAttempts,
+        CLOUDRU_REQUEST_POLICY.maxAttempts,
+        { min: 1, max: 10 }
+    );
 
     // === ПРОВЕРКА API КЛЮЧА ===
     if (!API_TOKEN || API_TOKEN === 'YOUR_CLOUDRU_API_KEY_HERE') {
@@ -383,9 +473,10 @@ export async function callCloudRuAPI(messages, opts = {}) {
     let rateRetries = 0;
     let forceFresh = false;
     const endpoint = `${CLOUDRU_BASE_URL}/chat/completions`;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    for (let attempt = 1; attempt <= effectiveMaxAttempts; attempt++) {
         try {
-            console.log(`\n🔄 [cloudru] ATTEMPT ${attempt}/${MAX_ATTEMPTS}`);
+            console.log(`\n🔄 [cloudru] ATTEMPT ${attempt}/${effectiveMaxAttempts}`);
+            console.log(`⏱️  Request timeout: ${effectiveRequestTimeoutMs}ms`);
             console.log(`📤 Request body size: ${JSON.stringify(requestBody).length} chars`);
             console.log(`📤 Sending to: ${endpoint}`);
             
@@ -421,7 +512,7 @@ export async function callCloudRuAPI(messages, opts = {}) {
                 headers: callHeaders,
                 body: requestBodyString,
                 agent
-            });
+            }, effectiveRequestTimeoutMs);
 
             console.log(`📥 Response status: ${response.status} ${response.statusText}`);
             console.log(`📥 Response headers: ${JSON.stringify(Object.fromEntries(response.headers.entries()), null, 2)}`);
@@ -435,7 +526,7 @@ export async function callCloudRuAPI(messages, opts = {}) {
                 console.log(`🔗 URL: ${CLOUDRU_BASE_URL}/chat/completions`);
                 console.log(`📝 Error response: ${errorText}`);
                 console.log(`⏰ Retry-After: ${response.headers.get('retry-after') || 'Not set'}`);
-                console.log(`🔄 Attempt: ${attempt}/${MAX_ATTEMPTS}`);
+                console.log(`🔄 Attempt: ${attempt}/${effectiveMaxAttempts}`);
                 console.log(`📊 Rate retries: ${rateRetries}/${MAX_RATE_LIMIT_RETRIES}`);
                 
                 // ✅ ДОПОЛНИТЕЛЬНАЯ ДИАГНОСТИКА: Проверяем наличие {{}} в сообщениях
@@ -698,7 +789,7 @@ export async function callCloudRuAPI(messages, opts = {}) {
                             temperature: Math.min(temperature + 0.1, 0.5) // Немного повышаем температуру
                         }),
                         agent: getAgentForUrl(`${CLOUDRU_BASE_URL}/chat/completions`)
-                    });
+                    }, effectiveRequestTimeoutMs);
                     
                     if (retryResponse.ok) {
                         const retryData = await retryResponse.json();
@@ -731,7 +822,7 @@ export async function callCloudRuAPI(messages, opts = {}) {
             console.log(`${'='*60}`);
             console.log(`🚨 Error type: ${error.constructor.name}`);
             console.log(`📝 Error message: ${error.message}`);
-            console.log(`🔄 Attempt: ${attempt}/${MAX_ATTEMPTS}`);
+            console.log(`🔄 Attempt: ${attempt}/${effectiveMaxAttempts}`);
             console.log(`📊 Rate retries: ${rateRetries}/${MAX_RATE_LIMIT_RETRIES}`);
             console.log(`🔍 Error code: ${error.code || 'N/A'}`);
             console.log(`🌐 Endpoint: ${endpoint}`);
@@ -741,7 +832,7 @@ export async function callCloudRuAPI(messages, opts = {}) {
             }
             console.log(`${'='*60}\n`);
             
-            if (attempt === MAX_ATTEMPTS) {
+            if (attempt === effectiveMaxAttempts) {
                 console.log(`❌ [cloudru] All attempts exhausted - throwing error`);
                 throw error;
             }
@@ -790,7 +881,10 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
         tool_choice = null,
         logRateLimit = true,
         cloudFirstTimeoutMs = 120000,
-        useResponseFormatForCloudRu = false
+        useResponseFormatForCloudRu = false,
+        requestTimeoutMs = null,
+        maxAttempts = null,
+        hybridMaxAttempts = CLOUDRU_REQUEST_POLICY.hybridMaxAttempts
     } = opts;
 
     console.log(`\n🔄 HYBRID API CALL START`);
@@ -806,8 +900,20 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
     const deadline = Date.now() + cloudFirstTimeoutMs;
     for (let i = 0; i < models.length; i++) {
         const model = models[i];
+        const remainingMs = Math.max(0, deadline - Date.now());
+        if (remainingMs <= 0) {
+            console.log(`[hybrid] Cloud-first timeout budget exceeded before model call (${cloudFirstTimeoutMs}ms). Falling back to OpenRouter.`);
+            break;
+        }
+        const hybridAttemptPolicy = resolveCloudRuHybridAttemptPolicy({
+            basePolicy: CLOUDRU_REQUEST_POLICY,
+            remainingMs,
+            requestTimeoutMs,
+            maxAttempts: hybridMaxAttempts ?? maxAttempts
+        });
         try {
             console.log(`\n🚀 [hybrid] Trying Cloud.ru model ${i + 1}/${models.length}: ${model}`);
+            console.log(`[hybrid] Cloud.ru budget remaining: ${remainingMs}ms; per-call timeout: ${hybridAttemptPolicy.requestTimeoutMs}ms; attempts: ${hybridAttemptPolicy.maxAttempts}`);
             
             // ✅ НОВОЕ: Экранируем плейсхолдеры {{}} перед отправкой в Cloud.ru
             const escapedMessages = escapePlaceholdersInMessages(messages);
@@ -820,7 +926,9 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
                 tools,
                 tool_choice,
                 fastFailOnNetwork: true,
-                useResponseFormatForCloudRu
+                useResponseFormatForCloudRu,
+                requestTimeoutMs: hybridAttemptPolicy.requestTimeoutMs,
+                maxAttempts: hybridAttemptPolicy.maxAttempts
             });
 
             console.log(`\n✅ [hybrid] Cloud.ru SUCCESS with model: ${model}`);

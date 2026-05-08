@@ -264,6 +264,17 @@ function isModelEmpty(model) {
     return getModelCounts(model).features === 0;
 }
 
+function isMaterialModelShrink(beforeModel, afterModel) {
+    const before = getModelCounts(beforeModel);
+    const after = getModelCounts(afterModel);
+    return (
+        after.features < before.features ||
+        after.stories < before.stories ||
+        after.scenarios < before.scenarios ||
+        after.codes < before.codes
+    );
+}
+
 export function collectStaticTestModelIssues(model, options = {}) {
     const {
         analyzeScenarioActionability,
@@ -893,6 +904,7 @@ export async function runTestModelValidationPipeline(options = {}) {
         model,
         llmClient,
         modelsToTry,
+        repairModelsToTry,
         requirementsText = '',
         reqStructure = null,
         analyzeScenarioActionability,
@@ -909,6 +921,9 @@ export async function runTestModelValidationPipeline(options = {}) {
     let judgeScores = null;
     let judgeModel = null;
     let judgeSummary = '';
+    const repairModelCandidates = Array.isArray(repairModelsToTry) && repairModelsToTry.length > 0
+        ? repairModelsToTry
+        : modelsToTry;
 
     for (let attempt = 0; attempt <= maxAttempts; attempt++) {
         const staticResult = collectStaticTestModelIssues(currentModel, {
@@ -973,7 +988,7 @@ export async function runTestModelValidationPipeline(options = {}) {
         try {
             const repairResult = await runRepair(currentModel, blockingIssues, {
                 llmClient,
-                modelsToTry,
+                modelsToTry: repairModelCandidates,
                 requirementsText,
                 reqStructure
             });
@@ -993,6 +1008,24 @@ export async function runTestModelValidationPipeline(options = {}) {
                             after: getModelCounts(repairedCandidate)
                         }),
                         suggestedFix: 'Уточнить repair prompt или исправить модель вручную без удаления всей структуры'
+                    })
+                ]);
+                break;
+            }
+
+            if (!isModelEmpty(currentModel) && isMaterialModelShrink(currentModel, repairedCandidate)) {
+                finalJudgeIssues = dedupeIssues([
+                    ...finalJudgeIssues,
+                    createIssue({
+                        rule: getValidationPromptRules()[0] || loadTestModelRuntimeRules()[0],
+                        severity: 'error',
+                        source: 'judge',
+                        message: 'LLM repair reduced test model coverage; previous fuller model was preserved',
+                        evidence: JSON.stringify({
+                            before: getModelCounts(currentModel),
+                            after: getModelCounts(repairedCandidate)
+                        }),
+                        suggestedFix: 'Исправить точечные runtime issues без удаления существующих Feature/Story/Scenario/Code ветвей'
                     })
                 ]);
                 break;

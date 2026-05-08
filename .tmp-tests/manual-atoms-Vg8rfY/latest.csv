@@ -1,0 +1,2 @@
+atom_id;source_section;mode;action;condition;expected_result;method_ref;method_name;http_method;endpoint;request_params;response_params;type;target_level;testable;include_in_coverage;comment
+REQ-CP;4.1;Список;Open;Cond;Result;;;;;;;UI_BEHAVIOR;C1_E2E;true;true;cp1251 row

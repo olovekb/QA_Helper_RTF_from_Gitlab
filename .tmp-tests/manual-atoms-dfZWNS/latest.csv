@@ -1,0 +1,3 @@
+atom_id;source_section;mode;action;condition;expected_result;method_ref;method_name;http_method;endpoint;request_params;response_params;type;target_level;testable;include_in_coverage;comment
+REQ-OK;4.1.1;Список ведомостей;Отображение названия;"Открыта страница";"Название отображается";Метод 1;Список реестров;GET;"/api/list?filter={date}";"doc_type=payroll, limit=1000";"registry.description";UI_BEHAVIOR;C2_C3_FRONTEND;true;true;api-backed row
+REQ-REPAIR;4.1.2;Список ведомостей D;Клик по ведомости;"Пользователь на странице";"Раскрывается детальная информация";;;;;;UI_BEHAVIOR;C2_C3_FRONTEND;true;true;pure ui row

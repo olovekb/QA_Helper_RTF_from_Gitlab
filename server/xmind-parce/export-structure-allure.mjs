@@ -5,9 +5,7 @@ import {customProjectField, projectTestCaseLayers} from "./customProjectField.js
 
 // Конфигурация
 const BASE_URL = config.baseUrl;
-const API_TOKEN = await getJwtToken();
 const HEADERS = {
-    'Authorization': `Bearer ${API_TOKEN}`,
     'Content-Type': 'application/json',
 };
 let isRefreshing = false; // Флаг для предотвращения одновременного обновления токена
@@ -27,6 +25,22 @@ function addRefreshSubscriber(callback) {
 const apiClient = axios.create({
     baseURL: BASE_URL,
     headers: HEADERS
+});
+
+function setAuthorizationToken(token) {
+    const authorization = `Bearer ${token}`;
+    apiClient.defaults.headers.common['Authorization'] = authorization;
+    apiClient.defaults.headers['Authorization'] = authorization;
+}
+
+apiClient.interceptors.request.use(async requestConfig => {
+    if (!requestConfig.headers?.['Authorization']) {
+        const token = await getJwtToken();
+        setAuthorizationToken(token);
+        requestConfig.headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    return requestConfig;
 });
 
 // Перехватчик для обработки ошибок
@@ -58,7 +72,7 @@ apiClient.interceptors.response.use(
                 const newToken = await getJwtToken(); // Получаем новый токен
 
                 // Обновляем заголовки по умолчанию
-                apiClient.defaults.headers['Authorization'] = `Bearer ${newToken}`;
+                setAuthorizationToken(newToken);
 
                 // Уведомляем подписчиков
                 onTokenRefreshed(newToken);

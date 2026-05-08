@@ -1,0 +1,2 @@
+atom_id,source_section,mode,action,condition,expected_result,method_ref,method_name,http_method,endpoint,request_params,response_params,type,target_level,testable,include_in_coverage,comment
+"REQ-101","3. API","repeat","repeat request","service returns business error","errorCode is shown","Method 2","Repeat registry","POST","/api/registries/{id}/repeat","id","errorCode","API_CONTRACT","C2_C3_BACKEND","true","true",""

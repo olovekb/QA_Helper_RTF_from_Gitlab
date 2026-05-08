@@ -154,6 +154,14 @@ export async function getEmbedding(text, apiKey, preferredModel = null) {
     throw new Error(`Все модели эмбеддеров недоступны: ${lastError?.message}`);
 }
 
+export async function getEmbeddingWithModel(text, apiKey, model) {
+    if (!model) {
+        throw new Error('Embedding model is required for exact embedding lookup.');
+    }
+
+    return await fetchEmbeddingFromCloudRu(text, apiKey, model);
+}
+
 async function fetchEmbeddingFromCloudRu(text, apiKey, model) {
     const CLOUDRU_EMBEDDING_URL = 'https://foundation-models.api.cloud.ru/v1/embeddings';
     

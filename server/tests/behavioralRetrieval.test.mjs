@@ -7,6 +7,7 @@ import {
     rerankRetrievedChunksByMetadata
 } from '../behavioralRetrieval.mjs';
 import {
+    resolveCanonicalGenerationSource,
     isMainDocumentIndexCandidate,
     selectCanonicalMainChunks
 } from '../canonicalChunkSelection.mjs';
@@ -253,4 +254,112 @@ test('canonical main chunk selection falls back to non-atomic behavioral chunks 
 
     assert.equal(selection.usedFallback, true);
     assert.deepEqual(selection.canonicalChunks.map((chunk) => chunk.id), ['behavioral-error-3-1']);
+});
+
+test('canonical generation source does not use manual atom registry as requirements source', () => {
+    const selection = selectCanonicalMainChunks([
+        {
+            id: 'meta-1',
+            chunk_type: CHUNK_TYPES.DOCUMENT_META,
+            chunk_granularity: 'atomic',
+            retrieval_class: RETRIEVAL_CLASSES.REFERENCE_CONTEXT,
+            eligibility_status: ELIGIBILITY_STATUSES.EXCLUDED,
+            exclude_from_retrieval: true,
+            cleaned_text: 'Wrapper page metadata'
+        }
+    ]);
+
+    const resolved = resolveCanonicalGenerationSource({
+        selection,
+        manualAtomRegistry: {
+            documentId: '244357919',
+            coverageSource: 'manual_atom_registry',
+            coverageUnits: [
+                {
+                    stableId: '244357919:REQ-001',
+                    atom_id: 'REQ-001',
+                    source_section: '3.1.1',
+                    sectionPath: ['3.1.1'],
+                    mode: 'INN input',
+                    action: 'call IFNS method',
+                    condition: 'user entered four INN symbols',
+                    expected_result: 'request sends first four symbols in code query parameter',
+                    method_ref: 'Method 1',
+                    method_name: 'IFNS',
+                    http_method: 'GET',
+                    endpoint: '/public/json?service=ifns&code={code}',
+                    request_params: 'service=ifns, code={first4InnChars}',
+                    response_params: '',
+                    type: 'API_CONTRACT',
+                    target_level: 'C2_C3_FRONTEND',
+                    text: 'call IFNS method\nuser entered four INN symbols\nrequest sends first four symbols in code query parameter',
+                    contentHash: 'hash-1'
+                }
+            ]
+        },
+        documentId: '244357919',
+        docTitle: 'Wrapper page'
+    });
+
+    assert.equal(resolved.usedManualAtomRegistryFallback, false);
+    assert.equal(resolved.usedAuxiliaryGenerationFallback, false);
+    assert.equal(resolved.generationSource, 'none');
+    assert.equal(resolved.canonicalChunks.length, 0);
+    assert.equal(resolved.indexableChunks.length, 0);
+});
+
+test('canonical generation source falls back to linked retrievable chunks when main page is wrapper-only', () => {
+    const selection = selectCanonicalMainChunks([
+        {
+            id: 'meta-1',
+            chunk_type: CHUNK_TYPES.DOCUMENT_META,
+            chunk_granularity: 'atomic',
+            retrieval_class: RETRIEVAL_CLASSES.REFERENCE_CONTEXT,
+            eligibility_status: ELIGIBILITY_STATUSES.EXCLUDED,
+            exclude_from_retrieval: true,
+            cleaned_text: 'Wrapper page metadata'
+        }
+    ]);
+    const linkedBehavioralChunk = createBehavioralChunk({
+        id: 'linked-req-1',
+        doc_id: 'linked-doc-1',
+        doc_title: 'Linked requirements',
+        source_type: 'linked',
+        cleaned_text: 'User enters four INN symbols and IFNS request sends code query parameter.',
+        core_text: 'User enters four INN symbols and IFNS request sends code query parameter.',
+        segment_text: 'User enters four INN symbols and IFNS request sends code query parameter.'
+    });
+
+    const resolved = resolveCanonicalGenerationSource({
+        selection,
+        manualAtomRegistry: {
+            documentId: '244357919',
+            coverageSource: 'manual_atom_registry',
+            coverageUnits: [
+                {
+                    stableId: '244357919:REQ-001',
+                    atom_id: 'REQ-001',
+                    text: 'manual atom text must not be used for generation'
+                }
+            ]
+        },
+        linkedDocs: [
+            {
+                docId: 'linked-doc-1',
+                title: 'Linked requirements',
+                canonicalChunks: [linkedBehavioralChunk]
+            }
+        ],
+        documentId: '244357919',
+        docTitle: 'Wrapper page'
+    });
+
+    assert.equal(resolved.usedManualAtomRegistryFallback, false);
+    assert.equal(resolved.usedAuxiliaryGenerationFallback, true);
+    assert.equal(resolved.generationSource, 'auxiliary_canonical_chunks');
+    assert.equal(resolved.canonicalChunks.length, 1);
+    assert.equal(resolved.indexableChunks.length, 0);
+    assert.equal(isMainDocumentIndexCandidate(resolved.canonicalChunks[0]), true);
+    assert.equal(resolved.canonicalChunks[0].id, 'linked-req-1');
+    assert.doesNotMatch(resolved.canonicalChunks[0].segment_text, /manual atom text/);
 });

@@ -244,6 +244,7 @@ import {
     isMainDocumentIndexCandidate,
     isContextAuxiliaryAtomicChunk,
     isLinkedAtomicChunk,
+    resolveCanonicalGenerationSource,
     selectCanonicalMainChunks
 } from './canonicalChunkSelection.mjs';
 import {
@@ -325,6 +326,19 @@ import {
     hasPersistedRuntimeValidation,
     runTestModelValidationPipeline
 } from './test-model-quality-pipeline.mjs';
+import { deriveFallbackScenarioText } from './test-model-scenario-repair.mjs';
+import {
+    buildCanonicalQualityRetryInstruction,
+    coerceQualityGateRetryModelFragment,
+    runCanonicalQualityGate,
+    runPostValidationQualityCheck
+} from './canonical-quality-gate.mjs';
+import { loadManualAtomRegistryForDocument } from './manual-atom-registry.mjs';
+import { writeTraceabilityArtifacts } from './traceability-artifacts.mjs';
+import {
+    coerceModelArrayFromToolArgs as coerceModelArrayFromToolArgsShared,
+    parseToolArgsContent
+} from './tool-args-parser.mjs';
 import { readFileSync, mkdirSync, writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -2320,6 +2334,15 @@ function repairStoryStructure(story) {
         appendScenario(scenarioClone);
     }
 
+    if (repairedScenarios.length === 0 && deferredCodes.length > 0) {
+        appendScenario({
+            id: generatePrefixedId('sc'),
+            text: deriveFallbackScenarioText({ story, codes: deferredCodes }),
+            requirement: story?.requirement,
+            codes: deferredCodes.splice(0)
+        });
+    }
+
     if (repairedScenarios.length > 0 && deferredCodes.length > 0) {
         repairedScenarios[0].codes = [...deferredCodes, ...(repairedScenarios[0].codes || [])];
     }
@@ -2398,11 +2421,12 @@ function isIssueProfileBetter(candidateIssues, baselineIssues) {
     return false;
 }
 
-function sanitizeModelForValidation(model) {
+function sanitizeModelForValidation(model, options = {}) {
+    const preserveIncompleteLeaves = Boolean(options.preserveIncompleteLeaves);
     let nextModel = repairModelStructure(model);
     nextModel = validateAndCleanModel(nextModel);
 
-    const pruneResult = pruneEmptyModelBranches(nextModel);
+    const pruneResult = pruneEmptyModelBranches(nextModel, { preserveIncompleteLeaves });
     nextModel = pruneResult.model;
 
     return {
@@ -2414,6 +2438,13 @@ function sanitizeModelForValidation(model) {
 function prepareModelForRuntimeValidation(model) {
     const normalizedModel = normalizeModelStructure(Array.isArray(model) ? model : []);
     const sanitized = sanitizeModelForValidation(normalizedModel);
+    const postProcessed = postProcessModel(sanitized.model);
+    return validateAndCleanModel(postProcessed);
+}
+
+function prepareCanonicalModelForRuntimeValidation(model) {
+    const normalizedModel = normalizeModelStructure(Array.isArray(model) ? model : []);
+    const sanitized = sanitizeModelForValidation(normalizedModel, { preserveIncompleteLeaves: true });
     const postProcessed = postProcessModel(sanitized.model);
     return validateAndCleanModel(postProcessed);
 }
@@ -5728,6 +5759,12 @@ function extractToolArgs(aiResponse, preferredFnName) {
                 return inlineToolArgs;
             }
 
+            const parsedContentArgs = parseToolArgsContent(content, preferredFnName);
+            if (parsedContentArgs) {
+                console.log(`[extractToolArgs] ✅ Успешно извлечены args из content через общий JSON fallback`);
+                return parsedContentArgs;
+            }
+
             // ✅ УЛУЧШЕННЫЙ парсинг JSON с обработкой ошибок
             const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) ||
                 content.match(/```\s*([\s\S]*?)\s*```/) ||
@@ -7968,33 +8005,12 @@ function clonePlainObject(value) {
 }
 
 function coerceModelArrayFromToolArgs(args) {
-    if (!args) return null;
-
-    let modelSource = args.model || args.features;
-
-    if (!modelSource && args.id && args.text && Array.isArray(args.stories)) {
-        modelSource = [args];
+    try {
+        return coerceModelArrayFromToolArgsShared(args);
+    } catch (error) {
+        console.warn('[coerceModelArrayFromToolArgs] Не удалось распарсить modelSource:', error.message);
+        return null;
     }
-
-    if (Array.isArray(modelSource)) {
-        return modelSource;
-    }
-
-    if (typeof modelSource === 'object' && modelSource !== null && Array.isArray(modelSource.items)) {
-        return modelSource.items;
-    }
-
-    if (typeof modelSource === 'string') {
-        try {
-            const parsed = JSON5.parse(modelSource);
-            if (Array.isArray(parsed)) return parsed;
-            if (parsed && Array.isArray(parsed.items)) return parsed.items;
-        } catch (error) {
-            console.warn('[coerceModelArrayFromToolArgs] Не удалось распарсить modelSource:', error.message);
-        }
-    }
-
-    return null;
 }
 
 function collectHierarchyRepairTargets(model, reqStructure) {
@@ -8140,11 +8156,13 @@ function upsertStoryIntoModel(model, featureName, story) {
     return nextModel;
 }
 
-function pruneEmptyModelBranches(model) {
+function pruneEmptyModelBranches(model, options = {}) {
+    const preserveIncompleteLeaves = Boolean(options.preserveIncompleteLeaves);
     const report = {
         removedFeatures: [],
         removedStories: [],
-        removedScenarios: []
+        removedScenarios: [],
+        incompleteScenarios: []
     };
 
     const nextModel = [];
@@ -8169,6 +8187,20 @@ function pruneEmptyModelBranches(model) {
 
                 const nextCodes = (scenario.codes || []).filter(code => String(code?.text || '').trim());
                 if (nextCodes.length === 0) {
+                    if (preserveIncompleteLeaves) {
+                        report.incompleteScenarios.push({
+                            feature: feature.text,
+                            story: story.text,
+                            scenario: scenario.text,
+                            reason: 'Scenario has no Code nodes and was preserved as an incomplete leaf.'
+                        });
+                        nextScenarios.push({
+                            ...scenario,
+                            text: scenarioAnalysis.normalizedText,
+                            codes: []
+                        });
+                        continue;
+                    }
                     report.removedScenarios.push({
                         feature: feature.text,
                         story: story.text,
@@ -9898,6 +9930,302 @@ async function runTargetedSemanticRefinement({
     };
 }
 
+function stripTraceabilityFromCoverage(requirementCoverage = null) {
+    if (!requirementCoverage || typeof requirementCoverage !== 'object') {
+        return requirementCoverage;
+    }
+
+    const { traceabilityMap, ...rest } = requirementCoverage;
+    return rest;
+}
+
+function compactCanonicalQualityAssessment(assessment = null) {
+    if (!assessment || typeof assessment !== 'object') {
+        return assessment;
+    }
+
+    return {
+        stage: assessment.stage || null,
+        checkedAt: assessment.checkedAt || new Date().toISOString(),
+        outcome: assessment.outcome,
+        passed: assessment.passed,
+        needsReview: assessment.needsReview,
+        retryAllowed: assessment.retryAllowed,
+        scaleGate: assessment.scaleGate,
+        requirementCoverage: stripTraceabilityFromCoverage(assessment.requirementCoverage)
+    };
+}
+
+function createQualityGateFailureError(message, diagnostics) {
+    const error = new Error(message);
+    error.qualityDiagnostics = diagnostics;
+    return error;
+}
+
+function formatQualityNumber(value, digits = 2) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric.toFixed(digits) : 'n/a';
+}
+
+function findScaleCheck(scaleGate, name) {
+    return (scaleGate?.checks || []).find((check) => check.name === name) || {};
+}
+
+function buildCanonicalQualityFailureMessage(baseMessage, assessment = {}) {
+    const parts = [baseMessage];
+    const scaleGate = assessment?.scaleGate;
+    const coverage = assessment?.requirementCoverage;
+
+    if (scaleGate) {
+        const scenarios = findScaleCheck(scaleGate, 'scenariosCount');
+        const codes = findScaleCheck(scaleGate, 'codesCount');
+        const leaves = findScaleCheck(scaleGate, 'leafBranchCount');
+        parts.push(
+            `scaleGate=${scaleGate.status || (scaleGate.passed ? 'passed' : 'failed')} ` +
+            `scenarios=${scenarios.actual ?? 'n/a'}/${scenarios.expected ?? 'n/a'} ` +
+            `codes=${codes.actual ?? 'n/a'}/${codes.expected ?? 'n/a'} ` +
+            `leafBranches=${leaves.actual ?? 'n/a'}/${leaves.expected ?? 'n/a'}`
+        );
+    }
+
+    if (coverage) {
+        const uncoveredCount = Array.isArray(coverage.uncoveredRequirementUnits)
+            ? coverage.uncoveredRequirementUnits.length
+            : 'n/a';
+        parts.push(
+            `requirementCoverage=${coverage.status || 'n/a'} ` +
+            `hard=${formatQualityNumber(coverage.hardCoverageRatio)} ` +
+            `partial=${formatQualityNumber(coverage.partialCoverageRatio)} ` +
+            `soft=${formatQualityNumber(coverage.softCoverageScore)} ` +
+            `covered=${coverage.coveredRequirementUnits ?? 'n/a'}/${coverage.totalTestableRequirementUnits ?? 'n/a'} ` +
+            `partialUnits=${coverage.partialRequirementUnits ?? 'n/a'} ` +
+            `uncovered=${uncoveredCount}`
+        );
+    }
+
+    return parts.join(' ');
+}
+
+function buildCanonicalQualityDiagnostics({
+    qualityGate,
+    traceabilityMap = [],
+    postValidationQualityCheck = null,
+    qualityStatus = 'failed',
+    pipeline = 'canonical-semantic-rag'
+} = {}) {
+    return {
+        qualityStatus,
+        pipeline,
+        qualityGate,
+        traceabilityMap,
+        postValidationQualityCheck
+    };
+}
+
+async function runCanonicalQualityAssessment({
+    stage,
+    model,
+    canonicalChunks,
+    coverageUnits = null,
+    coverageSource = null,
+    codeAugmentationDiagnostics = null,
+    manualRegistryDiagnostics = null,
+    segmentResults,
+    generationSegmentCount,
+    canonicalChunkCount,
+    apiKey
+}) {
+    const assessment = await runCanonicalQualityGate({
+        model,
+        canonicalChunks,
+        coverageUnits,
+        coverageSource,
+        codeAugmentationDiagnostics,
+        manualRegistryDiagnostics,
+        segmentResults,
+        generationSegmentCount,
+        canonicalChunkCount,
+        apiKey
+    });
+
+    return {
+        stage,
+        checkedAt: new Date().toISOString(),
+        ...assessment
+    };
+}
+
+async function runCanonicalQualityAugmentationAttempt({
+    currentModel,
+    retryInstruction,
+    systemPrompt,
+    selectedModel
+}) {
+    if (!selectedModel) {
+        throw new Error('Quality gate retry requires a selected model; fallback model retry is disabled.');
+    }
+
+    const currentStats = summarizeModelCounts(currentModel);
+    const userPrompt = [
+        'Canonical quality gate found missing requirement coverage or insufficient model scale.',
+        'Return only new non-duplicate Feature -> Story -> Scenario -> Code branches needed to close the listed gaps.',
+        'The returned model fragment will be merged with the existing model, so do not copy already covered branches.',
+        '',
+        `Current model stats: ${JSON.stringify(currentStats)}`,
+        '',
+        retryInstruction
+    ].join('\n');
+
+    const response = await callWithCloudRuFallback(
+        OPENROUTER_URL,
+        [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+        ],
+        config.openRouterAiKey,
+        {
+            tools: [buildSubmitModelTool()],
+            temperature: 0,
+            top_p: 0.9,
+            max_tokens: 20000,
+            models: [selectedModel],
+            extra: { transforms: 'middle-out' }
+        }
+    );
+
+    const args = extractToolArgs(response, 'submit_test_model');
+    const partialModel = coerceModelArrayFromToolArgs(args);
+    if (!Array.isArray(partialModel) || partialModel.length === 0) {
+        throw new Error('Quality gate retry returned an empty model fragment.');
+    }
+
+    const coercedModelFragment = coerceQualityGateRetryModelFragment(partialModel);
+    if (!Array.isArray(coercedModelFragment) || coercedModelFragment.length === 0) {
+        throw new Error('Quality gate retry returned an empty model fragment.');
+    }
+
+    let normalized = normalizeModelStructure(coercedModelFragment);
+    normalized = repairModelStructure(normalized);
+    const sanitized = sanitizeModelForValidation(normalized, { preserveIncompleteLeaves: true });
+
+    return {
+        model: sanitized.model,
+        llmCallCount: 1
+    };
+}
+
+function collectIncompleteScenarioLeaves(model = [], limit = 30) {
+    const leaves = [];
+    for (const feature of Array.isArray(model) ? model : []) {
+        for (const story of feature?.stories || []) {
+            for (const scenario of story?.scenarios || []) {
+                const codes = Array.isArray(scenario?.codes) ? scenario.codes : [];
+                const nonEmptyCodes = codes.filter(code => String(code?.text || '').trim());
+                if (nonEmptyCodes.length === 0 && String(scenario?.text || '').trim()) {
+                    leaves.push({
+                        featureId: feature?.id || null,
+                        storyId: story?.id || null,
+                        scenarioId: scenario?.id || null,
+                        featureText: feature?.text || '',
+                        storyText: story?.text || '',
+                        scenarioText: scenario?.text || ''
+                    });
+                    if (leaves.length >= limit) {
+                        return leaves;
+                    }
+                }
+            }
+        }
+    }
+    return leaves;
+}
+
+function buildMissingCodeAugmentationPrompt(incompleteLeaves = []) {
+    const examples = incompleteLeaves.map((leaf, index) => [
+        `${index + 1}. featureId=${leaf.featureId || 'n/a'}`,
+        `storyId=${leaf.storyId || 'n/a'}`,
+        `scenarioId=${leaf.scenarioId || 'n/a'}`,
+        `Feature="${String(leaf.featureText || '').replace(/\s+/g, ' ').slice(0, 240)}"`,
+        `Story="${String(leaf.storyText || '').replace(/\s+/g, ' ').slice(0, 240)}"`,
+        `Scenario="${String(leaf.scenarioText || '').replace(/\s+/g, ' ').slice(0, 400)}"`
+    ].join(' | ')).join('\n');
+
+    return [
+        'MISSING CODE NODE AUGMENTATION',
+        'Some Scenario nodes have no Code nodes. Add only missing Code nodes for the listed scenarios.',
+        'Do not rewrite existing valid branches. Do not add duplicate scenarios.',
+        'Return Feature -> Story -> Scenario -> Code JSON through submit_test_model only.',
+        '',
+        examples || 'No incomplete scenarios.'
+    ].join('\n');
+}
+
+async function runMissingCodeAugmentationAttempt({
+    currentModel,
+    systemPrompt,
+    selectedModel
+}) {
+    const beforeLeaves = collectIncompleteScenarioLeaves(currentModel);
+    const diagnostics = {
+        attempted: false,
+        succeeded: false,
+        beforeCount: beforeLeaves.length,
+        afterCount: beforeLeaves.length,
+        incompleteLeaves: beforeLeaves,
+        reasons: []
+    };
+
+    if (beforeLeaves.length === 0) {
+        return { model: currentModel, llmCallCount: 0, diagnostics };
+    }
+
+    if (!selectedModel) {
+        diagnostics.reasons.push('No selected model is available for missing Code augmentation.');
+        return { model: currentModel, llmCallCount: 0, diagnostics };
+    }
+
+    diagnostics.attempted = true;
+    const response = await callWithCloudRuFallback(
+        OPENROUTER_URL,
+        [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: buildMissingCodeAugmentationPrompt(beforeLeaves) }
+        ],
+        config.openRouterAiKey,
+        {
+            tools: [buildSubmitModelTool()],
+            temperature: 0,
+            top_p: 0.9,
+            max_tokens: 12000,
+            models: [selectedModel],
+            extra: { transforms: 'middle-out' }
+        }
+    );
+
+    const args = extractToolArgs(response, 'submit_test_model');
+    const partialModel = coerceQualityGateRetryModelFragment(coerceModelArrayFromToolArgs(args));
+    if (!Array.isArray(partialModel) || partialModel.length === 0) {
+        diagnostics.reasons.push('Missing Code augmentation returned an empty model fragment.');
+        return { model: currentModel, llmCallCount: 1, diagnostics };
+    }
+
+    const mergedModel = mergeChunkResults([currentModel, partialModel]);
+    let nextModel = deduplicateModel(mergedModel);
+    nextModel = postProcessModel(nextModel);
+    nextModel = enrichBackendCodesWithExpectedResult(nextModel);
+    nextModel = sanitizeModelForValidation(nextModel, { preserveIncompleteLeaves: true }).model;
+
+    const afterLeaves = collectIncompleteScenarioLeaves(nextModel);
+    diagnostics.succeeded = afterLeaves.length < beforeLeaves.length;
+    diagnostics.afterCount = afterLeaves.length;
+    diagnostics.remainingIncompleteLeaves = afterLeaves;
+    if (!diagnostics.succeeded) {
+        diagnostics.reasons.push('Selected LLM did not add usable Code nodes for incomplete scenarios.');
+    }
+
+    return { model: nextModel, llmCallCount: 1, diagnostics };
+}
+
 async function persistCompletedTestModelTask({
     taskId,
     cleanedModel,
@@ -9909,7 +10237,11 @@ async function persistCompletedTestModelTask({
     retrievalCallCount,
     targetedRefinementCount,
     dedupeStats = {},
-    auxiliaryIndexing = {}
+    auxiliaryIndexing = {},
+    qualityGate = null,
+    traceabilityMap = [],
+    postValidationQualityCheck = null,
+    qualityStatus = 'passed'
 }) {
     const finalModelStats = summarizeModelCounts(cleanedModel);
     const scenariosCount = finalModelStats.scenariosCount || 0;
@@ -9932,6 +10264,12 @@ async function persistCompletedTestModelTask({
         llmCallCount,
         retrievalCallCount,
         targetedRefinementCount,
+        qualityStatus,
+        scaleGatePassed: postValidationQualityCheck?.scaleGate?.passed ?? qualityGate?.scaleGate?.passed ?? null,
+        requirementCoverageStatus: postValidationQualityCheck?.requirementCoverage?.status ?? qualityGate?.requirementCoverage?.status ?? null,
+        hardCoverageRatio: postValidationQualityCheck?.requirementCoverage?.hardCoverageRatio ?? qualityGate?.requirementCoverage?.hardCoverageRatio ?? null,
+        partialCoverageRatio: postValidationQualityCheck?.requirementCoverage?.partialCoverageRatio ?? qualityGate?.requirementCoverage?.partialCoverageRatio ?? null,
+        softCoverageScore: postValidationQualityCheck?.requirementCoverage?.softCoverageScore ?? qualityGate?.requirementCoverage?.softCoverageScore ?? null,
         ...(runtimeValidationMetrics || {})
     };
 
@@ -9947,15 +10285,37 @@ async function persistCompletedTestModelTask({
         throw new Error(`Не удалось сохранить test model JSON в ${expectedJsonRelativePath}: ${error.message}`);
     }
 
+    let qualityArtifacts = null;
+    try {
+        qualityArtifacts = writeTraceabilityArtifacts({
+            taskId,
+            outputDir: join(__dirname, '..', 'report', 'test-models'),
+            qualityStatus,
+            qualityGate,
+            postValidationQualityCheck,
+            traceabilityMap
+        });
+    } catch (error) {
+        console.warn('[persistCompletedTestModelTask] Failed to persist traceability artifacts:', error.message);
+        qualityArtifacts = { error: error.message };
+    }
+
     const updateData = {
         status: 'completed',
         progress: 100,
         result: {
             testModel: cleanedModel,
             ...(validation ? { validation } : {}),
+            qualityStatus,
+            ...(qualityArtifacts?.qualitySummary ? { qualitySummary: qualityArtifacts.qualitySummary } : {}),
+            ...(qualityGate ? { qualityGate } : {}),
+            ...(Array.isArray(traceabilityMap) ? { traceabilityMap } : {}),
+            ...(postValidationQualityCheck ? { postValidationQualityCheck } : {}),
+            ...(qualityArtifacts ? { qualityArtifacts } : {}),
             modelStats: finalModelStats,
             dedupeStats,
             graphSessionId: null,
+            graphStatus: { status: 'skipped', reason: 'canonical_pipeline_no_graph', diagnostics: null },
             chunkSummary: {
                 canonicalChunkCount,
                 generationSegmentCount
@@ -10043,13 +10403,46 @@ async function runCanonicalDefaultModelPipeline({
         bearerToken
     });
 
+    const selectedMainChunks = selectCanonicalMainChunks(bundle?.main?.canonicalChunks || []);
+    const manualAtomRegistry = await loadManualAtomRegistryForDocument({
+        documentId: bundle?.main?.docId || graphDocumentId,
+        pageId: graphDocumentId,
+        searchDir: join(__dirname, '..', 'report', 'requirement-coverage-sources')
+    }).catch((error) => {
+        console.warn('[runCanonicalDefaultModelPipeline] Failed to load manual atom registry:', error.message);
+        return null;
+    });
+    const requirementCoverageUnits = manualAtomRegistry?.coverageUnits?.length
+        ? manualAtomRegistry.coverageUnits
+        : null;
+    const requirementCoverageSource = manualAtomRegistry?.coverageUnits?.length
+        ? manualAtomRegistry.coverageSource
+        : null;
+
+    const canonicalGenerationSource = resolveCanonicalGenerationSource({
+        selection: selectedMainChunks,
+        contextDocs: bundle?.contextDocs || [],
+        linkedDocs: bundle?.linkedDocs || []
+    });
     const {
         indexableChunks: indexableMainChunks,
         supportApiMainChunks,
         behavioralFallbackChunks,
         canonicalChunks: canonicalMainChunks,
-        usedFallback: usedSupportApiFallback
-    } = selectCanonicalMainChunks(bundle?.main?.canonicalChunks || []);
+        usedFallback: usedSupportApiFallback,
+        usedAuxiliaryGenerationFallback,
+        auxiliaryGenerationDetails
+    } = canonicalGenerationSource;
+    const requirementCoverageChunks = requirementCoverageUnits
+        ? (bundle?.main?.canonicalChunks || [])
+        : (usedAuxiliaryGenerationFallback ? canonicalMainChunks : (bundle?.main?.canonicalChunks || canonicalMainChunks));
+
+    if (manualAtomRegistry?.coverageUnits?.length) {
+        console.log(
+            `[runCanonicalDefaultModelPipeline] Using manual atom registry for coverage: ` +
+            `${manualAtomRegistry.coverageUnits.length}/${manualAtomRegistry.allAtomsCount} atom(s), file=${manualAtomRegistry.filePath}`
+        );
+    }
 
     if (canonicalMainChunks.length === 0) {
         const chunkTypeSummary = Object.entries(
@@ -10067,10 +10460,18 @@ async function runCanonicalDefaultModelPipeline({
             `[runCanonicalDefaultModelPipeline] No retrievable main chunks. ` +
             `total=${bundle?.main?.canonicalChunks?.length || 0}, summary=[${chunkTypeSummary}]`
         );
-        throw new Error('Canonical semantic chunking produced no retrievable chunks for the main document.');
+        throw new Error('Canonical semantic chunking produced no retrievable chunks for the main document or linked/context documents.');
     }
 
-    if (usedSupportApiFallback) {
+    if (usedAuxiliaryGenerationFallback) {
+        console.warn(
+            `[runCanonicalDefaultModelPipeline] Main document has no retrievable generation chunks; ` +
+            `using ${canonicalMainChunks.length} linked/context canonical chunk(s) as generation source ` +
+            `(context=${auxiliaryGenerationDetails?.contextChunkCount || 0}, linked=${auxiliaryGenerationDetails?.linkedChunkCount || 0}, docs=${auxiliaryGenerationDetails?.docCount || 0}).`
+        );
+    }
+
+    if (usedSupportApiFallback && !usedAuxiliaryGenerationFallback) {
         if (supportApiMainChunks.length > 0) {
             console.warn(
                 `[runCanonicalDefaultModelPipeline] Main document has no behavioral atomic chunks; ` +
@@ -10133,7 +10534,10 @@ async function runCanonicalDefaultModelPipeline({
         contextDocs: 0,
         linkedDocs: 0,
         indexedContextChunks: 0,
-        indexedLinkedChunks: 0
+        indexedLinkedChunks: 0,
+        generationSource: canonicalGenerationSource.generationSource,
+        usedAuxiliaryGenerationFallback: Boolean(usedAuxiliaryGenerationFallback),
+        auxiliaryGenerationDetails: auxiliaryGenerationDetails || null
     };
     const auxiliaryIndexLimit = pLimit(2);
     const auxiliaryDocs = [
@@ -10237,12 +10641,12 @@ async function runCanonicalDefaultModelPipeline({
                 llmCallCount += 1;
 
                 const args = extractToolArgs(response, 'submit_test_model');
-                const partialModel = coerceModelArrayFromToolArgs(args);
+                const partialModel = coerceQualityGateRetryModelFragment(coerceModelArrayFromToolArgs(args));
 
                 if (Array.isArray(partialModel) && partialModel.length > 0) {
                     let normalized = normalizeModelStructure(partialModel);
                     normalized = repairModelStructure(normalized);
-                    const sanitized = sanitizeModelForValidation(normalized);
+                    const sanitized = sanitizeModelForValidation(normalized, { preserveIncompleteLeaves: true });
                     bestSegmentModel = sanitized.model;
                     break;
                 }
@@ -10273,8 +10677,142 @@ async function runCanonicalDefaultModelPipeline({
     cleanedModel = postProcessModel(cleanedModel);
     cleanedModel = enrichBackendCodesWithExpectedResult(cleanedModel);
 
-    const sanitizedBeforeRefinement = sanitizeModelForValidation(cleanedModel);
+    const sanitizedBeforeRefinement = sanitizeModelForValidation(cleanedModel, { preserveIncompleteLeaves: true });
     cleanedModel = sanitizedBeforeRefinement.model;
+
+    let qualityGate = null;
+    let traceabilityMap = [];
+    let postValidationQualityCheck = null;
+    let qualityStatus = 'passed';
+    const selectedModel = Array.isArray(modelsToTry) ? modelsToTry[0] : null;
+    let codeAugmentationDiagnostics = {
+        attempted: false,
+        succeeded: false,
+        beforeCount: collectIncompleteScenarioLeaves(cleanedModel).length,
+        afterCount: collectIncompleteScenarioLeaves(cleanedModel).length,
+        incompleteLeaves: collectIncompleteScenarioLeaves(cleanedModel),
+        reasons: []
+    };
+
+    if (codeAugmentationDiagnostics.beforeCount > 0) {
+        try {
+            const codeAugmentationResult = await runMissingCodeAugmentationAttempt({
+                currentModel: cleanedModel,
+                systemPrompt,
+                selectedModel
+            });
+            cleanedModel = codeAugmentationResult.model;
+            llmCallCount += codeAugmentationResult.llmCallCount || 0;
+            codeAugmentationDiagnostics = codeAugmentationResult.diagnostics;
+        } catch (error) {
+            codeAugmentationDiagnostics = {
+                ...codeAugmentationDiagnostics,
+                attempted: true,
+                succeeded: false,
+                reasons: [error.message]
+            };
+            console.warn('[runCanonicalDefaultModelPipeline] Missing Code augmentation failed:', error.message);
+        }
+    }
+
+    const initialQualityAssessment = await runCanonicalQualityAssessment({
+        stage: 'after-initial-sanitize',
+        model: cleanedModel,
+        canonicalChunks: requirementCoverageChunks,
+        coverageUnits: requirementCoverageUnits,
+        coverageSource: requirementCoverageSource,
+        codeAugmentationDiagnostics,
+        manualRegistryDiagnostics: manualAtomRegistry?.diagnostics || null,
+        segmentResults,
+        generationSegmentCount: generationSegments.length,
+        canonicalChunkCount: canonicalMainChunks.length,
+        apiKey
+    });
+    const compactInitialQualityAssessment = compactCanonicalQualityAssessment(initialQualityAssessment);
+    qualityGate = {
+        stage: compactInitialQualityAssessment.stage,
+        checkedAt: compactInitialQualityAssessment.checkedAt,
+        scaleGate: compactInitialQualityAssessment.scaleGate,
+        requirementCoverage: compactInitialQualityAssessment.requirementCoverage,
+        initial: compactInitialQualityAssessment,
+        retryAttempt: { attempted: false },
+        retryAttempts: []
+    };
+    traceabilityMap = initialQualityAssessment.traceabilityMap || [];
+
+    let activeQualityAssessment = initialQualityAssessment;
+    const maxQualityAugmentationAttempts = 2;
+
+    for (let attemptIndex = 0; attemptIndex < maxQualityAugmentationAttempts && activeQualityAssessment.outcome !== 'passed'; attemptIndex += 1) {
+        const retryInstruction = buildCanonicalQualityRetryInstruction({
+            scaleGate: activeQualityAssessment.scaleGate,
+            requirementCoverage: activeQualityAssessment.requirementCoverage
+        });
+
+        const retryAttempt = {
+            attempted: true,
+            attempt: attemptIndex + 1,
+            selectedModel,
+            retryInstructionPreview: retryInstruction.slice(0, 12000)
+        };
+        qualityGate.retryAttempts.push(retryAttempt);
+        if (attemptIndex === 0) {
+            qualityGate.retryAttempt = retryAttempt;
+        }
+
+        console.warn(
+            `[runCanonicalDefaultModelPipeline] Canonical quality gate requests augmentation attempt ${attemptIndex + 1}/${maxQualityAugmentationAttempts}: ` +
+            `outcome=${activeQualityAssessment.outcome}, model=${selectedModel || 'n/a'}`
+        );
+
+        try {
+            const retryResult = await runCanonicalQualityAugmentationAttempt({
+                currentModel: cleanedModel,
+                retryInstruction,
+                systemPrompt,
+                selectedModel
+            });
+            llmCallCount += retryResult.llmCallCount || 0;
+
+            const retryMergedModel = mergeChunkResults([
+                cleanedModel,
+                retryResult.model
+            ]);
+            cleanedModel = deduplicateModel(retryMergedModel);
+            cleanedModel = postProcessModel(cleanedModel);
+            cleanedModel = enrichBackendCodesWithExpectedResult(cleanedModel);
+            cleanedModel = sanitizeModelForValidation(cleanedModel, { preserveIncompleteLeaves: true }).model;
+
+            retryAttempt.producedStats = summarizeModelCounts(retryResult.model);
+            retryAttempt.mergedStats = summarizeModelCounts(cleanedModel);
+        } catch (retryError) {
+            retryAttempt.error = retryError.message;
+            console.warn(`[runCanonicalDefaultModelPipeline] Quality gate retry attempt ${attemptIndex + 1} failed:`, retryError.message);
+        }
+
+        const retryQualityAssessment = await runCanonicalQualityAssessment({
+            stage: `after-quality-retry-${attemptIndex + 1}`,
+            model: cleanedModel,
+            canonicalChunks: requirementCoverageChunks,
+            coverageUnits: requirementCoverageUnits,
+            coverageSource: requirementCoverageSource,
+            codeAugmentationDiagnostics,
+            manualRegistryDiagnostics: manualAtomRegistry?.diagnostics || null,
+            segmentResults: null,
+            generationSegmentCount: generationSegments.length,
+            canonicalChunkCount: canonicalMainChunks.length,
+            apiKey
+        });
+        const compactRetryQualityAssessment = compactCanonicalQualityAssessment(retryQualityAssessment);
+        retryAttempt.qualityAssessment = compactRetryQualityAssessment;
+        qualityGate.retry = compactRetryQualityAssessment;
+        qualityGate.stage = compactRetryQualityAssessment.stage;
+        qualityGate.checkedAt = compactRetryQualityAssessment.checkedAt;
+        qualityGate.scaleGate = compactRetryQualityAssessment.scaleGate;
+        qualityGate.requirementCoverage = compactRetryQualityAssessment.requirementCoverage;
+        traceabilityMap = retryQualityAssessment.traceabilityMap || traceabilityMap;
+        activeQualityAssessment = retryQualityAssessment;
+    }
 
     await db('generation_tasks').where('id', taskId).update({
         progress: 85,
@@ -10293,7 +10831,7 @@ async function runCanonicalDefaultModelPipeline({
     retrievalCallCount += refinementResult.retrievalCallCount || 0;
     llmCallCount += refinementResult.llmCallCount || 0;
 
-    const sanitizedAfterRefinement = sanitizeModelForValidation(cleanedModel);
+    const sanitizedAfterRefinement = sanitizeModelForValidation(cleanedModel, { preserveIncompleteLeaves: true });
     cleanedModel = sanitizedAfterRefinement.model;
 
     console.log('[generate-test-model-async] Запускаю runtime validation pipeline по canonical-semantic-rag...');
@@ -10301,17 +10839,58 @@ async function runCanonicalDefaultModelPipeline({
         model: cleanedModel,
         llmClient: callCloudRuAPI,
         modelsToTry: judgeModelsToTry,
+        repairModelsToTry: modelsToTry,
         requirementsText: reqStringForModel,
         reqStructure: null,
         analyzeScenarioActionability,
         validateTestModelLegacy: () => ({ valid: true, errors: [], warnings: [] }),
         detectModelStructureIssues,
-        prepareModel: prepareModelForRuntimeValidation,
+        prepareModel: prepareCanonicalModelForRuntimeValidation,
         maxAttempts: 3
     });
     cleanedModel = runtimeValidationResult.model;
     const runtimeValidation = runtimeValidationResult.validation;
     assertRuntimeValidationComplete(runtimeValidation, 'canonical test model runtime validation');
+
+    const postValidationQualityAssessment = await runPostValidationQualityCheck({
+        model: cleanedModel,
+        canonicalChunks: requirementCoverageChunks,
+        coverageUnits: requirementCoverageUnits,
+        coverageSource: requirementCoverageSource,
+        codeAugmentationDiagnostics,
+        manualRegistryDiagnostics: manualAtomRegistry?.diagnostics || null,
+        segmentResults: null,
+        generationSegmentCount: generationSegments.length,
+        canonicalChunkCount: canonicalMainChunks.length,
+        apiKey
+    });
+    postValidationQualityCheck = compactCanonicalQualityAssessment(postValidationQualityAssessment);
+    traceabilityMap = postValidationQualityAssessment.traceabilityMap || traceabilityMap;
+
+    const finalUsableModelStats = summarizeModelCounts(cleanedModel);
+    const hasUsableFinalModel = (finalUsableModelStats.codesCount || 0) > 0;
+    if (postValidationQualityAssessment.outcome === 'failed' && !hasUsableFinalModel) {
+        throw createQualityGateFailureError(
+            buildCanonicalQualityFailureMessage(
+                'Final canonical quality check failed after validation and dedupe.',
+                postValidationQualityAssessment
+            ),
+            buildCanonicalQualityDiagnostics({
+                qualityGate,
+                traceabilityMap,
+                postValidationQualityCheck,
+                qualityStatus: 'failed'
+            })
+        );
+    }
+
+    qualityStatus = postValidationQualityAssessment.outcome === 'passed'
+        ? 'passed'
+        : postValidationQualityAssessment.outcome === 'needs_review'
+            ? 'needs_review'
+            : postValidationQualityAssessment.outcome === 'failed'
+                ? 'degraded_quality'
+                : postValidationQualityAssessment.outcome;
 
     if (!runtimeValidation.passed) {
         console.warn(
@@ -10350,7 +10929,11 @@ async function runCanonicalDefaultModelPipeline({
         retrievalCallCount,
         targetedRefinementCount: refinementResult.targetedRefinementCount || 0,
         dedupeStats,
-        auxiliaryIndexing
+        auxiliaryIndexing,
+        qualityGate,
+        traceabilityMap,
+        postValidationQualityCheck,
+        qualityStatus
     });
 }
 
@@ -10838,12 +11421,16 @@ async function generateTestModelAsync(taskId, inputData) {
         let graphSessionId = null;
         let graphChunkSummary = null;
         let graphFilterStats = null;
+        let graphStatus = { status: 'skipped', reason: 'not_started', diagnostics: null };
         const neo4jAvailable = await isNeo4jAvailable();
+        if (!neo4jAvailable) {
+            graphStatus = { status: 'skipped', reason: 'neo4j_unavailable', diagnostics: null };
+        }
         if (neo4jAvailable) {
             try {
                 console.log('[generate-test-model-async] 🌐 Извлечение сущностей в Neo4j граф...');
                 const sessionId = `testmodel-${taskId}-${Date.now()}`;
-                graphSessionId = sessionId;
+                graphStatus = { status: 'processing', reason: null, diagnostics: null };
                 
                 // Формируем тексты для извлечения сущностей: основной документ + контекстные страницы
                 const mainTexts = reqChunks;
@@ -10897,21 +11484,34 @@ async function generateTestModelAsync(taskId, inputData) {
                 }
                 
                 // Извлекаем сущности из основного документа
-                const { entities, relationships } = await extractEntitiesFromChunks(mainTexts, {
+                const { entities, relationships, diagnostics: graphExtractionDiagnostics } = await extractEntitiesFromChunks(mainTexts, {
                     sessionId,
                     documentId: graphDocumentId
                 });
+                if (entities.length === 0) {
+                    graphStatus = {
+                        status: 'failed',
+                        reason: 'no_entities_extracted',
+                        diagnostics: graphExtractionDiagnostics
+                    };
+                    try {
+                        await clearSession(sessionId);
+                    } catch (cleanupError) {
+                        console.warn('[generate-test-model-async] Failed to cleanup empty Neo4j graph:', cleanupError.message);
+                    }
+                }
                 
                 // Если есть контекстные страницы - извлекаем из них дополнительные сущности
-                if (contextTexts.length > 0) {
+                if (entities.length > 0 && contextTexts.length > 0) {
                     console.log('[generate-test-model-async] 📄 Извлекаем сущности из контекстных страниц...');
                     await createChunks(sessionId, contextTexts);
-                    const { entities: contextEntities, relationships: contextRel } = await extractEntitiesFromChunks(contextTexts, {
+                    const { entities: contextEntities, relationships: contextRel, diagnostics: contextGraphDiagnostics } = await extractEntitiesFromChunks(contextTexts, {
                         sessionId,
                         documentId: graphDocumentId
                     });
                     const filteredContextGraph = filterContextGraphExtraction(contextEntities, contextRel, contextTexts);
                     graphFilterStats = filteredContextGraph.stats;
+                    graphFilterStats.extractionDiagnostics = contextGraphDiagnostics;
                     
                     console.log(`[generate-test-model-async] 📊 Из контекста: ${contextEntities.length} сущностей, ${contextRel.length} связей`);
                     // Записываем контекстные сущности в Neo4j
@@ -10948,11 +11548,23 @@ async function generateTestModelAsync(taskId, inputData) {
                         businessRules: graphNodes.filter(node => node.type === 'BusinessRule'),
                         externalRefs: graphNodes.filter(node => node.type === 'ExternalRef')
                     };
+                    graphSessionId = sessionId;
+                    graphStatus = {
+                        status: 'completed',
+                        reason: null,
+                        diagnostics: graphExtractionDiagnostics
+                    };
                     console.log(`[generate-test-model-async] 🌐 Графовый контекст сформирован для сессии ${sessionId}`);
                 } else {
                     console.log('[generate-test-model-async] ⚠️ Не удалось извлечь сущности, пропускаем граф');
                 }
             } catch (graphError) {
+                graphSessionId = null;
+                graphStatus = {
+                    status: 'failed',
+                    reason: 'graph_stage_error',
+                    diagnostics: { message: graphError.message }
+                };
                 console.warn('[generate-test-model-async] Ошибка Neo4j graph:', graphError.message);
             }
         } else {
@@ -12178,6 +12790,7 @@ ${escalationPrompt}`;
             model: cleanedModel,
             llmClient: callCloudRuAPI,
             modelsToTry: judgeModelsToTry,
+            repairModelsToTry: modelsToTry,
             requirementsText: reqStringForModel,
             reqStructure,
             analyzeScenarioActionability,
@@ -12283,6 +12896,7 @@ ${escalationPrompt}`;
                 modelStats: finalModelStats,
                 dedupeStats,
                 graphSessionId,
+                graphStatus,
                 chunkSummary: graphChunkSummary,
                 testModelId: taskId  // ✅ Сохраняем ID задачи для последующей загрузки модели
             },
@@ -12320,11 +12934,20 @@ ${escalationPrompt}`;
 
     } catch (error) {
         console.error('Ошибка асинхронной генерации тестовой модели:', error);
-        await db('generation_tasks').where('id', taskId).update({
+        const failedUpdateData = {
             status: 'failed',
             error_message: error.message,
             updated_at: new Date()
-        });
+        };
+
+        if (error?.qualityDiagnostics) {
+            failedUpdateData.result = {
+                ...error.qualityDiagnostics,
+                error: error.message
+            };
+        }
+
+        await db('generation_tasks').where('id', taskId).update(failedUpdateData);
     }
 }
 
@@ -12471,6 +13094,7 @@ app.post('/api/refine-test-model', async (req, res) => {
             model: refinedModel,
             llmClient: callCloudRuAPI,
             modelsToTry: judgeModelsToTry,
+            repairModelsToTry: modelsToTry,
             requirementsText: requirements || '',
             reqStructure: null,
             analyzeScenarioActionability,
@@ -12540,11 +13164,21 @@ app.get('/api/generate-test-model-status/:taskId', async (req, res) => {
             return res.status(404).json({ error: 'Task not found' });
         }
 
+        let taskResultObject = task.result;
+        if (typeof taskResultObject === 'string') {
+            try {
+                taskResultObject = JSON.parse(taskResultObject);
+            } catch {
+                taskResultObject = null;
+            }
+        }
+
         const responseData = {
             id: task.id,
             status: task.status,
             progress: task.progress,
             result: task.result,
+            qualityStatus: taskResultObject?.qualityStatus || null,
             error_message: task.error_message,
             created_at: task.created_at,
             updated_at: task.updated_at,

@@ -26,8 +26,128 @@ const RELATIONSHIP_TYPES = [
   'LOCATED_IN_CHUNK'     // сущность находится в чанке
 ];
 
+const GRAPH_ENTITY_EXTRACTION_MODELS = [
+  'Qwen/Qwen3-235B-A22B-Instruct-2507',
+  'Qwen/Qwen3-Coder-Next'
+];
+
+function parseEntityExtractionContent(content) {
+  const cleaned = String(content || '')
+    .replace(/```json\s*/gi, '')
+    .replace(/```\s*/g, '')
+    .trim();
+
+  if (!cleaned) {
+    const error = new Error('empty_response');
+    error.reason = 'empty_response';
+    throw error;
+  }
+
+  const parsed = JSON.parse(cleaned);
+  if (!parsed || !Array.isArray(parsed.entities) || !Array.isArray(parsed.relationships)) {
+    const error = new Error('invalid_structure');
+    error.reason = 'invalid_structure';
+    throw error;
+  }
+
+  return parsed;
+}
+
+async function extractEntitiesWithModelFallback(messages, options = {}) {
+  const {
+    maxTokens = 4000,
+    chunkId,
+    documentId,
+    llmClient = callCloudRuAPI,
+    models = GRAPH_ENTITY_EXTRACTION_MODELS
+  } = options;
+  const attempts = [];
+  const modelsToTry = Array.isArray(models) && models.length > 0
+    ? models.slice(0, 2)
+    : GRAPH_ENTITY_EXTRACTION_MODELS;
+
+  for (const model of modelsToTry) {
+    const attempt = {
+      model,
+      status: 'failed',
+      reason: null,
+      finishReason: null,
+      contentLength: 0
+    };
+    attempts.push(attempt);
+
+    try {
+      const response = await llmClient(messages, {
+        model,
+        temperature: 0.1,
+        max_tokens: maxTokens,
+        response_format: { type: 'json_object' },
+        useResponseFormatForCloudRu: true
+      });
+
+      attempt.finishReason = response.choices?.[0]?.finish_reason || null;
+      const content = response.choices?.[0]?.message?.content || '';
+      attempt.contentLength = content.length;
+      const parsed = parseEntityExtractionContent(content);
+
+      const entities = (parsed.entities || [])
+        .filter(e => ENTITY_TYPES.includes(e.type) && e.name)
+        .map(e => ({
+          ...e,
+          sourceChunkId: chunkId,
+          sourceDocumentId: documentId
+        }));
+
+      const relationships = (parsed.relationships || [])
+        .filter(r =>
+          RELATIONSHIP_TYPES.includes(r.relType) &&
+          r.fromName && r.fromType && r.toName && r.toType
+        );
+
+      if (entities.length === 0) {
+        attempt.reason = 'no_entities_extracted';
+        continue;
+      }
+
+      attempt.status = 'success';
+      return {
+        entities,
+        relationships,
+        diagnostics: {
+          status: 'success',
+          reason: null,
+          attempts,
+          modelUsed: model
+        }
+      };
+    } catch (error) {
+      attempt.reason = error.reason || (error.message === 'empty_response' ? 'empty_response' : 'json_parse_failed');
+      attempt.errorMessage = error.message;
+      console.error(`[entityExtractor] РћС€РёР±РєР° РјРѕРґРµР»Рё ${model}:`, error.message);
+    }
+  }
+
+  const lastAttempt = attempts[attempts.length - 1] || {};
+  return {
+    entities: [],
+    relationships: [],
+    diagnostics: {
+      status: 'failed',
+      reason: lastAttempt.reason || 'extraction_failed',
+      attempts,
+      modelUsed: null
+    }
+  };
+}
+
 export async function extractEntitiesAndRelationships(text, options = {}) {
-  const { maxTokens = 4000, chunkId, documentId } = options;
+  const {
+    maxTokens = 4000,
+    chunkId,
+    documentId,
+    llmClient = callCloudRuAPI,
+    models = GRAPH_ENTITY_EXTRACTION_MODELS
+  } = options;
   
   if (!text || !text.trim()) {
     console.log('[entityExtractor] ⚠️ Пустой текст, пропускаем извлечение сущностей');
@@ -98,85 +218,98 @@ ${text.substring(0, 50000)}
 
 Верни ТОЛЬКО JSON без markdown и пояснений.`;
 
-  try {
-    const messages = [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: USER_PROMPT }
-    ];
-    
-    const response = await callCloudRuAPI(messages, {
-      temperature: 0.1,
-      max_tokens: maxTokens,
-      response_format: { type: 'json_object' }
-    });
-    
-    const content = response.choices?.[0]?.message?.content || '';
-    
-    if (!content) {
-      console.warn('[entityExtractor] Пустой ответ от LLM');
-      return { entities: [], relationships: [] };
-    }
-    
-    const cleaned = content
-      .replace(/```json\s*/gi, '')
-      .replace(/```\s*/g, '')
-      .trim();
-    
-    const parsed = JSON.parse(cleaned);
-    
-    // Фильтруем и добавляем sourceChunkId
-    const entities = (parsed.entities || [])
-      .filter(e => ENTITY_TYPES.includes(e.type) && e.name)
-      .map(e => ({
-        ...e,
-        sourceChunkId: chunkId,
-        sourceDocumentId: documentId
-      }));
-    
-    const relationships = (parsed.relationships || [])
-      .filter(r =>
-        RELATIONSHIP_TYPES.includes(r.relType) &&
-        r.fromName && r.fromType && r.toName && r.toType
-      );
-    
-    console.log(`[entityExtractor] ✅ Извлечено: ${entities.length} сущностей, ${relationships.length} связей`);
-    
-    return { entities, relationships };
-    
-  } catch (error) {
-    console.error('[entityExtractor] Ошибка:', error.message);
-    return { entities: [], relationships: [] };
-  }
+  const messages = [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content: USER_PROMPT }
+  ];
+
+  return await extractEntitiesWithModelFallback(messages, {
+    maxTokens,
+    chunkId,
+    documentId,
+    llmClient,
+    models
+  });
 }
 
 export async function extractEntitiesFromChunks(chunks, options = {}) {
-  const { sessionId, documentId } = options;
-  
-  console.log(`[entityExtractor] 📦 Начинаем извлечение из ${chunks.length} чанков для сессии: ${sessionId}`);
-  
+  const {
+    sessionId,
+    documentId,
+    llmClient = callCloudRuAPI,
+    models = GRAPH_ENTITY_EXTRACTION_MODELS
+  } = options;
+
+  console.log(`[entityExtractor] graph extraction start: chunks=${chunks.length}, sessionId=${sessionId}`);
+
   const allEntities = [];
   const allRelationships = [];
-  
+  const diagnostics = {
+    chunksTotal: chunks.length,
+    chunksProcessed: 0,
+    chunksSkipped: 0,
+    chunksSucceeded: 0,
+    chunksFailed: 0,
+    parseErrors: 0,
+    emptyResponses: 0,
+    emptyEntityChunks: 0,
+    modelsTried: {},
+    chunkResults: []
+  };
+
   for (let i = 0; i < chunks.length; i++) {
     const chunk = typeof chunks[i] === 'string' ? chunks[i] : (chunks[i].text || chunks[i].content || '');
     const chunkId = chunks[i]?.chunkId || `chunk-${i}`;
     const position = chunks[i]?.position ?? i;
-    
+
     if (!chunk || chunk.length < 50) {
-      console.log(`[entityExtractor] ⏭️ Чанк ${i + 1}/${chunks.length}: слишком короткий (${chunk?.length || 0} символов), пропускаем`);
+      diagnostics.chunksSkipped++;
+      diagnostics.chunkResults.push({
+        chunkId,
+        position,
+        status: 'skipped',
+        reason: 'too_short',
+        attempts: [],
+        modelUsed: null,
+        entitiesCount: 0,
+        relationshipsCount: 0
+      });
       continue;
     }
-    
-    console.log(`[entityExtractor] 🔄 Обрабатываем чанк ${i + 1}/${chunks.length} (${chunk.length} символов)...`);
-    
-    const result = await extractEntitiesAndRelationships(chunk, { 
-      chunkId, 
-      documentId 
+
+    diagnostics.chunksProcessed++;
+    const result = await extractEntitiesAndRelationships(chunk, {
+      chunkId,
+      documentId,
+      llmClient,
+      models
     });
-    
-    console.log(`[entityExtractor] 📊 Результат чанка ${i + 1}: ${result.entities.length} сущностей, ${result.relationships.length} связей`);
-    
-    // Добавляем связь EXTRACTED_FROM для каждой сущности из этого чанка
+
+    const chunkDiagnostics = {
+      chunkId,
+      position,
+      status: result.diagnostics?.status || (result.entities.length > 0 ? 'success' : 'failed'),
+      reason: result.diagnostics?.reason || null,
+      attempts: result.diagnostics?.attempts || [],
+      modelUsed: result.diagnostics?.modelUsed || null,
+      entitiesCount: result.entities.length,
+      relationshipsCount: result.relationships.length
+    };
+    diagnostics.chunkResults.push(chunkDiagnostics);
+
+    if (chunkDiagnostics.status === 'success') {
+      diagnostics.chunksSucceeded++;
+    } else {
+      diagnostics.chunksFailed++;
+    }
+
+    for (const attempt of chunkDiagnostics.attempts) {
+      diagnostics.modelsTried[attempt.model] = (diagnostics.modelsTried[attempt.model] || 0) + 1;
+      if (attempt.reason === 'empty_response') diagnostics.emptyResponses++;
+      if (attempt.reason === 'json_parse_failed' || attempt.reason === 'invalid_structure') diagnostics.parseErrors++;
+      if (attempt.reason === 'no_entities_extracted') diagnostics.emptyEntityChunks++;
+    }
+
     for (const entity of result.entities) {
       allRelationships.push({
         fromName: entity.name,
@@ -186,12 +319,11 @@ export async function extractEntitiesFromChunks(chunks, options = {}) {
         relType: 'EXTRACTED_FROM'
       });
     }
-    
+
     allEntities.push(...result.entities);
     allRelationships.push(...result.relationships);
   }
 
-  // Дедупликация по name + type
   const seen = new Set();
   const uniqueEntities = [];
   for (const e of allEntities) {
@@ -202,7 +334,6 @@ export async function extractEntitiesFromChunks(chunks, options = {}) {
     }
   }
 
-  // Дедупликация связей
   const seenRel = new Set();
   const uniqueRelationships = [];
   for (const r of allRelationships) {
@@ -213,9 +344,10 @@ export async function extractEntitiesFromChunks(chunks, options = {}) {
     }
   }
 
-  console.log(`[entityExtractor] ✅ Всего уникальных: ${uniqueEntities.length} сущностей, ${uniqueRelationships.length} связей`);
+  diagnostics.uniqueEntities = uniqueEntities.length;
+  diagnostics.uniqueRelationships = uniqueRelationships.length;
 
-  return { entities: uniqueEntities, relationships: uniqueRelationships };
+  return { entities: uniqueEntities, relationships: uniqueRelationships, diagnostics };
 }
 
 export async function extractUIFromText(text) {
@@ -334,4 +466,4 @@ export function convertUIToEntities(uiExtraction, options = {}) {
   return { entities, relationships };
 }
 
-export { ENTITY_TYPES, RELATIONSHIP_TYPES };
+export { ENTITY_TYPES, RELATIONSHIP_TYPES, GRAPH_ENTITY_EXTRACTION_MODELS };

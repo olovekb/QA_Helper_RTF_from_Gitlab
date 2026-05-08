@@ -109,44 +109,62 @@ export async function upsertNodes(nodes, sessionId) {
   }
 }
 
-export async function upsertRelationships(relationships, sessionId) {
-  if (!relationships || relationships.length === 0) return;
-  
-  const d = initNeo4j();
-  const session = d.session({ database: 'neo4j' });
-  
-  let createdCount = 0;
-  
+export async function upsertRelationships(relationships, sessionId, options = {}) {
+  const report = {
+    created: 0,
+    skippedInvalidType: 0,
+    skippedMissingName: 0,
+    skippedMissingEndpoint: 0
+  };
+
+  if (!relationships || relationships.length === 0) return report;
+
+  const d = options.session ? null : initNeo4j();
+  const session = options.session || d.session({ database: 'neo4j' });
+  const shouldCloseSession = !options.session;
+
   try {
     for (const rel of relationships) {
       const { fromName, fromType, toName, toType, relType, properties } = rel;
-      
-      if (!ALL_REL_TYPES.includes(relType)) {
-        console.warn(`[graphStore] ⚠️ Неизвестный тип связи: ${relType}, пропускаем`);
+
+      if (!ALL_REL_TYPES.includes(relType) || !ALL_NODE_TYPES.includes(fromType) || !ALL_NODE_TYPES.includes(toType)) {
+        console.warn(`[graphStore] invalid relationship endpoint or type: ${fromType}-${relType}->${toType}`);
+        report.skippedInvalidType++;
         continue;
       }
-      
+
       if (!fromName || !toName) {
-        console.warn(`[graphStore] ⚠️ Пропускаем связь без fromName или toName`);
+        console.warn('[graphStore] skipping relationship without fromName or toName');
+        report.skippedMissingName++;
         continue;
       }
-      
+
       const props = properties || {};
-      
       const cypher = `
         MATCH (a:${fromType} {sessionId: $sessionId, name: $fromName})
         MATCH (b:${toType} {sessionId: $sessionId, name: $toName})
         MERGE (a)-[r:${relType}]->(b)
         SET r += $props
+        RETURN count(r) as touched
       `;
-      
-      await session.run(cypher, { sessionId, fromName, toName, props });
-      createdCount++;
+
+      const result = await session.run(cypher, { sessionId, fromName, toName, props });
+      const touched = result.records?.[0]?.get?.('touched');
+      const touchedCount = touched
+        ? (neo4j.integer.inSafeRange(touched) ? touched.toNumber() : Number(touched.toString()))
+        : (result.summary?.counters?.updates?.().relationshipsCreated || 0);
+
+      if (touchedCount > 0) {
+        report.created++;
+      } else {
+        report.skippedMissingEndpoint++;
+      }
     }
-    
-    console.log(`[graphStore] ✅ Создано связей: ${createdCount}`);
+
+    console.log(`[graphStore] relationships upserted: ${report.created}, skipped: ${report.skippedInvalidType + report.skippedMissingName + report.skippedMissingEndpoint}`);
+    return report;
   } finally {
-    await session.close();
+    if (shouldCloseSession) await session.close();
   }
 }
 

@@ -160,3 +160,104 @@ export function selectCanonicalMainChunks(chunks = []) {
         usedFallback
     };
 }
+
+function flattenDocumentChunks(docs = []) {
+    return (Array.isArray(docs) ? docs : [])
+        .flatMap((doc) => Array.isArray(doc?.canonicalChunks) ? doc.canonicalChunks : [])
+        .filter(Boolean);
+}
+
+function countDistinctDocs(chunks = []) {
+    return new Set(
+        (chunks || [])
+            .map((chunk) => String(chunk?.doc_id || chunk?.docId || chunk?.metadata?.doc_id || '').trim())
+            .filter(Boolean)
+    ).size;
+}
+
+export function selectCanonicalAuxiliaryGenerationChunks({
+    contextDocs = [],
+    linkedDocs = []
+} = {}) {
+    const contextChunks = flattenDocumentChunks(contextDocs);
+    const linkedChunks = flattenDocumentChunks(linkedDocs);
+    const allAuxiliaryChunks = [...contextChunks, ...linkedChunks];
+    const behavioralChunks = allAuxiliaryChunks.filter((chunk) => isBehavioralAtomicRuleChunk(chunk));
+
+    if (behavioralChunks.length > 0) {
+        return {
+            canonicalChunks: behavioralChunks,
+            reason: 'behavioral_atomic_auxiliary_chunks',
+            contextChunkCount: contextChunks.filter((chunk) => behavioralChunks.includes(chunk)).length,
+            linkedChunkCount: linkedChunks.filter((chunk) => behavioralChunks.includes(chunk)).length,
+            docCount: countDistinctDocs(behavioralChunks)
+        };
+    }
+
+    const contextAtomicChunks = contextChunks.filter((chunk) => isContextAuxiliaryAtomicChunk(chunk));
+    const linkedAtomicChunks = linkedChunks.filter((chunk) => isLinkedAtomicChunk(chunk));
+    const atomicChunks = [...contextAtomicChunks, ...linkedAtomicChunks];
+
+    return {
+        canonicalChunks: atomicChunks,
+        reason: atomicChunks.length > 0 ? 'retrievable_atomic_auxiliary_chunks' : 'no_auxiliary_retrievable_chunks',
+        contextChunkCount: contextAtomicChunks.length,
+        linkedChunkCount: linkedAtomicChunks.length,
+        docCount: countDistinctDocs(atomicChunks)
+    };
+}
+
+export function resolveCanonicalGenerationSource({
+    selection = {},
+    contextDocs = [],
+    linkedDocs = []
+} = {}) {
+    const canonicalChunks = Array.isArray(selection?.canonicalChunks) ? selection.canonicalChunks : [];
+    const indexableChunks = Array.isArray(selection?.indexableChunks) ? selection.indexableChunks : [];
+
+    if (canonicalChunks.length > 0) {
+        return {
+            ...selection,
+            indexableChunks,
+            canonicalChunks,
+            generationSource: 'canonical_main_chunks',
+            usedManualAtomRegistryFallback: false,
+            usedAuxiliaryGenerationFallback: false,
+            noRetrievableMainChunks: false
+        };
+    }
+
+    const auxiliarySelection = selectCanonicalAuxiliaryGenerationChunks({ contextDocs, linkedDocs });
+    if (auxiliarySelection.canonicalChunks.length > 0) {
+        return {
+            ...selection,
+            indexableChunks,
+            behavioralMainChunks: [],
+            supportApiMainChunks: [],
+            behavioralFallbackChunks: [],
+            canonicalChunks: auxiliarySelection.canonicalChunks,
+            auxiliaryGenerationChunks: auxiliarySelection.canonicalChunks,
+            auxiliaryGenerationDetails: {
+                reason: auxiliarySelection.reason,
+                contextChunkCount: auxiliarySelection.contextChunkCount,
+                linkedChunkCount: auxiliarySelection.linkedChunkCount,
+                docCount: auxiliarySelection.docCount
+            },
+            usedFallback: true,
+            usedManualAtomRegistryFallback: false,
+            usedAuxiliaryGenerationFallback: true,
+            noRetrievableMainChunks: true,
+            generationSource: 'auxiliary_canonical_chunks'
+        };
+    }
+
+    return {
+        ...selection,
+        indexableChunks,
+        canonicalChunks,
+        generationSource: 'none',
+        usedManualAtomRegistryFallback: false,
+        usedAuxiliaryGenerationFallback: false,
+        noRetrievableMainChunks: true
+    };
+}

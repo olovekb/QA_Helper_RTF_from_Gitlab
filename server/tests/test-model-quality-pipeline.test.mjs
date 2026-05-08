@@ -259,6 +259,89 @@ test('validation pipeline repairs model after judge error and passes on retry', 
     assert.equal(result.model[0].stories[0].scenarios[0].text, 'Нажать кнопку "Оплатить повторно"');
 });
 
+test('validation pipeline repairs judge issues with the original generation model', async () => {
+    const baseModel = createMinimalValidModel();
+    const fixedModel = createMinimalValidModel();
+    fixedModel[0].stories[0].scenarios[0].text = 'Click Pay again';
+
+    const blockingRuleId = getValidationPromptRules()[0].ruleId;
+    const calls = [];
+    let judgeCalls = 0;
+
+    const llmClient = async (messages, options) => {
+        const systemPrompt = String(messages[0].content || '');
+
+        if (systemPrompt.includes('LLM-as-a-judge')) {
+            calls.push({ phase: 'judge', model: options.model });
+            judgeCalls += 1;
+
+            return {
+                choices: [
+                    {
+                        message: {
+                            content: JSON.stringify(judgeCalls === 1
+                                ? {
+                                    passed: false,
+                                    summary: 'needs repair',
+                                    issues: [
+                                        {
+                                            ruleId: blockingRuleId,
+                                            severity: 'error',
+                                            nodePath: 'Feature -> Story -> Scenario',
+                                            nodeId: 'sc-1',
+                                            nodeType: 'scenario',
+                                            message: 'Scenario needs a targeted repair',
+                                            evidence: 'judge issue',
+                                            suggestedFix: 'Rewrite the scenario with the source generation model'
+                                        }
+                                    ]
+                                }
+                                : {
+                                    passed: true,
+                                    summary: 'fixed',
+                                    issues: [],
+                                    scores: { structure: 97, readability: 96, atomicity: 97, detailLevel: 95 }
+                                })
+                        }
+                    }
+                ]
+            };
+        }
+
+        calls.push({ phase: 'repair', model: options.model });
+        return {
+            choices: [
+                {
+                    message: {
+                        content: JSON.stringify(fixedModel)
+                    }
+                }
+            ]
+        };
+    };
+
+    const result = await runTestModelValidationPipeline({
+        model: baseModel,
+        llmClient,
+        modelsToTry: ['judge-qwen'],
+        repairModelsToTry: ['selected-generation-model', 'judge-qwen'],
+        requirementsText: 'Payment',
+        analyzeScenarioActionability: () => ({ valid: true, reason: null }),
+        validateTestModelLegacy: () => ({ valid: true, errors: [], warnings: [] }),
+        detectModelStructureIssues: () => [],
+        prepareModel: (value) => value,
+        maxAttempts: 3
+    });
+
+    assert.equal(result.validation.passed, true);
+    assert.deepEqual(calls.map((call) => `${call.phase}:${call.model}`), [
+        'judge:judge-qwen',
+        'repair:selected-generation-model',
+        'judge:judge-qwen'
+    ]);
+    assert.equal(result.model[0].stories[0].scenarios[0].text, 'Click Pay again');
+});
+
 test('validation pipeline preserves previous model when repair degenerates to empty array', async () => {
     const baseModel = createMinimalValidModel();
     const blockingRuleId = getValidationPromptRules()[0].ruleId;
@@ -320,6 +403,80 @@ test('validation pipeline preserves previous model when repair degenerates to em
     assert.equal(result.validation.attemptsUsed, 1);
     assert.deepEqual(result.model, baseModel);
     assert.ok(result.validation.judgeIssues.some((issue) => issue.message.includes('empty test model')));
+    assertValidationMetadata(result.validation);
+});
+
+test('validation pipeline preserves previous model when repair removes existing branches', async () => {
+    const baseModel = createMinimalValidModel();
+    const shrunkenModel = createMinimalValidModel();
+    shrunkenModel[0].stories[0].scenarios[0].codes = shrunkenModel[0].stories[0].scenarios[0].codes.slice(0, 1);
+    const blockingRuleId = getValidationPromptRules()[0].ruleId;
+    let judgeCalls = 0;
+
+    const llmClient = async (messages) => {
+        const systemPrompt = String(messages[0].content || '');
+
+        if (systemPrompt.includes('LLM-as-a-judge')) {
+            judgeCalls += 1;
+            return {
+                choices: [
+                    {
+                        message: {
+                            content: JSON.stringify(judgeCalls === 1
+                                ? {
+                                    passed: false,
+                                    summary: 'need fix',
+                                    issues: [
+                                        {
+                                            ruleId: blockingRuleId,
+                                            severity: 'error',
+                                            nodePath: 'Feature -> Story -> Scenario -> Code',
+                                            nodeId: 'c-2',
+                                            nodeType: 'code',
+                                            message: 'Code needs a targeted wording fix',
+                                            evidence: 'judge issue',
+                                            suggestedFix: 'Rewrite one Code node'
+                                        }
+                                    ]
+                                }
+                                : {
+                                    passed: true,
+                                    summary: 'ok',
+                                    issues: []
+                                })
+                        }
+                    }
+                ]
+            };
+        }
+
+        return {
+            choices: [
+                {
+                    message: {
+                        content: JSON.stringify(shrunkenModel)
+                    }
+                }
+            ]
+        };
+    };
+
+    const result = await runTestModelValidationPipeline({
+        model: baseModel,
+        llmClient,
+        modelsToTry: ['Qwen/Qwen3-235B-A22B-Instruct-2507'],
+        requirementsText: 'Payment',
+        analyzeScenarioActionability: () => ({ valid: true, reason: null }),
+        validateTestModelLegacy: () => ({ valid: true, errors: [], warnings: [] }),
+        detectModelStructureIssues: () => [],
+        prepareModel: (value) => value,
+        maxAttempts: 3
+    });
+
+    assert.equal(result.validation.passed, false);
+    assert.equal(result.validation.attemptsUsed, 1);
+    assert.deepEqual(result.model, baseModel);
+    assert.ok(result.validation.judgeIssues.some((issue) => issue.message.includes('reduced test model coverage')));
     assertValidationMetadata(result.validation);
 });
 

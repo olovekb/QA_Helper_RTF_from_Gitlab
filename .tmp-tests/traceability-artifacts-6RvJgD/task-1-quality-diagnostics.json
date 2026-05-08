@@ -1,0 +1,55 @@
+{
+  "taskId": "task-1",
+  "generatedAt": "2026-05-08T11:49:35.966Z",
+  "qualityStatus": "needs_review",
+  "qualityGate": {
+    "requirementCoverage": {
+      "coverageSource": "manual_atom_registry",
+      "diagnostics": {
+        "confidence": "normal"
+      }
+    }
+  },
+  "postValidationQualityCheck": {
+    "requirementCoverage": {
+      "status": "needs_review",
+      "coverageSource": "manual_atom_registry",
+      "allTestableAtoms": 2,
+      "strongCount": 1,
+      "partialCount": 1,
+      "notCoveredCount": 0,
+      "strictCoverage": 0.5,
+      "potentialCoverage": 1,
+      "softCoverageScore": 0.77,
+      "orphanBranchRate": 0,
+      "incompleteLeafRate": 0,
+      "branchCount": 2,
+      "embeddingModelUsed": "Qwen/Qwen3-Embedding-0.6B",
+      "confidence": "normal",
+      "diagnostics": {
+        "confidence": "normal",
+        "manualRegistryDiagnostics": {
+          "sourceFile": "latest.csv",
+          "encodingUsed": "utf-8",
+          "delimiterUsed": ";",
+          "totalRows": 2,
+          "parsedRows": 2,
+          "repairedRows": [],
+          "invalidRows": []
+        }
+      }
+    }
+  },
+  "requirementCoverageDiagnostics": {
+    "confidence": "normal",
+    "manualRegistryDiagnostics": {
+      "sourceFile": "latest.csv",
+      "encodingUsed": "utf-8",
+      "delimiterUsed": ";",
+      "totalRows": 2,
+      "parsedRows": 2,
+      "repairedRows": [],
+      "invalidRows": []
+    }
+  }
+}
