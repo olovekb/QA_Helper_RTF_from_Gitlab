@@ -344,6 +344,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import knexfile from './db/knexfile.js';
 import { compareGeneratedCasesAgainstAllure } from './metrics/test-case-comparison.mjs';
+import { writeBertScoreMetricsArtifact } from './metrics/test-case-comparison-artifacts.mjs';
 import { GENERATION_TASK_TYPES, buildGenerationTaskTypeCheckClause } from '../shared/generation-task-types.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -23008,12 +23009,24 @@ app.post('/api/compare-test-cases-async', async (req, res) => {
             }
         })
             .then(async (result) => {
+                const bertScoreMetricsArtifact = await writeBertScoreMetricsArtifact({
+                    taskId,
+                    result
+                });
+                const resultWithArtifacts = {
+                    ...result,
+                    artifacts: {
+                        ...(result.artifacts || {}),
+                        bertScoreMetrics: bertScoreMetricsArtifact
+                    }
+                };
+
                 await updateTaskStatusWithMetrics(
                     taskId,
                     {
                         status: 'completed',
                         progress: 100,
-                        result,
+                        result: resultWithArtifacts,
                         completed_at: new Date(),
                         updated_at: new Date()
                     },

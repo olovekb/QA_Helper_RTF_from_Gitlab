@@ -608,6 +608,7 @@ const serializeCasesForComparison = (rawCases = []) => rawCases.map((testCase) =
 
 const comparisonClassMeta = {
     strong: { label: 'Strong', color: '#2ea043', background: 'rgba(46, 160, 67, 0.16)' },
+    semanticStrong: { label: 'Semantic', color: '#58a6ff', background: 'rgba(88, 166, 255, 0.16)' },
     weak: { label: 'Weak', color: '#d29922', background: 'rgba(210, 153, 34, 0.16)' },
     mismatch: { label: 'Mismatch', color: '#f85149', background: 'rgba(248, 81, 73, 0.16)' },
     unmatched: { label: 'Unmatched', color: '#8b949e', background: 'rgba(139, 148, 158, 0.16)' }
@@ -5143,9 +5144,9 @@ export default function TestModelReviewModal({
                                         <div style={{ fontSize: '20px', fontWeight: 700 }}>{comparisonReport.summary?.allManualCoverage ?? 0}</div>
                                     </div>
                                     <div style={{ padding: '12px', borderRadius: '8px', background: '#1b2129', border: '1px solid #30363d' }}>
-                                        <div style={{ fontSize: '11px', color: '#9fb3d1', marginBottom: '4px' }}>strong / weak / unmatched</div>
+                                        <div style={{ fontSize: '11px', color: '#9fb3d1', marginBottom: '4px' }}>strong / semantic / weak / unmatched</div>
                                         <div style={{ fontSize: '18px', fontWeight: 700 }}>
-                                            {(comparisonReport.summary?.strongCount ?? 0)} / {(comparisonReport.summary?.weakCount ?? 0)} / {(comparisonReport.summary?.unmatchedCount ?? 0)}
+                                            {(comparisonReport.summary?.strongCount ?? 0)} / {(comparisonReport.summary?.semanticStrongCount ?? 0)} / {(comparisonReport.summary?.weakCount ?? 0)} / {(comparisonReport.summary?.unmatchedCount ?? 0)}
                                         </div>
                                     </div>
                                 </div>

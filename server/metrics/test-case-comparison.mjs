@@ -23,8 +23,8 @@ const BLOCK_WEIGHTS = {
     context: 0.05
 };
 
-const MATCH_THRESHOLDS = {
-    strong: 0.82,
+export const MATCH_THRESHOLDS = {
+    strong: 0.79,
     weak: 0.70,
     featureStory: 0.35,
     scenarioCode: 0.30,
@@ -35,6 +35,8 @@ const MATCH_THRESHOLDS = {
     scenarioCodeTopN: 5,
     lexicalTopN: 8
 };
+
+const COVERED_MATCH_CLASSES = new Set(['strong', 'semanticStrong', 'weak']);
 
 const ASSIGNMENT_COSTS = {
     dummy: 0.30,
@@ -856,9 +858,9 @@ function toPublicCaseSnapshot(testCase, blocks) {
     };
 }
 
-function classifyPair(weightedF1, generatedValidation) {
-    if (weightedF1 >= MATCH_THRESHOLDS.strong && generatedValidation.valid) {
-        return 'strong';
+export function classifyPair(weightedF1, generatedValidation) {
+    if (weightedF1 >= MATCH_THRESHOLDS.strong) {
+        return generatedValidation?.valid ? 'strong' : 'semanticStrong';
     }
     if (weightedF1 >= MATCH_THRESHOLDS.weak) {
         return 'weak';
@@ -866,8 +868,12 @@ function classifyPair(weightedF1, generatedValidation) {
     return 'mismatch';
 }
 
+export function isCoveredMatchClass(matchClass) {
+    return COVERED_MATCH_CLASSES.has(matchClass);
+}
+
 function buildSummary(pairReports, manualCases, generatedValidations) {
-    const coveredPairs = pairReports.filter((pair) => pair.matchClass === 'strong' || pair.matchClass === 'weak');
+    const coveredPairs = pairReports.filter((pair) => isCoveredMatchClass(pair.matchClass));
     const coveredManualIds = new Set(coveredPairs.map((pair) => pair.manualCase?.id).filter(Boolean));
     const blockSummary = {};
 
@@ -881,7 +887,7 @@ function buildSummary(pairReports, manualCases, generatedValidations) {
     }
 
     const effectiveGeneratedScores = pairReports.map((pair) => (
-        pair.matchClass === 'strong' || pair.matchClass === 'weak'
+        isCoveredMatchClass(pair.matchClass)
             ? pair.weighted.f1
             : 0
     ));
@@ -902,6 +908,7 @@ function buildSummary(pairReports, manualCases, generatedValidations) {
         generatedCount: pairReports.length,
         manualCount: manualCases.length,
         strongCount: pairReports.filter((pair) => pair.matchClass === 'strong').length,
+        semanticStrongCount: pairReports.filter((pair) => pair.matchClass === 'semanticStrong').length,
         weakCount: pairReports.filter((pair) => pair.matchClass === 'weak').length,
         mismatchCount: pairReports.filter((pair) => pair.matchClass === 'mismatch').length,
         unmatchedCount: pairReports.filter((pair) => pair.matchClass === 'unmatched').length,
@@ -1009,7 +1016,7 @@ export async function compareGeneratedCasesAgainstAllure({
     const summary = buildSummary(pairReports, manualCases, generatedValidations);
     const uncoveredManualCases = manualCases
         .filter((manualCase) => !pairReports.some((pair) => (
-            (pair.matchClass === 'strong' || pair.matchClass === 'weak') &&
+            isCoveredMatchClass(pair.matchClass) &&
             pair.manualCase?.id === manualCase.id
         )))
         .map((manualCase, manualIndex) => ({

@@ -12,7 +12,13 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // Конфигурация
 const BASE_URL = config.baseUrl;
-const ALLURE_TOKEN = config.allureToken;
+const REDACTED_CONFIG_VALUES = new Set([
+    '__REDACTED__',
+    'REDACTED',
+    'YOUR_ALLURE_TOKEN_HERE',
+    'YOUR_TOKEN_HERE',
+    'your_token_here'
+]);
 const ALLOW_INSECURE_TLS = ['1', 'true', 'yes', 'on'].includes(
     String(process.env.ALLURE_ALLOW_INSECURE_TLS || (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0'))
         .trim()
@@ -28,6 +34,29 @@ let authToken = null;
 // Обновляем токен и возвращаем новый
 let isRefreshing = false;
 let tokenPromise = null;
+
+function isUsableSecret(value) {
+    const text = String(value || '').trim();
+    return Boolean(text) && !REDACTED_CONFIG_VALUES.has(text);
+}
+
+export function resolveAllureApiToken(configLike = config, env = process.env) {
+    const candidates = [
+        env?.ALLURE_TOKEN,
+        env?.ALLURE_API_TOKEN,
+        configLike?.allureToken
+    ];
+
+    return candidates.find(isUsableSecret) || '';
+}
+
+function getConfiguredAllureToken() {
+    const token = resolveAllureApiToken(config, process.env);
+    if (!token) {
+        throw new Error('Allure API token is not configured. Set ALLURE_TOKEN in .env or allureToken in server/config.json.');
+    }
+    return token;
+}
 
 function getFetchAgent(url) {
     if (!HTTPS_AGENT) {
@@ -65,7 +94,7 @@ export async function getJwtToken ()
             new URLSearchParams({
                 grant_type: "apitoken",
                 scope: "openid",
-                token: ALLURE_TOKEN,
+                token: getConfiguredAllureToken(),
             }),
             {
                 headers: {

@@ -20,15 +20,34 @@ function isUsableSecret(value) {
     return Boolean(text) && !REDACTED_CONFIG_VALUES.has(text);
 }
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 180000;
+const DEFAULT_REQUEST_TIMEOUT_MS = null;
 const DEFAULT_MAX_ATTEMPTS = 2;
 const DEFAULT_HYBRID_MAX_ATTEMPTS = 1;
+const DEFAULT_CLOUD_FIRST_TIMEOUT_MS = null;
 const BASE_RETRY_MS = 1000;
 
 function coerceBoundedPositiveInteger(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
     const parsed = Number.parseInt(String(value ?? ''), 10);
     const candidate = Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
     return Math.min(max, Math.max(min, candidate));
+}
+
+function coerceOptionalBoundedPositiveInteger(value, fallback = null, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+    if (value === undefined || value === null || value === '') {
+        return fallback;
+    }
+
+    const text = String(value).trim().toLowerCase();
+    if (['0', 'false', 'off', 'none', 'null', 'disable', 'disabled'].includes(text)) {
+        return null;
+    }
+
+    const parsed = Number.parseInt(text, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return fallback;
+    }
+
+    return Math.min(max, Math.max(min, parsed));
 }
 
 export function resolveCloudRuApiKey(configLike = config, env = process.env) {
@@ -46,7 +65,7 @@ export function resolveCloudRuRequestPolicy(configLike = config, env = process.e
     const cloudruConfig = configLike?.cloudru || {};
 
     return {
-        requestTimeoutMs: coerceBoundedPositiveInteger(
+        requestTimeoutMs: coerceOptionalBoundedPositiveInteger(
             env?.CLOUDRU_REQUEST_TIMEOUT_MS ?? cloudruConfig.requestTimeoutMs ?? configLike?.cloudruRequestTimeoutMs,
             DEFAULT_REQUEST_TIMEOUT_MS,
             { min: 1000, max: 1800000 }
@@ -60,6 +79,11 @@ export function resolveCloudRuRequestPolicy(configLike = config, env = process.e
             env?.CLOUDRU_HYBRID_MAX_ATTEMPTS ?? cloudruConfig.hybridMaxAttempts ?? configLike?.cloudruHybridMaxAttempts,
             DEFAULT_HYBRID_MAX_ATTEMPTS,
             { min: 1, max: 5 }
+        ),
+        cloudFirstTimeoutMs: coerceOptionalBoundedPositiveInteger(
+            env?.CLOUDRU_CLOUD_FIRST_TIMEOUT_MS ?? cloudruConfig.cloudFirstTimeoutMs ?? configLike?.cloudruCloudFirstTimeoutMs,
+            DEFAULT_CLOUD_FIRST_TIMEOUT_MS,
+            { min: 1000, max: 1800000 }
         )
     };
 }
@@ -70,17 +94,19 @@ export function resolveCloudRuHybridAttemptPolicy({
     requestTimeoutMs = null,
     maxAttempts = null
 } = {}) {
-    const baseRequestTimeoutMs = coerceBoundedPositiveInteger(
+    const baseRequestTimeoutMs = coerceOptionalBoundedPositiveInteger(
         requestTimeoutMs,
         basePolicy.requestTimeoutMs,
         { min: 1000, max: 1800000 }
     );
     const remainingBudgetMs = Number.isFinite(Number(remainingMs)) && Number(remainingMs) > 0
         ? Number(remainingMs)
-        : baseRequestTimeoutMs;
+        : null;
 
     return {
-        requestTimeoutMs: Math.round(Math.max(1000, Math.min(baseRequestTimeoutMs, remainingBudgetMs))),
+        requestTimeoutMs: remainingBudgetMs === null
+            ? baseRequestTimeoutMs
+            : Math.round(Math.max(1000, Math.min(baseRequestTimeoutMs ?? remainingBudgetMs, remainingBudgetMs))),
         maxAttempts: coerceBoundedPositiveInteger(
             maxAttempts,
             basePolicy.hybridMaxAttempts || DEFAULT_HYBRID_MAX_ATTEMPTS,
@@ -282,6 +308,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Fetch with timeout helper
 async function fetchWithTimeout(url, options = {}, timeoutMs = CLOUDRU_REQUEST_POLICY.requestTimeoutMs) {
+    if (!Number.isFinite(Number(timeoutMs)) || Number(timeoutMs) <= 0) {
+        return await fetch(url, { ...options, agent: options.agent ?? getAgentForUrl(url) });
+    }
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -359,7 +389,7 @@ export async function callCloudRuAPI(messages, opts = {}) {
         maxAttempts = CLOUDRU_REQUEST_POLICY.maxAttempts
     } = opts;
 
-    const effectiveRequestTimeoutMs = coerceBoundedPositiveInteger(
+    const effectiveRequestTimeoutMs = coerceOptionalBoundedPositiveInteger(
         requestTimeoutMs,
         CLOUDRU_REQUEST_POLICY.requestTimeoutMs,
         { min: 1000, max: 1800000 }
@@ -476,7 +506,7 @@ export async function callCloudRuAPI(messages, opts = {}) {
     for (let attempt = 1; attempt <= effectiveMaxAttempts; attempt++) {
         try {
             console.log(`\n🔄 [cloudru] ATTEMPT ${attempt}/${effectiveMaxAttempts}`);
-            console.log(`⏱️  Request timeout: ${effectiveRequestTimeoutMs}ms`);
+            console.log(`⏱️  Request timeout: ${effectiveRequestTimeoutMs === null ? 'disabled' : `${effectiveRequestTimeoutMs}ms`}`);
             console.log(`📤 Request body size: ${JSON.stringify(requestBody).length} chars`);
             console.log(`📤 Sending to: ${endpoint}`);
             
@@ -880,7 +910,7 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
         tools = null,
         tool_choice = null,
         logRateLimit = true,
-        cloudFirstTimeoutMs = 120000,
+        cloudFirstTimeoutMs = CLOUDRU_REQUEST_POLICY.cloudFirstTimeoutMs,
         useResponseFormatForCloudRu = false,
         requestTimeoutMs = null,
         maxAttempts = null,
@@ -896,12 +926,14 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
     console.log(`📝 Messages count: ${Array.isArray(messages) ? messages.length : 0}`);
     console.log(`${'='*80}\n`);
 
-    // Try Cloud.ru models first with overall timeout budget
-    const deadline = Date.now() + cloudFirstTimeoutMs;
+    // Try Cloud.ru models first. A finite cloudFirstTimeoutMs can cap total Cloud.ru time,
+    // but by default each model uses the normal request timeout policy.
+    const hasCloudFirstTimeout = Number.isFinite(Number(cloudFirstTimeoutMs)) && Number(cloudFirstTimeoutMs) > 0;
+    const deadline = hasCloudFirstTimeout ? Date.now() + Number(cloudFirstTimeoutMs) : null;
     for (let i = 0; i < models.length; i++) {
         const model = models[i];
-        const remainingMs = Math.max(0, deadline - Date.now());
-        if (remainingMs <= 0) {
+        const remainingMs = deadline === null ? null : Math.max(0, deadline - Date.now());
+        if (deadline !== null && remainingMs <= 0) {
             console.log(`[hybrid] Cloud-first timeout budget exceeded before model call (${cloudFirstTimeoutMs}ms). Falling back to OpenRouter.`);
             break;
         }
@@ -913,7 +945,9 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
         });
         try {
             console.log(`\n🚀 [hybrid] Trying Cloud.ru model ${i + 1}/${models.length}: ${model}`);
-            console.log(`[hybrid] Cloud.ru budget remaining: ${remainingMs}ms; per-call timeout: ${hybridAttemptPolicy.requestTimeoutMs}ms; attempts: ${hybridAttemptPolicy.maxAttempts}`);
+            const budgetLabel = remainingMs === null ? 'disabled' : `${remainingMs}ms`;
+            const timeoutLabel = hybridAttemptPolicy.requestTimeoutMs === null ? 'disabled' : `${hybridAttemptPolicy.requestTimeoutMs}ms`;
+            console.log(`[hybrid] Cloud.ru budget remaining: ${budgetLabel}; per-call timeout: ${timeoutLabel}; attempts: ${hybridAttemptPolicy.maxAttempts}`);
             
             // ✅ НОВОЕ: Экранируем плейсхолдеры {{}} перед отправкой в Cloud.ru
             const escapedMessages = escapePlaceholdersInMessages(messages);
@@ -955,7 +989,7 @@ export async function callWithCloudRuFallback(url, messages, openRouterApiKey, o
                 error.code === 'NETWORK_FAST_FAIL'
             ) {
                 console.log(`🔄 [hybrid] Rate limit/server error - trying next Cloud.ru model`);
-                if (Date.now() > deadline) {
+                if (deadline !== null && Date.now() > deadline) {
                     console.log(`⏳ [hybrid] Cloud-first timeout budget exceeded (${cloudFirstTimeoutMs}ms). Falling back to OpenRouter.`);
                     break;
                 }

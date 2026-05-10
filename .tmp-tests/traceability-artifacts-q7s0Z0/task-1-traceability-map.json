@@ -1,0 +1,94 @@
+{
+  "taskId": "task-1",
+  "generatedAt": "2026-05-08T19:40:14.921Z",
+  "qualitySummary": {
+    "taskId": "task-1",
+    "qualityStatus": "needs_review",
+    "coverageSource": "manual_atom_registry",
+    "final": {
+      "status": "needs_review",
+      "coverageSource": "manual_atom_registry",
+      "allTestableAtoms": 2,
+      "strongCount": 1,
+      "partialCount": 1,
+      "notCoveredCount": 0,
+      "strictCoverage": 0.5,
+      "potentialCoverage": 1,
+      "hardCoverageRatio": null,
+      "partialCoverageRatio": null,
+      "softCoverageScore": 0.77,
+      "orphanBranchRate": 0,
+      "incompleteLeafRate": 0,
+      "branchCount": 2,
+      "embeddingModelUsed": "Qwen/Qwen3-Embedding-0.6B",
+      "confidence": "normal"
+    },
+    "initial": {
+      "status": null,
+      "coverageSource": "manual_atom_registry",
+      "allTestableAtoms": null,
+      "strongCount": null,
+      "partialCount": null,
+      "notCoveredCount": null,
+      "strictCoverage": null,
+      "potentialCoverage": null,
+      "hardCoverageRatio": null,
+      "partialCoverageRatio": null,
+      "softCoverageScore": null,
+      "orphanBranchRate": null,
+      "incompleteLeafRate": null,
+      "branchCount": null,
+      "embeddingModelUsed": null,
+      "confidence": null
+    },
+    "manualRegistry": {
+      "sourceFile": "latest.csv",
+      "encodingUsed": "utf-8",
+      "delimiterUsed": ";",
+      "totalRows": 2,
+      "parsedRows": 2,
+      "repairedRows": 0,
+      "invalidRows": 0,
+      "warnings": 0
+    }
+  },
+  "qualityStatus": "needs_review",
+  "coverageSource": "manual_atom_registry",
+  "traceabilityMap": [
+    {
+      "coverageSource": "manual_atom_registry",
+      "documentId": "doc-1",
+      "atom_id": "REQ-1",
+      "stableId": "doc-1:REQ-1",
+      "contentHash": "hash-1",
+      "source_section": "2.1 Registry",
+      "type": "UI_BEHAVIOR",
+      "target_level": "C1_E2E",
+      "mode": "list",
+      "action": "open list",
+      "condition": "authorized user",
+      "expected_result": "rows are visible",
+      "coverageStatus": "strong",
+      "bestBranchId": "branch-1",
+      "bestMatchedBranchSignature": "feature > story > scenario > code",
+      "confidence": 0.91,
+      "reason": "verified",
+      "evidence": [
+        "rows are visible"
+      ],
+      "comment": "baseline",
+      "candidateBranches": [
+        {
+          "branch_id": "branch-1",
+          "coverage_status": "strong",
+          "confidence": 0.91
+        },
+        {
+          "branch_id": "branch-2",
+          "coverage_status": "partial",
+          "confidence": 0.62
+        }
+      ]
+    }
+  ]
+}

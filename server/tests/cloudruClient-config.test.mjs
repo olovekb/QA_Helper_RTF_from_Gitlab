@@ -31,12 +31,13 @@ test('resolveCloudRuApiKey prefers environment key over config values', () => {
     assert.equal(apiKey, 'env.cloudru-key');
 });
 
-test('resolveCloudRuRequestPolicy uses fail-fast defaults instead of 15 minute waits', () => {
+test('resolveCloudRuRequestPolicy disables client-side Cloud.ru timeouts by default', () => {
     const policy = resolveCloudRuRequestPolicy({}, {});
 
-    assert.equal(policy.requestTimeoutMs, 180000);
+    assert.equal(policy.requestTimeoutMs, null);
     assert.equal(policy.maxAttempts, 2);
     assert.equal(policy.hybridMaxAttempts, 1);
+    assert.equal(policy.cloudFirstTimeoutMs, null);
 });
 
 test('resolveCloudRuRequestPolicy allows config and env overrides', () => {
@@ -44,33 +45,51 @@ test('resolveCloudRuRequestPolicy allows config and env overrides', () => {
         cloudru: {
             requestTimeoutMs: 240000,
             maxAttempts: 3,
-            hybridMaxAttempts: 2
+            hybridMaxAttempts: 2,
+            cloudFirstTimeoutMs: 300000
         }
     }, {});
 
     assert.deepEqual(configPolicy, {
         requestTimeoutMs: 240000,
         maxAttempts: 3,
-        hybridMaxAttempts: 2
+        hybridMaxAttempts: 2,
+        cloudFirstTimeoutMs: 300000
     });
 
     const envPolicy = resolveCloudRuRequestPolicy({
         cloudru: {
             requestTimeoutMs: 240000,
             maxAttempts: 3,
-            hybridMaxAttempts: 2
+            hybridMaxAttempts: 2,
+            cloudFirstTimeoutMs: 300000
         }
     }, {
-        CLOUDRU_REQUEST_TIMEOUT_MS: '90000',
+        CLOUDRU_REQUEST_TIMEOUT_MS: '0',
         CLOUDRU_MAX_ATTEMPTS: '1',
-        CLOUDRU_HYBRID_MAX_ATTEMPTS: '1'
+        CLOUDRU_HYBRID_MAX_ATTEMPTS: '1',
+        CLOUDRU_CLOUD_FIRST_TIMEOUT_MS: '0'
     });
 
     assert.deepEqual(envPolicy, {
-        requestTimeoutMs: 90000,
+        requestTimeoutMs: null,
         maxAttempts: 1,
-        hybridMaxAttempts: 1
+        hybridMaxAttempts: 1,
+        cloudFirstTimeoutMs: null
     });
+});
+
+test('resolveCloudRuHybridAttemptPolicy keeps per-call timeout disabled without a Cloud-first budget', () => {
+    const attemptPolicy = resolveCloudRuHybridAttemptPolicy({
+        basePolicy: {
+            requestTimeoutMs: null,
+            maxAttempts: 2,
+            hybridMaxAttempts: 1
+        }
+    });
+
+    assert.equal(attemptPolicy.requestTimeoutMs, null);
+    assert.equal(attemptPolicy.maxAttempts, 1);
 });
 
 test('resolveCloudRuHybridAttemptPolicy caps per-call timeout to remaining Cloud-first budget', () => {

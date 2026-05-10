@@ -1,6 +1,6 @@
 {
     "baseUrl":  "https://abanking.qatools.cloud/api",
-    "allureToken":  "__REDACTED__",
+    "allureToken":  "541c1cd4-1b19-4559-8d64-ba0272d3c66a",
     "projectId":  "199",
     "jiraIssue":  "SADO-20913",
     "url":  "https://abanking.qatools.cloud",
